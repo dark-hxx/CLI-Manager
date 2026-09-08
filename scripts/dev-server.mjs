@@ -5,13 +5,21 @@ const DEV_PORT = 1420;
 const DEV_HOST = "127.0.0.1";
 const DEV_URL = `http://${DEV_HOST}:${DEV_PORT}`;
 const SERVER_PROBE_TIMEOUT_MS = 15_000;
+const SERVER_PROBE_MAX_BYTES = 64 * 1024;
 
 const requestIndex = () =>
   new Promise((resolve) => {
     const request = http.get(DEV_URL, { timeout: SERVER_PROBE_TIMEOUT_MS }, (response) => {
       let body = "";
+      let bodyBytes = 0;
       response.setEncoding("utf8");
       response.on("data", (chunk) => {
+        bodyBytes += Buffer.byteLength(chunk);
+        if (bodyBytes > SERVER_PROBE_MAX_BYTES) {
+          request.destroy();
+          resolve({ available: true, statusCode: response.statusCode ?? 0, body: "" });
+          return;
+        }
         body += chunk;
       });
       response.on("end", () => {

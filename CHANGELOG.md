@@ -1,6 +1,14 @@
 # Changelog
 
-## [TEMP] - 2026-09-07
+## [TEMP] - 2026-09-08
+
+### 后端注释扫描问题修复与加固
+
+- 修复 Provider JSON/TOML 数组脱敏与密钥保留遍历、故障转移队列恢复、全局多 Home 切换 journal/回滚/备份校验，以及 SQLite WAL busy 和备份文件碰撞问题。
+- 为 WSL stdin、daemon 写入、Hook stdin、外部命令、Codex profile/恢复请求、HTTP 响应、SSE、脚本探测和 Capability 文件补齐总期限、容量上限或字节安全解析；错误与 crash context 在返回或记录前脱敏。
+- 收紧终端背景图常规文件、扩展名、canonical 根和 symlink 清理边界；同步 ZIP 不再覆盖已有目标，文件同路径 copy/move 在删除前拒绝，Git tag 与 Unix 文件定位/启动目录语义保持跨平台一致。
+- OpenCode Hook 仅在投递成功后提交去重状态并使用 5 秒请求期限；子代理订阅替换可靠停止旧线程，Codex proxy pending resume 限制为 64 项，相关容量测试改用真实状态夹具。
+- 建立逐项安全加固 PRD 与处置台账；需要公开协议、跨存储事务或真实 Unix/WSL/SSH 环境的观察项保留为明确后续任务。桌宠 ID/卸载路径问题按本次范围要求未修改。
 
 ### AI 开发架构治理
 

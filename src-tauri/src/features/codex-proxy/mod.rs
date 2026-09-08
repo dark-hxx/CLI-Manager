@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
 use std::fs::OpenOptions;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
@@ -46,6 +46,7 @@ const MAX_CODEX_PROFILE_OVERRIDES: usize = 256;
 // executable path and shell launcher arguments used by .cmd/.ps1 installs.
 const MAX_CODEX_CHILD_ARGUMENT_UTF16_UNITS: usize = 20 * 1024;
 const MAX_PROTOCOL_TRACE_PENDING_REQUESTS: usize = 64;
+const MAX_PENDING_RESUMES: usize = 64;
 const STRICT_RESUME_ERROR_CODE: i64 = -32091;
 const SSH_HANDOFF_HOOK_QUEUE_CAPACITY: usize = 32;
 const LOCAL_HANDOFF_DELIVERY_INSTRUCTION: &str = "CLI-Manager remote handoff: deliver output files with `cc-connect send --file <absolute-path>` and output images with `cc-connect send --image <absolute-path>`.";
@@ -603,13 +604,21 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
         .map(PathBuf::from)
         .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
     let path = codex_home.join(format!("{profile_name}.config.toml"));
-    let metadata = std::fs::metadata(&path)
+    let file = std::fs::File::open(&path)
+        .map_err(|err| format!("open Codex Provider profile failed: {err}"))?;
+    let metadata = file
+        .metadata()
         .map_err(|err| format!("read Codex Provider profile metadata failed: {err}"))?;
-    if !metadata.is_file() || metadata.len() > MAX_CODEX_PROFILE_BYTES {
+    if !metadata.is_file() {
         return Err("Codex Provider profile is missing or too large".to_string());
     }
-    let profile = std::fs::read_to_string(&path)
+    let mut profile = String::new();
+    file.take(MAX_CODEX_PROFILE_BYTES + 1)
+        .read_to_string(&mut profile)
         .map_err(|err| format!("read Codex Provider profile failed: {err}"))?;
+    if profile.len() as u64 > MAX_CODEX_PROFILE_BYTES {
+        return Err("Codex Provider profile is missing or too large".to_string());
+    }
     let document = toml::from_str::<toml::Value>(&profile)
         .map_err(|err| format!("parse Codex Provider profile failed: {err}"))?;
     let mut overrides = Vec::new();
@@ -1023,6 +1032,12 @@ fn inspect_client_line(
         }
     }
     if let Some(key) = rpc_id_key(&id) {
+        if pending.len() >= MAX_PENDING_RESUMES && !pending.contains_key(&key) {
+            return ClientLineAction::Reject(rpc_error_response(
+                &id,
+                "CLI-Manager has too many pending Codex resume requests".to_string(),
+            ));
+        }
         pending.insert(
             key,
             PendingResume {

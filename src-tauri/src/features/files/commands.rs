@@ -837,6 +837,7 @@ pub async fn file_copy(
         if source.is_dir() && target.starts_with(&source) {
             return Err("target_inside_source".into());
         }
+        ensure_distinct_source_target(&source, &target)?;
         prepare_target(&target, overwrite)?;
         copy_path(&root, &source, &target)
     })
@@ -1235,8 +1236,21 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
     if source.is_dir() && target.starts_with(source) {
         return Err("target_inside_source".into());
     }
+    ensure_distinct_source_target(source, target)?;
     prepare_target(target, overwrite)?;
     fs::rename(source, target).map_err(|err| format!("move_failed: {err}"))
+}
+
+fn ensure_distinct_source_target(source: &Path, target: &Path) -> Result<(), String> {
+    if source == target {
+        return Err("source_equals_target".into());
+    }
+    match target.canonicalize() {
+        Ok(existing_target) if existing_target == source => Err("source_equals_target".into()),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("target_canonicalize_failed: {error}")),
+    }
 }
 
 fn image_mime_type(path: &Path) -> Option<&'static str> {
@@ -1759,6 +1773,23 @@ mod tests {
         move_path(&root, &target, &moved, false).unwrap();
         assert!(!root.join("two.txt").exists());
         assert_eq!(fs::read_to_string(root.join("three.txt")).unwrap(), "one");
+    }
+
+    #[test]
+    fn overwrite_move_rejects_the_same_source_without_deleting_it() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("root");
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("same.txt");
+        fs::write(&source, "preserve me").unwrap();
+        let root = root.canonicalize().unwrap();
+        let source = source.canonicalize().unwrap();
+
+        assert_eq!(
+            move_path(&root, &source, &source, true).unwrap_err(),
+            "source_equals_target"
+        );
+        assert_eq!(fs::read_to_string(source).unwrap(), "preserve me");
     }
 
     #[test]

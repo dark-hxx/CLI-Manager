@@ -4,7 +4,7 @@ use super::keys::{activate_key_in_transaction, delete_key_in_transaction};
 use super::support::{
     apply_claude_config_fields, apply_claude_meta, apply_config_fields,
     claude_config_from_settings, config_summary, duplicate_settings_config, normalize_app_type,
-    project_key_into_settings, redact_settings_config,
+    project_key_into_settings, redact_settings_config, strip_json_secrets,
 };
 use crate::provider::database;
 use serde_json::Map;
@@ -27,6 +27,21 @@ fn redacts_nested_secret_values_without_changing_non_secrets() {
     assert!(valid);
     assert!(!redacted.contains("secret-token"));
     assert!(redacted.contains("https://example.test"));
+}
+
+#[test]
+fn redacts_and_strips_secrets_from_every_json_array_entry() {
+    let raw = r#"{"providers":[{"api_key":"first-secret"},{"api_key":"second-secret"}]}"#;
+    let (redacted, has_secret, valid) = redact_settings_config(raw);
+    assert!(valid);
+    assert!(has_secret);
+    assert!(!redacted.contains("first-secret"));
+    assert!(!redacted.contains("second-secret"));
+
+    let mut value: Value = serde_json::from_str(raw).unwrap();
+    assert!(strip_json_secrets(&mut value));
+    assert!(value["providers"][0].get("api_key").is_none());
+    assert!(value["providers"][1].get("api_key").is_none());
 }
 
 #[test]

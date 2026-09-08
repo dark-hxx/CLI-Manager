@@ -1334,7 +1334,7 @@ fn list_tags(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let separator = '\x1f';
     let format = format!(
-        "%(refname:short){separator}%(objectname){separator}%(objecttype){separator}%(subject)"
+        "--format=%(refname:short){separator}%(objectname){separator}%(objecttype){separator}%(subject)"
     );
     let output = run_git(
         &repo,

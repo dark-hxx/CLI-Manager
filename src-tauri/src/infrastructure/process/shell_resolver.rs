@@ -144,6 +144,14 @@ pub struct BoundedOutput {
     pub stdout_truncated: bool,
 }
 
+#[derive(Debug)]
+pub struct BoundedInputOutput {
+    pub status: std::process::ExitStatus,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub stdout_truncated: bool,
+}
+
 fn drain_bounded<R: std::io::Read>(pipe: Option<R>, limit: usize) -> (Vec<u8>, bool) {
     let mut retained = Vec::with_capacity(limit.min(8 * 1024));
     let mut truncated = false;
@@ -245,6 +253,97 @@ pub fn output_with_timeout_bounded(
     })
 }
 
+/// Executes a child with bounded retained output and one deadline covering stdin writes and exit.
+pub fn output_with_input_timeout_bounded(
+    mut command: Command,
+    input: Vec<u8>,
+    timeout: std::time::Duration,
+    stdout_limit: usize,
+    stderr_limit: usize,
+) -> std::io::Result<BoundedInputOutput> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    #[cfg(target_os = "windows")]
+    let job = match ChildJob::assign(&child, "bounded input process") {
+        Ok(job) => job,
+        Err(err) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(err));
+        }
+    };
+
+    let stdin_pipe = child.stdin.take();
+    let stdout_pipe = child.stdout.take();
+    let stderr_pipe = child.stderr.take();
+    let stdin_writer = std::thread::spawn(move || {
+        let mut pipe =
+            stdin_pipe.ok_or_else(|| std::io::Error::other("child stdin unavailable"))?;
+        pipe.write_all(&input)
+    });
+    let stdout_reader = std::thread::spawn(move || drain_bounded(stdout_pipe, stdout_limit));
+    let stderr_reader = std::thread::spawn(move || drain_bounded(stderr_pipe, stderr_limit));
+
+    let deadline = std::time::Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {}
+            Err(error) => {
+                #[cfg(target_os = "windows")]
+                job.terminate();
+                #[cfg(unix)]
+                terminate_process_group(child.id());
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            #[cfg(target_os = "windows")]
+            job.terminate();
+            #[cfg(unix)]
+            terminate_process_group(child.id());
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!("进程超过 {}s 未结束，已终止", timeout.as_secs()),
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(30));
+    };
+
+    #[cfg(target_os = "windows")]
+    drop(job);
+    #[cfg(unix)]
+    terminate_process_group(child.id());
+
+    stdin_writer
+        .join()
+        .map_err(|_| std::io::Error::other("child stdin writer panicked"))??;
+    let (stdout, stdout_truncated) = stdout_reader.join().unwrap_or_default();
+    let (stderr, _) = stderr_reader.join().unwrap_or_default();
+    Ok(BoundedInputOutput {
+        status,
+        stdout,
+        stderr,
+        stdout_truncated,
+    })
+}
+
 #[cfg(unix)]
 fn terminate_process_group(pid: u32) {
     use nix::sys::signal::{killpg, Signal};
@@ -314,6 +413,31 @@ mod process_timeout_tests {
         assert!(output.status.success());
         assert_eq!(output.stdout.len(), 32);
         assert!(output.stdout_truncated);
+    }
+
+    #[test]
+    fn input_write_is_covered_by_the_process_deadline() {
+        let command = if cfg!(windows) {
+            let mut command = Command::new("powershell");
+            command.args(["-NoProfile", "-Command", "Start-Sleep -Seconds 5"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "sleep 5"]);
+            command
+        };
+        let started = std::time::Instant::now();
+        let error = output_with_input_timeout_bounded(
+            command,
+            vec![b'x'; 2 * 1024 * 1024],
+            std::time::Duration::from_millis(100),
+            0,
+            0,
+        )
+        .expect_err("blocked stdin write should time out");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < std::time::Duration::from_secs(4));
     }
 }
 

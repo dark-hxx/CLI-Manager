@@ -881,13 +881,27 @@ fn websocket_error(status: StatusCode, message: &str) -> ErrorResponse {
 }
 
 fn is_allowed_webview_origin(origin: &str) -> bool {
-    matches!(
+    if matches!(
         origin,
         "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
-    ) || origin.starts_with("http://localhost:")
-        || origin.starts_with("https://localhost:")
-        || origin.starts_with("http://127.0.0.1:")
-        || origin.starts_with("https://127.0.0.1:")
+    ) {
+        return true;
+    }
+    let Ok(uri) = origin.parse::<hyper::Uri>() else {
+        return false;
+    };
+    let Some(scheme) = uri.scheme_str() else {
+        return false;
+    };
+    let Some(authority) = uri.authority() else {
+        return false;
+    };
+    matches!(scheme, "http" | "https")
+        && matches!(authority.host(), "localhost" | "127.0.0.1")
+        && authority.port_u16().is_some()
+        && uri
+            .path_and_query()
+            .is_none_or(|path_and_query| path_and_query.as_str() == "/")
 }
 
 fn validate_websocket_request(

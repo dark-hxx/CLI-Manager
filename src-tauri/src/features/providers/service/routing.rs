@@ -870,7 +870,7 @@ pub(crate) async fn set_failover_queue_and_load(
         if next_provider_id != previous_provider_id {
             if let Err(error) = apply_hot_switch_for_active_homes(&app_type, next_provider_id).await
             {
-                let _ = set_failover_queue(&app_type, &[previous_provider_id]);
+                let _ = set_failover_queue(&app_type, &[previous_provider_id]).await;
                 return Err(error);
             }
         }

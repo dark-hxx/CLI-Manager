@@ -398,7 +398,15 @@ fn is_runtime_marker_name(file_name: &str) -> bool {
     } else {
         "runtime-state"
     };
-    file_name.starts_with(prefix) && file_name.ends_with(".json")
+    let Some(stem) = file_name.strip_suffix(".json") else {
+        return false;
+    };
+    if stem == prefix {
+        return true;
+    }
+    stem.strip_prefix(prefix)
+        .and_then(|suffix| suffix.strip_prefix('-'))
+        .is_some_and(|pid| !pid.is_empty() && pid.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn install_panic_hook() {
@@ -503,11 +511,37 @@ fn redact_json_value(value: Value) -> Value {
         Value::Object(values) => Value::Object(
             values
                 .into_iter()
-                .map(|(key, value)| (key, redact_json_value(value)))
+                .map(|(key, value)| {
+                    let value = if is_sensitive_json_key(&key) {
+                        Value::String("<redacted>".to_string())
+                    } else {
+                        redact_json_value(value)
+                    };
+                    (key, value)
+                })
                 .collect(),
         ),
         value => value,
     }
+}
+
+fn is_sensitive_json_key(key: &str) -> bool {
+    let normalized = key
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    [
+        "token",
+        "password",
+        "passwd",
+        "secret",
+        "apikey",
+        "authorization",
+        "cookie",
+    ]
+    .iter()
+    .any(|marker| normalized.contains(marker))
 }
 
 fn limit_json_size(value: Value, max_bytes: usize) -> Value {
@@ -597,6 +631,17 @@ mod tests {
             "runtime-state.json"
         };
         assert!(is_runtime_marker_name(expected));
+        let expected_pid = expected.replace(".json", "-123.json");
+        assert!(is_runtime_marker_name(&expected_pid));
+        let other_build = if cfg!(debug_assertions) {
+            "runtime-state.json"
+        } else {
+            "runtime-state-dev.json"
+        };
+        assert!(!is_runtime_marker_name(other_build));
+        assert!(!is_runtime_marker_name(
+            &expected.replace(".json", "-pid.json")
+        ));
         assert!(!is_runtime_marker_name("cli-manager.log"));
     }
 
@@ -654,5 +699,20 @@ mod tests {
         assert!(!redacted.contains("two words"));
         assert!(!redacted.contains("abc123"));
         assert_eq!(redacted.matches("<redacted>").count(), 3);
+    }
+
+    #[test]
+    fn json_object_keys_redact_plain_secret_values() {
+        let value = serde_json::json!({
+            "password": "plain-value",
+            "nested": {"apiKey": "another-value", "label": "safe"},
+            "authorizationHeader": 123,
+        });
+        let redacted = redact_json_value(value);
+
+        assert_eq!(redacted["password"], "<redacted>");
+        assert_eq!(redacted["nested"]["apiKey"], "<redacted>");
+        assert_eq!(redacted["nested"]["label"], "safe");
+        assert_eq!(redacted["authorizationHeader"], "<redacted>");
     }
 }

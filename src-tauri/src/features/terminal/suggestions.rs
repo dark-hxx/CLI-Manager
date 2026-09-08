@@ -5,10 +5,11 @@ use std::time::{Duration, Instant};
 use log::LevelFilter;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::OnceLock;
 
 use crate::{
     provider::{auxiliary_text, network_client},
-    shell_resolver::silent_command,
+    shell_resolver::{output_with_timeout_bounded, silent_command},
 };
 
 const MODEL_TEST_TIMEOUT_SECS: u64 = 4;
@@ -389,7 +390,8 @@ fn list_wsl_path_entries(
     limit: usize,
 ) -> Result<Vec<CommandSuggestionPathEntry>, String> {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
-    let output = silent_command(&wsl_exe.to_string_lossy())
+    let mut command = silent_command(&wsl_exe.to_string_lossy());
+    command
         .arg("-d")
         .arg(distro)
         .arg("--exec")
@@ -403,12 +405,11 @@ fn list_wsl_path_entries(
             "1",
             "-printf",
             "%f\\0%y\\0%Y\\0",
-        ])
-        .output()
+        ]);
+    let output = output_with_timeout_bounded(command, Duration::from_secs(5), 512 * 1024)
         .map_err(|err| format!("read_dir_failed: {err}"))?;
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("read_dir_failed: {}", stderr.trim()));
+        return Err("read_dir_failed".to_string());
     }
     parse_wsl_path_entries(&output.stdout, prefix, directories_only, limit)
 }
@@ -488,19 +489,25 @@ fn resolve_directory_path(path: &str) -> Result<Option<String>, String> {
 
 fn wsl_directory_exists(distro: &str, linux_dir: &str) -> Result<bool, String> {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
-    let output = silent_command(&wsl_exe.to_string_lossy())
-        .args(["-d", distro, "--exec", "test", "-d", linux_dir])
-        .output()
+    let mut command = silent_command(&wsl_exe.to_string_lossy());
+    command.args(["-d", distro, "--exec", "test", "-d", linux_dir]);
+    let output = output_with_timeout_bounded(command, Duration::from_secs(3), 0)
         .map_err(|err| format!("path_check_failed: {err}"))?;
     Ok(output.status.success())
 }
 
 fn shared_client() -> Result<reqwest::Client, String> {
-    network_client::configure_builder(reqwest::Client::builder())?
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client.clone());
+    }
+    let client = network_client::configure_builder(reqwest::Client::builder())?
         .user_agent("CLI-Manager command suggestion")
         .timeout(Duration::from_secs(MODEL_TEST_TIMEOUT_SECS))
         .build()
-        .map_err(|err| format!("http_client_create_failed: {err}"))
+        .map_err(|err| format!("http_client_create_failed: {err}"))?;
+    let _ = CLIENT.set(client.clone());
+    Ok(CLIENT.get().cloned().unwrap_or(client))
 }
 
 fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
@@ -656,7 +663,7 @@ fn response_error_message(value: &Value) -> Option<String> {
         .get("message")
         .and_then(Value::as_str)
         .unwrap_or("model_response_error");
-    Some(message.to_string())
+    Some(sanitize_error_detail(message))
 }
 
 fn extract_command(value: &Value, api_type: CommandSuggestionApiType) -> Option<String> {
@@ -726,16 +733,33 @@ fn usage_u64(value: &Value, keys: &[&str]) -> Option<u64> {
 }
 
 fn summarize_http_error(status: u16, body: &str) -> String {
-    let summary = body
-        .chars()
-        .filter(|ch| !ch.is_control())
-        .take(240)
-        .collect::<String>();
+    let summary = sanitize_error_detail(body);
     if summary.trim().is_empty() {
         format!("HTTP {status}")
     } else {
         format!("HTTP {status}: {}", summary.trim())
     }
+}
+
+fn sanitize_error_detail(value: &str) -> String {
+    static SENSITIVE: OnceLock<regex::Regex> = OnceLock::new();
+    let clean = value
+        .chars()
+        .filter(|ch| !ch.is_control())
+        .collect::<String>();
+    let pattern = SENSITIVE.get_or_init(|| {
+        regex::Regex::new(
+            r#"(?i)((?:token|password|passwd|secret|api[_-]?key|authorization)\s*[:=]\s*)(?:bearer\s+)?(?:\"[^\"]*\"|'[^']*'|[^\s,;}]+)"#,
+        )
+        .expect("valid command suggestion redaction regex")
+    });
+    pattern
+        .replace_all(&clean, |captures: &regex::Captures<'_>| {
+            format!("{}<redacted>", &captures[1])
+        })
+        .chars()
+        .take(240)
+        .collect()
 }
 
 fn map_request_error(err: reqwest::Error) -> String {
@@ -890,6 +914,23 @@ mod tests {
     #[test]
     fn sanitize_command_rejects_long_command() {
         assert!(sanitize_command(&"x".repeat(501)).is_none());
+    }
+
+    #[test]
+    fn provider_error_messages_are_redacted_and_bounded() {
+        let body = format!("api_key=private-key password: hidden {}", "x".repeat(300));
+        let summary = summarize_http_error(401, &body);
+        assert!(summary.contains("api_key=<redacted>"));
+        assert!(summary.contains("password: <redacted>"));
+        assert!(!summary.contains("private-key"));
+        assert!(!summary.contains("hidden"));
+        assert!(summary.chars().count() <= 250);
+
+        let response = serde_json::json!({"error":{"message":"token=secret-token"}});
+        assert_eq!(
+            response_error_message(&response).as_deref(),
+            Some("token=<redacted>")
+        );
     }
 
     #[test]

@@ -6,13 +6,13 @@ mod themes;
 use themes::powerline_theme;
 
 use crate::app_paths;
-use crate::shell_resolver::{output_with_timeout, silent_command};
+use crate::shell_resolver::{output_with_timeout, output_with_timeout_bounded, silent_command};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
@@ -856,26 +856,14 @@ fn run_custom_command(item: &WidgetItem, payload: &Value) -> Option<String> {
     if let Some(cwd) = cwd {
         child.current_dir(cwd);
     }
-    child.stdin(Stdio::null()).stderr(Stdio::null());
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         child.creation_flags(0x08000000);
     }
-    let mut process = child.stdout(Stdio::piped()).spawn().ok()?;
     let timeout = Duration::from_millis(item.timeout.unwrap_or(2_000).clamp(100, 30_000));
-    let start = std::time::Instant::now();
-    loop {
-        if process.try_wait().ok().flatten().is_some() {
-            let output = process.wait_with_output().ok()?;
-            return Some(String::from_utf8_lossy(&output.stdout).trim().to_string());
-        }
-        if start.elapsed() >= timeout {
-            let _ = process.kill();
-            return None;
-        }
-        std::thread::sleep(Duration::from_millis(10));
-    }
+    let output = output_with_timeout_bounded(child, timeout, 64 * 1024).ok()?;
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn render_widget_raw(item: &WidgetItem, payload: &Value) -> Option<String> {
@@ -1125,7 +1113,9 @@ fn ansi_color(name: &str, background: bool) -> Option<String> {
     let hex = normalized
         .strip_prefix("hex:")
         .or_else(|| normalized.strip_prefix('#'));
-    if let Some(value) = hex.filter(|value| value.len() == 6) {
+    if let Some(value) =
+        hex.filter(|value| value.len() == 6 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
+    {
         let r = u8::from_str_radix(&value[0..2], 16).ok()?;
         let g = u8::from_str_radix(&value[2..4], 16).ok()?;
         let b = u8::from_str_radix(&value[4..6], 16).ok()?;
@@ -1781,6 +1771,7 @@ mod tests {
             Some("48;2;17;34;51")
         );
         assert_eq!(ansi_color("bgBrightRed", true).as_deref(), Some("101"));
+        assert_eq!(ansi_color("hex:aéabc", false), None);
     }
     #[test]
     fn powerline_renders_caps_and_theme() {

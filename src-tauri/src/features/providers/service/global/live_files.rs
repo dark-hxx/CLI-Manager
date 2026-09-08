@@ -1,9 +1,7 @@
 use super::{live_path, LivePath, WSL_OPERATION_TIMEOUT};
 use crate::{shell_resolver, wsl};
 use std::fs;
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 pub(super) fn wsl_command(distro: &str, program: &str, args: &[&str]) -> Result<Command, String> {
     let exe = wsl::find_wsl_exe().ok_or_else(|| "provider_wsl_unavailable".to_string())?;
@@ -44,46 +42,26 @@ pub(super) fn run_wsl_script_with_input(
     input: &[u8],
 ) -> Result<(), String> {
     let mut command = wsl_command(distro, "sh", &["-lc", script, "cli-manager"])?;
-    command
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "provider_wsl_operation_failed".to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(input).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("provider_wsl_operation_failed".to_string());
+    command.args(args);
+    let output = shell_resolver::output_with_input_timeout_bounded(
+        command,
+        input.to_vec(),
+        WSL_OPERATION_TIMEOUT,
+        0,
+        0,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "provider_wsl_operation_timeout".to_string()
+        } else {
+            "provider_wsl_operation_failed".to_string()
         }
-    }
-    let deadline = Instant::now() + WSL_OPERATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err("provider_wsl_operation_failed".to_string())
-                };
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_timeout".to_string());
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_failed".to_string());
-            }
-        }
-    }
+    })?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "provider_wsl_operation_failed".to_string())
 }
 
 pub(super) fn wsl_batch_group(paths: &[String]) -> Option<(String, Vec<String>)> {
@@ -109,46 +87,26 @@ pub(super) fn run_wsl_with_input(
     args: &[&str],
     input: &[u8],
 ) -> Result<(), String> {
-    let mut command = wsl_command(distro, program, args)?;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "provider_wsl_operation_failed".to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(input).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("provider_wsl_operation_failed".to_string());
+    let command = wsl_command(distro, program, args)?;
+    let output = shell_resolver::output_with_input_timeout_bounded(
+        command,
+        input.to_vec(),
+        WSL_OPERATION_TIMEOUT,
+        0,
+        0,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "provider_wsl_operation_timeout".to_string()
+        } else {
+            "provider_wsl_operation_failed".to_string()
         }
-    }
-    let deadline = std::time::Instant::now() + WSL_OPERATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err("provider_wsl_operation_failed".to_string())
-                };
-            }
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_timeout".to_string());
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_failed".to_string());
-            }
-        }
-    }
+    })?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "provider_wsl_operation_failed".to_string())
 }
 
 pub(crate) fn read_live(path: &str) -> Result<Option<Vec<u8>>, String> {

@@ -732,6 +732,15 @@ async fn install_codex_hooks_feature_module_only_toggles_config() {
     assert!(!codex_dir.join(CODEX_HOOKS_FILE_NAME).exists());
 }
 
+#[test]
+fn codex_hooks_feature_status_accepts_a_trailing_inline_comment() {
+    let tmp = TempDir::new().unwrap();
+    let config_path = tmp.path().join(CODEX_CONFIG_FILE_NAME);
+    fs::write(&config_path, "[features]\nhooks = true # user comment\n").unwrap();
+
+    assert!(codex_hooks_feature_installed(&config_path).unwrap());
+}
+
 #[tokio::test]
 async fn empty_codex_status_is_not_installed() {
     let tmp = TempDir::new().unwrap();

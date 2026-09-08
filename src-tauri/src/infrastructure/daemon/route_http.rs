@@ -121,7 +121,7 @@ enum StreamCommitKind {
 #[derive(Debug)]
 struct StreamCommitTracker {
     kind: StreamCommitKind,
-    buffer: String,
+    buffer: Vec<u8>,
     settled: bool,
 }
 
@@ -136,7 +136,7 @@ impl StreamCommitTracker {
     fn new(kind: StreamCommitKind) -> Self {
         Self {
             kind,
-            buffer: String::new(),
+            buffer: Vec::new(),
             settled: false,
         }
     }
@@ -145,10 +145,14 @@ impl StreamCommitTracker {
         if self.settled {
             return StreamCommitOutcome::None;
         }
-        self.buffer.push_str(&String::from_utf8_lossy(chunk));
-        while let Some(end) = self.buffer.find("\n\n") {
-            let event = self.buffer[..end].to_string();
-            self.buffer.drain(..end + 2);
+        self.buffer.extend_from_slice(chunk);
+        if self.buffer.len() > MAX_ERROR_DIAGNOSTIC_BODY_BYTES {
+            let excess = self.buffer.len() - MAX_ERROR_DIAGNOSTIC_BODY_BYTES;
+            self.buffer.drain(..excess);
+        }
+        while let Some((end, delimiter_len)) = sse_byte_boundary(&self.buffer) {
+            let event = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
+            self.buffer.drain(..end + delimiter_len);
             let outcome = self.event_outcome(&event);
             if outcome != StreamCommitOutcome::None {
                 self.settled = true;
@@ -198,6 +202,22 @@ impl StreamCommitTracker {
                 }
             }
         }
+    }
+}
+
+fn sse_byte_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|end| (end, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|end| (end, 4));
+    match (lf, crlf) {
+        (Some(left), Some(right)) => Some(if left.0 <= right.0 { left } else { right }),
+        (Some(boundary), None) | (None, Some(boundary)) => Some(boundary),
+        (None, None) => None,
     }
 }
 
@@ -722,10 +742,8 @@ fn add_claude_model_mapping(
             source: display_name.to_string(),
             target: target.to_string(),
         });
-        if display_name.len() > 4
-            && display_name[display_name.len() - 4..].eq_ignore_ascii_case("[1m]")
-        {
-            let base_name = display_name[..display_name.len() - 4].trim_end();
+        if let Some(base_name) = display_name.strip_suffix("[1m]") {
+            let base_name = base_name.trim_end();
             if !base_name.is_empty() && base_name != role && base_name != target {
                 mappings.push(ModelMapping {
                     source: base_name.to_string(),

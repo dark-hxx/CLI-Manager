@@ -948,14 +948,24 @@ async fn cleanup_finished_journal_backups() -> Result<(), String> {
 }
 
 pub(crate) async fn pending_journal(app_type: &str, home_identity: &str) -> Result<bool, String> {
+    pending_journal_except(app_type, home_identity, None).await
+}
+
+async fn pending_journal_except(
+    app_type: &str,
+    home_identity: &str,
+    excluded_journal_id: Option<&str>,
+) -> Result<bool, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM provider_apply_journal
          WHERE app_type = ?1 AND home_identity = ?2
-           AND state IN ('staged', 'replacing', 'verifying', 'recovery_required')",
+           AND state IN ('staged', 'replacing', 'verifying', 'recovery_required')
+           AND (?3 IS NULL OR id != ?3)",
     )
     .bind(app_type)
     .bind(home_identity)
+    .bind(excluded_journal_id)
     .fetch_one(&mut connection)
     .await
     .map_err(|_| "provider_journal_read_failed".to_string())?;
@@ -1238,12 +1248,13 @@ pub(crate) async fn current(input: GlobalCurrentInput) -> Result<GlobalCurrent, 
 }
 
 pub(crate) async fn apply(input: GlobalApplyInput) -> Result<GlobalApplyResult, String> {
-    apply_internal(input, true).await
+    apply_internal(input, true, None).await
 }
 
 async fn apply_internal(
     input: GlobalApplyInput,
     commit_provider_current: bool,
+    pending_journal_exemption: Option<&str>,
 ) -> Result<GlobalApplyResult, String> {
     let preview_fingerprint = input.preview_fingerprint.trim();
     if preview_fingerprint.is_empty() {
@@ -1263,7 +1274,13 @@ async fn apply_internal(
         build_plan(&preview_input).await?
     };
     let _lock = acquire_apply_lock(&plan.app_type, &plan.home.identity.identity)?;
-    if pending_journal(&plan.app_type, &plan.home.identity.identity).await? {
+    if pending_journal_except(
+        &plan.app_type,
+        &plan.home.identity.identity,
+        pending_journal_exemption,
+    )
+    .await?
+    {
         return Err("provider_recovery_required".to_string());
     }
     let preview = plan_preview(&plan);
@@ -1436,14 +1453,21 @@ async fn apply_internal(
     }
 
     cleanup_stage_files(&journal_targets);
-    cleanup_backup_files(&journal_targets);
+    if commit_provider_current {
+        cleanup_backup_files(&journal_targets);
+    }
 
     Ok(GlobalApplyResult {
         app_type: plan.app_type,
         provider_id: plan.provider_id,
         home_identity: plan.home.identity,
         journal_id,
-        state: "committed".to_string(),
+        state: if commit_provider_current {
+            "committed"
+        } else {
+            "verifying"
+        }
+        .to_string(),
         changed_targets: changed_paths,
         verified_fingerprints: verified,
     })
@@ -1496,8 +1520,7 @@ pub(crate) async fn apply_hot_switch(
             Ok(preview) => preview,
             Err(_) => {
                 let rollback =
-                    rollback_hot_switch(&app_type, previous_provider_id, targets, applied.len())
-                        .await?;
+                    rollback_hot_switch(&app_type, previous_provider_id, targets, &applied).await?;
                 complete_hot_switch_rollback(&app_type, previous_provider_id, &applied, &rollback)
                     .await?;
                 return Err("routing_hot_switch_failed".to_string());
@@ -1512,14 +1535,14 @@ pub(crate) async fn apply_hot_switch(
                 projection: Some(target.projection.clone()),
             },
             false,
+            None,
         )
         .await;
         match result {
             Ok(result) => applied.push(result),
             Err(_) => {
                 let rollback =
-                    rollback_hot_switch(&app_type, previous_provider_id, targets, applied.len())
-                        .await?;
+                    rollback_hot_switch(&app_type, previous_provider_id, targets, &applied).await?;
                 complete_hot_switch_rollback(&app_type, previous_provider_id, &applied, &rollback)
                     .await?;
                 return Err("routing_hot_switch_failed".to_string());
@@ -1535,10 +1558,11 @@ pub(crate) async fn apply_hot_switch(
         .is_err()
     {
         let rollback =
-            rollback_hot_switch(&app_type, previous_provider_id, targets, applied.len()).await?;
+            rollback_hot_switch(&app_type, previous_provider_id, targets, &applied).await?;
         complete_hot_switch_rollback(&app_type, previous_provider_id, &applied, &rollback).await?;
         return Err("routing_hot_switch_failed".to_string());
     }
+    let _ = cleanup_finished_journal_backups().await;
     Ok(applied)
 }
 
@@ -1546,10 +1570,10 @@ async fn rollback_hot_switch(
     app_type: &str,
     previous_provider_id: &str,
     targets: &[HotSwitchTarget],
-    applied_count: usize,
+    applied: &[GlobalApplyResult],
 ) -> Result<Vec<GlobalApplyResult>, String> {
-    let mut rollback_results = Vec::with_capacity(applied_count);
-    for target in targets[..applied_count].iter().rev() {
+    let mut rollback_results = Vec::with_capacity(applied.len());
+    for (target, original) in targets[..applied.len()].iter().zip(applied.iter()).rev() {
         let preview_input = GlobalPreviewInput {
             app_type: app_type.to_string(),
             provider_id: previous_provider_id.to_string(),
@@ -1566,6 +1590,7 @@ async fn rollback_hot_switch(
                 projection: Some(target.projection.clone()),
             },
             false,
+            Some(&original.journal_id),
         )
         .await?;
         rollback_results.push(result);
@@ -1637,6 +1662,7 @@ async fn complete_hot_switch_rollback(
         )
         .await?;
     }
+    let _ = cleanup_finished_journal_backups().await;
     Ok(())
 }
 
@@ -1743,20 +1769,27 @@ async fn recover_one(
         cleanup_backup_files(&targets);
         return Ok("recovered");
     }
-    for target in targets.iter().rev() {
-        let Some(before) = target.backup_path.as_deref() else {
+    let mut restore_bytes = Vec::with_capacity(targets.len());
+    for target in &targets {
+        let bytes = match target.backup_path.as_deref() {
+            Some(before) => fs::read(before)
+                .map(Some)
+                .map_err(|_| "provider_recovery_required".to_string())?,
+            None => None,
+        };
+        if expected.get(&target.target) != Some(&fingerprint(bytes.as_deref())) {
+            cleanup_stage_files(&targets);
+            return Err("provider_recovery_required".to_string());
+        }
+        restore_bytes.push(bytes);
+    }
+    for (target, bytes) in targets.iter().zip(restore_bytes).rev() {
+        let Some(bytes) = bytes else {
             if let Err(error) = remove_live(&target.target) {
                 cleanup_stage_files(&targets);
                 return Err(error);
             }
             continue;
-        };
-        let bytes = match fs::read(before) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                cleanup_stage_files(&targets);
-                return Err("provider_recovery_required".to_string());
-            }
         };
         if let Err(error) = write_live(&target.target, &bytes) {
             cleanup_stage_files(&targets);

@@ -3,6 +3,7 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::Value as TomlValue;
@@ -564,11 +565,19 @@ pub fn discovery_layout(
 }
 
 fn read_bounded(path: &Path, max_bytes: u64) -> Result<String, &'static str> {
-    let metadata = fs::metadata(path).map_err(|_| "source_unreadable")?;
+    let file = fs::File::open(path).map_err(|_| "source_unreadable")?;
+    let metadata = file.metadata().map_err(|_| "source_unreadable")?;
     if !metadata.is_file() || metadata.len() > max_bytes {
         return Err("source_invalid");
     }
-    fs::read_to_string(path).map_err(|_| "source_unreadable")
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| "source_unreadable")?;
+    if bytes.len() as u64 > max_bytes {
+        return Err("source_invalid");
+    }
+    String::from_utf8(bytes).map_err(|_| "source_unreadable")
 }
 
 pub fn collect_local_bundle(layout: &DiscoveryLayout) -> DiscoveryBundle {
@@ -894,9 +903,11 @@ fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<Stri
     }
     let mut name = None;
     let mut description = None;
+    let mut closed = false;
     for line in lines {
         let line = line.trim();
         if line == "---" {
+            closed = true;
             break;
         }
         if let Some(value) = line.strip_prefix("name:") {
@@ -906,7 +917,7 @@ fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<Stri
             description = Some(value.trim().trim_matches(['\'', '"']).to_string());
         }
     }
-    let valid = name.as_ref().is_some_and(|value| !value.trim().is_empty());
+    let valid = closed && name.as_ref().is_some_and(|value| !value.trim().is_empty());
     (
         name.filter(|value| !value.is_empty())
             .unwrap_or_else(|| fallback_name.to_string()),
@@ -957,6 +968,16 @@ fn fingerprint(bundle: &DiscoveryBundle) -> String {
         hasher.update([0]);
         hasher.update(document.content.as_bytes());
         hasher.update([0xff]);
+    }
+    for document in &bundle.skills {
+        hasher.update(document.path_label.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.scope.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.source_kind.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.content.as_bytes());
+        hasher.update([0xfe]);
     }
     format!("sha256:{:x}", hasher.finalize())
 }
@@ -1487,7 +1508,7 @@ command = "local"
     }
 
     #[test]
-    fn nested_plugin_skill_is_discovered_without_following_symlinks() {
+    fn nested_plugin_skill_is_discovered() {
         let temp = tempfile::tempdir().unwrap();
         let skill = temp
             .path()
@@ -1509,5 +1530,38 @@ command = "local"
         assert!(bundle.skills[0]
             .path_label
             .ends_with("skills/nested/SKILL.md"));
+    }
+
+    #[test]
+    fn skill_frontmatter_requires_a_closing_delimiter() {
+        let (name, _, valid) = parse_frontmatter("---\nname: open-ended\nbody", "fallback");
+        assert_eq!(name, "open-ended");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn skill_content_changes_the_configuration_fingerprint() {
+        let skill = |content: &str| DiscoveryBundle {
+            skills: vec![SkillDocument {
+                path_label: "home/demo/SKILL.md".into(),
+                scope: "user".into(),
+                source_kind: "native".into(),
+                fallback_name: "demo".into(),
+                content: content.into(),
+            }],
+            ..DiscoveryBundle::default()
+        };
+
+        assert_ne!(fingerprint(&skill("first")), fingerprint(&skill("second")));
+    }
+
+    #[test]
+    fn bounded_reader_enforces_the_open_file_byte_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, b"12345").unwrap();
+
+        assert_eq!(read_bounded(&path, 4).unwrap_err(), "source_invalid");
+        assert_eq!(read_bounded(&path, 5).unwrap(), "12345");
     }
 }

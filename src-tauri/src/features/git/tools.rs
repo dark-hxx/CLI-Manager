@@ -117,7 +117,7 @@ fn parse_tags(bytes: &[u8]) -> Vec<GitTagInfo> {
 
 fn list_tags(project_path: &str) -> Result<Vec<GitTagInfo>, String> {
     let format = format!(
-        "%(refname:short){TAG_FIELD_SEPARATOR}%(objectname){TAG_FIELD_SEPARATOR}%(objecttype){TAG_FIELD_SEPARATOR}%(subject)"
+        "--format=%(refname:short){TAG_FIELD_SEPARATOR}%(objectname){TAG_FIELD_SEPARATOR}%(objecttype){TAG_FIELD_SEPARATOR}%(subject)"
     );
     let output = git_command_output(
         project_path,
@@ -783,7 +783,10 @@ fn rewrite_commits(
     let original_prefix = original_head.get(..12).unwrap_or(&original_head);
     let backup_ref = format!("refs/cli-manager/rebase-backup/{timestamp}-{original_prefix}");
     // Empty old-value makes this create-only: a collision must never replace a recovery point.
-    run_git_cli(project_path, &["update-ref", &backup_ref, &original_head, ""])?;
+    run_git_cli(
+        project_path,
+        &["update-ref", &backup_ref, &original_head, ""],
+    )?;
     run_git_cli(project_path, &["reset", "--hard", upstream])?;
     for step in steps {
         let result = match step.action.as_str() {
@@ -859,7 +862,9 @@ pub async fn git_rewrite_commits(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_blame, parse_tags, rewrite_commits, GitRewriteStep, TAG_FIELD_SEPARATOR};
+    use super::{
+        list_tags, parse_blame, parse_tags, rewrite_commits, GitRewriteStep, TAG_FIELD_SEPARATOR,
+    };
     use std::path::Path;
     use std::process::Command;
 
@@ -895,6 +900,25 @@ mod tests {
         assert_eq!(tags.len(), 2);
         assert!(tags[0].annotated);
         assert!(!tags[1].annotated);
+    }
+
+    #[test]
+    fn lists_repository_tags_with_the_requested_fields() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path();
+        git(path, &["init"]);
+        git(path, &["config", "user.name", "CLI Manager Test"]);
+        git(
+            path,
+            &["config", "user.email", "cli-manager@example.invalid"],
+        );
+        commit(path, "file.txt", "content\n", "initial");
+        git(path, &["tag", "v1.0.0"]);
+
+        let tags = list_tags(path.to_str().unwrap()).unwrap();
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].name, "v1.0.0");
+        assert!(!tags[0].target.is_empty());
     }
 
     #[test]
@@ -944,11 +968,14 @@ mod tests {
         let first_backup_head = git(path, &["rev-parse", &backup]);
         let rewritten_head = git(path, &["rev-parse", "HEAD"]);
         let sequence = git(path, &["rev-list", "--reverse", &format!("{base}..HEAD")]);
-        let steps = sequence.lines().map(|id| GitRewriteStep {
-            action: "pick".into(),
-            commit_id: id.into(),
-            message: String::new(),
-        }).collect::<Vec<_>>();
+        let steps = sequence
+            .lines()
+            .map(|id| GitRewriteStep {
+                action: "pick".into(),
+                commit_id: id.into(),
+                message: String::new(),
+            })
+            .collect::<Vec<_>>();
         let second_backup = rewrite_commits(path.to_str().unwrap(), &base, &steps).unwrap();
         assert_ne!(backup, second_backup);
         assert_eq!(git(path, &["rev-parse", &backup]), first_backup_head);
@@ -961,6 +988,9 @@ mod tests {
             "git_rewrite_worktree_dirty"
         );
         assert_eq!(git(path, &["rev-parse", "HEAD"]), head_before);
-        assert_eq!(std::fs::read_to_string(path.join("file.txt")).unwrap(), "uncommitted user work\n");
+        assert_eq!(
+            std::fs::read_to_string(path.join("file.txt")).unwrap(),
+            "uncommitted user work\n"
+        );
     }
 }

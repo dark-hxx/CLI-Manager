@@ -967,16 +967,6 @@ fn log_hook_payload_diagnostic(payload: &ClaudeHookRequest) {
         payload.wsl_distro_name,
         payload.cwd,
     );
-
-    // AgentTool 事件详细诊断：记录完整 payload JSON 以定位 Claude Code 实际字段。
-    if matches!(payload.event.as_str(), "AgentToolStart" | "AgentToolStop") {
-        if let Ok(full_json) = serde_json::to_string_pretty(payload) {
-            debug!(
-                "[agent_tool_diagnostic] {} full payload:\n{}",
-                payload.event, full_json
-            );
-        }
-    }
 }
 
 fn normalize_source(source: Option<&str>) -> &str {

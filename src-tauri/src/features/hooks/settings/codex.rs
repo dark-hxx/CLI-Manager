@@ -541,9 +541,9 @@ pub(super) fn codex_hooks_feature_installed(config_path: &Path) -> Result<bool, 
             continue;
         }
         if in_features
-            && trimmed
-                .split_once('=')
-                .is_some_and(|(key, value)| key.trim() == "hooks" && value.trim() == "true")
+            && trimmed.split_once('=').is_some_and(|(key, value)| {
+                key.trim() == "hooks" && toml_bool_value(value) == Some(true)
+            })
         {
             return Ok(true);
         }

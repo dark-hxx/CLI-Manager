@@ -6,6 +6,7 @@ const ROOT_SESSION_ID_PATTERN = /^ses_[A-Za-z0-9]+$/;
 const SESSION_MAPPING_TTL_MS = 5 * 60 * 1000;
 const MAX_TRACKED_SESSIONS = 1024;
 const MAX_PARENT_DEPTH = 64;
+const DELIVERY_TIMEOUT_MS = 5_000;
 const lastStatus = new Map();
 
 function nonEmpty(value) {
@@ -280,11 +281,11 @@ async function post(event, sessionId) {
   if (!tabId || !port || !token || !sessionId) return;
   const dedupKey = `${sessionId}:${event}`;
   if (lastStatus.get(sessionId) === dedupKey) return;
-  rememberBounded(lastStatus, sessionId, dedupKey);
   try {
-    await fetch(`http://127.0.0.1:${port}/api/claude-hook`, {
+    const response = await fetch(`http://127.0.0.1:${port}/api/claude-hook`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
       body: JSON.stringify({
         tabId,
         source: "opencode",
@@ -294,6 +295,7 @@ async function post(event, sessionId) {
         timestamp: new Date().toISOString(),
       }),
     });
+    if (response.ok) rememberBounded(lastStatus, sessionId, dedupKey);
   } catch {
     // Session telemetry must never interrupt OpenCode.
   }

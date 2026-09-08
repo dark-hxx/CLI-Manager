@@ -10,8 +10,10 @@ process.env.CLI_MANAGER_NOTIFY_PORT = "9876";
 process.env.CLI_MANAGER_NOTIFY_TOKEN = "test-token";
 
 const calls = [];
+const signals = [];
 globalThis.fetch = async (_url, options) => {
   calls.push(JSON.parse(options.body));
+  signals.push(options.signal);
   return { ok: true };
 };
 
@@ -63,6 +65,41 @@ test("OpenCode hook binds the canonical root session and ignores child lifecycle
       { event: "UserPromptSubmit", sessionId: rootId },
     ],
   );
+});
+
+test("failed status delivery does not suppress a retry of the same state", async () => {
+  calls.length = 0;
+  const bridge = await newBridge();
+  const retryRootId = "ses_retryA";
+  await bridge.event(created(retryRootId));
+
+  const successfulFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("fixture delivery failure");
+    };
+    await bridge.event(status(retryRootId));
+    globalThis.fetch = successfulFetch;
+    await bridge.event(status(retryRootId));
+  } finally {
+    globalThis.fetch = successfulFetch;
+  }
+
+  assert.equal(
+    calls.filter(({ event, sessionId }) => event === "UserPromptSubmit" && sessionId === retryRootId)
+      .length,
+    1,
+  );
+});
+
+test("OpenCode delivery requests carry an abort deadline", async () => {
+  calls.length = 0;
+  signals.length = 0;
+  const bridge = await newBridge();
+  await bridge.event(created("ses_deadlineA"));
+
+  assert.equal(calls.length, 1);
+  assert.ok(signals[0] instanceof AbortSignal);
 });
 
 test("child sessions that arrive before their parent are resolved without replaying child events", async () => {
@@ -172,7 +209,7 @@ test("capacity eviction does not break the active root", async () => {
   const bridge = await newBridge();
   await bridge.event(created(rootId));
   for (let i = 0; i < 1030; i += 1) {
-    await bridge.event({ type: "session.status", properties: { sessionID: `ses_filler${i}`, status: { type: "idle" } } });
+    await bridge.event(created(`ses_filler${i}`, { parentID: rootId }));
   }
   await bridge.event(status(rootId));
   assert.ok(calls.some(({ event, sessionId }) => event === "SessionStart" && sessionId === rootId));

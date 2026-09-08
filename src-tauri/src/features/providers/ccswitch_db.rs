@@ -1,6 +1,4 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::time::Duration;
 
 use uuid::Uuid;
@@ -122,29 +120,30 @@ fn run_wsl_python_with_stdin(
         .arg("-d")
         .arg(distro)
         .args(["--exec", "python3", "-c", script])
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "wsl_sqlite_runtime_unavailable".to_string())?;
-    child
-        .stdin
-        .as_mut()
-        .ok_or_else(|| "wsl_sqlite_stdin_unavailable".to_string())?
-        .write_all(stdin)
-        .map_err(|_| "wsl_sqlite_stdin_failed".to_string())?;
-    let output = child
-        .wait_with_output()
-        .map_err(|_| "wsl_sqlite_failed".to_string())?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            "wsl_sqlite_failed".to_string()
+        .args(args);
+    let output = crate::shell_resolver::output_with_input_timeout_bounded(
+        command,
+        stdin.to_vec(),
+        Duration::from_secs(15),
+        128 * 1024,
+        32 * 1024,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "wsl_sqlite_timeout".to_string()
         } else {
-            format!("wsl_sqlite_failed: {stderr}")
-        });
+            "wsl_sqlite_failed".to_string()
+        }
+    })?;
+    if output.stdout_truncated {
+        return Err("wsl_sqlite_output_too_large".to_string());
+    }
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if stderr.contains("python3") && stderr.contains("not found") {
+            return Err("wsl_sqlite_runtime_unavailable".to_string());
+        }
+        return Err("wsl_sqlite_failed".to_string());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

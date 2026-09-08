@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 const NOTIFY_ATTEMPTS: usize = 2;
 const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
+const HOOK_STDIN_MAX_BYTES: u64 = 64 * 1024;
 
 /// `main` 在初始化 Tauri runtime 之前调用本函数并退出，因此这里
 /// 不依赖任何 Tauri/WebView 状态，冷启动开销极小。
@@ -81,12 +82,7 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
     let tab_id =
         non_empty_env("CLI_MANAGER_TAB_ID").unwrap_or_else(|| format!("external:{source}"));
 
-    let mut stdin_raw = String::new();
-    std::io::stdin()
-        .read_to_string(&mut stdin_raw)
-        .map_err(|_| HookNotifyError::StdinRead)?;
-    let hook_input: Value =
-        serde_json::from_str(stdin_raw.trim()).map_err(|_| HookNotifyError::InvalidInput)?;
+    let hook_input = read_hook_input(std::io::stdin().lock())?;
     if should_suppress_codex_permission_request(source, event, &hook_input) {
         return Ok(());
     }
@@ -160,6 +156,18 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
         }
     }
     Err(last_error)
+}
+
+fn read_hook_input(reader: impl Read) -> Result<Value, HookNotifyError> {
+    let mut stdin_raw = String::new();
+    reader
+        .take(HOOK_STDIN_MAX_BYTES + 1)
+        .read_to_string(&mut stdin_raw)
+        .map_err(|_| HookNotifyError::StdinRead)?;
+    if stdin_raw.len() as u64 > HOOK_STDIN_MAX_BYTES {
+        return Err(HookNotifyError::InvalidInput);
+    }
+    serde_json::from_str(stdin_raw.trim()).map_err(|_| HookNotifyError::InvalidInput)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -421,7 +429,7 @@ fn title_for(source: &str, event: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::{
-        approval_transcript_bytes, failure_diagnostic_line,
+        approval_transcript_bytes, failure_diagnostic_line, read_hook_input,
         should_suppress_codex_permission_request, title_for,
     };
     use serde_json::json;
@@ -431,6 +439,19 @@ mod tests {
     fn kimi_titles_defer_to_localized_frontend() {
         assert_eq!(title_for("kimi", "PermissionResult"), None);
         assert_eq!(title_for("kimi", "Interrupt"), None);
+    }
+
+    #[test]
+    fn hook_stdin_reader_rejects_oversized_payloads() {
+        let oversized = vec![b'x'; super::HOOK_STDIN_MAX_BYTES as usize + 1];
+        assert_eq!(
+            read_hook_input(oversized.as_slice()).unwrap_err().code(),
+            "invalid_input"
+        );
+        assert_eq!(
+            read_hook_input(br#"{"event":"Stop"}"#.as_slice()).unwrap()["event"],
+            "Stop"
+        );
     }
 
     #[test]
