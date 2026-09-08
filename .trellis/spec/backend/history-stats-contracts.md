@@ -546,3 +546,12 @@ record_route_usage(context, capture, status, "error", Some(code), duration).awai
 ```
 
 Capture a bounded discarded error response, preserve only the sanitized allowlisted field, and retain a stable code/status fallback when no safe detail exists.
+
+
+## Tool observation parity (TEMP, 2026-09-07)
+
+Native adapters feed shared `tool_observations` semantics. Server metadata or the explicit `mcp__server__tool` naming contract identifies MCP; do not guess server names from arbitrary underscores. Deduplicate native requests/results by call ID. Reconcile observed usage from normalized events for every existing native source; summary-only sources keep their reported totals.
+
+Optional `HistoryToolEvent.evidence` is stored in `history_tool_events.source_extension_json`. `kind: inferred` denotes a static orchestration call site, with parent call ID and byte source position. Inferred rows remain visible but never contribute to observed counts or health. Unsupported/ambiguous script syntax is omitted, never evaluated. Size and call-site limits bound extraction.
+
+Catalog readers recognize `mcp:<server>` as well as the legacy `mcp` category, preserve provenance and message association, and exclude inferred counts. Advance both catalog and v2 adapter parser versions when these derived semantics change. Never rewrite native logs to repair derived indexes.

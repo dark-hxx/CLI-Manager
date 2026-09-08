@@ -1,4 +1,6 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { historyPathsMatch, resolveHistoryResumeEnvironment } from "../lib/historyResumeEnvironment";
+import { getOsPlatform } from "../../../shared/platform/shell";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import { useHistoryStore } from "../index";
@@ -27,7 +29,7 @@ import {
   HISTORY_SOURCE_DESCRIPTOR_BY_ID,
   type HistorySourceId,
 } from "../../../shared/lib/historySources";
-import { findWorktreeByPath, projectWithWorktreeProviderOverrides } from "../../terminal/api/terminalProject";
+import { projectWithWorktreeProviderOverrides } from "../../terminal/api/terminalProject";
 import { projectSupportsCapability } from "../../projects/api/projectCapabilities";
 import { PromptLibrary } from "../../prompts/api/PromptLibrary";
 import { DiffModal } from "./DiffModal";
@@ -94,10 +96,7 @@ function matchesSourceFilter(source: string, sourceFilter: HistorySourceFilter):
   return sourceFilter === "all" || source.toLowerCase() === sourceFilter;
 }
 
-function isAbsolutePathLike(value: string): boolean {
-  const trimmed = value.trim();
-  return /^[a-zA-Z]:[\\/]/.test(trimmed) || trimmed.startsWith("\\\\") || trimmed.startsWith("/");
-}
+
 
 function parseProjectEnvVars(project?: Project | null): Record<string, string> | undefined {
   if (!project) return undefined;
@@ -127,22 +126,16 @@ function findRemoteHistoryProjects(
   return sourceProjects.filter((project) => normalizePathKey(project.remote_path) === normalizedCwd);
 }
 
-function findHistoryWorktree(session: HistorySessionView | HistorySessionDetail, worktrees: WorktreeRecord[]): WorktreeRecord | null {
-  const cwd = "cwd" in session ? session.cwd?.trim() : null;
-  return findWorktreeByPath(worktrees, cwd) ?? findWorktreeByPath(worktrees, session.project_key);
+function findHistoryWorktree(
+  session: HistorySessionView | HistorySessionDetail, worktrees: WorktreeRecord[], projects: Project[],
+): WorktreeRecord | null {
+  return worktrees.find((worktree) => {
+    const project = projects.find((entry) => entry.id === worktree.project_id);
+    if (!project || !matchesHistoryProjectSource(project, session.source)) return false;
+    return historyPathsMatch({ ...session, cwd: session.cwd || session.project_key }, { ...project, path: worktree.path });
+  }) ?? null;
 }
 
-function resolveHistoryResumeCwd(
-  session: HistorySessionView | HistorySessionDetail,
-  project?: Project | null,
-  worktree?: WorktreeRecord | null
-): string | undefined {
-  const cwd = "cwd" in session ? session.cwd?.trim() : null;
-  if (cwd) return cwd;
-  if (worktree) return worktree.path;
-  if (project) return project.path;
-  return isAbsolutePathLike(session.project_key) ? session.project_key.trim() : undefined;
-}
 
 interface HistoryWorkspaceProps {
   active?: boolean;
@@ -993,21 +986,25 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       return;
     }
 
-    const cwd = resolveHistoryResumeCwd(session, project, worktree);
-    if (!cwd) {
-      toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.missingCwd") });
-      return;
-    }
-
     try {
       const requestedShell = launchProject ? launchProject.shell : unscopedShell;
-      const shell = requestedShell && requestedShell !== "powershell" ? requestedShell : undefined;
+      const launch = resolveHistoryResumeEnvironment(session, launchProject, worktree, requestedShell, await getOsPlatform());
+      const cwd = launch.cwd;
+      const shell = launch.shell && launch.shell !== "powershell" ? launch.shell : undefined;
+      const env = { ...(launchProject ? parseProjectEnvVars(launchProject) : {}), ...launch.env };
+      if (launch.shell === "wsl") {
+        const forwarding = new Set((env.WSLENV ?? "").split(":").filter(Boolean));
+        for (const key of Object.keys(env).filter((key) => key !== "WSLENV")) {
+          if (!Array.from(forwarding).some((entry) => entry.split("/")[0] === key)) forwarding.add(key);
+        }
+        if (forwarding.size) env.WSLENV = Array.from(forwarding).join(":");
+      }
       await createSession(
         project?.id,
         cwd,
         worktree?.name ?? (project?.name.trim() || title),
         command,
-        launchProject ? parseProjectEnvVars(launchProject) : undefined,
+        Object.keys(env).length ? env : undefined,
         shell,
         undefined,
         worktree?.id,
@@ -1017,11 +1014,15 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       setResumeIntent(null);
       closeHistory();
     } catch (err) {
-      toast.error(t("history.toast.resumeTerminalFailed"), { description: String(err) });
+      toast.error(t("history.toast.resumeTerminalFailed"), { description: String(err).includes("history_resume_") ? t("history.resumeProject.environmentUnavailable", { code: String(err) }) : String(err) });
     }
   }, [closeHistory, createSession, remoteContext, setActiveTerminalSession, t, terminalSessions]);
 
   const requestResume = useCallback((session: HistorySessionView | HistorySessionDetail, title: string) => {
+    if (HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(session.source)?.capabilities.resume !== "supported") {
+      toast.error(t("history.resumeProject.unsupportedSource"));
+      return;
+    }
     if (session.session_ref?.transportKind === "ssh") {
       if (!remoteContext) {
         toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.remoteUnavailable") });
@@ -1050,7 +1051,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       });
       return;
     }
-    const worktree = findHistoryWorktree(session, worktrees);
+    const worktree = findHistoryWorktree(session, worktrees, projects);
     const selection = selectLocalHistoryResumeProject(
       session,
       historyProjects,

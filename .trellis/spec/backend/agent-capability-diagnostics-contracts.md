@@ -147,3 +147,8 @@ if let Ok(json) = serde_json::from_str::<JsonValue>(output) {
 ```
 
 Exact binding prevents cross-pane leakage; fixed probes prevent configuration from becoming an arbitrary command-execution surface; document parsing prevents valid user/project configuration from producing false diagnostics.
+
+
+## Runtime evidence precedence (TEMP, 2026-09-07)
+
+Evidence must match the bound CLI session ID and Agent. Only completed/succeeded or failed native results establish health; missing, started, pending, cancelled, denied and inferred call-site records do not. Prefer the newest timestamp per server. A probe with no health observation (including unsupported auth status) must not overwrite existing session health with unknown. Static configuration alone remains unknown with an explanation in both interface languages. These rules are shared by Claude, Codex, Pi, Grok and OpenCode across local/WSL/SSH diagnostics.

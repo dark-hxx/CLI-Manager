@@ -2246,3 +2246,13 @@ must adopt the same policy if caret jumps are reported there.
 **Tests**: `npx tsc --noEmit`; manually hold a key in a long common configuration to confirm the
 caret stays in place and the characters keep their order, then verify refresh / save / provider
 switch / document switch still reload content and keep the viewport.
+
+## Realtime statistics image export
+
+The live statistics panel marks its scroll content with `data-stats-screenshot-scroll`; screenshot/refresh actions carry `data-stats-screenshot-exclude`. Export the currently enabled cards at the current panel width, including content below the viewport, without changing live layout or scroll position. Hidden cards and closed dialogs stay excluded.
+
+Snapshot computed styles (including inherited theme variables) and canvas pixels synchronously before asynchronous rendering. Expand only the offscreen scroll clone, and remove its inert/aria-hidden host in `finally`. Do not point the renderer at the terminal, the whole window or a different session after a tab switch. Use a proportional pixel budget rather than cropping.
+
+`statsScreenshot` lazily loads html-to-image; `statsScreenshotClipboard` uses Tauri `Image.new` with explicit RGBA dimensions and `writeImage`, then closes the native resource in `finally`. The only added permission is clipboard-manager write-image. No filesystem export, upload or clipboard read is needed. The button owns its in-flight guard, disables duplicate clicks and localizes all feedback.
+
+Tests: `node --test scripts/statsScreenshot.test.mjs`; `node scripts/statsScreenshot.browser.mjs` produces a standalone file fixture whose `statsScreenshotTests.runScreenshotRegression()` exercises dark/light themes, three scroll positions, SVG/canvas, snapshot stability and cleanup. This fixture does not start CLI-Manager services or Tauri. A human must still verify pasting the image from the actual desktop app and switching UI language.

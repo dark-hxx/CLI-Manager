@@ -1124,7 +1124,7 @@ pub(super) fn scan_kimi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                 .or_else(|| event.get("input"))
                 .and_then(summarize_json_value),
             None,
-            None,
+            super::tool_observations::mcp_server(event),
         ));
         if let Some(call_id) = call_id {
             event_by_call_id.insert(call_id.clone(), event_index);

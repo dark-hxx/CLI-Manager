@@ -30,3 +30,5 @@ mod remote;
 mod scope_paths;
 mod session_pipeline;
 mod usage_stats;
+
+mod tool_observations;

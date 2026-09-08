@@ -261,6 +261,7 @@ const SOURCES: &[SourceSpec] = &[
         location: SESSION_ROOT,
         capabilities: CapabilitySpec {
             realtime_stats: "supported",
+            resume: "supported",
             ..NATIVE_READONLY_FILE
         },
         default_leaf: ".pi",
@@ -270,7 +271,7 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "OpenCode",
         aliases: &[],
         location: SESSION_DB,
-        capabilities: NATIVE_READONLY_DB,
+        capabilities: CapabilitySpec { resume: "supported", ..NATIVE_READONLY_DB },
         default_leaf: ".local/share/opencode/opencode.db",
     },
     SourceSpec {

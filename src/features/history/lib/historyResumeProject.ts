@@ -1,3 +1,4 @@
+import { historyPathsMatch, historySourceWslPath } from "./historyResumeEnvironment";
 import { resolveCliToolHistorySourceId } from "../../../shared/lib/cliTools";
 import { getProviderSwitchAppType } from "../../providers/api/providerSwitching";
 import type { HistorySessionSummary, Project, WorktreeRecord } from "../../../shared/types/index";
@@ -7,18 +8,13 @@ function normalizePathKey(value: string): string {
 }
 
 export function findLocalHistoryCwdProjects(
-  session: Pick<HistorySessionSummary, "cwd">,
+  session: Pick<HistorySessionSummary, "cwd"> & Partial<HistorySessionSummary>,
   projects: Project[]
 ): Project[] {
   const cwd = session.cwd?.trim();
   if (!cwd) return [];
 
-  const normalizedCwd = normalizePathKey(cwd);
-  return projects.filter(
-    (project) =>
-      project.environment_type !== "ssh" &&
-      normalizePathKey(project.path) === normalizedCwd
-  );
+  return projects.filter((project) => historyPathsMatch(session, project));
 }
 
 function projectPathName(path: string): string {
@@ -35,7 +31,7 @@ export function matchesHistoryProjectSource(project: Project, source: string): b
 }
 
 export function findLocalHistoryResumeProjects(
-  session: Pick<HistorySessionSummary, "cwd" | "project_key" | "source">,
+  session: Pick<HistorySessionSummary, "cwd" | "project_key" | "source"> & Partial<HistorySessionSummary>,
   projects: Project[],
 ): Project[] {
   const sourceProjects = projects.filter((project) => (
@@ -44,6 +40,8 @@ export function findLocalHistoryResumeProjects(
   const cwdProjects = findLocalHistoryCwdProjects(session, sourceProjects);
   if (cwdProjects.length > 0) return cwdProjects;
 
+  // WSL identity must never fall back to matching an unrelated project name.
+  if (historySourceWslPath(session) || session.session_ref?.transportKind === "wsl") return [];
   const normalizedProjectKey = normalizePathKey(session.project_key);
   if (!normalizedProjectKey) return [];
   const normalizedProjectKeyLower = normalizedProjectKey.toLowerCase();
@@ -63,7 +61,7 @@ export interface LocalHistoryResumeSelection {
 }
 
 export function selectLocalHistoryResumeProject(
-  session: Pick<HistorySessionSummary, "cwd" | "project_key" | "source">,
+  session: Pick<HistorySessionSummary, "cwd" | "project_key" | "source"> & Partial<HistorySessionSummary>,
   projects: Project[],
   worktree: WorktreeRecord | null,
   projectIdFilter: string | null,
@@ -71,7 +69,8 @@ export function selectLocalHistoryResumeProject(
   const worktreeProject = worktree
     ? projects.find((project) => project.id === worktree.project_id) ?? null
     : null;
-  if (worktreeProject && matchesHistoryProjectSource(worktreeProject, session.source)) {
+  if (worktreeProject && worktree && matchesHistoryProjectSource(worktreeProject, session.source)
+    && historyPathsMatch({ ...session, cwd: session.cwd || session.project_key }, { ...worktreeProject, path: worktree.path })) {
     return { project: worktreeProject, worktree, candidates: [worktreeProject] };
   }
 

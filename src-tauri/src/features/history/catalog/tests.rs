@@ -1893,3 +1893,5 @@ fn validate_source_instance_rejects_invalid_storage_and_locations() {
         "history_source_locations_json_invalid"
     );
 }
+
+mod tool_observations;

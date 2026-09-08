@@ -1310,7 +1310,8 @@ export function HistoryListPane({
       {contextMenu && (
         <Portal>
           <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef} role="menu">
-            <button className="context-menu-item" role="menuitem" onClick={handleContextMenuResume}>
+            <button className="context-menu-item" role="menuitem" onClick={handleContextMenuResume}
+              disabled={HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(contextMenu.session.source)?.capabilities.resume !== "supported"}>
               <RefreshCw size={13} aria-hidden="true" />
               <span>{t("history.menu.resumeInTerminal")}</span>
             </button>

@@ -1,6 +1,17 @@
 import type { zh } from "./terminal.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+  "termStats.screenshot": "Copy full statistics as image",
+  "termStats.screenshotBusy": "Creating statistics image…",
+  "termStats.screenshotCopied": "Statistics image copied to clipboard",
+  "termStats.screenshotFailed": "Could not copy the statistics image. Please try again.",
+  "termStats.screenshotTooLarge": "Statistics image is too large. Hide some cards and try again.",
+  "termStats.inferred": "Inferred",
+  "termStats.inferredCount": "{count} additional nested call sites (inferred)",
+  "termStats.inferredTools": "Nested tools (inferred)",
+  "termStats.inferredMcp": "MCP (inferred)",
+  "termStats.inferredHelp": "Identified from orchestration script call sites, not confirmed execution counts or health evidence.",
+  "termStats.agentCapabilities.health.unknownReason": "No verifiable call result or native health status yet. Inferred calls do not establish connection health.",
   "terminal.backgroundTasks.title": "Background tasks",
   "terminal.backgroundTasks.shortTitle": "Tasks",
   "terminal.backgroundTasks.running": "Running",

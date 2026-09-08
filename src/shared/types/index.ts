@@ -712,6 +712,7 @@ export interface HistoryToolCount {
 }
 
 export interface HistoryToolEvent {
+  evidence?: { kind: "inferred"; parent_call_id?: string | null; source_position?: number | null } | null;
   call_id?: string | null;
   name: string;
   category: string;

@@ -1,4 +1,6 @@
 export const zh = {
+  "history.resumeProject.unsupportedSource": "该来源尚未接入继续对话功能",
+  "history.resumeProject.environmentUnavailable": "无法在原运行环境继续会话，请选择匹配的 WSL 项目并检查发行版和目录。错误：{code}",
   "subagentTranscript.omittedMessages": "已省略前 {count} 条消息",
   "history.menu.resumeInTerminal": "恢复会话",
   "history.menu.convertToClaude": "转换为 Claude",

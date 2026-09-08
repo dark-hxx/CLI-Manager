@@ -291,7 +291,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.opencode",
     defaultLabel: "OpenCode",
     locations: [sessionDbSlot],
-    capabilities: readonlyDatabaseCapabilities,
+    capabilities: { ...readonlyDatabaseCapabilities, resume: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-2",

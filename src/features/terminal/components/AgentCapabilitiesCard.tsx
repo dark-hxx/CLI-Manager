@@ -126,6 +126,9 @@ function McpRow({ item }: { item: McpCapabilityItem }) {
           )}
         </Group>
       </Group>
+      {!disabled && item.health === "unknown" && (
+        <Text size="xs" c="dimmed" mt={6}>{t("termStats.agentCapabilities.health.unknownReason")}</Text>
+      )}
       {item.lastEvidence && (
         <Text size="xs" c="dimmed" mt={6}>
           {t("termStats.agentCapabilities.lastEvidence", {

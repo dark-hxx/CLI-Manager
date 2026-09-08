@@ -417,6 +417,8 @@ pub(super) async fn parse_opencode_session_row(
         project_key,
         path: opencode_session_locator(db_path, &session_id),
     };
+    let tool_events = super::tool_observations::merge_tool_events(tool_events);
+    super::tool_observations::reconcile_tool_stats(&mut stats, &tool_events);
     let computed = CachedSessionComputation {
         created_at,
         updated_at,
@@ -611,14 +613,15 @@ pub(super) fn opencode_tool_event(
     }
     let name = opencode_tool_name(part).unwrap_or_else(|| "tool".to_string());
     Some(HistoryToolEvent {
+        evidence: None,
         call_id: part
-            .get("id")
-            .or_else(|| part.get("callID"))
+            .get("callID")
+            .or_else(|| part.get("id"))
             .or_else(|| part.get("call_id"))
             .and_then(Value::as_str)
             .map(str::to_string),
+        category: super::tool_observations::tool_category(&name, super::tool_observations::mcp_server(part)),
         name,
-        category: "builtin".to_string(),
         message_index: Some(message_index),
         timestamp,
         status: part
@@ -630,10 +633,12 @@ pub(super) fn opencode_tool_event(
         input_summary: part
             .get("input")
             .or_else(|| part.get("arguments"))
+            .or_else(|| part.get("state").and_then(|state| state.get("input")))
             .and_then(summarize_json_value),
         output_summary: part
             .get("output")
             .or_else(|| part.get("result"))
+            .or_else(|| part.get("state").and_then(|state| state.get("output").or_else(|| state.get("error"))))
             .and_then(summarize_json_value),
     })
 }

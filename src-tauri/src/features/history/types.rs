@@ -60,9 +60,19 @@ pub struct HistoryToolCount {
     pub count: u64,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryToolEvidence {
+    pub kind: String,
+    pub parent_call_id: Option<String>,
+    pub source_position: Option<usize>,
+}
+
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryToolEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<HistoryToolEvidence>,
     pub call_id: Option<String>,
     pub name: String,
     pub category: String,

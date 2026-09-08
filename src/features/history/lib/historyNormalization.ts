@@ -252,12 +252,23 @@ export function normalizeToolCounts(raw: unknown): HistoryToolCount[] {
     .filter((item) => item.name.length > 0 && item.count > 0);
 }
 
+function normalizeToolEvidence(raw: unknown): HistoryToolEvent["evidence"] {
+  if (!raw || typeof raw !== "object") return undefined;
+  const value = raw as Record<string, unknown>;
+  if (value.kind !== "inferred") return undefined;
+  return { kind: "inferred",
+    parent_call_id: asString(value.parent_call_id ?? value.parentCallId ?? "") || null,
+    source_position: typeof (value.source_position ?? value.sourcePosition) === "number"
+      ? asNumber(value.source_position ?? value.sourcePosition) : null };
+}
+
 export function normalizeToolEvents(raw: unknown): HistoryToolEvent[] {
   if (!Array.isArray(raw)) return [];
   return raw
     .map((item) => {
       const rec = (item ?? {}) as Record<string, unknown>;
       return {
+        evidence: normalizeToolEvidence(rec.evidence),
         call_id: asString(rec.call_id ?? rec.callId ?? "") || null,
         name: asString(rec.name),
         category: asString(rec.category),
