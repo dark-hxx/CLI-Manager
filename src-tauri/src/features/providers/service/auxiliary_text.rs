@@ -19,6 +19,7 @@ pub(crate) enum AuxiliaryTextError {
     ResponseInvalidUtf8,
 }
 
+// 按协议构造认证头和非流式文本请求，使用调用方超时；返回状态码与正文，不自行拒绝非 2xx。
 pub(crate) async fn post_text_request(
     client: &Client,
     protocol: AuxiliaryTextProtocol,
@@ -73,6 +74,7 @@ pub(crate) async fn post_text_request(
     Ok((status, body))
 }
 
+// 按字符串后缀避免重复完整端点或 /v1，再拼接路径；不解析 URL 查询、片段或规范化大小写。
 pub(crate) fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
     let base = base_url.trim().trim_end_matches('/');
     let path = versioned_path.trim().trim_start_matches('/');
@@ -87,6 +89,7 @@ pub(crate) fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
     format!("{base}/{path}")
 }
 
+// 构造非流式 Chat 请求，裁剪模型和系统提示，空系统提示省略对应消息。
 pub(crate) fn chat_completion_body(
     model: &str,
     system_prompt: &str,
@@ -108,6 +111,7 @@ pub(crate) fn chat_completion_body(
     })
 }
 
+// 构造非流式且 store=false 的 Responses 请求，使用字符串 input，空 instructions 不写入。
 pub(crate) fn responses_body(
     model: &str,
     instructions: &str,
@@ -127,6 +131,7 @@ pub(crate) fn responses_body(
     Value::Object(body)
 }
 
+// 构造 Anthropic 单条用户消息与系统提示及输出上限；不添加 stream 字段。
 pub(crate) fn anthropic_messages_body(
     model: &str,
     system_prompt: &str,
@@ -141,6 +146,7 @@ pub(crate) fn anthropic_messages_body(
     })
 }
 
+// 按协议借用首个匹配文本片段，Chat 可回退旧 text 字段，Responses 优先顶层 output_text；不合并多个片段。
 pub(crate) fn response_text<'a>(
     value: &'a Value,
     protocol: AuxiliaryTextProtocol,
@@ -181,6 +187,7 @@ pub(crate) fn response_text<'a>(
     }
 }
 
+// 先拒绝声明长度超过 128 KiB 的响应，再完整读取正文交给字节校验；未知长度不会在读取途中截断。
 async fn read_response_body(response: Response) -> Result<String, AuxiliaryTextError> {
     if response
         .content_length()
@@ -195,6 +202,7 @@ async fn read_response_body(response: Response) -> Result<String, AuxiliaryTextE
     response_body_from_bytes(bytes.as_ref())
 }
 
+// 拒绝超过 128 KiB 或非 UTF-8 的完整字节，再复制为字符串，不解析 JSON。
 fn response_body_from_bytes(bytes: &[u8]) -> Result<String, AuxiliaryTextError> {
     if bytes.len() > MAX_RESPONSE_BODY_BYTES {
         return Err(AuxiliaryTextError::ResponseTooLarge);
@@ -209,6 +217,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证根地址、版本地址及完整端点不会重复拼接版本和路径。
     fn endpoint_url_avoids_duplicate_v1_and_endpoint_segments() {
         assert_eq!(
             endpoint_url("https://example.com/", "v1/chat/completions"),
@@ -225,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Responses 使用字符串输入、不附加 tools/reasoning，且禁止存储。
     fn responses_body_uses_compatible_string_input_without_tools() {
         let body = responses_body("model-a", "title instructions", "user text", 64);
         assert_eq!(body.get("input").and_then(Value::as_str), Some("user text"));
@@ -234,6 +244,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Chat/Responses 显式关闭流式及 Anthropic 的输出上限；未发请求验证服务端默认行为。
     fn all_protocol_bodies_are_non_streaming() {
         assert_eq!(
             chat_completion_body("model-a", "system", "input", 16)
@@ -256,6 +267,7 @@ mod tests {
     }
 
     #[test]
+    // 验证三种协议的典型响应结构均能提取首个文本内容。
     fn response_text_extracts_all_supported_protocol_shapes() {
         assert_eq!(
             response_text(
@@ -281,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    // 用内存字节验证超限与无效 UTF-8 被拒绝，不覆盖网络读取期间的内存占用。
     fn response_body_is_bounded_and_must_be_utf8() {
         assert!(matches!(
             response_body_from_bytes(&vec![b'x'; MAX_RESPONSE_BODY_BYTES + 1]),

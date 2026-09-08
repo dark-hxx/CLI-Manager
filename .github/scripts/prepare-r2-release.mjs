@@ -10,16 +10,20 @@ if (![inputDir, outputDir, publicBaseUrl, tag].every(Boolean)) {
 
 const baseUrl = new URL(`${normalizeR2PublicBaseUrl(publicBaseUrl)}/`);
 
+// 将标签与文件名编码为已验证 R2 源下的版本化下载地址。
 const releaseUrl = (name) => new URL(`CLI-Manager/releases/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`, baseUrl).toString();
 
+// 读取指定本地文件并解析 JSON，保留读取或解析错误。
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"));
 }
 
+// 将 JSON 以两空格缩进和尾换行写入指定文件。
 async function writeJson(path, value) {
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+// 创建输出目录并复制输入目录的普通文件，不递归复制子目录。
 async function copyReleaseFiles() {
   await mkdir(outputDir, { recursive: true });
   const entries = await readdir(inputDir, { withFileTypes: true });
@@ -29,6 +33,7 @@ async function copyReleaseFiles() {
   }
 }
 
+// 校验桌面更新平台条目并将副本中的下载地址改写为 R2 地址。
 async function rewriteDesktopManifest() {
   const path = join(outputDir, "latest.json");
   const value = await readJson(path);
@@ -44,6 +49,7 @@ async function rewriteDesktopManifest() {
   await writeJson(path, value);
 }
 
+// 校验 Agent 产物列表并将副本中的下载地址改写为 R2 地址。
 async function rewriteAgentManifest() {
   const path = join(outputDir, "ssh-agent-release-manifest.json");
   const value = await readJson(path);
@@ -62,6 +68,7 @@ async function rewriteAgentManifest() {
 await copyReleaseFiles();
 
 const sourceFiles = await Promise.all(
+  // 并发检查两个来源清单是否为文件，查询失败按不存在处理。
   ["latest.json", "ssh-agent-release-manifest.json"].map(async (name) => {
     try {
       return (await stat(join(inputDir, name))).isFile();

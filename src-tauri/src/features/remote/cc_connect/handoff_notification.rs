@@ -51,6 +51,7 @@ struct NotificationSettings {
 }
 
 impl Default for NotificationSettings {
+    // 默认开启各类接管通知并设定五分钟进度间隔。
     fn default() -> Self {
         Self {
             enabled: true,
@@ -73,6 +74,7 @@ struct HandoffIdentity {
 }
 
 impl HandoffIdentity {
+    // 从持久化记录提取通知归属所需的接管身份。
     fn from_record(record: &PersistedHandoffRecord) -> Self {
         Self {
             agent: record.agent,
@@ -84,6 +86,7 @@ impl HandoffIdentity {
         }
     }
 
+    // 比较当前记录与已捕获的接管身份是否一致。
     fn matches_record(&self, record: &PersistedHandoffRecord) -> bool {
         self == &Self::from_record(record)
     }
@@ -99,6 +102,7 @@ struct RemoteHookEvent {
 }
 
 impl RemoteHookEvent {
+    // 解析 Hook 标识及事件，并仅保留审批内容的哈希指纹。
     fn from_payload(payload: &Value) -> Option<Self> {
         let tab_id = string_field(payload, &["tabId", "tab_id"])?;
         let source = string_field(payload, &["source"])?;
@@ -119,6 +123,7 @@ impl RemoteHookEvent {
         })
     }
 
+    // 校验事件来源、Tab 和可选 CLI 会话是否属于当前接管。
     fn belongs_to(&self, record: &PersistedHandoffRecord) -> bool {
         self.source == record.agent.hook_source()
             && self.tab_id == record.local_session_id
@@ -150,6 +155,7 @@ struct TaskState {
 }
 
 impl TaskState {
+    // 创建运行态任务并初始化通知去重及计时字段。
     fn new(record: &PersistedHandoffRecord, now: Instant) -> Self {
         Self {
             identity: HandoffIdentity::from_record(record),
@@ -164,6 +170,7 @@ impl TaskState {
         }
     }
 
+    // 有指纹时按指纹去重，无指纹时使用短时间窗口。
     fn is_duplicate_permission(&self, fingerprint: Option<u64>, now: Instant) -> bool {
         if fingerprint.is_some() {
             return fingerprint == self.last_permission_fingerprint;
@@ -172,6 +179,7 @@ impl TaskState {
             .is_some_and(|last| now.duration_since(last) < PERMISSION_DEDUP_WINDOW)
     }
 
+    // 首次标记状态未知提示已入队，重复调用返回否。
     fn mark_status_unknown_enqueued(&mut self) -> bool {
         if self.status_unknown_enqueued {
             return false;
@@ -180,6 +188,7 @@ impl TaskState {
         true
     }
 
+    // 仅首次进入终态并记录待发送的完成或失败类型。
     fn mark_terminal(&mut self, kind: NotificationKind) -> bool {
         if self.phase == TaskPhase::Terminal {
             return false;
@@ -205,6 +214,7 @@ enum NotificationKind {
 }
 
 impl NotificationKind {
+    // 返回通知类型的持久化事件键。
     fn key(self) -> &'static str {
         match self {
             Self::Progress => "progress",
@@ -234,6 +244,7 @@ pub struct RemoteHandoffNotifier {
 }
 
 impl RemoteHandoffNotifier {
+    // 创建有界 Hook 与投递队列并启动两条工作线程。
     pub fn start() -> Self {
         let (scheduler_sender, scheduler_receiver) =
             sync_channel::<SchedulerMessage>(HOOK_QUEUE_CAPACITY);
@@ -246,6 +257,7 @@ impl RemoteHandoffNotifier {
         }
     }
 
+    // 非阻塞提交 Hook 事件，队列满或断开时记录警告。
     pub fn try_enqueue(&self, payload: Value) {
         match self.sender.try_send(SchedulerMessage::Hook(payload)) {
             Ok(()) => {}
@@ -259,6 +271,7 @@ impl RemoteHandoffNotifier {
     }
 }
 
+// 清除继承 Hook 绑定后，仅在接管和存活 daemon 可用时注入新绑定。
 pub(super) fn apply_hook_environment(command: &mut Command) {
     for key in HOOK_ENV_KEYS {
         command.env_remove(key);
@@ -294,6 +307,7 @@ pub(super) fn apply_hook_environment(command: &mut Command) {
     }
 }
 
+// 组合本地 Tab 与 daemon Hook 端口、令牌的子进程环境。
 fn hook_environment_values(
     record: &PersistedHandoffRecord,
     info: &DaemonInfo,
@@ -305,6 +319,7 @@ fn hook_environment_values(
     ]
 }
 
+// 接收 Hook 事件并按周期协调任务通知状态。
 fn run_scheduler(receiver: Receiver<SchedulerMessage>, delivery_sender: SyncSender<DeliveryJob>) {
     let mut state: Option<TaskState> = None;
     loop {
@@ -319,6 +334,7 @@ fn run_scheduler(receiver: Receiver<SchedulerMessage>, delivery_sender: SyncSend
     }
 }
 
+// 匹配接管身份后根据提交、审批及结束事件更新状态和通知队列。
 fn handle_hook_payload(
     payload: Value,
     state: &mut Option<TaskState>,
@@ -388,6 +404,7 @@ fn handle_hook_payload(
     }
 }
 
+// 核对接管仍有效并调度终态、状态未知或周期进度通知。
 fn tick_scheduler(state: &mut Option<TaskState>, delivery_sender: &SyncSender<DeliveryJob>) {
     let Some(current) = state.as_mut() else {
         return;
@@ -431,6 +448,7 @@ fn tick_scheduler(state: &mut Option<TaskState>, delivery_sender: &SyncSender<De
     }
 }
 
+// 在设置允许时尝试发送一次状态未知提示。
 fn enqueue_status_unknown(
     state: &mut TaskState,
     record: &PersistedHandoffRecord,
@@ -454,6 +472,7 @@ fn enqueue_status_unknown(
     }
 }
 
+// 按进度间隔和宽限期计算不小于二十分钟的未知状态阈值。
 fn task_stale_after(settings: NotificationSettings) -> Duration {
     if settings.progress_enabled {
         let interval = Duration::from_secs(settings.progress_interval_minutes * 60);
@@ -463,6 +482,7 @@ fn task_stale_after(settings: NotificationSettings) -> Duration {
     }
 }
 
+// 按完成通知开关及入队状态发送待处理终态通知。
 fn enqueue_terminal(
     state: &mut TaskState,
     record: &PersistedHandoffRecord,
@@ -487,6 +507,7 @@ fn enqueue_terminal(
     );
 }
 
+// 捕获当前接管与语言生成通知并非阻塞加入投递队列。
 fn enqueue_delivery(
     sender: &SyncSender<DeliveryJob>,
     record: &PersistedHandoffRecord,
@@ -517,6 +538,7 @@ fn enqueue_delivery(
     }
 }
 
+// 消费仍有效的投递任务并更新持久化尝试、成功及失败状态。
 fn run_delivery_worker(receiver: Receiver<DeliveryJob>) {
     let mut cached_binary: Option<(Option<String>, DetectedBinary)> = None;
     while let Ok(job) = receiver.recv() {
@@ -553,6 +575,7 @@ fn run_delivery_worker(receiver: Receiver<DeliveryJob>) {
     }
 }
 
+// 核对持久化接管身份，读取失败或已替换视为任务失效。
 fn delivery_job_is_current(job: &DeliveryJob) -> bool {
     load_handoff_record()
         .ok()
@@ -580,6 +603,7 @@ enum DeliveryAttemptOutcome {
     Failed(HandoffNotificationSendError),
 }
 
+// 每次重试前校验归属，按指定次数投递并保留最终错误。
 fn retry_delivery<Current, Send, Wait>(
     attempts: usize,
     mut is_current: Current,
@@ -610,6 +634,7 @@ where
     }))
 }
 
+// 解析配置与可信程序后重试投递，接管变化时停止。
 fn deliver(
     job: &DeliveryJob,
     cached_binary: &mut Option<(Option<String>, DetectedBinary)>,
@@ -674,6 +699,7 @@ fn deliver(
     }
 }
 
+// 组合允许的错误码与脱敏后的投递详情。
 fn delivery_failure(code: &'static str, detail: &str, secrets: &[String]) -> DeliveryFailure {
     DeliveryFailure {
         code: safe_delivery_error_code(code),
@@ -681,6 +707,7 @@ fn delivery_failure(code: &'static str, detail: &str, secrets: &[String]) -> Del
     }
 }
 
+// 将未知投递错误码归一化，禁止原始敏感文本成为持久化代码。
 fn safe_delivery_error_code(code: &str) -> &'static str {
     match code {
         "binary_detection_failed" => "binary_detection_failed",
@@ -699,6 +726,7 @@ fn safe_delivery_error_code(code: &str) -> &'static str {
     }
 }
 
+// 脱敏投递详情并压为至多一千字符的单行文本。
 fn redact_delivery_detail(detail: &str, secrets: &[String]) -> String {
     redact_log_line(detail, secrets)
         .replace(['\r', '\n'], " ")
@@ -707,6 +735,7 @@ fn redact_delivery_detail(detail: &str, secrets: &[String]) -> String {
         .collect()
 }
 
+// 收集平台、Provider、daemon 及敏感环境值用于日志脱敏。
 fn delivery_redaction_secrets(record: &PersistedHandoffRecord) -> Vec<String> {
     let mut secrets = Vec::new();
     for account in [
@@ -755,6 +784,7 @@ fn delivery_redaction_secrets(record: &PersistedHandoffRecord) -> Vec<String> {
     secrets
 }
 
+// 读取通知设置，缺失或读取解析失败时使用默认设置。
 fn read_notification_settings() -> NotificationSettings {
     let path = match crate::app_paths::data_paths() {
         Ok(paths) => paths.settings_store_path,
@@ -782,6 +812,7 @@ fn read_notification_settings() -> NotificationSettings {
     }
 }
 
+// 从 JSON 提取通知开关并将进度间隔限制为一至六十分钟。
 fn notification_settings_from_value(value: &Value) -> NotificationSettings {
     let defaults = NotificationSettings::default();
     let interval = value
@@ -810,10 +841,12 @@ fn notification_settings_from_value(value: &Value) -> NotificationSettings {
     }
 }
 
+// 读取布尔设置，类型不符或缺失时使用回退值。
 fn bool_setting(value: &Value, key: &str, fallback: bool) -> bool {
     value.get(key).and_then(Value::as_bool).unwrap_or(fallback)
 }
 
+// 按候选键顺序提取首个非空去空白字符串。
 fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter().find_map(|key| {
         value
@@ -825,10 +858,12 @@ fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
     })
 }
 
+// 返回托管通知状态 JSON 的路径。
 fn notification_status_path() -> Result<PathBuf, String> {
     Ok(remote_manager_dir()?.join(STATUS_FILE_NAME))
 }
 
+// 读取通知状态并将旧的不安全错误文本改写为脱敏标记。
 fn read_notification_status() -> Result<CcConnectHandoffNotificationStatus, String> {
     let path = notification_status_path()?;
     let raw = match fs::read_to_string(path) {
@@ -850,6 +885,7 @@ fn read_notification_status() -> Result<CcConnectHandoffNotificationStatus, Stri
     Ok(status)
 }
 
+// 序列化通知状态并原子式替换状态文件。
 fn write_notification_status(status: &CcConnectHandoffNotificationStatus) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(status)
         .map_err(|err| format!("serialize handoff notification status failed: {err}"))?;
@@ -860,6 +896,7 @@ fn write_notification_status(status: &CcConnectHandoffNotificationStatus) -> Res
     )
 }
 
+// 按通知类型及语言格式化平台、项目、会话、目录和耗时元数据。
 fn format_notification(
     record: &PersistedHandoffRecord,
     kind: NotificationKind,
@@ -918,6 +955,7 @@ fn format_notification(
     }
 }
 
+// 返回对应语言的消息平台显示名称。
 fn platform_label(platform: CcConnectPlatform, language: CcConnectLanguage) -> &'static str {
     match (platform, language) {
         (CcConnectPlatform::Telegram, _) => "Telegram",
@@ -930,6 +968,7 @@ fn platform_label(platform: CcConnectPlatform, language: CcConnectLanguage) -> &
     }
 }
 
+// 将耗时按至少一分钟格式化为分钟或小时分钟。
 fn elapsed_label(elapsed: Duration, language: CcConnectLanguage) -> String {
     let total_minutes = elapsed.as_secs() / 60;
     let minutes = total_minutes.max(1);
@@ -946,6 +985,7 @@ fn elapsed_label(elapsed: Duration, language: CcConnectLanguage) -> String {
 }
 
 #[tauri::command]
+// 返回持久化接管通知状态。
 pub fn cc_connect_handoff_notification_status() -> Result<CcConnectHandoffNotificationStatus, String>
 {
     read_notification_status()
@@ -958,6 +998,7 @@ mod tests {
     use serde_json::json;
     use std::cell::Cell;
 
+    // 构造固定身份的纯内存接管记录。
     fn record() -> PersistedHandoffRecord {
         PersistedHandoffRecord {
             schema_version: HANDOFF_SCHEMA_VERSION,
@@ -989,6 +1030,7 @@ mod tests {
     }
 
     #[test]
+    // 验证通知默认开关、间隔上下界及过期阈值。
     fn notification_settings_default_and_clamp_interval() {
         let defaults = notification_settings_from_value(&json!({}));
         assert!(defaults.enabled);
@@ -1008,6 +1050,7 @@ mod tests {
     }
 
     #[test]
+    // 验证四种 Agent 的 Hook 事件只匹配对应接管归属。
     fn hook_event_must_match_the_handoff_owner() {
         for (agent, source) in [
             (CcConnectAgent::Claude, "claude"),
@@ -1040,6 +1083,7 @@ mod tests {
     }
 
     #[test]
+    // 验证审批按指纹或短时间窗口去重。
     fn permission_events_are_deduplicated_without_storing_message_content() {
         let record = record();
         let now = Instant::now();
@@ -1053,6 +1097,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未知状态提示不会阻止随后进入完成终态。
     fn completed_event_remains_terminal_after_status_unknown_reminder() {
         let record = record();
         let mut state = TaskState::new(&record, Instant::now());
@@ -1064,6 +1109,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未知状态提示不会阻止随后进入失败终态。
     fn failed_event_remains_terminal_after_status_unknown_reminder() {
         let record = record();
         let mut state = TaskState::new(&record, Instant::now());
@@ -1075,6 +1121,7 @@ mod tests {
     }
 
     #[test]
+    // 验证重试间接管取消后不再发送。
     fn notification_retry_stops_when_handoff_is_cancelled() {
         let checks = Cell::new(0usize);
         let sends = Cell::new(0usize);
@@ -1102,6 +1149,7 @@ mod tests {
     }
 
     #[test]
+    // 验证任一接管身份字段变化都会使旧任务失效。
     fn replacement_invalidates_every_handoff_identity_field() {
         let original = record();
         let identity = HandoffIdentity::from_record(&original);
@@ -1132,6 +1180,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已知秘密和敏感关键词均不会泄露到投递错误。
     fn notification_errors_redact_known_and_pattern_credentials() {
         let secrets = vec![
             "telegram-credential".to_string(),
@@ -1158,6 +1207,7 @@ mod tests {
     }
 
     #[test]
+    // 验证各平台审批通知包含预期接管元数据且无工具输入。
     fn formatted_messages_use_safe_handoff_metadata_for_every_platform() {
         for platform in [
             CcConnectPlatform::Telegram,
@@ -1181,6 +1231,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Hook 环境绑定本地会话及 daemon 端口令牌。
     fn hook_environment_targets_the_daemon_and_local_session() {
         let record = record();
         let info = DaemonInfo {

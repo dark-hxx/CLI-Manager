@@ -7,6 +7,7 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+// 限时调用 cc-connect config format 格式化并校验托管配置。
 pub(super) fn format_and_check_config_syntax(
     executable: &Path,
     config: &Path,
@@ -24,6 +25,7 @@ pub(super) fn format_and_check_config_syntax(
     ))
 }
 
+// 启动后台读取线程，按行限量捕获输出并交由脱敏日志写入。
 pub(super) fn spawn_log_reader<R: Read + Send + 'static>(
     reader: R,
     source: &'static str,
@@ -74,6 +76,7 @@ pub(super) fn spawn_log_reader<R: Read + Send + 'static>(
     });
 }
 
+// 将捕获字节解码并附加截断标记，忽略完全空的记录。
 pub(super) fn push_captured_log_line(
     logs: &Arc<Mutex<CcConnectLogBuffer>>,
     writer: &SharedLogWriter,
@@ -92,6 +95,7 @@ pub(super) fn push_captured_log_line(
     push_log_line(logs, writer, source, &line, secrets);
 }
 
+// 脱敏后尽力写入内存缓冲与滚动日志并刷新。
 pub(super) fn push_log_line(
     logs: &Arc<Mutex<CcConnectLogBuffer>>,
     writer: &SharedLogWriter,
@@ -111,6 +115,7 @@ pub(super) fn push_log_line(
     }
 }
 
+// 替换已知秘密，含敏感关键词时整行隐藏，并限制显示字符数。
 pub(crate) fn redact_log_line(raw: &str, secrets: &[String]) -> String {
     let mut value = raw.to_string();
     for secret in secrets.iter().filter(|secret| secret.len() >= 4) {

@@ -253,6 +253,7 @@ const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 
 #[tauri::command]
+// 按筛选分页读取目录会话，必要时刷新索引并回退到旧扫描路径。
 pub async fn history_list_sessions(
     app: tauri::AppHandle,
     source: Option<String>,
@@ -398,6 +399,7 @@ pub async fn history_list_sessions(
 }
 
 #[tauri::command]
+// 优先复用会话详情缓存，按来源读取详情并处理子代理聚合与强制刷新。
 pub async fn history_get_session(
     app: tauri::AppHandle,
     file_path: String,
@@ -497,6 +499,7 @@ pub async fn history_get_session(
 }
 
 #[tauri::command]
+// 校验会话与目标写入状态，执行原生格式转换并更新索引状态。
 pub async fn history_convert_session(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -537,6 +540,7 @@ pub async fn history_convert_session(
 }
 
 #[tauri::command]
+// 校验来源及写入锁后删除对应原生会话，并使历史索引失效。
 pub async fn history_delete_session(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -573,6 +577,7 @@ pub async fn history_delete_session(
 }
 
 #[tauri::command]
+// 拒绝过短查询，刷新目录后执行全文检索。
 pub async fn history_search(
     app: tauri::AppHandle,
     query: String,
@@ -597,6 +602,7 @@ pub async fn history_search(
 }
 
 #[tauri::command]
+// 触发非强制目录刷新并返回索引状态。
 pub async fn history_get_index_status(
     app: tauri::AppHandle,
     claude_config_dir: Option<String>,
@@ -610,11 +616,13 @@ pub async fn history_get_index_status(
 }
 
 #[tauri::command]
+// 返回第二代历史目录的持久化索引状态。
 pub async fn history_get_index_v2_status() -> Result<HistoryIndexV2Status, String> {
     catalog::get_v2_status().await
 }
 
 #[tauri::command]
+// 扫描并筛选本地会话，返回受数量限制的第二代适配结果。
 pub async fn history_index_v2_preview_adapter_sessions(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -666,6 +674,7 @@ pub async fn history_index_v2_preview_adapter_sessions(
 }
 
 #[tauri::command]
+// 在第二代目录中新增或更新来源实例。
 pub async fn history_index_v2_upsert_source_instance(
     input: HistoryIndexV2SourceInstanceInput,
 ) -> Result<HistoryIndexV2Status, String> {
@@ -673,6 +682,7 @@ pub async fn history_index_v2_upsert_source_instance(
 }
 
 #[tauri::command]
+// 将指定来源实例标记为停用。
 pub async fn history_index_v2_deactivate_source_instance(
     source_id: String,
     instance_id: Option<String>,
@@ -681,6 +691,7 @@ pub async fn history_index_v2_deactivate_source_instance(
 }
 
 #[tauri::command]
+// 请求远端历史同步，校验实例身份后应用结果并清理相关缓存。
 pub async fn history_remote_sync(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -750,6 +761,7 @@ pub async fn history_remote_sync(
 }
 
 #[tauri::command]
+// 按来源实例分页读取本地缓存的远程会话。
 pub async fn history_remote_list_cached(
     source_instance_id: String,
     project_path: Option<String>,
@@ -768,6 +780,7 @@ pub async fn history_remote_list_cached(
 }
 
 #[tauri::command]
+// 经守护进程检索远端历史，并校验每个结果的来源身份。
 pub async fn history_remote_search(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -846,6 +859,7 @@ pub async fn history_remote_search(
 }
 
 #[tauri::command]
+// 获取远程会话详情并校验身份，非直接文件请求可复用详情缓存。
 pub async fn history_remote_get_session(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -915,6 +929,7 @@ pub async fn history_remote_get_session(
 }
 
 #[tauri::command]
+// 向远端预检恢复条件，严格校验身份、目录和参数后构造引用命令。
 pub async fn history_remote_resume_preflight(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -1021,6 +1036,7 @@ pub async fn history_remote_resume_preflight(
 }
 
 #[tauri::command]
+// 释放指定 SSH 主机上的历史访问消费者。
 pub fn history_remote_close(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     host_id: String,
@@ -1033,6 +1049,7 @@ pub fn history_remote_close(
 }
 
 #[tauri::command]
+// 枚举来源转换能力矩阵，仅将 Claude 与 Codex 互转标为可写。
 pub async fn history_get_conversion_matrix() -> Result<Vec<HistoryConversionMatrixItem>, String> {
     const SOURCES: [&str; 12] = [
         "claude",
@@ -1087,6 +1104,7 @@ pub async fn history_get_conversion_matrix() -> Result<Vec<HistoryConversionMatr
 }
 
 #[tauri::command]
+// 强制刷新指定历史根目录，按选项等待完成。
 pub async fn history_refresh_index(
     app: tauri::AppHandle,
     claude_config_dir: Option<String>,
@@ -1101,6 +1119,7 @@ pub async fn history_refresh_index(
 }
 
 #[tauri::command]
+// 按作用域扫描用户提示词，补充 OpenCode 结果并按会话时间排序限量。
 pub async fn history_list_prompts(
     scope: Option<String>,
     source: Option<String>,
@@ -1250,6 +1269,7 @@ pub async fn history_list_prompts(
 }
 
 #[tauri::command]
+// 合并本地历史与 OpenCode 的非空项目键并排序去重。
 pub async fn history_list_stats_projects(
     source: Option<String>,
     claude_config_dir: Option<String>,
@@ -1294,6 +1314,7 @@ pub async fn history_list_stats_projects(
 }
 
 #[tauri::command]
+// 按来源、项目和时间聚合历史及路由用量，复用分层缓存并补充数据质量信息。
 pub async fn history_get_stats(
     source: Option<String>,
     claude_config_dir: Option<String>,

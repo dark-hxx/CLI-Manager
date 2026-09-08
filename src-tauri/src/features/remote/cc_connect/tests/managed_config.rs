@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证生成配置保留零值及最大单轮时间边界。
 fn managed_config_preserves_supported_turn_time_boundaries() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -19,6 +20,7 @@ fn managed_config_preserves_supported_turn_time_boundaries() {
 }
 
 #[test]
+// 验证托管配置限制危险命令、隔离平台密钥并提供受控切换。
 fn managed_config_is_safe() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -82,6 +84,7 @@ fn managed_config_is_safe() {
 }
 
 #[test]
+// 验证四种 Agent 的配置类型、安全模式及 Pi RPC 映射。
 fn managed_agent_config_maps_all_supported_handoff_agents() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -117,6 +120,7 @@ fn managed_agent_config_maps_all_supported_handoff_agents() {
 }
 
 #[test]
+// 验证 Claude 快照使用结构化参数且环境保持占位符。
 fn managed_claude_snapshot_uses_structured_cmd_without_persisting_project_secrets() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -162,6 +166,7 @@ fn managed_claude_snapshot_uses_structured_cmd_without_persisting_project_secret
 }
 
 #[test]
+// 验证 Pi 项目环境分离进程秘密并屏蔽保留变量，Claude 不使用该路径。
 fn pi_and_opencode_project_environment_uses_process_placeholders() {
     let project_dir = tempfile::tempdir().unwrap();
     let mut project = sample_registered_project("pi-project", "Pi", project_dir.path());
@@ -192,6 +197,7 @@ fn pi_and_opencode_project_environment_uses_process_placeholders() {
 }
 
 #[test]
+// 仅在显式测试变量提供程序时验证实际 cc-connect 格式化兼容性。
 fn managed_config_matches_installed_cc_connect_when_requested() {
     let Ok(binary) = std::env::var("CLI_MANAGER_TEST_CC_CONNECT") else {
         return;

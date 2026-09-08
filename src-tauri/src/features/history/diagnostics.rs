@@ -4,6 +4,7 @@ use super::{
 };
 use log::{debug, warn};
 
+// 累计消息正文、工具摘要及文件变更文本的字节数，不计结构开销。
 pub(super) fn estimate_history_detail_content_bytes(detail: &HistorySessionDetail) -> usize {
     let message_bytes: usize = detail
         .messages
@@ -31,6 +32,7 @@ pub(super) fn estimate_history_detail_content_bytes(detail: &HistorySessionDetai
     message_bytes + tool_bytes + file_change_bytes
 }
 
+// 累计详情中各文件包含的变更操作数量。
 pub(super) fn history_detail_operation_count(detail: &HistorySessionDetail) -> usize {
     detail
         .file_changes
@@ -39,6 +41,7 @@ pub(super) fn history_detail_operation_count(detail: &HistorySessionDetail) -> u
         .sum()
 }
 
+// 按内容大小或消息数阈值选择日志级别，记录详情规模与耗时。
 pub(super) fn log_history_detail_oom_diagnostic(
     phase: &str,
     detail: &HistorySessionDetail,
@@ -79,10 +82,12 @@ pub(super) fn log_history_detail_oom_diagnostic(
     }
 }
 
+// 序列化统计响应估算传输字节数，序列化失败返回零。
 pub(super) fn estimate_history_stats_response_bytes(response: &HistoryStatsResponse) -> usize {
     serde_json::to_vec(response).map_or(0, |value| value.len())
 }
 
+// 累计热力图与小时桶持有的会话引用数量，保留重复引用。
 pub(super) fn stats_session_ref_count(response: &HistoryStatsResponse) -> usize {
     response
         .heatmap
@@ -96,6 +101,7 @@ pub(super) fn stats_session_ref_count(response: &HistoryStatsResponse) -> usize 
             .sum::<usize>()
 }
 
+// 按响应序列化大小选择日志级别，记录统计规模与耗时。
 pub(super) fn log_history_stats_oom_diagnostic(
     phase: &str,
     response: &HistoryStatsResponse,

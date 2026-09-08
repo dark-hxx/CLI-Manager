@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+// 惰性安装当前平台的默认密钥库，成功或失败结果都会缓存，后续调用不重新尝试初始化。
 fn initialize_store() -> Result<(), String> {
     static STORE_INIT: OnceLock<Result<(), String>> = OnceLock::new();
     STORE_INIT
@@ -21,6 +22,7 @@ fn initialize_store() -> Result<(), String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+// 在 CLI-Manager 服务名下创建账户条目句柄，Linux 额外指定 target；本身不读取密码。
 pub(crate) fn entry(account: &str) -> Result<keyring_core::Entry, String> {
     initialize_store()?;
     #[cfg(target_os = "linux")]
@@ -34,6 +36,7 @@ pub(crate) fn entry(account: &str) -> Result<keyring_core::Entry, String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+// 将值保存到系统密钥库对应账户，初始化或写入失败均向调用方返回上下文错误。
 pub(crate) fn set(account: &str, value: &str) -> Result<(), String> {
     entry(account)?
         .set_password(value)
@@ -41,6 +44,7 @@ pub(crate) fn set(account: &str, value: &str) -> Result<(), String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+// 读取账户密码，仅条目不存在映射为 None；权限、服务及其他读取错误不伪装成缺失。
 pub(crate) fn get(account: &str) -> Result<Option<String>, String> {
     match entry(account)?.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -50,6 +54,7 @@ pub(crate) fn get(account: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+// 删除指定账户凭据，已不存在视为成功，其余失败保留为错误。
 pub(crate) fn delete(account: &str) -> Result<(), String> {
     match entry(account)?.delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),

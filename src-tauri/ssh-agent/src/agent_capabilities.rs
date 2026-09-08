@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 const PROBE_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_PROBE_OUTPUT_BYTES: usize = 256 * 1024;
 
+// 限制 SSH 环境、会话标识长度/控制字符以及绝对目录路径形态；不在此验证会话所有权或路径存在性。
 fn validate_request(request: &InspectRequest) -> Result<(), &'static str> {
     if request.environment != EnvironmentKind::Ssh {
         return Err("agent_capability_environment_invalid");
@@ -40,6 +41,7 @@ fn validate_request(request: &InspectRequest) -> Result<(), &'static str> {
     Ok(())
 }
 
+// 要求 HOME 为可规范化的绝对目录，缺失、解析失败或不是目录统一返回不可用代码。
 fn home_dir() -> Result<PathBuf, &'static str> {
     env::var_os("HOME")
         .map(PathBuf::from)
@@ -49,6 +51,7 @@ fn home_dir() -> Result<PathBuf, &'static str> {
         .ok_or("agent_capability_home_unavailable")
 }
 
+// 校验请求并规范化 HOME/cwd/可选配置根，用这些目录收集配置；快照仍携带原请求而非替换其路径。
 fn inspect(request: InspectRequest) -> Result<AgentCapabilitySnapshot, &'static str> {
     validate_request(&request)?;
     let home = home_dir()?;
@@ -73,6 +76,7 @@ fn inspect(request: InspectRequest) -> Result<AgentCapabilitySnapshot, &'static 
     Ok(assemble_snapshot(request, collect_local_bundle(&layout)))
 }
 
+// 为支持探测的 Agent 返回固定 MCP 列表参数；Pi 不提供命令，Codex/Grok 请求 JSON 输出。
 fn probe_args(agent: AgentKind) -> Option<&'static [&'static str]> {
     match agent {
         AgentKind::Claude => Some(&["mcp", "list"]),
@@ -82,6 +86,7 @@ fn probe_args(agent: AgentKind) -> Option<&'static [&'static str]> {
     }
 }
 
+// 持续排空输入但只保留上限内的前缀，记录是否截断；读取错误与 EOF 都终止且不另行返回错误。
 fn read_bounded(mut reader: impl Read, limit: usize) -> (Vec<u8>, bool) {
     let mut retained = Vec::with_capacity(limit.min(8 * 1024));
     let mut truncated = false;
@@ -99,6 +104,8 @@ fn read_bounded(mut reader: impl Read, limit: usize) -> (Vec<u8>, bool) {
     (retained, truncated)
 }
 
+// 在请求 cwd 执行固定探测命令，禁用 stdin/stderr，只为 Claude/Codex 覆盖配置根环境变量。
+// 轮询子进程并在 15 秒后尝试终止回收；stdout 读取线程的 join 没有独立超时，不能保证总耗时有界。
 fn run_probe(request: &InspectRequest) -> Result<(bool, Vec<u8>), &'static str> {
     let Some(args) = probe_args(request.agent) else {
         return Ok((true, Vec::new()));
@@ -165,6 +172,7 @@ fn run_probe(request: &InspectRequest) -> Result<(bool, Vec<u8>), &'static str> 
     Ok((status.success(), output))
 }
 
+// 先生成静态发现快照；显式探测且非 Pi 时合并命令输出，探测失败仅追加警告，静态发现失败仍返回错误。
 pub fn execute(
     request: InspectRequest,
     probe: bool,
@@ -185,6 +193,7 @@ pub fn execute(
     Ok(snapshot)
 }
 
+// 从空发现集合构造快照并追加调用方给定的错误诊断，不执行文件读取或探测。
 pub fn invalid_snapshot(request: InspectRequest, code: &str) -> AgentCapabilitySnapshot {
     let mut snapshot = assemble_snapshot(request, DiscoveryBundle::default());
     snapshot.diagnostics.push(CapabilityDiagnostic {
@@ -199,6 +208,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证远端诊断入口拒绝 Local 环境请求，而不是在本机代做 SSH 诊断。
     fn remote_inspection_rejects_local_environment() {
         let request = InspectRequest {
             terminal_session_id: "tab".into(),
@@ -218,6 +228,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超限读取仅保留指定长度的前缀并标记截断。
     fn bounded_probe_reader_discards_bytes_over_the_limit() {
         let input = vec![b'x'; 64];
         let (retained, truncated) = read_bounded(input.as_slice(), 16);

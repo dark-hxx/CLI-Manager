@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-resource-diagnostics-log-"));
+// 退出时清理诊断日志测试的临时目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 writeFileSync(join(tempDir, "tauriCore.mjs"), `
@@ -33,6 +34,7 @@ writeFileSync(modulePath, transpiled, "utf8");
 const { writeResourceDiagnostic } = await import(pathToFileURL(modulePath).href);
 const tauriCoreStub = await import(pathToFileURL(join(tempDir, "tauriCore.mjs")).href);
 
+// 验证资源诊断使用专用结构化 IPC 参数。
 test("resource diagnostics use the dedicated structured IPC", () => {
   tauriCoreStub.calls.length = 0;
   writeResourceDiagnostic("info", "webview", "runtimeSnapshot", { sessions: 2 });
@@ -50,6 +52,7 @@ test("resource diagnostics use the dedicated structured IPC", () => {
   }]);
 });
 
+// 验证非 Tauri 环境不发送诊断 IPC。
 test("resource diagnostics skip IPC outside Tauri", () => {
   tauriCoreStub.calls.length = 0;
   tauriCoreStub.setTauri(false);

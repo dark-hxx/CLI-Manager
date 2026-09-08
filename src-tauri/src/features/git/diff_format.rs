@@ -1,5 +1,6 @@
 use super::BoundedPatch;
 
+// 打印 libgit2 Patch 并补正文前缀，无效 UTF-8 行内容置空，允许空结果。
 pub(in crate::commands) fn format_diff_to_text_allow_empty(
     diff: &git2::Diff,
 ) -> Result<String, String> {
@@ -20,6 +21,7 @@ pub(in crate::commands) fn format_diff_to_text_allow_empty(
     Ok(patch_text)
 }
 
+// 按字节限额打印 Patch，遇二进制或超限清空文本并记录截断状态。
 pub(super) fn format_diff_to_bounded_text(
     diff: &git2::Diff,
     max_bytes: usize,
@@ -67,6 +69,7 @@ pub(super) fn format_diff_to_bounded_text(
 /// 校验前端传入的 repo 相对路径（前端不可信，防越界）。
 ///
 /// 纯函数，便于单测。返回稳定错误字符串供前端分支。
+// 拒绝空路径、任意双点子串和绝对路径前缀。
 pub(in crate::commands) fn validate_repo_relative_path(p: &str) -> Result<(), String> {
     if p.is_empty() {
         return Err("empty_path".into());

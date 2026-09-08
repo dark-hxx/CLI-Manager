@@ -5,6 +5,7 @@ use tempfile::tempdir;
 use super::{build_page_url, open_root_dir, resolve_request_path, validate_start_request};
 
 #[test]
+// 验证临时 Unicode HTML 入口及含空格路径的 URL 编码。
 fn validates_html_entry_and_encodes_unicode_url() {
     let temp = tempdir().unwrap();
     let relative = "页面 files/首页.html";
@@ -20,6 +21,7 @@ fn validates_html_entry_and_encodes_unicode_url() {
 }
 
 #[test]
+// 验证入口拒绝父级、当前段、反斜杠、非 HTML 及缺失文件。
 fn rejects_invalid_entry_paths() {
     let temp = tempdir().unwrap();
     fs::write(temp.path().join("index.html"), "ok").unwrap();
@@ -33,6 +35,7 @@ fn rejects_invalid_entry_paths() {
 }
 
 #[test]
+// 验证根及目录 URL 补 index.html，编码后的父级跳转被拒绝。
 fn resolves_index_and_rejects_encoded_traversal() {
     let temp = tempdir().unwrap();
     let root = temp.path().canonicalize().unwrap();
@@ -56,6 +59,7 @@ fn resolves_index_and_rejects_encoded_traversal() {
 
 #[cfg(unix)]
 #[test]
+// 验证 Unix 目录能力句柄拒绝通过符号链接读取根外临时文件。
 fn capability_root_rejects_symlink_escape() {
     use std::os::unix::fs::symlink;
 
@@ -73,6 +77,7 @@ fn capability_root_rejects_symlink_escape() {
 }
 
 #[test]
+// 验证规范化临时根可打开能力句柄及根内文件。
 fn opens_canonical_root_capability() {
     let temp = tempdir().unwrap();
     fs::write(temp.path().join("index.html"), "ok").unwrap();
@@ -81,6 +86,7 @@ fn opens_canonical_root_capability() {
     assert!(directory.open("index.html").is_ok());
 }
 
+// 断言入口校验返回指定稳定错误码。
 fn assert_error(root: &str, relative: &str, expected: &str) {
     assert_eq!(
         validate_start_request(root, relative).unwrap_err(),

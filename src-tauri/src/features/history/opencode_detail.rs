@@ -4,6 +4,7 @@ use super::{
     HistorySessionSummary, HistorySessionUsage, OpenCodeParsedSession,
 };
 
+// 验证默认 OpenCode 数据库定位器并读取指定会话详情。
 pub(super) async fn build_opencode_session_detail(
     file_path: &str,
     summary: HistorySessionSummary,
@@ -20,6 +21,7 @@ pub(super) async fn build_opencode_session_detail(
     Ok(finalize_opencode_detail(parsed, summary))
 }
 
+// 组合 OpenCode 解析结果与摘要定位字段，生成统一会话详情。
 pub(super) fn finalize_opencode_detail(
     parsed: OpenCodeParsedSession,
     summary: HistorySessionSummary,

@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证 WSL find 输出可解析路径、项目、大小及毫秒时间。
 fn parse_wsl_find_session_file_line_extracts_path_metadata_and_project() {
     let hit = parse_wsl_find_session_file_line(
         "/home/me/.claude/projects/proj/session.jsonl\t42\t1719234567.2500000000",
@@ -19,6 +20,7 @@ fn parse_wsl_find_session_file_line_extracts_path_metadata_and_project() {
 }
 
 #[test]
+// 验证 Windows 项目路径匹配 WSL 编码的 Claude 项目键。
 fn session_matches_project_path_matches_wsl_encoded_claude_key() {
     // CLI-Manager 项目为 Windows 路径，claude 在 WSL 内按 /mnt/d 编码出此目录名（现场真实值）
     let file_ref = SessionFileRef {
@@ -31,6 +33,7 @@ fn session_matches_project_path_matches_wsl_encoded_claude_key() {
 }
 
 #[test]
+// 验证不同项目的 Claude 编码键不会匹配。
 fn session_matches_project_path_rejects_unrelated_claude_key() {
     let file_ref = SessionFileRef {
         source: "claude".to_string(),
@@ -42,6 +45,7 @@ fn session_matches_project_path_rejects_unrelated_claude_key() {
 }
 
 #[test]
+// 验证范围内已索引 JSONL 会话可解析为规范路径。
 fn resolve_session_file_ref_accepts_indexed_jsonl() {
     let temp_dir = TempDir::new().unwrap();
     let base = temp_dir.path().join("history");
@@ -67,6 +71,7 @@ fn resolve_session_file_ref_accepts_indexed_jsonl() {
 }
 
 #[test]
+// 验证 Codex 项目键可由 cwd 校正，并拒绝错误项目。
 fn resolve_session_file_ref_reconciles_codex_project_key_from_cwd() {
     let temp_dir = TempDir::new().unwrap();
     let base = temp_dir.path().join("sessions");
@@ -104,6 +109,7 @@ fn resolve_session_file_ref_reconciles_codex_project_key_from_cwd() {
 }
 
 #[test]
+// 验证非 JSONL 文件被会话路径校验拒绝。
 fn resolve_session_file_ref_rejects_non_jsonl() {
     let temp_dir = TempDir::new().unwrap();
     let base = temp_dir.path().join("history");
@@ -122,6 +128,7 @@ fn resolve_session_file_ref_rejects_non_jsonl() {
 }
 
 #[test]
+// 验证历史根目录外的会话文件被拒绝。
 fn resolve_session_file_ref_rejects_path_outside_history_scope() {
     let temp_dir = TempDir::new().unwrap();
     let base = temp_dir.path().join("history");
@@ -141,6 +148,7 @@ fn resolve_session_file_ref_rejects_path_outside_history_scope() {
 }
 
 #[test]
+// 验证 wsl.localhost 与 wsl$ 前缀的等价范围匹配。
 fn path_within_history_scope_accepts_equivalent_wsl_unc_prefixes() {
     let requested = PathBuf::from(
         r"\\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl",
@@ -151,6 +159,7 @@ fn path_within_history_scope_accepts_equivalent_wsl_unc_prefixes() {
 }
 
 #[test]
+// 验证扩展 UNC 格式下两种 WSL 前缀仍等价。
 fn path_within_history_scope_accepts_verbatim_wsl_unc_prefixes() {
     let requested = PathBuf::from(
         r"\\?\UNC\wsl.localhost\Ubuntu\home\silver\.codex\sessions\2026\06\29\rollout.jsonl",
@@ -161,6 +170,7 @@ fn path_within_history_scope_accepts_verbatim_wsl_unc_prefixes() {
 }
 
 #[test]
+// 验证 WSL UNC 转换为 Linux 运行路径，而本机路径保持原样。
 fn codex_runtime_path_uses_linux_path_for_wsl_unc() {
     let standard = PathBuf::from(
         r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\rollout.jsonl",
@@ -182,6 +192,7 @@ fn codex_runtime_path_uses_linux_path_for_wsl_unc() {
 }
 
 #[test]
+// 验证 WSL 状态数据库禁用注册，本机数据库允许注册。
 fn codex_state_registration_is_disabled_for_wsl_database() {
     let wsl_db =
         PathBuf::from(r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\state_5.sqlite");
@@ -192,6 +203,7 @@ fn codex_state_registration_is_disabled_for_wsl_database() {
 }
 
 #[test]
+// 验证 WSL 路径不能通过同级目录越出历史范围。
 fn path_within_history_scope_rejects_wsl_paths_outside_base() {
     let requested = PathBuf::from(r"\\wsl.localhost\Ubuntu\home\silver\.codex\other\rollout.jsonl");
     let history_base = PathBuf::from(r"\\wsl$\Ubuntu\home\silver\.codex\sessions");
@@ -200,6 +212,7 @@ fn path_within_history_scope_rejects_wsl_paths_outside_base() {
 }
 
 #[test]
+// 验证索引条目的来源或项目不符时拒绝会话解析。
 fn resolve_session_file_ref_rejects_source_or_project_mismatch() {
     let temp_dir = TempDir::new().unwrap();
     let base = temp_dir.path().join("history");

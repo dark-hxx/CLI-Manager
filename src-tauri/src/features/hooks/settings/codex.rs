@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
+// 重建 Codex 托管事件，开启 hooks 特性、清理旧脚本并写回 JSON。
 pub(super) fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     let exe = hook_exe_for_dir(codex_dir)?;
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
@@ -38,6 +39,7 @@ pub(super) fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     write_json(&hooks_path, &settings)
 }
 
+// 安装所选 Codex 命令模块或单独开启 hooks 特性。
 pub(super) fn install_codex_hook_module(
     codex_dir: &Path,
     module: CodexHookModule,
@@ -54,6 +56,7 @@ pub(super) fn install_codex_hook_module(
     write_json(&hooks_path, &settings)
 }
 
+// 读取 Codex TOML 并将 hooks 特性设置为启用。
 pub(super) fn ensure_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
     let content = read_text_if_exists(&config_path)?.unwrap_or_default();
@@ -61,6 +64,7 @@ pub(super) fn ensure_codex_hooks_feature(codex_dir: &Path) -> Result<(), String>
     write_text(&config_path, &next_content)
 }
 
+// 逐行更新 features.hooks；启用可补项补表，禁用不凭空创建。
 pub(super) fn set_toml_feature_hooks_enabled(content: &str, enabled: bool) -> String {
     let mut lines: Vec<String> = content.lines().map(ToString::to_string).collect();
     let mut features_header_index = None;
@@ -113,6 +117,7 @@ pub(super) fn set_toml_feature_hooks_enabled(content: &str, enabled: bool) -> St
     format!("{}\n", lines.join("\n"))
 }
 
+// 合并启用标记及托管信任块，新 features 表插在首个已有表之前。
 pub(super) fn merge_codex_common_config_toml(
     existing: Option<&str>,
     hook_state_blocks: &[Vec<String>],
@@ -182,15 +187,18 @@ pub(super) fn merge_codex_common_config_toml(
     format!("{}\n", lines.join("\n"))
 }
 
+// 查找首个满足文本表头形状的行索引。
 pub(super) fn first_toml_table_header_index(lines: &[String]) -> Option<usize> {
     lines.iter().position(|line| is_toml_table_header(line))
 }
 
+// 按裁剪后首尾方括号判断表头形状，不解析完整 TOML。
 pub(super) fn is_toml_table_header(line: &str) -> bool {
     let trimmed = line.trim();
     trimmed.starts_with('[') && trimmed.ends_with(']')
 }
 
+// 移除旧标记块及同键信任块，再在选定位置插入新托管块。
 pub(super) fn merge_codex_common_config_hook_state_blocks(
     lines: &mut Vec<String>,
     hook_state_blocks: &[Vec<String>],
@@ -226,6 +234,7 @@ pub(super) fn merge_codex_common_config_hook_state_blocks(
     trim_empty_lines(lines);
 }
 
+// 选择 features 表之后、下个表之前的位置插入信任块。
 pub(super) fn codex_hook_state_insert_index(lines: &[String]) -> usize {
     let Some(features_index) = lines.iter().position(|line| line.trim() == "[features]") else {
         return first_toml_table_header_index(lines).unwrap_or(lines.len());
@@ -238,6 +247,7 @@ pub(super) fn codex_hook_state_insert_index(lines: &[String]) -> usize {
     lines.len()
 }
 
+// 删除紧随托管标记的信任表及其后直到下个表头的内容。
 pub(super) fn remove_marker_owned_codex_hook_state_blocks(lines: &mut Vec<String>) {
     let mut next = Vec::new();
     let mut index = 0;
@@ -260,6 +270,7 @@ pub(super) fn remove_marker_owned_codex_hook_state_blocks(lines: &mut Vec<String
     *lines = next;
 }
 
+// 按解析后的信任键删除指定表块及相邻前置托管标记。
 pub(super) fn remove_codex_hook_state_blocks(lines: &mut Vec<String>, hook_state_keys: &[String]) {
     if hook_state_keys.is_empty() {
         return;
@@ -289,6 +300,7 @@ pub(super) fn remove_codex_hook_state_blocks(lines: &mut Vec<String>, hook_state
     *lines = next;
 }
 
+// 原地移除首尾空白行，不改变中间行。
 pub(super) fn trim_empty_lines(lines: &mut Vec<String>) {
     while lines.first().is_some_and(|line| line.trim().is_empty()) {
         lines.remove(0);
@@ -298,6 +310,7 @@ pub(super) fn trim_empty_lines(lines: &mut Vec<String>) {
     }
 }
 
+// 按当前 hooks 文件路径、事件名和数组位置生成托管命令信任键。
 pub(super) fn codex_cli_manager_hook_state_keys(
     settings: &Value,
     hooks_path: &Path,
@@ -330,6 +343,7 @@ pub(super) fn codex_cli_manager_hook_state_keys(
     keys
 }
 
+// 将受支持的 Codex 原生事件映射为信任状态使用的蛇形名称。
 pub(super) fn codex_hook_state_event_name(event: &str) -> Option<&'static str> {
     match event {
         "PermissionRequest" => Some("permission_request"),
@@ -344,6 +358,7 @@ pub(super) fn codex_hook_state_event_name(event: &str) -> Option<&'static str> {
     }
 }
 
+// 检查至少一条托管 Hook 存在，且其信任状态未禁用、哈希均匹配。
 pub(super) fn codex_cli_manager_hooks_trusted(
     settings: &Value,
     hooks_path: &Path,
@@ -401,6 +416,7 @@ pub(super) fn codex_cli_manager_hooks_trusted(
     Ok(found)
 }
 
+// 规范化命令默认值及参与匹配的字段，计算带前缀的 SHA-256 信任哈希。
 pub(super) fn codex_hook_trusted_hash(
     event: &str,
     group: &Value,
@@ -453,6 +469,7 @@ pub(super) fn codex_hook_trusted_hash(
     Ok(format!("sha256:{:x}", Sha256::digest(canonical)))
 }
 
+// 借助 TOML 解析取得单个信任表的实际键值，兼容不同引号形式。
 pub(super) fn toml_hooks_state_key(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if !trimmed.starts_with("[hooks.state.") || !is_toml_table_header(trimmed) {
@@ -467,6 +484,7 @@ pub(super) fn toml_hooks_state_key(line: &str) -> Option<String> {
         .flatten()
 }
 
+// 只对指定托管键保留最后一个信任表块，无重复时不生成新文本。
 pub(super) fn deduplicate_codex_hook_state_blocks(
     config: &str,
     expected_keys: &[String],
@@ -517,10 +535,12 @@ pub(super) fn deduplicate_codex_hook_state_blocks(
     Some(format!("{}\n", next_lines.join("\n")))
 }
 
+// 转义 TOML 基本字符串中的反斜杠与双引号。
 pub(super) fn toml_escape_basic_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
+// 去除行尾注释并读取精确 true 或 false 字面量。
 pub(super) fn toml_bool_value(value: &str) -> Option<bool> {
     match value.split('#').next().unwrap_or("").trim() {
         "true" => Some(true),
@@ -529,6 +549,7 @@ pub(super) fn toml_bool_value(value: &str) -> Option<bool> {
     }
 }
 
+// 按行检查 features 表中的 hooks 赋值是否精确为 true。
 pub(super) fn codex_hooks_feature_installed(config_path: &Path) -> Result<bool, String> {
     let Some(content) = read_text_if_exists(config_path)? else {
         return Ok(false);
@@ -551,6 +572,7 @@ pub(super) fn codex_hooks_feature_installed(config_path: &Path) -> Result<bool, 
     Ok(false)
 }
 
+// 清理旧脚本并移除托管 Codex 命令，保留特性开关和其他 JSON 内容。
 pub(super) fn uninstall_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     cleanup_legacy_scripts(&codex_dir.join("hooks"), &CODEX_LEGACY_SCRIPTS);
 
@@ -574,6 +596,7 @@ pub(super) fn uninstall_codex_hooks(codex_dir: &Path) -> Result<(), String> {
     write_json(&hooks_path, &settings)
 }
 
+// 移除指定 Codex 命令模块，或单独关闭 hooks 特性。
 pub(super) fn uninstall_codex_hook_module(
     codex_dir: &Path,
     module: CodexHookModule,
@@ -589,6 +612,7 @@ pub(super) fn uninstall_codex_hook_module(
     write_json(&hooks_path, &settings)
 }
 
+// 读取 Codex 配置并写回关闭 hooks 特性的结果。
 pub(super) fn disable_codex_hooks_feature(codex_dir: &Path) -> Result<(), String> {
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
     let content = read_text_if_exists(&config_path)?.unwrap_or_default();

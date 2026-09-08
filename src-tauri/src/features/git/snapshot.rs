@@ -6,6 +6,7 @@ use super::{
 };
 use git2::{DiffOptions, Repository};
 
+// 相对 HEAD 生成含未跟踪文件的受限工作区 Patch，遇超限或二进制标记截断。
 pub(super) fn build_worktree_patch(repo: &Repository) -> Result<BoundedPatch, String> {
     let head_tree = repo
         .head()
@@ -27,6 +28,7 @@ pub(super) fn build_worktree_patch(repo: &Repository) -> Result<BoundedPatch, St
     format_diff_to_bounded_text(&diff, MAX_WORKTREE_PATCH_BYTES)
 }
 
+// 组合 HEAD、分支、文件状态及受限 Patch，任一变化或截断均标为脏工作区。
 pub(super) fn build_worktree_snapshot(
     project_path: &str,
     repo: &Repository,
@@ -45,6 +47,7 @@ pub(super) fn build_worktree_snapshot(
     })
 }
 
+// 超过 WebView 返回阈值时释放 Patch 文本并标为截断，保留已有字节统计。
 pub(super) fn truncate_snapshot_patch_for_webview(snapshot: &mut GitWorktreeSnapshot) {
     if snapshot.patch.len() <= OOM_SNAPSHOT_PATCH_RETURN_MAX_BYTES {
         return;
@@ -54,6 +57,7 @@ pub(super) fn truncate_snapshot_patch_for_webview(snapshot: &mut GitWorktreeSnap
     snapshot.patch_truncated = true;
 }
 
+// 状态条目超过阈值时跳过昂贵的 Diff 行数统计。
 pub(super) fn should_skip_diff_line_stats(status_count: usize) -> bool {
     status_count > GIT_DIFF_LINE_STATS_STATUS_LIMIT
 }
@@ -65,6 +69,7 @@ pub(super) fn should_skip_diff_line_stats(status_count: usize) -> bool {
 ///
 /// # Returns
 /// 路径（正斜杠归一化）→ (新增行数, 删除行数)
+// 一次遍历仓库 Diff 累加增删行，行回调超限时清空统计，其他遍历失败可保留部分值。
 pub(super) fn compute_diff_line_stats(
     repo: &Repository,
 ) -> std::collections::HashMap<String, (i32, i32)> {
@@ -137,6 +142,7 @@ pub(super) fn compute_diff_line_stats(
     map
 }
 
+// 通过 WSL Git 获取相对 HEAD 的 numstat 输出并解析路径行数。
 pub(super) fn compute_wsl_diff_line_stats(
     distro: &str,
     linux_path: &str,
@@ -156,6 +162,7 @@ pub(super) fn compute_wsl_diff_line_stats(
     Ok(stats)
 }
 
+// 解析 NUL 分隔的新增、删除及路径记录，跳过缺字段或无效计数。
 pub(super) fn parse_wsl_numstat(stdout: &[u8]) -> std::collections::HashMap<String, (i32, i32)> {
     use std::collections::HashMap;
 
@@ -183,6 +190,7 @@ pub(super) fn parse_wsl_numstat(stdout: &[u8]) -> std::collections::HashMap<Stri
     map
 }
 
+// 将二进制占位符映射为零，其余解析为有符号行数。
 pub(super) fn parse_numstat_count(value: &str) -> Option<i32> {
     if value == "-" {
         return Some(0);

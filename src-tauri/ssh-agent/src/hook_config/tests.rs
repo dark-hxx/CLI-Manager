@@ -16,6 +16,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
 
+// 按给定启动器路径构造固定安装身份记录，不读取真实 Agent 安装状态。
 fn installation_record_for_test(path: &std::path::Path) -> InstallationRecord {
     InstallationRecord {
         schema_version: 1,
@@ -35,6 +36,7 @@ fn installation_record_for_test(path: &std::path::Path) -> InstallationRecord {
 }
 
 #[test]
+// 验证 Kimi 默认根目录、九项事件数量及带精确 owner token 的 PermissionResult 命令。
 fn kimi_source_uses_native_root_and_exact_owner_token() {
     let installation = installation_record_for_test(std::path::Path::new(
         "/opt/cli-manager/cli-manager-ssh-agent",
@@ -49,6 +51,7 @@ fn kimi_source_uses_native_root_and_exact_owner_token() {
 
 #[cfg(unix)]
 #[test]
+// 在临时 Kimi 配置中验证单文件计划、第三方内容保留和九项托管命令，且不生成历史源候选。
 fn kimi_plan_uses_single_config_role_and_omits_history_candidate() {
     let temp = tempfile::tempdir().unwrap();
     let root_path = temp.path().join(".kimi-code");
@@ -86,6 +89,7 @@ fn kimi_plan_uses_single_config_role_and_omits_history_candidate() {
 }
 
 #[test]
+// 验证 Grok 默认根目录、十一项事件数量及 PermissionRequest 的托管命令格式。
 fn grok_source_uses_native_root_and_permission_request_command() {
     let installation = installation_record_for_test(std::path::Path::new(
         "/opt/cli-manager/cli-manager-ssh-agent",
@@ -98,6 +102,7 @@ fn grok_source_uses_native_root_and_permission_request_command() {
     );
 }
 
+// 把内存 TOML 文本包装为 grokCompat 文件状态并解析，非法测试夹具直接失败。
 fn grok_compat_doc(text: &str) -> toml_edit::DocumentMut {
     parse_toml(&FileState {
         role: "grokCompat",
@@ -111,6 +116,7 @@ fn grok_compat_doc(text: &str) -> toml_edit::DocumentMut {
 }
 
 #[test]
+// 验证嵌套表及点号写法均可识别兼容 Hook 隔离，两项 Hook 均禁用才视为隔离。
 fn grok_compat_isolated_reads_nested_and_dotted_tables() {
     assert!(!grok_compat_isolated(&grok_compat_doc(
         "[compat.claude]\nskills = true\n"
@@ -130,6 +136,7 @@ fn grok_compat_isolated_reads_nested_and_dotted_tables() {
 }
 
 #[test]
+// 验证隔离安装标记自身改动，卸载恢复原值且保留用户已禁用项、注释和 skills 配置。
 fn grok_compat_uninstall_restores_owned_values_and_preserves_user_values() {
     let mut document = grok_compat_doc(
         "# keep\n[compat.claude]\nhooks = true # claude user comment\nskills = true\n[compat.cursor]\nhooks = false # cursor user choice\n",
@@ -151,6 +158,7 @@ fn grok_compat_uninstall_restores_owned_values_and_preserves_user_values() {
 }
 
 #[test]
+// 从无 compat 的文档安装后卸载，验证新建表被移除而原有其他表与注释保留。
 fn grok_compat_uninstall_removes_only_agent_created_tables() {
     let mut document = grok_compat_doc("# keep\n[other]\nvalue = true\n");
 
@@ -167,6 +175,7 @@ fn grok_compat_uninstall_removes_only_agent_created_tables() {
 }
 
 #[test]
+// 验证其他安装 ID 不能撤销隔离，并保留用户随后重设的值、恢复仍属本安装的值。
 fn grok_compat_uninstall_respects_other_installations_and_user_changes() {
     let mut document =
         grok_compat_doc("[compat.claude]\nhooks = true\n[compat.cursor]\nhooks = true\n");
@@ -183,6 +192,7 @@ fn grok_compat_uninstall_respects_other_installations_and_user_changes() {
 }
 
 #[test]
+// 验证用户自行隔离且无托管标记的配置经过安装和卸载后文本不变。
 fn grok_compat_already_isolated_without_marker_remains_unchanged() {
     let original = "[compat.claude]\nhooks = false # user\n[compat.cursor]\nhooks = false # user\n";
     let mut document = grok_compat_doc(original);
@@ -194,6 +204,7 @@ fn grok_compat_already_isolated_without_marker_remains_unchanged() {
 }
 
 #[test]
+// 验证缺少完整恢复信息的标记不会授权卸载修改配置。
 fn grok_compat_uninstall_ignores_incomplete_markers() {
     let original =
         "[compat.claude]\nhooks = false # cli-manager-ssh-agent installation=installation-1\n";
@@ -205,6 +216,7 @@ fn grok_compat_uninstall_ignores_incomplete_markers() {
 }
 
 #[test]
+// 验证两种点号配置可安装隔离并恢复原布尔值，卸载后不残留托管标记。
 fn grok_compat_install_and_uninstall_preserve_supported_dotted_forms() {
     for original in [
         "compat.claude.hooks = true\ncompat.cursor.hooks = true\n",
@@ -224,6 +236,8 @@ fn grok_compat_install_and_uninstall_preserve_supported_dotted_forms() {
 
 #[cfg(unix)]
 #[test]
+// 在临时 Grok 根目录验证 JSON Hook 与 TOML 隔离两项计划、用户内容保留及无历史源候选。
+// 将候选 TOML 写入测试目录再规划卸载，验证原兼容开关可恢复。
 fn grok_plan_writes_hooks_json_and_compat_and_omits_history_candidate() {
     let temp = tempfile::tempdir().unwrap();
     let root_path = temp.path().join(".grok");
@@ -301,6 +315,7 @@ fn grok_plan_writes_hooks_json_and_compat_and_omits_history_candidate() {
 
 #[cfg(unix)]
 #[test]
+// 用退出失败的临时 Kimi 脚本验证候选检查报错、原配置不变且候选临时文件被清理。
 fn kimi_candidate_failure_leaves_live_config_untouched() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -324,6 +339,7 @@ fn kimi_candidate_failure_leaves_live_config_untouched() {
 
 #[cfg(unix)]
 #[test]
+// 用两个临时脚本模拟 doctor 成功与失败，验证当前 Kimi 能力判定，不调用真实 CLI。
 fn kimi_capability_rejects_legacy_cli_and_accepts_current_cli() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -340,6 +356,7 @@ fn kimi_capability_rejects_legacy_cli_and_accepts_current_cli() {
 }
 
 #[test]
+// 验证 Claude 托管命令添加后可按精确命令移除，同时保留第三方 Stop Hook 与权限配置。
 fn exact_owner_merge_preserves_third_party_entries() {
     let mut value = json!({
         "permissions": { "allow": ["Read"] },
@@ -374,6 +391,7 @@ fn exact_owner_merge_preserves_third_party_entries() {
 }
 
 #[test]
+// 验证恢复标记仅能被相同安装 ID 解析，其他安装 ID 不获得归属信息。
 fn marker_only_matches_same_installation() {
     let marker = feature_marker("installation-1", "false", false);
     assert_eq!(
@@ -384,6 +402,7 @@ fn marker_only_matches_same_installation() {
 }
 
 #[test]
+// 验证 Codex 重复托管条目被识别为过期但非冲突，再安装可去重且卸载可全部清除。
 fn duplicate_exact_entries_are_outdated_but_removable() {
     let mut value = json!({});
     let expected = HashMap::from([
@@ -415,6 +434,7 @@ fn duplicate_exact_entries_are_outdated_but_removable() {
 }
 
 #[test]
+// 验证卸载恢复本安装开启前的 hooks=false，并保留用户原本开启的值和注释。
 fn codex_feature_uninstall_restores_only_owned_changes() {
     let mut disabled = "[features]\nhooks = false # keep this\n".parse().unwrap();
     install_codex_feature(&mut disabled, "installation-1").unwrap();
@@ -428,6 +448,7 @@ fn codex_feature_uninstall_restores_only_owned_changes() {
     assert!(user_enabled.to_string().contains("hooks = true # user"));
 }
 
+// 在给定测试根目录下构造 HOME、数据、状态和运行时布局，不修改进程环境。
 fn test_layout(root: &std::path::Path) -> AgentLayout {
     let state_dir = root.join("state");
     AgentLayout {
@@ -440,6 +461,7 @@ fn test_layout(root: &std::path::Path) -> AgentLayout {
 }
 
 #[cfg(unix)]
+// 向测试状态目录写入指定配置根与安装身份的 Hook 记录，仅 Claude/Codex 附历史源候选。
 fn write_hook_record(
     layout: &AgentLayout,
     source: Source,
@@ -472,6 +494,7 @@ fn write_hook_record(
     .unwrap();
 }
 
+// 对已存在测试文件创建前后字节计划，并记录其规范路径供事务校验。
 fn test_plan(path: &std::path::Path, before: &[u8], after: &[u8]) -> PlannedFile {
     PlannedFile {
         before: FileState {
@@ -488,6 +511,7 @@ fn test_plan(path: &std::path::Path, before: &[u8], after: &[u8]) -> PlannedFile
 }
 
 #[test]
+// 在规划后外部修改临时文件，验证事务拒绝覆盖并保留外部内容。
 fn transaction_rejects_external_change_without_overwrite() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("settings.json");
@@ -502,6 +526,7 @@ fn transaction_rejects_external_change_without_overwrite() {
 }
 
 #[test]
+// 使第二个计划的逻辑路径与规范路径不符，验证事务在写首个文件前就拒绝且两文件均未变。
 fn transaction_preflights_all_targets_before_first_write() {
     let temp = tempfile::tempdir().unwrap();
     let first = temp.path().join("first.json");
@@ -527,6 +552,7 @@ fn transaction_preflights_all_targets_before_first_write() {
 }
 
 #[test]
+// 构造中断事务日志，验证可安全恢复的文件被还原，外部冲突文件保留并返回恢复冲突错误。
 fn recovery_restores_safe_files_and_preserves_external_conflict() {
     let temp = tempfile::tempdir().unwrap();
     let layout = test_layout(temp.path());
@@ -581,6 +607,7 @@ fn recovery_restores_safe_files_and_preserves_external_conflict() {
 
 #[cfg(unix)]
 #[test]
+// 验证 Unix 配置符号链接解析到真实文件规范路径，而不是停留在逻辑配置路径。
 fn config_symlink_resolves_to_the_real_target() {
     use super::{resolve_config_file, ResolvedRoot};
     use std::fs;
@@ -604,6 +631,7 @@ fn config_symlink_resolves_to_the_real_target() {
 }
 
 #[test]
+// 验证检查器忽略未来事件的未知结构，且不会把第三方命令计为托管或修改输入。
 fn unrelated_hook_event_shapes_are_preserved() {
     let value = json!({
         "hooks": {
@@ -625,6 +653,7 @@ fn unrelated_hook_event_shapes_are_preserved() {
 
 #[cfg(unix)]
 #[test]
+// 在文件状态捕获后重定向 Unix 配置符号链接，验证目标复核返回根目录变化错误。
 fn config_symlink_target_change_is_rejected() {
     use super::{resolve_config_file, ResolvedRoot};
     use std::fs;
@@ -657,6 +686,7 @@ fn config_symlink_target_change_is_rejected() {
 
 #[cfg(unix)]
 #[test]
+// 在根目录解析后、文件规划前重定向符号链接，验证配置文件解析拒绝已变化的根。
 fn config_root_symlink_target_change_before_planning_is_rejected() {
     use super::{resolve_config_file, resolve_root};
     use std::os::unix::fs::symlink;
@@ -688,6 +718,7 @@ fn config_root_symlink_target_change_before_planning_is_rejected() {
 
 #[cfg(unix)]
 #[test]
+// 删除空的临时自定义配置根后，验证卸载解析可从 Hook 记录恢复旧规范路径并标记不存在。
 fn deleted_custom_root_can_be_recovered_for_record_cleanup() {
     use super::resolve_uninstall_root;
     use crate::layout::AgentLayout;
@@ -721,6 +752,7 @@ fn deleted_custom_root_can_be_recovered_for_record_cleanup() {
 
 #[cfg(unix)]
 #[test]
+// 验证重定向后默认卸载解析使用新根，而显式保留的已记录规范根仍指向旧配置文件。
 fn retained_uninstall_uses_recorded_root_after_symlink_retarget() {
     use super::{resolve_config_file, resolve_uninstall_root};
     use std::os::unix::fs::symlink;

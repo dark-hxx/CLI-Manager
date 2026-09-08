@@ -91,6 +91,7 @@ pub struct PowerlineConfig {
 }
 
 impl Default for PowerlineConfig {
+    // 构造默认关闭、使用箭头分隔符的 Powerline 配置。
     fn default() -> Self {
         Self {
             enabled: false,
@@ -141,6 +142,7 @@ pub struct StatuslineSettings {
 }
 
 impl Default for StatuslineSettings {
+    // 构造内置三行状态栏及默认布局、颜色和缓存设置。
     fn default() -> Self {
         Self {
             version: SETTINGS_VERSION,
@@ -198,25 +200,32 @@ pub struct PowerlineFontInstallResult {
     pub installed_count: usize,
 }
 
+// 返回当前状态栏设置模式版本。
 fn settings_version() -> u32 {
     SETTINGS_VERSION
 }
+// 返回默认弹性布局模式。
 fn default_flex_mode() -> String {
     "full-minus-40".to_string()
 }
+// 返回默认紧凑显示阈值。
 fn default_compact_threshold() -> u8 {
     60
 }
+// 返回默认 ANSI256 色彩级别。
 fn default_color_level() -> u8 {
     2
 }
+// 返回默认 Git 缓存秒数配置。
 fn default_git_cache_ttl() -> u8 {
     5
 }
+// 返回默认 Powerline 箭头分隔符列表。
 fn default_powerline_separators() -> Vec<String> {
     vec!["\u{e0b0}".to_string()]
 }
 
+// 构造指定身份、类型和前景色的基础组件配置。
 fn widget(id: &str, widget_type: &str, color: Option<&str>) -> WidgetItem {
     WidgetItem {
         id: id.to_string(),
@@ -239,6 +248,7 @@ fn widget(id: &str, widget_type: &str, color: Option<&str>) -> WidgetItem {
     }
 }
 
+// 构造模型、上下文及 Git 信息的默认行，另外两行留空。
 fn default_lines() -> Vec<Vec<WidgetItem>> {
     vec![
         vec![
@@ -255,12 +265,14 @@ fn default_lines() -> Vec<Vec<WidgetItem>> {
     ]
 }
 
+// 返回当前应用数据根内的状态栏设置路径。
 pub fn settings_path() -> Result<PathBuf, String> {
     Ok(app_paths::cli_manager_data_dir()?
         .join(STATUSLINE_DIR)
         .join(SETTINGS_FILE))
 }
 
+// 从 USERPROFILE 或 HOME 读取用户主目录。
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -269,6 +281,7 @@ fn home_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "home_dir_unavailable".to_string())
 }
 
+// 按操作系统返回用户优先的字体安装目录列表。
 fn powerline_font_dirs() -> Result<Vec<PathBuf>, String> {
     let home = home_dir()?;
     #[cfg(target_os = "windows")]
@@ -293,6 +306,7 @@ fn powerline_font_dirs() -> Result<Vec<PathBuf>, String> {
     Ok(Vec::new())
 }
 
+// 根据名称中的常见 Powerline 或 Nerd Font 标记识别候选字体。
 fn looks_like_powerline_font(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     name.contains("powerline")
@@ -303,6 +317,7 @@ fn looks_like_powerline_font(name: &str) -> bool {
         || name.contains("fira code nerd")
 }
 
+// 将可选匹配字体名称转换为字体可用状态。
 fn powerline_font_status(matched_font: Option<String>) -> PowerlineFontStatus {
     PowerlineFontStatus {
         installed: matched_font.is_some(),
@@ -312,6 +327,7 @@ fn powerline_font_status(matched_font: Option<String>) -> PowerlineFontStatus {
 }
 
 #[cfg(target_os = "windows")]
+// 在 Windows 用户和系统字体注册表项中查找匹配字体。
 fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     for key in [
         r"HKCU\Software\Microsoft\Windows NT\CurrentVersion\Fonts",
@@ -342,6 +358,7 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
 }
 
 #[cfg(target_os = "linux")]
+// 通过 Linux fc-list 字体家族输出查找匹配字体。
 fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     let mut command = silent_command("fc-list");
     command.args([":", "family"]);
@@ -363,6 +380,7 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
 }
 
 #[cfg(target_os = "macos")]
+// 从 macOS 系统字体数据库中查找匹配家族。
 fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     let mut db = fontdb::Database::new();
     db.load_system_fonts();
@@ -376,6 +394,7 @@ fn detect_powerline_font() -> Result<PowerlineFontStatus, String> {
     Ok(powerline_font_status(None))
 }
 
+// 优先选择内置符号字体，否则选择非粗体、非斜体候选。
 fn preferred_powerline_font(fonts: &[PathBuf]) -> Option<&Path> {
     fonts
         .iter()
@@ -400,6 +419,7 @@ fn preferred_powerline_font(fonts: &[PathBuf]) -> Option<&Path> {
 }
 
 #[cfg(target_os = "windows")]
+// 在 Windows 激活首选字体、写入用户注册表并广播字体变更。
 fn activate_powerline_fonts(target: &Path, fonts: &[PathBuf]) -> Result<(), String> {
     let font =
         preferred_powerline_font(fonts).ok_or_else(|| "powerline_fonts_not_found".to_string())?;
@@ -444,6 +464,7 @@ fn activate_powerline_fonts(target: &Path, fonts: &[PathBuf]) -> Result<(), Stri
 }
 
 #[cfg(target_os = "linux")]
+// 调用 Linux fc-cache 刷新目标字体目录。
 fn activate_powerline_fonts(target: &Path, _fonts: &[PathBuf]) -> Result<(), String> {
     let mut command = silent_command("fc-cache");
     command.args(["-f"]).arg(target);
@@ -457,10 +478,12 @@ fn activate_powerline_fonts(target: &Path, _fonts: &[PathBuf]) -> Result<(), Str
 }
 
 #[cfg(target_os = "macos")]
+// macOS 字体复制完成后无需额外激活步骤。
 fn activate_powerline_fonts(_target: &Path, _fonts: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+// 将内置符号字体写入用户字体目录并执行平台激活。
 fn install_powerline_fonts() -> Result<PowerlineFontInstallResult, String> {
     let target = powerline_font_dirs()?
         .into_iter()
@@ -480,6 +503,7 @@ fn install_powerline_fonts() -> Result<PowerlineFontInstallResult, String> {
     })
 }
 
+// 返回用户原 ccstatusline 的只读导入来源路径。
 fn legacy_settings_path() -> Result<PathBuf, String> {
     Ok(home_dir()?
         .join(".config")
@@ -487,6 +511,7 @@ fn legacy_settings_path() -> Result<PathBuf, String> {
         .join(SETTINGS_FILE))
 }
 
+// 优先使用 CLAUDE_CONFIG_DIR，否则解析 Claude 默认设置文件。
 fn claude_settings_path() -> Result<PathBuf, String> {
     if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|value| !value.is_empty()) {
         return Ok(PathBuf::from(dir).join(SETTINGS_FILE));
@@ -497,6 +522,7 @@ fn claude_settings_path() -> Result<PathBuf, String> {
         .map(|dir| dir.join(SETTINGS_FILE))
 }
 
+// 检查行数、紧凑阈值、色彩级别和组件身份字段。
 pub(crate) fn validate_settings(settings: &StatuslineSettings) -> Result<(), String> {
     if settings.lines.is_empty() || settings.lines.len() > 3 {
         return Err("statusline_invalid_line_count".to_string());
@@ -517,6 +543,7 @@ pub(crate) fn validate_settings(settings: &StatuslineSettings) -> Result<(), Str
     Ok(())
 }
 
+// 解析设置、迁移旧组件别名并补足三行后验证。
 fn parse_settings(text: &str) -> Result<StatuslineSettings, String> {
     let mut value: Value =
         serde_json::from_str(text).map_err(|_| "statusline_invalid_json".to_string())?;
@@ -543,6 +570,7 @@ fn parse_settings(text: &str) -> Result<StatuslineSettings, String> {
     Ok(settings)
 }
 
+// 读取内部状态栏设置，缺失时只返回内置默认值。
 pub fn load_settings() -> Result<StatuslineSettings, String> {
     let path = settings_path()?;
     if !path.exists() {
@@ -553,6 +581,7 @@ pub fn load_settings() -> Result<StatuslineSettings, String> {
     )
 }
 
+// 读取可选旧版设置并解析，来源不存在时返回无配置。
 pub(crate) fn load_legacy_settings() -> Result<Option<StatuslineSettings>, String> {
     let path = legacy_settings_path()?;
     if !path.exists() {
@@ -564,6 +593,7 @@ pub(crate) fn load_legacy_settings() -> Result<Option<StatuslineSettings>, Strin
     .map(Some)
 }
 
+// 同目录暂存设置后替换目标，失败时尝试清理暂存文件。
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -592,6 +622,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// 验证设置并以当前模式版本序列化保存。
 pub fn save_settings(settings: &StatuslineSettings) -> Result<(), String> {
     validate_settings(settings)?;
     let mut next = settings.clone();
@@ -601,6 +632,7 @@ pub fn save_settings(settings: &StatuslineSettings) -> Result<(), String> {
     atomic_write(&settings_path()?, &bytes)
 }
 
+// 导入并记录旧配置来源，仅写 CLI-Manager 内部设置。
 pub fn import_legacy() -> Result<StatuslineSettings, String> {
     let path = legacy_settings_path()?;
     if !path.exists() {
@@ -615,6 +647,7 @@ pub fn import_legacy() -> Result<StatuslineSettings, String> {
     Ok(settings)
 }
 
+// 读取 Claude JSON 对象，缺失时返回空对象且拒绝无效根。
 fn read_json_object(path: &Path) -> Result<Map<String, Value>, String> {
     if !path.exists() {
         return Ok(Map::new());
@@ -629,6 +662,7 @@ fn read_json_object(path: &Path) -> Result<Map<String, Value>, String> {
         .ok_or_else(|| "claude_settings_invalid_root".to_string())
 }
 
+// 为已存在设置文件创建固定后缀备份。
 fn backup_file(path: &Path) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -641,6 +675,7 @@ fn backup_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 按平台 shell 规则转义程序路径并追加状态栏子命令。
 fn quote_command_path(path: &Path) -> String {
     let raw = path.to_string_lossy();
     if cfg!(target_os = "windows") {
@@ -653,12 +688,14 @@ fn quote_command_path(path: &Path) -> String {
     }
 }
 
+// 为当前可执行文件生成受管状态栏命令。
 pub fn managed_command() -> Result<String, String> {
     Ok(quote_command_path(
         &std::env::current_exe().map_err(|err| format!("executable_path_failed: {err}"))?,
     ))
 }
 
+// 构造受管 command 配置，设置零 padding 并限制刷新间隔。
 fn managed_status_line(refresh_interval: Option<u8>) -> Result<Value, String> {
     let mut status_line = Map::new();
     status_line.insert("type".to_string(), json!("command"));
@@ -670,6 +707,7 @@ fn managed_status_line(refresh_interval: Option<u8>) -> Result<Value, String> {
     Ok(Value::Object(status_line))
 }
 
+// 备份 Claude 配置并写入受管 statusLine，保留其余字段。
 pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
     let path = claude_settings_path()?;
     let mut root = read_json_object(&path)?;
@@ -683,6 +721,7 @@ pub fn install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String>
     get_status()
 }
 
+// 仅当命令包含受管标记时备份并移除 Claude 状态栏配置。
 pub fn uninstall() -> Result<StatuslineStatus, String> {
     let path = claude_settings_path()?;
     let mut root = read_json_object(&path)?;
@@ -704,6 +743,7 @@ pub fn uninstall() -> Result<StatuslineStatus, String> {
     get_status()
 }
 
+// 只读查询内部路径、Claude 当前命令和旧配置可用状态。
 pub fn get_status() -> Result<StatuslineStatus, String> {
     let claude_path = claude_settings_path()?;
     let root = read_json_object(&claude_path)?;
@@ -727,23 +767,27 @@ pub fn get_status() -> Result<StatuslineStatus, String> {
     })
 }
 
+// 沿 JSON 字段路径查找嵌套值。
 fn value_at<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
     path.iter()
         .try_fold(value, |current, key| current.get(*key))
 }
 
+// 读取数字或数字字符串，字段不可用时回退零。
 fn number_at(value: &Value, path: &[&str]) -> f64 {
     value_at(value, path)
         .and_then(|value| value.as_f64().or_else(|| value.as_str()?.parse().ok()))
         .unwrap_or(0.0)
 }
 
+// 沿字段路径读取可选字符串。
 fn string_at(value: &Value, path: &[&str]) -> Option<String> {
     value_at(value, path)
         .and_then(|value| value.as_str())
         .map(str::to_string)
 }
 
+// 将数值格式化为整数或带一位小数的 k/m 缩写。
 fn format_number(value: f64) -> String {
     if value >= 1_000_000.0 {
         format!("{:.1}m", value / 1_000_000.0)
@@ -754,6 +798,7 @@ fn format_number(value: f64) -> String {
     }
 }
 
+// 格式化上下文数值并移除 k/m 前多余的 .0。
 fn format_context_number(value: f64) -> String {
     let formatted = format_number(value);
     if let Some(value) = formatted.strip_suffix(".0k") {
@@ -765,6 +810,7 @@ fn format_context_number(value: f64) -> String {
     }
 }
 
+// 从当前上下文用量对象中读取指定数值字段。
 fn current_usage(payload: &Value, key: &str) -> f64 {
     value_at(payload, &["context_window", "current_usage"])
         .and_then(Value::as_object)
@@ -773,12 +819,14 @@ fn current_usage(payload: &Value, key: &str) -> f64 {
         .unwrap_or(0.0)
 }
 
+// 从载荷工作目录发现 Git 仓库。
 fn git_repo(payload: &Value) -> Option<git2::Repository> {
     let cwd = string_at(payload, &["workspace", "current_dir"])
         .or_else(|| string_at(payload, &["cwd"]))?;
     git2::Repository::discover(cwd).ok()
 }
 
+// 优先使用预览分支，否则读取仓库 HEAD 简称。
 fn git_branch(payload: &Value) -> Option<String> {
     if let Some(branch) = string_at(payload, &["preview_git", "branch"]) {
         return Some(branch);
@@ -788,6 +836,7 @@ fn git_branch(payload: &Value) -> Option<String> {
     branch
 }
 
+// 使用预览计数或扫描 Git 状态，返回暂存、未暂存、未跟踪和冲突数。
 fn git_status_counts(payload: &Value) -> (usize, usize, usize, usize) {
     if let Some(preview) = payload.get("preview_git") {
         let count = |key: &str| preview.get(key).and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -837,6 +886,7 @@ fn git_status_counts(payload: &Value) -> (usize, usize, usize, usize) {
     (staged, unstaged, untracked, conflicts)
 }
 
+// 在载荷工作目录执行自定义 shell 命令，轮询退出并在超时后终止。
 fn run_custom_command(item: &WidgetItem, payload: &Value) -> Option<String> {
     let command = item.command_path.as_deref()?.trim();
     if command.is_empty() {
@@ -878,6 +928,7 @@ fn run_custom_command(item: &WidgetItem, payload: &Value) -> Option<String> {
     }
 }
 
+// 按组件类型渲染原始值，隐藏项和普通空值不产生输出。
 fn render_widget_raw(item: &WidgetItem, payload: &Value) -> Option<String> {
     if item.hide.unwrap_or(false) {
         return None;
@@ -1109,10 +1160,12 @@ fn render_widget_raw(item: &WidgetItem, payload: &Value) -> Option<String> {
     }
 }
 
+// 渲染组件原始文本后应用组件 ANSI 样式。
 fn render_widget(item: &WidgetItem, payload: &Value) -> Option<String> {
     render_widget_raw(item, payload).map(|value| apply_style(&value, item))
 }
 
+// 将命名色、ANSI256 或六位十六进制色转换为前景或背景代码。
 fn ansi_color(name: &str, background: bool) -> Option<String> {
     let mut normalized = name.to_string();
     if normalized.to_ascii_lowercase().starts_with("bg") {
@@ -1156,6 +1209,7 @@ fn ansi_color(name: &str, background: bool) -> Option<String> {
     Some((if background { code + 10 } else { code }).to_string())
 }
 
+// 按前景、背景及粗体配置包装 ANSI 文本段。
 fn styled_segment(
     text: &str,
     foreground: Option<&str>,
@@ -1179,6 +1233,7 @@ fn styled_segment(
     }
 }
 
+// 为组件文本添加粗体、暗淡及前景背景 ANSI 样式。
 fn apply_style(text: &str, item: &WidgetItem) -> String {
     let mut codes = Vec::new();
     if item.bold.unwrap_or(false) {
@@ -1208,6 +1263,7 @@ fn apply_style(text: &str, item: &WidgetItem) -> String {
     }
 }
 
+// 按语言获取组件标签，自定义文本、分隔符和 Git 分支不加标签。
 fn preview_label(widget_type: &str, language: &str) -> Option<&'static str> {
     if matches!(
         widget_type,
@@ -1237,6 +1293,7 @@ fn preview_label(widget_type: &str, language: &str) -> Option<&'static str> {
         })
 }
 
+// 通过统一管线渲染普通或 Powerline 多行布局及本地化标签。
 fn render_internal(
     settings: &StatuslineSettings,
     payload: &Value,
@@ -1396,10 +1453,12 @@ fn render_internal(
     Ok(rendered.join("\n"))
 }
 
+// 使用中文短标签渲染实际状态栏。
 pub fn render(settings: &StatuslineSettings, payload: &Value) -> Result<String, String> {
     render_internal(settings, payload, Some("zh-CN"))
 }
 
+// 使用指定语言的标签通过共享管线渲染预览。
 pub fn render_preview(
     settings: &StatuslineSettings,
     payload: &Value,
@@ -1408,6 +1467,7 @@ pub fn render_preview(
     render_internal(settings, payload, Some(language))
 }
 
+// 从标准输入读取 JSON、加载设置并输出状态栏后以对应状态码退出。
 pub fn run_and_exit() -> ! {
     let mut input = String::new();
     let result = io::stdin()
@@ -1427,6 +1487,7 @@ pub fn run_and_exit() -> ! {
     }
 }
 
+// 将静态组件目录转换为可序列化条目列表。
 pub fn catalog() -> Vec<WidgetCatalogEntry> {
     WIDGET_CATALOG
         .iter()
@@ -1630,14 +1691,17 @@ const WIDGET_CATALOG: &[(&str, &str, &str, &str)] = &[
 ];
 
 #[tauri::command]
+// 暴露状态栏安装状态查询命令。
 pub fn statusline_get_status() -> Result<StatuslineStatus, String> {
     get_status()
 }
 #[tauri::command]
+// 暴露内部状态栏设置读取命令。
 pub fn statusline_load_settings() -> Result<StatuslineSettings, String> {
     load_settings()
 }
 #[tauri::command]
+// 保存传入设置并返回调用方载荷。
 pub fn statusline_save_settings(
     settings: StatuslineSettings,
 ) -> Result<StatuslineSettings, String> {
@@ -1645,10 +1709,12 @@ pub fn statusline_save_settings(
     Ok(settings)
 }
 #[tauri::command]
+// 暴露旧 ccstatusline 配置导入命令。
 pub fn statusline_import_legacy() -> Result<StatuslineSettings, String> {
     import_legacy()
 }
 #[tauri::command]
+// 按指定语言渲染预览，未指定时使用英文。
 pub fn statusline_render_preview(
     settings: StatuslineSettings,
     payload: Value,
@@ -1657,24 +1723,29 @@ pub fn statusline_render_preview(
     render_preview(&settings, &payload, language.as_deref().unwrap_or("en-US"))
 }
 #[tauri::command]
+// 暴露 Claude 受管状态栏安装命令。
 pub fn statusline_install(refresh_interval: Option<u8>) -> Result<StatuslineStatus, String> {
     install(refresh_interval)
 }
 #[tauri::command]
+// 暴露仅移除受管状态栏的卸载命令。
 pub fn statusline_uninstall() -> Result<StatuslineStatus, String> {
     uninstall()
 }
 #[tauri::command]
+// 返回内置状态栏组件目录。
 pub fn statusline_get_catalog() -> Vec<WidgetCatalogEntry> {
     catalog()
 }
 
 #[tauri::command]
+// 调用当前平台字体发现流程查询 Powerline 可用性。
 pub fn statusline_powerline_font_status() -> Result<PowerlineFontStatus, String> {
     detect_powerline_font()
 }
 
 #[tauri::command]
+// 响应显式安装请求写入并激活内置 Powerline 字体。
 pub fn statusline_powerline_install_fonts() -> Result<PowerlineFontInstallResult, String> {
     install_powerline_fonts()
 }
@@ -1683,16 +1754,19 @@ pub fn statusline_powerline_install_fonts() -> Result<PowerlineFontInstallResult
 mod tests {
     use super::*;
     #[test]
+    // 验证内置默认状态栏设置通过校验。
     fn default_settings_are_valid() {
         validate_settings(&StatuslineSettings::default()).unwrap();
     }
     #[test]
+    // 验证旧 git-pr 组件在解析时升级为 git-review。
     fn legacy_git_pr_is_upgraded() {
         let settings =
             parse_settings(r#"{"lines":[[{"id":"1","type":"git-pr"}]],"version":1}"#).unwrap();
         assert_eq!(settings.lines[0][0].widget_type, "git-review");
     }
     #[test]
+    // 验证状态栏模型和输入 Token 来自传入载荷。
     fn render_uses_payload() {
         let settings = StatuslineSettings {
             lines: vec![vec![
@@ -1707,6 +1781,7 @@ mod tests {
         assert!(output.contains("1.2k"));
     }
     #[test]
+    // 验证预览 Git 信息保持在第二行并包含各类变更数。
     fn render_keeps_preview_git_on_second_line() {
         let settings = StatuslineSettings {
             lines: vec![
@@ -1728,6 +1803,7 @@ mod tests {
         assert!(lines[1].contains("+2 *4 ?1 !0"));
     }
     #[test]
+    // 验证实际输出使用中文标签而英文预览使用英文标签。
     fn live_and_preview_outputs_include_localized_labels() {
         let settings = StatuslineSettings {
             lines: vec![vec![widget("1", "model", None)]],
@@ -1740,6 +1816,7 @@ mod tests {
             .contains("Model: Opus"));
     }
     #[test]
+    // 验证上下文条同时包含使用量、容量和百分比。
     fn context_bar_includes_usage_limit_and_percentage() {
         let settings = StatuslineSettings {
             lines: vec![vec![widget("1", "context-bar", None)]],
@@ -1762,6 +1839,7 @@ mod tests {
         );
     }
     #[test]
+    // 验证 Git 分支使用分支符号且不添加重复标签。
     fn git_branch_uses_branch_symbol_without_extra_label() {
         let settings = StatuslineSettings {
             lines: vec![vec![widget("1", "git-branch", None)]],
@@ -1771,6 +1849,7 @@ mod tests {
         assert_eq!(render(&settings, &payload).unwrap(), "⎇ master");
     }
     #[test]
+    // 验证 ANSI256、TrueColor 及亮背景命名色转换。
     fn ansi_color_supports_extended_formats() {
         assert_eq!(
             ansi_color("ansi256:123", false).as_deref(),
@@ -1783,6 +1862,7 @@ mod tests {
         assert_eq!(ansi_color("bgBrightRed", true).as_deref(), Some("101"));
     }
     #[test]
+    // 验证 Powerline 首段缩进、端帽和主题组件内容。
     fn powerline_renders_caps_and_theme() {
         let mut settings = StatuslineSettings {
             lines: vec![vec![
@@ -1806,6 +1886,7 @@ mod tests {
         assert!(output.contains("high"));
     }
     #[test]
+    // 验证 Powerline 主题按色彩级别生成对应 ANSI 序列。
     fn powerline_theme_respects_color_level() {
         let mut settings = StatuslineSettings {
             lines: vec![vec![widget("1", "model", None)]],
@@ -1828,12 +1909,14 @@ mod tests {
             .contains("\x1b[38;2;46;52;64;48;2;136;192;208m"));
     }
     #[test]
+    // 验证常见 Powerline 字体名称识别并排除普通字体。
     fn detects_common_powerline_font_names() {
         assert!(looks_like_powerline_font("CaskaydiaCove NerdFont.ttf"));
         assert!(looks_like_powerline_font("Meslo LG S for Powerline.ttf"));
         assert!(!looks_like_powerline_font("Arial.ttf"));
     }
     #[test]
+    // 验证字体选择优先内置符号字体而非粗体候选。
     fn prefers_bundled_powerline_symbol_font() {
         let fonts = vec![
             PathBuf::from("Meslo LG S Bold for Powerline.ttf"),
@@ -1845,6 +1928,7 @@ mod tests {
         );
     }
     #[test]
+    // 从内置字体字节验证实际字体家族名称。
     fn bundled_powerline_font_has_expected_family() {
         let mut db = fontdb::Database::new();
         db.load_font_data(BUNDLED_POWERLINE_FONT.to_vec());

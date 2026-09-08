@@ -46,6 +46,7 @@ struct CounterPermit {
 }
 
 impl CounterPermit {
+    // 等待并取得全局并发名额；池满时周期检查停止标记，锁异常返回空。
     fn acquire(
         state: &'static OnceLock<PermitPool>,
         limit: usize,
@@ -69,6 +70,7 @@ impl CounterPermit {
 }
 
 impl Drop for CounterPermit {
+    // 归还并发名额并唤醒一个等待者，锁异常时跳过回收。
     fn drop(&mut self) {
         if let Ok(mut active) = self.pool.active.lock() {
             *active = active.saturating_sub(1);
@@ -107,6 +109,7 @@ struct BridgeRunError {
     connected_for: Option<Duration>,
 }
 
+// 将连接、认证及 Agent 身份字段拼接为桥接复用标识。
 fn bridge_identity(plan: &SshLaunchPlan) -> String {
     format!(
         "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
@@ -142,6 +145,7 @@ struct BridgeControl {
 }
 
 impl BridgeControl {
+    // 初始化尚在连接的桥接控制状态及空子进程槽。
     fn new() -> Self {
         Self {
             stop: AtomicBool::new(false),
@@ -153,10 +157,12 @@ impl BridgeControl {
         }
     }
 
+    // 增加在途请求计数，阻止空闲活动抢占当前桥接。
     fn reserve(&self) {
         self.pending_requests.fetch_add(1, Ordering::AcqRel);
     }
 
+    // 检查桥接可用状态并原子地将空闲计数占为一个请求。
     fn try_reserve_idle(&self) -> bool {
         if self.stop.load(Ordering::Acquire)
             || self.finished.load(Ordering::Acquire)
@@ -169,11 +175,13 @@ impl BridgeControl {
             .is_ok()
     }
 
+    // 尝试取得空闲活动占位，成功后由返回值析构归还。
     fn try_reserve_idle_activity(&self) -> Option<BridgeIdleReservation<'_>> {
         self.try_reserve_idle()
             .then_some(BridgeIdleReservation { control: self })
     }
 
+    // 原子递减在途计数，并在调试构建中检查重复归还。
     fn release_request(&self) {
         let released =
             self.pending_requests
@@ -183,11 +191,13 @@ impl BridgeControl {
         debug_assert!(released.is_ok());
     }
 
+    // 设置停止标记并终止当前保存的 SSH 子进程。
     fn stop(&self) {
         self.stop.store(true, Ordering::Release);
         self.terminate_current_child();
     }
 
+    // 取出子进程后终止并等待退出，锁异常或空槽时跳过。
     fn terminate_current_child(&self) {
         if let Ok(mut child) = self.child.lock() {
             if let Some(mut child) = child.take() {
@@ -202,11 +212,13 @@ struct BridgeIdleReservation<'a> {
 }
 
 impl Drop for BridgeIdleReservation<'_> {
+    // 释放空闲活动占用的请求计数。
     fn drop(&mut self) {
         self.control.release_request();
     }
 }
 
+// 尝试杀死子进程并等待退出，忽略清理阶段的错误。
 fn terminate_child(child: &mut Child) {
     let _ = child.kill();
     let _ = child.wait();
@@ -235,6 +247,7 @@ struct BridgeHandle {
 }
 
 impl BridgeHandle {
+    // 将桥接句柄转为请求占位，同时增加在途计数。
     fn reserve(self) -> BridgeRequestReservation {
         self.control.reserve();
         BridgeRequestReservation {
@@ -252,6 +265,7 @@ struct BridgeRequestReservation {
 }
 
 impl Drop for BridgeRequestReservation {
+    // 在请求占位离开作用域时归还计数。
     fn drop(&mut self) {
         self.control.release_request();
     }
@@ -265,6 +279,7 @@ enum BridgeLane {
 }
 
 impl BridgeLane {
+    // 按请求种类选择通道；Readonly 是通道名称，也承载文件写入操作。
     fn for_request(kind: &str) -> Self {
         if matches!(
             kind,
@@ -323,15 +338,18 @@ impl BridgeLane {
         }
     }
 
+    // 判断通道是否仅处理请求与心跳而不主动轮询 Hook。
     fn is_request_driven(self) -> bool {
         self != Self::Primary
     }
 
+    // 标识只有主通道要求启动计划携带工具来源。
     fn requires_tool_source(self) -> bool {
         self == Self::Primary
     }
 }
 
+// 按主机和通道生成桥接槽键，辅助通道使用独立后缀。
 fn bridge_slot(host_id: &str, lane: BridgeLane) -> String {
     match lane {
         BridgeLane::Primary => host_id.to_string(),
@@ -340,6 +358,7 @@ fn bridge_slot(host_id: &str, lane: BridgeLane) -> String {
     }
 }
 
+// 复制启动计划并为辅助通道派生隔离的客户端实例标识。
 fn bridge_plan(plan: &SshLaunchPlan, lane: BridgeLane) -> SshLaunchPlan {
     let mut plan = plan.clone();
     if matches!(lane, BridgeLane::Readonly | BridgeLane::Git) {
@@ -352,6 +371,7 @@ fn bridge_plan(plan: &SshLaunchPlan, lane: BridgeLane) -> SshLaunchPlan {
     plan
 }
 
+// 刷新 Agent 安装身份，必要时保留旧主通道的项目上下文。
 fn bridge_refresh_plan(
     current_plan: &SshLaunchPlan,
     stale_plan: &SshLaunchPlan,
@@ -368,10 +388,12 @@ fn bridge_refresh_plan(
     plan
 }
 
+// 为文件辅助通道派生客户端实例标识。
 fn readonly_client_instance_id(host_id: &str, client_instance_id: &str) -> String {
     isolated_client_instance_id(host_id, client_instance_id, BridgeLane::Readonly)
 }
 
+// 按主机、实例和通道散列生成 UUIDv8，避免与原实例字符串相同。
 fn isolated_client_instance_id(
     host_id: &str,
     client_instance_id: &str,
@@ -409,6 +431,7 @@ fn isolated_client_instance_id(
     id.to_string()
 }
 
+// 按历史、Git 网络操作及其他请求类别选择响应等待时长。
 fn response_timeout(kind: &str) -> Duration {
     if kind.starts_with("history") {
         HISTORY_RESPONSE_TIMEOUT
@@ -441,6 +464,7 @@ struct EventDedup {
 }
 
 impl EventDedup {
+    // 记录新事件标识并按插入顺序淘汰超出上限的去重条目。
     fn insert(&mut self, event_id: &str) -> bool {
         if !self.ids.insert(event_id.to_string()) {
             return false;
@@ -462,6 +486,7 @@ pub struct SshAgentBridgeManager {
 }
 
 impl SshAgentBridgeManager {
+    // 登记远程会话恢复占用；已有其他消费者时返回冲突。
     fn claim_resume_session(&self, claim_key: &str, consumer_id: &str) -> Result<(), String> {
         let mut claims = self
             .resume_claims
@@ -477,16 +502,19 @@ impl SshAgentBridgeManager {
         Ok(())
     }
 
+    // 移除该消费者持有的全部恢复占用，当前实现不按主机筛选。
     fn release_resume_claims(&self, _host_id: &str, consumer_id: &str) {
         if let Ok(mut claims) = self.resume_claims.lock() {
             claims.retain(|_, owner| owner != consumer_id);
         }
     }
 
+    // 为终端会话确保主桥接存在，忽略无法创建的返回值。
     pub fn ensure(&self, host: Weak<DaemonHost>, session_id: &str, plan: &SshLaunchPlan) {
         let _ = self.ensure_bridge(host, plan, BridgeLane::Primary, Some(session_id), None);
     }
 
+    // 校验身份并复用或替换桥接，保留引用集合后在线程中运行连接循环。
     fn ensure_bridge(
         &self,
         host: Weak<DaemonHost>,
@@ -576,6 +604,7 @@ impl SshAgentBridgeManager {
         })
     }
 
+    // 在身份匹配且空闲时借用主通道，并登记消费者引用。
     fn try_reserve_primary(
         &self,
         host_id: &str,
@@ -596,6 +625,7 @@ impl SshAgentBridgeManager {
         })
     }
 
+    // 仅终止仍对应当前占位控制对象的桥接，返回其计划供刷新。
     fn invalidate_reservation(
         &self,
         reservation: &BridgeRequestReservation,
@@ -613,6 +643,7 @@ impl SshAgentBridgeManager {
         }
     }
 
+    // 校验请求并取得通道占位，等待响应；缺失能力时最多刷新一次桥接。
     pub fn request(
         &self,
         host: Weak<DaemonHost>,
@@ -773,6 +804,7 @@ impl SshAgentBridgeManager {
         result
     }
 
+    // 释放主通道的会话引用，无其他引用时停止桥接。
     pub fn release(&self, host_id: &str, session_id: &str) {
         let mut bridges = match self.bridges.lock() {
             Ok(bridges) => bridges,
@@ -790,6 +822,7 @@ impl SshAgentBridgeManager {
         }
     }
 
+    // 释放消费者及关联文件、Git 引用，并停止不再使用的各通道。
     pub fn release_consumer(&self, host_id: &str, consumer_id: &str) {
         self.release_resume_claims(host_id, consumer_id);
         let mut bridges = match self.bridges.lock() {
@@ -823,6 +856,7 @@ impl SshAgentBridgeManager {
     }
 }
 
+// 按期限等待业务响应，将超时与通道断开映射为桥接错误。
 fn receive_agent_response(
     receiver: &Receiver<Result<Value, String>>,
     timeout: Duration,
@@ -836,16 +870,19 @@ fn receive_agent_response(
     }
 }
 
+// 排空当前已入队请求，并逐个尝试发送指定失败结果。
 fn fail_pending_requests(receiver: &Receiver<AgentBridgeRequest>, error: &str) {
     while let Ok(request) = receiver.try_recv() {
         let _ = request.response.send(Err(error.to_string()));
     }
 }
 
+// 判断桥接协议或传输类错误是否要求断开当前连接。
 fn request_error_requires_disconnect(error: &str) -> bool {
     error.starts_with("ssh_agent_bridge_")
 }
 
+// 判断是否尚未尝试过能力刷新且错误携带非空缺失能力名。
 fn should_refresh_capability_error(attempted: bool, result: &Result<Value, String>) -> bool {
     !attempted
         && result.as_ref().err().is_some_and(|error| {
@@ -855,10 +892,12 @@ fn should_refresh_capability_error(attempted: bool, result: &Result<Value, Strin
         })
 }
 
+// 除桥接已被占用外，连接失败时均通知已排队请求。
 fn bridge_failure_should_fail_pending(error: &str) -> bool {
     error != "bridge_already_active"
 }
 
+// 查找特定业务请求所需的 Agent 能力，其他请求不额外检查。
 fn required_capability(kind: &str) -> Option<&'static str> {
     match kind {
         "gitDiffWithOptions" => Some("gitDiffOptions"),
@@ -901,6 +940,7 @@ fn required_capability(kind: &str) -> Option<&'static str> {
     }
 }
 
+// 判断附件开始请求是否显式指定了非空自定义根目录。
 fn custom_attachment_root_requested(kind: &str, payload: &Value) -> bool {
     matches!(kind, "fileAttachBegin" | "fileAttachAnyBegin")
         && payload
@@ -909,6 +949,7 @@ fn custom_attachment_root_requested(kind: &str, payload: &Value) -> bool {
             .is_some_and(|root| !root.trim().is_empty())
 }
 
+// 校验能力后串行发送业务请求并回传结果，传输错误要求断线。
 fn handle_agent_request(
     writer: &mut impl Write,
     reader_receiver: &Receiver<ReaderMessage>,
@@ -977,6 +1018,7 @@ fn handle_agent_request(
     Ok(())
 }
 
+// 心跳到期时发送 ping 并校验回显时间，成功后更新计时。
 fn send_heartbeat_if_due(
     writer: &mut impl Write,
     reader_receiver: &Receiver<ReaderMessage>,
@@ -1006,6 +1048,7 @@ fn send_heartbeat_if_due(
 }
 
 impl Drop for SshAgentBridgeManager {
+    // 管理器析构时停止所有仍登记的桥接子进程。
     fn drop(&mut self) {
         if let Ok(bridges) = self.bridges.get_mut() {
             for entry in bridges.values() {
@@ -1015,6 +1058,7 @@ impl Drop for SshAgentBridgeManager {
     }
 }
 
+// 将 JSON 帧写为大端长度前缀和正文并刷新，拒绝空帧及超限帧。
 fn write_frame(writer: &mut impl Write, frame: &ClientFrame<'_>) -> Result<(), String> {
     let bytes =
         serde_json::to_vec(frame).map_err(|_| "ssh_agent_bridge_frame_invalid".to_string())?;
@@ -1028,6 +1072,7 @@ fn write_frame(writer: &mut impl Write, frame: &ClientFrame<'_>) -> Result<(), S
         .map_err(|_| "ssh_agent_bridge_write_failed".to_string())
 }
 
+// 校验大端长度前缀后读取限定大小正文，并反序列化服务端帧。
 fn read_frame(reader: &mut impl Read) -> Result<ServerFrame, String> {
     let mut length = [0u8; 4];
     reader
@@ -1044,6 +1089,7 @@ fn read_frame(reader: &mut impl Read) -> Result<ServerFrame, String> {
     serde_json::from_slice(&bytes).map_err(|_| "ssh_agent_bridge_frame_invalid".to_string())
 }
 
+// 在总字节上限内跳过前导行，直到找到合法协议标记及十六进制随机串。
 fn read_preamble(reader: &mut BufReader<impl Read>) -> Result<(), String> {
     let mut consumed = 0;
     loop {
@@ -1073,6 +1119,7 @@ fn read_preamble(reader: &mut BufReader<impl Read>) -> Result<(), String> {
     }
 }
 
+// 在线程中读取协议前导和后续帧，通过有界通道发送状态或错误。
 fn spawn_reader(
     reader: impl Read + Send + 'static,
     sender: SyncSender<ReaderMessage>,
@@ -1106,6 +1153,7 @@ fn spawn_reader(
     })
 }
 
+// 持续排空标准错误流，仅保留上限内的前缀字节。
 fn spawn_stderr_reader(
     mut reader: impl Read + Send + 'static,
     captured: Arc<Mutex<Vec<u8>>>,
@@ -1124,6 +1172,7 @@ fn spawn_stderr_reader(
     })
 }
 
+// 从标准错误文本识别交互认证或主机密钥确认需求。
 fn classify_bridge_stderr(bytes: &[u8]) -> Option<&'static str> {
     let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
     if [
@@ -1146,6 +1195,7 @@ fn classify_bridge_stderr(bytes: &[u8]) -> Option<&'static str> {
     None
 }
 
+// 等待读取线程确认前导有效，将超时或非预期消息映射为握手错误。
 fn receive_ready(receiver: &Receiver<ReaderMessage>, timeout: Duration) -> Result<(), String> {
     match receiver.recv_timeout(timeout) {
         Ok(ReaderMessage::Ready) => Ok(()),
@@ -1156,6 +1206,7 @@ fn receive_ready(receiver: &Receiver<ReaderMessage>, timeout: Duration) -> Resul
     }
 }
 
+// 等待一帧消息，将读取错误、超时及意外就绪信号转为错误。
 fn receive_frame(
     receiver: &Receiver<ReaderMessage>,
     timeout: Duration,
@@ -1169,6 +1220,7 @@ fn receive_frame(
     }
 }
 
+// 核对请求标识及响应种类，并仅接受受限字符集的远端错误码。
 fn checked_response(frame: ServerFrame, request_id: &str, kind: &str) -> Result<Value, String> {
     if frame.request_id != request_id {
         return Err("ssh_agent_bridge_response_mismatch".to_string());
@@ -1194,6 +1246,7 @@ fn checked_response(frame: ServerFrame, request_id: &str, kind: &str) -> Result<
     Ok(frame.payload)
 }
 
+// 校验 Hook 批次大小与递增序号，要求末条序号等于最新游标。
 fn validate_hook_batch(payload: &Value, cursor: u64) -> Result<(&[Value], u64), String> {
     let events = payload
         .get("events")
@@ -1223,6 +1276,7 @@ fn validate_hook_batch(payload: &Value, cursor: u64) -> Result<(&[Value], u64), 
     Ok((events.as_slice(), latest))
 }
 
+// 发送请求并共用响应截止时间，历史详情和文件下载按分块协议接收。
 fn request(
     writer: &mut impl Write,
     receiver: &Receiver<ReaderMessage>,
@@ -1251,6 +1305,7 @@ fn request(
     checked_response(first, &request_id, response_kind)
 }
 
+// 按连续索引和稳定总数组装受限大小的历史 JSON，全部收齐后解析。
 fn receive_history_detail_chunks(
     receiver: &Receiver<ReaderMessage>,
     mut frame: ServerFrame,
@@ -1303,6 +1358,7 @@ fn receive_history_detail_chunks(
     }
 }
 
+// 校验下载分块的索引、路径、声明大小和编码长度，拼接 Base64 结果。
 fn receive_file_get_chunks(
     receiver: &Receiver<ReaderMessage>,
     mut frame: ServerFrame,
@@ -1379,6 +1435,7 @@ fn receive_file_get_chunks(
     }
 }
 
+// 返回 Unix 毫秒时间，系统时间早于纪元时使用零时长。
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1386,6 +1443,7 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+// 按退避档位及主机种子计算带约百分之二十抖动的重试间隔。
 fn retry_delay(attempt: usize, seed: &str) -> Duration {
     let base = RETRY_BASE_SECONDS[attempt.min(RETRY_BASE_SECONDS.len() - 1)] * 1_000;
     let span = base / 5;
@@ -1397,6 +1455,7 @@ fn retry_delay(attempt: usize, seed: &str) -> Duration {
     Duration::from_millis((base as i64 + offset).max(1) as u64)
 }
 
+// 以最多四分之一秒的睡眠粒度等待重试期限，并响应停止标记。
 fn wait_for_retry(control: &BridgeControl, delay: Duration) -> bool {
     let deadline = Instant::now() + delay;
     while !control.stop.load(Ordering::Acquire) {
@@ -1409,6 +1468,7 @@ fn wait_for_retry(control: &BridgeControl, delay: Duration) -> bool {
     false
 }
 
+// 识别身份、认证、协议及能力类不可自动重试错误。
 fn permanent_bridge_error(error: &str) -> bool {
     if error.starts_with("ssh_agent_capability_missing:") {
         return true;
@@ -1428,6 +1488,7 @@ fn permanent_bridge_error(error: &str) -> bool {
     )
 }
 
+// 取得桥接并发名额后循环连接和退避，稳定连接后重置失败档位。
 fn run_bridge_loop(
     host: Weak<DaemonHost>,
     plan: SshLaunchPlan,
@@ -1484,6 +1545,7 @@ fn run_bridge_loop(
     control.finished.store(true, Ordering::Release);
 }
 
+// 包装单次连接，更新连接中标记并记录失败前的在线时长。
 fn run_bridge_once(
     host: &Weak<DaemonHost>,
     plan: &SshLaunchPlan,
@@ -1510,6 +1572,7 @@ fn run_bridge_once(
     })
 }
 
+// 启动 SSH 管道并握手，按通道处理请求、Hook 与心跳，退出时回收线程和进程。
 fn run_bridge_once_inner(
     host: &Weak<DaemonHost>,
     plan: &SshLaunchPlan,

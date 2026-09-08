@@ -57,6 +57,7 @@ pub(super) struct RemoteCodexLaunch {
     pub(super) ssh_launch: Option<SshCodexLaunch>,
 }
 
+// 优先使用显式 Codex 配置目录，否则回退用户 .codex。
 pub(super) fn codex_config_dir(profile: &CcConnectProfile) -> Result<PathBuf, String> {
     profile
         .codex_config_dir
@@ -69,6 +70,7 @@ pub(super) fn codex_config_dir(profile: &CcConnectProfile) -> Result<PathBuf, St
 }
 
 #[cfg(not(target_os = "windows"))]
+// 生成非 Windows 的代理路由与 Provider 覆盖包装脚本。
 pub(super) fn codex_profile_wrapper_payload() -> String {
     format!(
         "#!/bin/sh\n\
@@ -93,6 +95,7 @@ pub(super) fn codex_profile_wrapper_payload() -> String {
     )
 }
 
+// 拒绝空值及危险命令字符后构造 Codex 配置覆盖赋值。
 pub(super) fn codex_wrapper_override(key: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -109,6 +112,7 @@ pub(super) fn codex_wrapper_override(key: &str, value: &str) -> Result<String, S
     Ok(format!("{key}={value}"))
 }
 
+// 将 Provider 标识编码为安全的配置键路径片段。
 pub(super) fn codex_provider_override_key(
     model_provider: &str,
     field: &str,
@@ -129,6 +133,7 @@ pub(super) fn codex_provider_override_key(
     Ok(format!("model_providers.{segment}.{field}"))
 }
 
+// 验证 HTTP(S) 端点后构造 Provider base_url 覆盖。
 pub(super) fn codex_base_url_override(model_provider: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     let url =
@@ -142,6 +147,7 @@ pub(super) fn codex_base_url_override(model_provider: &str, value: &str) -> Resu
     )
 }
 
+// 校验环境变量名并构造 Provider env_key 覆盖。
 pub(super) fn codex_env_key_override(model_provider: &str, value: &str) -> Result<String, String> {
     let value = value.trim();
     let mut chars = value.chars();
@@ -158,6 +164,7 @@ pub(super) fn codex_env_key_override(model_provider: &str, value: &str) -> Resul
     )
 }
 
+// 构造 wire_api 覆盖，未配置时使用 responses。
 pub(super) fn codex_wire_api_override(
     model_provider: &str,
     value: Option<&str>,
@@ -172,6 +179,7 @@ pub(super) fn codex_wire_api_override(
     )
 }
 
+// 将非空模型名转换为可选 model 覆盖赋值。
 pub(super) fn codex_model_override(value: Option<&str>) -> Result<Option<String>, String> {
     value
         .map(str::trim)
@@ -180,6 +188,7 @@ pub(super) fn codex_model_override(value: Option<&str>) -> Result<Option<String>
         .transpose()
 }
 
+// 对模型目录路径进行 JSON 引号编码以构造配置覆盖。
 pub(super) fn codex_model_catalog_override(directory: &Path) -> Result<String, String> {
     let catalog_path = directory.join(CODEX_MODEL_CATALOG_FILE_NAME);
     let encoded_path = serde_json::to_string(&path_string(&catalog_path))
@@ -187,6 +196,7 @@ pub(super) fn codex_model_catalog_override(directory: &Path) -> Result<String, S
     Ok(format!("model_catalog_json={encoded_path}"))
 }
 
+// 在合法 HTTP(S) Provider 基址下定位 models 端点。
 pub(super) fn codex_models_endpoint(base_url: &str) -> Result<reqwest::Url, String> {
     let normalized = format!("{}/", base_url.trim().trim_end_matches('/'));
     let base_url = reqwest::Url::parse(&normalized)
@@ -199,6 +209,7 @@ pub(super) fn codex_models_endpoint(base_url: &str) -> Result<reqwest::Url, Stri
         .map_err(|_| "Codex Provider models URL is invalid".to_string())
 }
 
+// 优先保留当前模型，过滤非聊天发现项并排序去重限量收集。
 pub(super) fn normalize_managed_codex_models(
     current_model: Option<&str>,
     discovered_models: impl IntoIterator<Item = String>,
@@ -254,6 +265,7 @@ pub(super) fn normalize_managed_codex_models(
     models
 }
 
+// 构造不依赖本机缓存的保守模型能力模板。
 pub(super) fn fallback_codex_model_catalog_entry() -> serde_json::Value {
     serde_json::json!({
         "slug": "",
@@ -289,6 +301,7 @@ pub(super) fn fallback_codex_model_catalog_entry() -> serde_json::Value {
     })
 }
 
+// 检查模型模板关键字段的基本 JSON 类型。
 pub(super) fn is_usable_codex_model_catalog_entry(
     entry: &serde_json::Map<String, serde_json::Value>,
 ) -> bool {
@@ -317,6 +330,7 @@ pub(super) fn is_usable_codex_model_catalog_entry(
             .is_some_and(serde_json::Value::is_array)
 }
 
+// 检查缓存元数据大小并读取其中可用模型模板，失败返回空。
 pub(super) fn load_codex_model_catalog_templates(
     codex_home: Option<&Path>,
 ) -> Vec<serde_json::Map<String, serde_json::Value>> {
@@ -346,6 +360,7 @@ pub(super) fn load_codex_model_catalog_templates(
         .collect()
 }
 
+// 按模型匹配或首选模板生成 Provider 模型能力目录。
 pub(super) fn build_codex_model_catalog(
     codex_home: Option<&Path>,
     provider: &RemoteCodexProviderLaunch,
@@ -392,6 +407,7 @@ pub(super) fn build_codex_model_catalog(
     CodexModelCatalog { models }
 }
 
+// 写入隔离发现目录的模型目录、配置及 Provider profile。
 pub(super) fn write_codex_model_discovery_home(
     directory: &Path,
     codex_home: Option<&Path>,
@@ -424,6 +440,7 @@ pub(super) fn write_codex_model_discovery_home(
     )
 }
 
+// 从 data 或 models 数组提取字符串或对象中的模型标识。
 pub(super) fn parse_codex_models_response(payload: &[u8]) -> Vec<String> {
     let Ok(value) = serde_json::from_slice::<serde_json::Value>(payload) else {
         return Vec::new();
@@ -448,6 +465,7 @@ pub(super) fn parse_codex_models_response(payload: &[u8]) -> Vec<String> {
         .collect()
 }
 
+// 按代理策略限时请求模型端点并在流式字节上限内解析结果。
 pub(super) async fn discover_codex_provider_models(
     base_url: &str,
     secret: &str,
@@ -501,6 +519,7 @@ pub(super) async fn discover_codex_provider_models(
 }
 
 #[cfg(target_os = "windows")]
+// 将随应用提供的 Windows 原生 Codex 代理按摘要复制为包装器。
 pub(super) fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
     // cc-connect v1.4.1 hardcodes `codex` for its app-server backend. A native
     // GUI-subsystem shim is required here because a batch shim allocates a console.
@@ -522,6 +541,7 @@ pub(super) fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 写入非 Windows Codex 包装脚本并确保可执行权限。
 pub(super) fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
     let wrapper_dir = remote_manager_dir()?.join("bin");
     fs::create_dir_all(&wrapper_dir)
@@ -536,6 +556,7 @@ pub(super) fn write_codex_profile_wrapper() -> Result<PathBuf, String> {
     Ok(wrapper_path)
 }
 
+// 准备本地 Provider 或 SSH 启动、模型目录、包装器及预期会话绑定。
 pub(super) fn prepare_remote_codex_launch(
     profile: &CcConnectProfile,
     project: &RegisteredProject,
@@ -654,6 +675,7 @@ pub(super) fn prepare_remote_codex_launch(
     }))
 }
 
+// 向子进程注入包装器 PATH、真实 Home 与启动覆盖并清除不适用变量。
 pub(super) fn apply_remote_codex_launch_environment(
     command: &mut Command,
     launch: &RemoteCodexLaunch,
@@ -761,6 +783,7 @@ pub(super) fn apply_remote_codex_launch_environment(
     Ok(())
 }
 
+// 构造 app-server stdio 探测参数及可选严格配置开关。
 pub(super) fn codex_app_server_probe_args(strict_config: bool) -> Vec<&'static str> {
     let mut args = vec!["app-server"];
     if strict_config {
@@ -770,6 +793,7 @@ pub(super) fn codex_app_server_probe_args(strict_config: bool) -> Vec<&'static s
     args
 }
 
+// 启动受限时长的代理探测，模型目录验证使用隔离 Home。
 pub(super) fn probe_remote_codex_app_server(launch: &RemoteCodexLaunch) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let mut command = silent_command(&path_string(&launch.wrapper_dir.join("codex.exe")));
@@ -809,6 +833,7 @@ pub(super) fn probe_remote_codex_app_server(launch: &RemoteCodexLaunch) -> Resul
     ))
 }
 
+// 解码探测输出并使用 Provider 秘密执行日志脱敏。
 pub(super) fn redact_remote_codex_probe_output(
     launch: &RemoteCodexLaunch,
     stdout: &[u8],

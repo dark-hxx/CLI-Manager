@@ -3,12 +3,14 @@ import test from "node:test";
 import { dependencyViolations } from "./architecture/core.mjs";
 import { maskRustNonCode, rustFacadeRoutes, rustReferences } from "./architecture/rust.mjs";
 
+// 验证 Rust 分组导入、直接路径及 self 导入均被识别。
 test("Rust dependencies include grouped uses, direct paths and self imports", () => {
   assert.deepEqual(rustReferences("use crate::{commands::{history, ssh}, provider::{self, models::A}}; crate::app::run();"), [
     "crate::commands::history", "crate::commands::ssh", "crate::provider", "crate::provider::models::A", "crate::app::run",
   ]);
 });
 
+// 验证嵌入脚本、字符串、字符与嵌套注释不会产生虚假依赖。
 test("embedded scripts, raw strings, chars and nested comments do not invent crate paths", () => {
   const source = String.raw`// crate::features::fake
     /* nested /* crate::app::bad */ crate::app::bad */
@@ -20,6 +22,7 @@ test("embedded scripts, raw strings, chars and nested comments do not invent cra
   assert.match(maskRustNonCode(source), /real<'a>/);
 });
 
+// 验证保留命名空间的注册入口仍遵守实际文件分层。
 test("namespace-preserving registry routes still enforce physical layers", () => {
   const routes = rustFacadeRoutes("src-tauri/src/commands/mod.rs", '#[path = "../features/history/mod.rs"]\npub mod history;');
   assert.deepEqual(routes, [{ prefix: "crate::commands::history", target: "src-tauri/src/features/history/mod.rs" }]);

@@ -5,6 +5,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+// 定位 wsl.exe 并构造指定发行版的直接程序调用，参数逐项传递；只构造命令，不执行。
 pub(super) fn wsl_command(distro: &str, program: &str, args: &[&str]) -> Result<Command, String> {
     let exe = wsl::find_wsl_exe().ok_or_else(|| "provider_wsl_unavailable".to_string())?;
     let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -17,6 +18,7 @@ pub(super) fn wsl_command(distro: &str, program: &str, args: &[&str]) -> Result<
     Ok(command)
 }
 
+// 用共享超时执行器运行 WSL 程序，映射执行错误；非零退出状态保留给调用方判断。
 pub(super) fn run_wsl(
     distro: &str,
     program: &str,
@@ -26,6 +28,7 @@ pub(super) fn run_wsl(
         .map_err(|_| "provider_wsl_operation_failed".to_string())
 }
 
+// 在 WSL 登录 shell 执行脚本，以 cli-manager 作为参数零并追加位置参数，退出状态由调用方检查。
 pub(super) fn run_wsl_script(
     distro: &str,
     script: &str,
@@ -37,6 +40,7 @@ pub(super) fn run_wsl_script(
         .map_err(|_| "provider_wsl_operation_failed".to_string())
 }
 
+// 向 WSL 脚本同步写完 stdin 后才开始等待超时；写入或等待失败尝试终止回收子进程，不保证 stdin 写入阶段有时限。
 pub(super) fn run_wsl_script_with_input(
     distro: &str,
     script: &str,
@@ -86,6 +90,7 @@ pub(super) fn run_wsl_script_with_input(
     }
 }
 
+// 仅当非空路径列表均为同一发行版的 WSL UNC 时返回批处理组，发行版比较忽略大小写。
 pub(super) fn wsl_batch_group(paths: &[String]) -> Option<(String, Vec<String>)> {
     let mut distro: Option<String> = None;
     let mut linux_paths = Vec::with_capacity(paths.len());
@@ -103,6 +108,7 @@ pub(super) fn wsl_batch_group(paths: &[String]) -> Option<(String, Vec<String>)>
     Some((distro?, linux_paths))
 }
 
+// 向 WSL 程序同步写入 stdin，再轮询退出并限制等待时长；超时计时不覆盖前面的 write_all。
 pub(super) fn run_wsl_with_input(
     distro: &str,
     program: &str,
@@ -151,6 +157,7 @@ pub(super) fn run_wsl_with_input(
     }
 }
 
+// 按本机或 WSL 路径读取内容，缺失返回 None；WSL 先 test 再 cat，二者之间不是原子快照。
 pub(crate) fn read_live(path: &str) -> Result<Option<Vec<u8>>, String> {
     match live_path(path) {
         LivePath::Local(path) => match fs::read(path) {
@@ -186,6 +193,7 @@ for path do
 done
 "#;
 
+// 按声明长度解析批量读取帧并检查尾部完整消费；标记仅等于 1 时视为存在，其他标记要求长度为零。
 pub(super) fn parse_wsl_batch_reads(
     stdout: &[u8],
     expected: usize,
@@ -232,6 +240,7 @@ pub(super) fn parse_wsl_batch_reads(
     Ok(values)
 }
 
+// 同发行版 WSL 路径合并为一次脚本读取并解帧，其他路径逐项读取；空输入直接返回空列表。
 pub(super) fn read_live_many(paths: &[String]) -> Result<Vec<Option<Vec<u8>>>, String> {
     if paths.is_empty() {
         return Ok(Vec::new());
@@ -246,6 +255,7 @@ pub(super) fn read_live_many(paths: &[String]) -> Result<Vec<Option<Vec<u8>>>, S
     paths.iter().map(|path| read_live(path)).collect()
 }
 
+// 按平台检查普通文件，本机使用元数据，WSL 使用 test -f；探测失败返回 false。
 pub(crate) fn live_is_file(path: &str) -> bool {
     match live_path(path) {
         LivePath::Local(path) => path.is_file(),
@@ -255,6 +265,7 @@ pub(crate) fn live_is_file(path: &str) -> bool {
     }
 }
 
+// 按平台检查目录，本机使用元数据，WSL 使用 test -d；探测失败返回 false。
 pub(crate) fn live_is_dir(path: &str) -> bool {
     match live_path(path) {
         LivePath::Local(path) => path.is_dir(),
@@ -264,6 +275,7 @@ pub(crate) fn live_is_dir(path: &str) -> bool {
     }
 }
 
+// 本机递归创建目录或在 WSL 执行 mkdir -p，失败传播，不回滚已创建父目录。
 pub(crate) fn create_live_dir_all(path: &str) -> Result<(), String> {
     match live_path(path) {
         LivePath::Local(path) => {
@@ -280,6 +292,7 @@ pub(crate) fn create_live_dir_all(path: &str) -> Result<(), String> {
     }
 }
 
+// 以本机只读属性或 WSL test -w 估计文件/最近已有父目录可写性，不实际写入，也不保证随后写入成功。
 pub(crate) fn target_writable(path: &str) -> bool {
     match live_path(path) {
         LivePath::Local(path) => match fs::metadata(&path) {
@@ -334,6 +347,7 @@ for path do
 done
 "#;
 
+// 同发行版 WSL 批量探测可写性，执行、解码或数量异常时全返回 false；其他路径逐项检查。
 pub(super) fn target_writable_many(paths: &[String]) -> Vec<bool> {
     if paths.is_empty() {
         return Vec::new();
@@ -357,6 +371,7 @@ pub(super) fn target_writable_many(paths: &[String]) -> Vec<bool> {
     paths.iter().map(|path| target_writable(path)).collect()
 }
 
+// 从目标父路径向根逐级查找首个已有目录并测试可写，探测失败按未命中处理。
 pub(super) fn wsl_writable_parent(distro: &str, linux_path: &str) -> bool {
     let mut current = linux_path
         .rsplit_once('/')
@@ -383,6 +398,7 @@ pub(super) fn wsl_writable_parent(distro: &str, linux_path: &str) -> bool {
     }
 }
 
+// 解析目标父目录并按平台递归创建，缺失父路径返回错误，不创建目标文件。
 pub(super) fn ensure_parent(path: &str) -> Result<(), String> {
     match live_path(path) {
         LivePath::Local(path) => path
@@ -407,6 +423,7 @@ pub(super) fn ensure_parent(path: &str) -> Result<(), String> {
     }
 }
 
+// 先创建父目录，再直接写入或截断覆盖本机/WSL 目标；不使用临时文件原子替换。
 pub(crate) fn write_live(path: &str, bytes: &[u8]) -> Result<(), String> {
     ensure_parent(path)?;
     match live_path(path) {
@@ -434,6 +451,7 @@ for path do
 done
 "#;
 
+// 要求路径与负载数量相等，同发行版 WSL 用长度前缀串接输入批量写入，否则依次写入；失败不自行回滚前面已写目标。
 pub(super) fn write_live_many(paths: &[String], payloads: &[Vec<u8>]) -> Result<(), String> {
     if paths.len() != payloads.len() {
         return Err("provider_target_write_failed".to_string());
@@ -456,6 +474,7 @@ pub(super) fn write_live_many(paths: &[String], payloads: &[Vec<u8>]) -> Result<
     Ok(())
 }
 
+// 删除目标文件，缺失视为成功；WSL 使用 rm -f，非成功退出映射为恢复失败。
 pub(crate) fn remove_live(path: &str) -> Result<(), String> {
     match live_path(path) {
         LivePath::Local(path) => match fs::remove_file(path) {

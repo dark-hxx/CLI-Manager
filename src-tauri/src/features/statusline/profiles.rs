@@ -88,6 +88,7 @@ struct ExportLibrary {
     codex: Vec<StatuslineProfile>,
 }
 
+// 返回当前 Unix 毫秒时间用于配置记录。
 fn now_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -95,6 +96,7 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+// 组合进程号、时间与递增序列生成配置标识。
 fn new_id() -> String {
     format!(
         "profile-{}-{}-{}",
@@ -104,12 +106,14 @@ fn new_id() -> String {
     )
 }
 
+// 返回当前应用数据根中的状态栏配置库路径。
 fn library_path() -> Result<PathBuf, String> {
     Ok(app_paths::cli_manager_data_dir()?
         .join("statusline")
         .join(LIBRARY_FILE))
 }
 
+// 在目标同目录暂存内容后替换文件，失败时尝试清理暂存文件。
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -133,6 +137,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// 规范化配置名称并限定为 1 至 80 个字符。
 fn validate_name(name: &str) -> Result<String, String> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > 80 {
@@ -141,6 +146,7 @@ fn validate_name(name: &str) -> Result<String, String> {
     Ok(name.to_string())
 }
 
+// 按 Claude 设置或 Codex 项目目录严格验证配置载荷。
 fn validate_payload(tool: StatuslineProfileTool, payload: &Value) -> Result<(), String> {
     match tool {
         StatuslineProfileTool::Claude => {
@@ -158,6 +164,7 @@ fn validate_payload(tool: StatuslineProfileTool, payload: &Value) -> Result<(), 
     Ok(())
 }
 
+// 验证存储快照形状，但保留 Codex 未知项目供编辑器移除。
 fn validate_stored_payload(tool: StatuslineProfileTool, payload: &Value) -> Result<(), String> {
     match tool {
         StatuslineProfileTool::Claude => validate_payload(tool, payload),
@@ -169,6 +176,7 @@ fn validate_stored_payload(tool: StatuslineProfileTool, payload: &Value) -> Resu
     }
 }
 
+// 读取实际 Claude 设置或 Codex 项目列表作为配置载荷。
 fn actual_payload(
     tool: StatuslineProfileTool,
     config_dir: Option<String>,
@@ -190,6 +198,7 @@ fn actual_payload(
     }
 }
 
+// 严格验证载荷后应用到 Claude 内部设置或 Codex 原生配置。
 fn apply_payload(
     tool: StatuslineProfileTool,
     payload: &Value,
@@ -211,6 +220,7 @@ fn apply_payload(
     }
 }
 
+// 从实际配置创建并激活初始快照。
 fn initial_profile(
     tool: StatuslineProfileTool,
     config_dir: Option<String>,
@@ -231,6 +241,7 @@ fn initial_profile(
     })
 }
 
+// 在内存中规范化配置库内的 Codex 旧项目别名。
 fn canonicalize_codex_profiles(library: &mut ProfileLibrary) -> Result<(), String> {
     for profile in &mut library.codex.profiles {
         let items = serde_json::from_value::<Vec<String>>(profile.payload.clone())
@@ -241,6 +252,7 @@ fn canonicalize_codex_profiles(library: &mut ProfileLibrary) -> Result<(), Strin
     Ok(())
 }
 
+// 读取并验证配置库，缺失时从两个工具的实际配置初始化并保存。
 fn load_library(config_dir: Option<String>) -> Result<ProfileLibrary, String> {
     let path = library_path()?;
     if !path.exists() {
@@ -266,6 +278,7 @@ fn load_library(config_dir: Option<String>) -> Result<ProfileLibrary, String> {
     Ok(library)
 }
 
+// 检查每个工具都有有效活动配置，并验证名称与快照形状。
 fn validate_library(library: &ProfileLibrary) -> Result<(), String> {
     for (tool, section) in [
         (StatuslineProfileTool::Claude, &library.claude),
@@ -287,6 +300,7 @@ fn validate_library(library: &ProfileLibrary) -> Result<(), String> {
     Ok(())
 }
 
+// 验证完整配置库后序列化并写入内部文件。
 fn save_library(library: &ProfileLibrary) -> Result<(), String> {
     validate_library(library)?;
     let bytes = serde_json::to_vec_pretty(library)
@@ -294,6 +308,7 @@ fn save_library(library: &ProfileLibrary) -> Result<(), String> {
     atomic_write(&library_path()?, &bytes)
 }
 
+// 获取指定工具的只读配置分区。
 fn section(library: &ProfileLibrary, tool: StatuslineProfileTool) -> &ToolProfiles {
     match tool {
         StatuslineProfileTool::Claude => &library.claude,
@@ -301,6 +316,7 @@ fn section(library: &ProfileLibrary, tool: StatuslineProfileTool) -> &ToolProfil
     }
 }
 
+// 获取指定工具的可变配置分区。
 fn section_mut(library: &mut ProfileLibrary, tool: StatuslineProfileTool) -> &mut ToolProfiles {
     match tool {
         StatuslineProfileTool::Claude => &mut library.claude,
@@ -308,6 +324,7 @@ fn section_mut(library: &mut ProfileLibrary, tool: StatuslineProfileTool) -> &mu
     }
 }
 
+// 返回配置库状态，并将实际配置与活动快照差异作为外部载荷暴露。
 fn state(
     library: &ProfileLibrary,
     tool: StatuslineProfileTool,
@@ -336,6 +353,7 @@ pub struct StatuslineBackupBundle {
 }
 
 #[tauri::command]
+// 导出已验证的内部状态栏设置和配置库，缺失配置库时按规则初始化。
 pub fn statusline_backup_export() -> Result<StatuslineBackupBundle, String> {
     let settings = if statusline::settings_path()?.exists() {
         statusline::load_settings()?
@@ -349,6 +367,7 @@ pub fn statusline_backup_export() -> Result<StatuslineBackupBundle, String> {
 }
 
 #[tauri::command]
+// 验证备份后依次替换内部设置与配置库，不应用外部工具配置。
 pub fn statusline_backup_restore(bundle: StatuslineBackupBundle) -> Result<(), String> {
     statusline::validate_settings(&bundle.settings)?;
     validate_library(&bundle.profiles)?;
@@ -361,6 +380,7 @@ pub fn statusline_backup_restore(bundle: StatuslineBackupBundle) -> Result<(), S
 }
 
 #[tauri::command]
+// 加载配置库并返回指定工具状态及外部漂移。
 pub fn statusline_profiles_load(
     tool: StatuslineProfileTool,
     config_dir: Option<String>,
@@ -370,6 +390,7 @@ pub fn statusline_profiles_load(
 }
 
 #[tauri::command]
+// 验证新名称和载荷，先应用实际配置再新增并激活快照。
 pub fn statusline_profiles_create(
     tool: StatuslineProfileTool,
     name: String,
@@ -404,6 +425,7 @@ pub fn statusline_profiles_create(
 }
 
 #[tauri::command]
+// 仅允许保存活动配置，先应用载荷再更新配置库版本。
 pub fn statusline_profiles_save(
     tool: StatuslineProfileTool,
     profile_id: String,
@@ -429,6 +451,7 @@ pub fn statusline_profiles_save(
 }
 
 #[tauri::command]
+// 先应用目标快照，成功后切换活动标识并保存配置库。
 pub fn statusline_profiles_switch(
     tool: StatuslineProfileTool,
     profile_id: String,
@@ -449,6 +472,7 @@ pub fn statusline_profiles_switch(
 }
 
 #[tauri::command]
+// 检查同工具名称冲突后重命名配置并递增库版本。
 pub fn statusline_profiles_rename(
     tool: StatuslineProfileTool,
     profile_id: String,
@@ -478,6 +502,7 @@ pub fn statusline_profiles_rename(
 }
 
 #[tauri::command]
+// 复制指定载荷为新名称，应用后将副本设为活动配置。
 pub fn statusline_profiles_duplicate(
     tool: StatuslineProfileTool,
     profile_id: String,
@@ -517,6 +542,7 @@ pub fn statusline_profiles_duplicate(
 }
 
 #[tauri::command]
+// 删除非活动配置，活动项和不存在的标识均返回错误。
 pub fn statusline_profiles_delete(
     tool: StatuslineProfileTool,
     profile_id: String,
@@ -538,6 +564,7 @@ pub fn statusline_profiles_delete(
 }
 
 #[tauri::command]
+// 读取当前实际载荷并创建新的活动配置快照。
 pub fn statusline_profiles_capture_external(
     tool: StatuslineProfileTool,
     name: String,
@@ -547,6 +574,7 @@ pub fn statusline_profiles_capture_external(
     statusline_profiles_create(tool, name, payload, config_dir)
 }
 
+// 限定导入导出为 JSON 路径，导入时检查文件类型和大小。
 fn validate_transfer_path(path: &str, must_exist: bool) -> Result<PathBuf, String> {
     let path = PathBuf::from(path);
     if path
@@ -567,6 +595,7 @@ fn validate_transfer_path(path: &str, must_exist: bool) -> Result<PathBuf, Strin
     Ok(path)
 }
 
+// 读取版本化导出库并严格验证所有名称与工具载荷。
 fn read_export(path: &str) -> Result<ExportLibrary, String> {
     let path = validate_transfer_path(path, true)?;
     let value: ExportLibrary = serde_json::from_str(
@@ -589,6 +618,7 @@ fn read_export(path: &str) -> Result<ExportLibrary, String> {
 }
 
 #[tauri::command]
+// 仅导出版本与两个工具的配置列表到指定 JSON 文件。
 pub fn statusline_profiles_export(path: String, config_dir: Option<String>) -> Result<(), String> {
     let library = load_library(config_dir)?;
     let export = ExportLibrary {
@@ -602,6 +632,7 @@ pub fn statusline_profiles_export(path: String, config_dir: Option<String>) -> R
 }
 
 #[tauri::command]
+// 验证导入库并按同工具名称收集冲突与当前修订号。
 pub fn statusline_profiles_analyze_import(
     path: String,
     config_dir: Option<String>,
@@ -641,6 +672,7 @@ pub fn statusline_profiles_analyze_import(
 }
 
 #[tauri::command]
+// 核对修订号并处理跳过、重命名或覆盖决策，禁止覆盖活动配置后保存。
 pub fn statusline_profiles_commit_import(
     path: String,
     revision: u64,
@@ -719,6 +751,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证拒绝空白配置名称。
     fn rejects_empty_profile_name() {
         assert_eq!(
             validate_name(" ").unwrap_err(),
@@ -727,6 +760,7 @@ mod tests {
     }
 
     #[test]
+    // 验证拒绝非 JSON 传输路径。
     fn rejects_non_json_transfer_path() {
         assert_eq!(
             validate_transfer_path("profiles.txt", false).unwrap_err(),
@@ -735,6 +769,7 @@ mod tests {
     }
 
     #[test]
+    // 验证严格载荷检查拒绝未知 Codex 项目。
     fn rejects_unknown_codex_item() {
         assert_eq!(
             validate_payload(
@@ -747,6 +782,7 @@ mod tests {
     }
 
     #[test]
+    // 验证存储快照保留未知 Codex 项目但实际应用仍拒绝。
     fn keeps_unknown_codex_items_in_stored_profiles_for_removal() {
         let payload = serde_json::json!(["thread-name"]);
         assert!(validate_stored_payload(StatuslineProfileTool::Codex, &payload).is_ok());
@@ -757,6 +793,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 配置载荷拒绝空状态栏行列表。
     fn rejects_invalid_claude_line_count() {
         let mut settings = statusline::StatuslineSettings::default();
         settings.lines.clear();

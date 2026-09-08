@@ -1,10 +1,12 @@
 use super::{build_command, HOOK_COMMAND_MARKER};
 use serde_json::{json, Map, Value};
 
+// 以空 matcher 添加事件命令，复用 JSON Hook 合并逻辑。
 pub(super) fn add_hook_command(settings: &mut Value, event: &str, command: String) {
     add_hook_command_with_matcher(settings, event, "", command);
 }
 
+// 确保对象与事件数组形状，命令文本尚不存在时追加带 matcher 的条目。
 pub(super) fn add_hook_command_with_matcher(
     settings: &mut Value,
     event: &str,
@@ -36,6 +38,7 @@ pub(super) fn add_hook_command_with_matcher(
     }
 }
 
+// 从指定事件移除含当前标记或旧脚本名的命令，并清理空容器。
 pub(super) fn remove_hook_commands(settings: &mut Value, events: &[&str], script_names: &[&str]) {
     let Some(hooks) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
@@ -74,6 +77,7 @@ pub(super) fn remove_hook_commands(settings: &mut Value, events: &[&str], script
     }
 }
 
+// 按命令中的标记、来源参数和事件参数子串移除指定桥接命令。
 pub(super) fn remove_named_hook_command(
     settings: &mut Value,
     hook_event: &str,
@@ -112,6 +116,7 @@ pub(super) fn remove_named_hook_command(
     }
 }
 
+// 用当前可执行路径构造命令，并检查指定原生事件是否已注册。
 pub(super) fn registered_exact_command(
     settings: &Value,
     exe: Option<&str>,
@@ -128,6 +133,7 @@ pub(super) fn registered_exact_command(
     })
 }
 
+// 检查当前路径生成的命令与指定 matcher 是否同时精确匹配。
 pub(super) fn registered_exact_command_with_matcher(
     settings: &Value,
     exe: Option<&str>,
@@ -146,6 +152,7 @@ pub(super) fn registered_exact_command_with_matcher(
     })
 }
 
+// 检查指定事件数组中是否存在完全相同的命令文本。
 pub(super) fn exact_command_registered(settings: &Value, event: &str, command: &str) -> bool {
     settings
         .get("hooks")
@@ -153,6 +160,7 @@ pub(super) fn exact_command_registered(settings: &Value, event: &str, command: &
         .is_some_and(|event_value| event_has_exact_command(event_value, command))
 }
 
+// 在精确匹配的 matcher 条目中查找完全相同的命令文本。
 pub(super) fn exact_command_with_matcher_registered(
     settings: &Value,
     event: &str,
@@ -178,6 +186,7 @@ pub(super) fn exact_command_with_matcher_registered(
         })
 }
 
+// 遍历事件条目的 hooks 数组，按字符串相等检查命令。
 pub(super) fn event_has_exact_command(event_value: &Value, command: &str) -> bool {
     event_value.as_array().is_some_and(|entries| {
         entries.iter().any(|entry| {
@@ -195,6 +204,7 @@ pub(super) fn event_has_exact_command(event_value: &Value, command: &str) -> boo
     })
 }
 
+// 按隐藏命令标记或旧脚本名子串识别可清理的命令。
 pub(super) fn is_cli_manager_command(hook: &Value, legacy_scripts: &[&str]) -> bool {
     hook.get("command")
         .and_then(Value::as_str)
@@ -207,6 +217,7 @@ pub(super) fn is_cli_manager_command(hook: &Value, legacy_scripts: &[&str]) -> b
         })
 }
 
+// 将非对象值替换为空对象，并返回可变对象引用。
 pub(super) fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
     if !value.is_object() {
         *value = Value::Object(Map::new());
@@ -214,6 +225,7 @@ pub(super) fn ensure_object(value: &mut Value) -> &mut Map<String, Value> {
     value.as_object_mut().expect("value was just made object")
 }
 
+// 确保指定子项为对象，必要时创建或替换后返回引用。
 pub(super) fn ensure_child_object<'a>(
     object: &'a mut Map<String, Value>,
     key: &str,

@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 扫描 Pi 会话元数据与消息，结合默认模型汇总用量及去重工具计数。
 pub(super) fn scan_pi_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -80,6 +81,7 @@ pub(super) fn scan_pi_jsonl_session(
     (summary, stats, output_messages)
 }
 
+// 遍历 Pi 消息的 toolCall 块，按可用调用 ID 去重并累计工具次数。
 pub(super) fn collect_pi_tool_calls(
     value: &Value,
     seen_call_ids: &mut HashSet<String>,
@@ -110,14 +112,17 @@ pub(super) fn collect_pi_tool_calls(
     }
 }
 
+// 按 Pi 兼容字段顺序读取工具调用 ID。
 pub(super) fn pi_tool_call_id(value: &Value) -> Option<String> {
     pi_string_by_keys(value, &["toolCallId", "tool_call_id", "id"])
 }
 
+// 按 Pi 兼容字段顺序读取工具名称。
 pub(super) fn pi_tool_name(value: &Value) -> Option<String> {
     pi_string_by_keys(value, &["name", "toolName", "tool_name", "kind"])
 }
 
+// 扫描 Pi 工具调用为诊断事件，并按调用 ID 回填工具结果正文与完成状态。
 pub(super) fn scan_pi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let Ok(file) = File::open(path) else {
         return Vec::new();

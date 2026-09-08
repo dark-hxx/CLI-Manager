@@ -33,6 +33,7 @@ pub struct DaemonInfo {
 }
 
 /// dev 与安装版使用不同发现文件，互不 attach（对齐 sessions.dev.json 隔离规则）。
+// 根据调用方提供的开发标志选择不同发现文件名，函数本身不推断构建环境。
 pub fn daemon_info_file_name(is_dev: bool) -> &'static str {
     if is_dev {
         DEV_DAEMON_INFO_FILE_NAME
@@ -41,11 +42,14 @@ pub fn daemon_info_file_name(is_dev: bool) -> &'static str {
     }
 }
 
+// 将环境隔离的文件名拼到指定数据根，不创建目录或验证路径。
 pub fn daemon_info_path(data_dir: &Path, is_dev: bool) -> PathBuf {
     data_dir.join(daemon_info_file_name(is_dev))
 }
 
 /// 独占创建写入发现文件：已存在即失败（单实例约束，由调用方决定是否清扫残留后重试）。
+// 创建父目录并独占创建发现文件后写 JSON，已有文件绝不覆盖；写失败可能留下不完整文件，由调用方处理。
+// 文件含连接 token，不得记录 payload；flush 不等于磁盘 sync_data，读取方可能遇到发布中的内容。
 pub fn write_daemon_info_exclusive(path: &Path, info: &DaemonInfo) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| format!("create data dir failed: {err}"))?;
@@ -62,6 +66,7 @@ pub fn write_daemon_info_exclusive(path: &Path, info: &DaemonInfo) -> Result<(),
         .map_err(|err| format!("write daemon info failed: {err}"))
 }
 
+// 读取并反序列化连接信息，仅文件不存在返回 None；不验证 PID、协议兼容性或 token 权限。
 pub fn read_daemon_info(path: &Path) -> Result<Option<DaemonInfo>, String> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -73,6 +78,7 @@ pub fn read_daemon_info(path: &Path) -> Result<Option<DaemonInfo>, String> {
         .map_err(|err| format!("parse daemon info failed: {err}"))
 }
 
+// 尽力删除给定发现文件，缺失无操作，其他错误告警；调用方负责确认文件属于应清理的 daemon。
 pub fn remove_daemon_info(path: &Path) {
     if let Err(err) = fs::remove_file(path) {
         if err.kind() != std::io::ErrorKind::NotFound {
@@ -82,6 +88,7 @@ pub fn remove_daemon_info(path: &Path) {
 }
 
 /// pid 存活检测：用于识别 daemon.json 残留（进程已死 → 删除文件重拉）。
+// 只查询指定 PID 是否存在，不读取命令行，也不验证启动时间、用户或可执行身份。
 pub fn is_pid_alive(pid: u32) -> bool {
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
     let mut system = System::new();
@@ -98,6 +105,7 @@ pub fn is_pid_alive(pid: u32) -> bool {
 mod tests {
     use super::*;
 
+    // 构造固定假端口/token 与当前协议能力的测试发现信息，不启动服务。
     fn sample() -> DaemonInfo {
         DaemonInfo {
             port: 12345,
@@ -113,12 +121,14 @@ mod tests {
     }
 
     #[test]
+    // 验证开发与安装环境使用不同发现文件名。
     fn file_name_is_isolated_per_environment() {
         assert_eq!(daemon_info_file_name(false), "daemon.json");
         assert_eq!(daemon_info_file_name(true), "daemon.dev.json");
     }
 
     #[test]
+    // 在临时目录验证读写往返、重复独占创建失败、删除后缺失及重新创建成功。
     fn write_read_roundtrip_and_exclusive_create() {
         let dir = tempfile::tempdir().unwrap();
         let path = daemon_info_path(dir.path(), false);
@@ -133,6 +143,7 @@ mod tests {
     }
 
     #[test]
+    // 验证尚未创建发现文件时返回 None 而不是读取错误。
     fn missing_file_reads_as_none() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(
@@ -142,6 +153,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧发现 JSON 缺失协议版本与能力字段时使用零值及空列表。
     fn legacy_info_defaults_protocol_capabilities() {
         let info: DaemonInfo =
             serde_json::from_str(r#"{"port":1,"token":"tok","pid":2,"version":"old"}"#).unwrap();
@@ -151,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前支持能力列表包含本地路由标识，不测试真实路由连接。
     fn current_info_advertises_local_routing_capability() {
         assert!(sample()
             .features
@@ -159,6 +172,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前测试进程 PID 可见，极大伪 PID 不可见；不读取进程命令行。
     fn pid_liveness() {
         assert!(is_pid_alive(std::process::id()));
         // u32::MAX 几乎不可能是真实 pid。

@@ -11,6 +11,7 @@ use sha2::Sha256;
 
 type HmacSha256 = Hmac<Sha256>;
 
+// 按供应商名称构造请求规范或返回不支持错误；只生成数据，不发送网络请求。
 pub fn build_request(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -35,6 +36,7 @@ pub fn build_request(
     }
 }
 
+// 按供应商选择业务码、布尔值或投递 ID 判定；custom 仅检查 2xx，各分支的 HTTP 状态要求不同。
 pub fn parse_response(
     target: &ThirdPartyTarget,
     response: &HttpResponseSnapshot,
@@ -68,6 +70,7 @@ pub fn parse_response(
     }
 }
 
+// 构造钉钉文本请求；配置 secret 时用毫秒时间与 secret 生成 HMAC，并将时间和签名追加到 URL。
 fn build_dingtalk(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -86,6 +89,7 @@ fn build_dingtalk(
     Ok(json_post(url, vec![], dingtalk_body(message)))
 }
 
+// 构造飞书文本请求；配置 secret 时以秒时间和 secret 组成 HMAC 密钥，对空载荷签名并写入正文。
 fn build_feishu(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -104,6 +108,7 @@ fn build_feishu(
     build_json_webhook(target, message, "webhookUrl", body)
 }
 
+// 拼接 Bark 服务及设备 key，加入标题正文、可选属性和成对 Basic 凭据；URL 校验留到发送阶段。
 fn build_bark(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -133,6 +138,7 @@ fn build_bark(
     Ok(json_post(url, headers, Value::Object(body)))
 }
 
+// 构造固定 PushPlus 地址的 JSON 请求，包含 token、标题正文及可选渠道属性。
 fn build_pushplus(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -154,6 +160,7 @@ fn build_pushplus(
     ))
 }
 
+// 构造 WxPusher 纯文本消息，优先采用 spt，否则要求 appToken 并选取有效用户及主题数组。
 fn build_wxpusher(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -194,6 +201,7 @@ fn build_wxpusher(
     ))
 }
 
+// 按 sendKey 是否以 sctp 开头选择服务地址，使用表单发送标题与正文。
 fn build_serverchan(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -215,6 +223,7 @@ fn build_serverchan(
     })
 }
 
+// 将 bot token 拼入 Telegram 端点，构造聊天目标与文本，可选附带整数线程 ID。
 fn build_telegram(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -238,6 +247,7 @@ fn build_telegram(
     ))
 }
 
+// 构造主题路径和纯文本 POST，将标题及可选优先级/标签放入请求头，并按配置附加认证。
 fn build_ntfy(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -265,6 +275,7 @@ fn build_ntfy(
     })
 }
 
+// 校验 Gotify 消息端点并把 token 加入查询，构造标题正文及缺省为 5 的优先级。
 fn build_gotify(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -287,6 +298,7 @@ fn build_gotify(
     ))
 }
 
+// 只接受 GET/POST，渲染 URL、查询和头模板；GET 忽略正文，POST 支持 JSON、表单或文本。
 fn build_custom(
     target: &ThirdPartyTarget,
     message: &HookNotificationMessage,
@@ -377,6 +389,7 @@ fn build_custom(
     })
 }
 
+// 取得必填 webhook 字符串并包装 JSON POST，暂不解析或校验 URL。
 fn build_json_webhook(
     target: &ThirdPartyTarget,
     _message: &HookNotificationMessage,
@@ -387,6 +400,7 @@ fn build_json_webhook(
     Ok(json_post(url, vec![], body))
 }
 
+// 将通知正文包装为钉钉文本消息结构。
 fn dingtalk_body(message: &HookNotificationMessage) -> Value {
     json!({
         "msgtype": "text",
@@ -394,6 +408,7 @@ fn dingtalk_body(message: &HookNotificationMessage) -> Value {
     })
 }
 
+// 将通知正文包装为飞书文本消息结构。
 fn feishu_body(message: &HookNotificationMessage) -> Value {
     json!({
         "msg_type": "text",
@@ -401,6 +416,7 @@ fn feishu_body(message: &HookNotificationMessage) -> Value {
     })
 }
 
+// 将通知正文包装为企业微信文本消息结构。
 fn wecom_body(message: &HookNotificationMessage) -> Value {
     json!({
         "msgtype": "text",
@@ -408,6 +424,7 @@ fn wecom_body(message: &HookNotificationMessage) -> Value {
     })
 }
 
+// 组合 URL、自定义头和 JSON 正文为 POST 规范，不执行校验或发送。
 fn json_post(url: String, headers: Vec<(String, String)>, body: Value) -> HttpRequestSpec {
     HttpRequestSpec {
         method: HttpMethod::Post,
@@ -417,6 +434,7 @@ fn json_post(url: String, headers: Vec<(String, String)>, body: Value) -> HttpRe
     }
 }
 
+// 解析 JSON 并要求指定整数业务码等于预期值；不额外检查 HTTP 状态。
 fn parse_json_code(
     response: &HttpResponseSnapshot,
     field: &str,
@@ -440,6 +458,7 @@ fn parse_json_code(
     ))
 }
 
+// 解析 JSON 并要求 ok=true，可提取整数 message_id；不额外检查 HTTP 状态或要求投递 ID 存在。
 fn parse_telegram(response: &HttpResponseSnapshot) -> Result<ProviderAccepted, NotificationError> {
     let value = response_json(response)?;
     if value.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -458,6 +477,7 @@ fn parse_telegram(response: &HttpResponseSnapshot) -> Result<ProviderAccepted, N
     ))
 }
 
+// 先要求 2xx 或严格 200，再从 JSON 中取得字符串/整数 id；空字符串也会作为有效 ID 返回。
 fn parse_id(
     response: &HttpResponseSnapshot,
     allow_any_2xx: bool,
@@ -494,11 +514,13 @@ fn parse_id(
     }
 }
 
+// 将响应字节解析为 JSON，语法失败返回固定错误，不包含原始响应正文。
 fn response_json(response: &HttpResponseSnapshot) -> Result<Value, NotificationError> {
     serde_json::from_slice::<Value>(&response.body)
         .map_err(|_| NotificationError::new("invalid_response_json", "response is not valid json"))
 }
 
+// 按固定键顺序提取首个字符串消息并截取 160 字符；不移除秘密或控制字符。
 fn json_message(value: &Value) -> Option<String> {
     for key in ["errmsg", "msg", "message", "error"] {
         if let Some(text) = value.get(key).and_then(Value::as_str) {
@@ -508,6 +530,7 @@ fn json_message(value: &Value) -> Option<String> {
     None
 }
 
+// 按固定字段顺序读取字符串或有符号整数投递 ID，并转换为字符串。
 fn json_delivery_id(value: &Value) -> Option<String> {
     for key in ["id", "messageId", "message_id"] {
         if let Some(id) = value.get(key) {
@@ -522,6 +545,7 @@ fn json_delivery_id(value: &Value) -> Option<String> {
     None
 }
 
+// 对给定字节载荷计算 HMAC-SHA256，返回标准 Base64，不记录密钥。
 fn hmac_base64(key: &[u8], payload: &[u8]) -> Result<String, NotificationError> {
     let mut mac = HmacSha256::new_from_slice(key)
         .map_err(|_| NotificationError::new("sign_failed", "invalid signing key"))?;
@@ -529,6 +553,7 @@ fn hmac_base64(key: &[u8], payload: &[u8]) -> Result<String, NotificationError> 
     Ok(STANDARD.encode(mac.finalize().into_bytes()))
 }
 
+// 把用户名与密码的冒号连接串编码成 Basic 认证头；Base64 并非加密。
 fn basic_auth(username: &str, password: &str) -> String {
     format!(
         "Basic {}",
@@ -536,6 +561,7 @@ fn basic_auth(username: &str, password: &str) -> String {
     )
 }
 
+// 按 authType 追加 Bearer 或成对 Basic 凭据；缺少必需值时静默省略，不删除已有认证头。
 fn append_auth_headers(target: &ThirdPartyTarget, headers: &mut Vec<(String, String)>) {
     match optional_string(&target.config, "authType").as_deref() {
         Some("bearer") => {
@@ -558,6 +584,7 @@ fn append_auth_headers(target: &ThirdPartyTarget, headers: &mut Vec<(String, Str
     }
 }
 
+// 按固定顺序逐项替换消息占位符；不转义，较早替换引入的后续占位符可能再次被替换。
 fn render_template(template: &str, message: &HookNotificationMessage) -> String {
     template
         .replace("{{title}}", &message.title)
@@ -569,6 +596,7 @@ fn render_template(template: &str, message: &HookNotificationMessage) -> String 
         .replace("{{id}}", &message.id)
 }
 
+// 递归替换 JSON 字符串值，保持对象键和非字符串值不变，不设递归深度限制。
 fn render_json_templates(value: Value, message: &HookNotificationMessage) -> Value {
     match value {
         Value::String(text) => Value::String(render_template(&text, message)),
@@ -588,12 +616,14 @@ fn render_json_templates(value: Value, message: &HookNotificationMessage) -> Val
     }
 }
 
+// 读取裁剪后的非空字符串配置，缺失、类型错误或空值统一返回 missing_config。
 fn required_string(value: &Value, key: &str) -> Result<String, NotificationError> {
     optional_string(value, key).ok_or_else(|| {
         NotificationError::new("missing_config", format!("missing config field {key}"))
     })
 }
 
+// 读取字符串字段并裁剪空白，非字符串或空值返回空值。
 fn optional_string(value: &Value, key: &str) -> Option<String> {
     value
         .get(key)
@@ -603,10 +633,12 @@ fn optional_string(value: &Value, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+// 只读取可表示为 i64 的 JSON 数值，不解析数字字符串。
 fn optional_i64(value: &Value, key: &str) -> Option<i64> {
     value.get(key).and_then(Value::as_i64)
 }
 
+// 从数组中保留裁剪后的非空字符串，跳过其他元素，结果为空时返回空值。
 fn optional_string_array(value: &Value, key: &str) -> Option<Vec<String>> {
     let items = value.get(key)?.as_array()?;
     let result: Vec<String> = items
@@ -619,6 +651,7 @@ fn optional_string_array(value: &Value, key: &str) -> Option<Vec<String>> {
     (!result.is_empty()).then_some(result)
 }
 
+// 从数组中保留可表示为 i64 的值，跳过无效元素，结果为空时返回空值。
 fn optional_i64_array(value: &Value, key: &str) -> Option<Vec<i64>> {
     let items = value.get(key)?.as_array()?;
     let result: Vec<i64> = items.iter().filter_map(Value::as_i64).collect();
@@ -630,6 +663,7 @@ mod tests {
     use super::*;
     use crate::third_party_notification::model::HookNotificationMessage;
 
+    // 构造固定通知消息供模板测试使用，不创建目标或发送通知。
     fn message() -> HookNotificationMessage {
         HookNotificationMessage {
             id: "id-1".to_string(),
@@ -643,6 +677,7 @@ mod tests {
     }
 
     #[test]
+    // 验证模板替换保留数字，并能处理嵌套数组中的字符串。
     fn custom_json_replaces_only_string_leaves() {
         let value = json!({"body":"{{body}}","count":1,"nested":["{{project}}"]});
         let rendered = render_json_templates(value, &message());
@@ -651,6 +686,7 @@ mod tests {
     }
 
     #[test]
+    // 验证禁止调用方设置 Content-Length，而普通 X-Test 头名可通过。
     fn rejects_controlled_custom_header() {
         assert!(ensure_safe_header_name("Content-Length").is_err());
         assert!(ensure_safe_header_name("X-Test").is_ok());

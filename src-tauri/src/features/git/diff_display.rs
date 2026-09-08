@@ -8,6 +8,7 @@ use super::git_diff::{
 };
 use crate::text_encoding::{decode_text, decode_text_fragment, is_utf8_encoding, DecodedText};
 
+// 解码 CLI Diff 并应用展示上限，仅适合精确回滚的 UTF-8 文本允许局部回滚。
 pub(super) fn format_cli_diff(
     bytes: &[u8],
     file_path: &str,
@@ -24,6 +25,7 @@ pub(super) fn format_cli_diff(
     build_diff_payload(content, options.allows_partial_revert() && utf8 && !binary)
 }
 
+// 优先检测工作区文件编码，否则检查 HEAD Blob，二进制或缺失返回空提示。
 pub(super) fn detect_file_diff_encoding(
     repo: &Repository,
     workdir: &Path,
@@ -55,6 +57,7 @@ pub(super) fn detect_file_diff_encoding(
     }
 }
 
+// 结合编码提示生成可读 Patch，并计算局部回滚权限及展示上限。
 pub(super) fn format_diff_for_display(
     diff: git2::Diff,
     file_path: &str,
@@ -94,6 +97,7 @@ pub(super) fn format_diff_for_display(
     )
 }
 
+// 汇集 Diff 正文增删和上下文行的字节，供编码检测使用。
 fn collect_diff_body_bytes(diff: &git2::Diff) -> Result<Vec<u8>, String> {
     let mut body = Vec::new();
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
@@ -106,6 +110,7 @@ fn collect_diff_body_bytes(diff: &git2::Diff) -> Result<Vec<u8>, String> {
     Ok(body)
 }
 
+// 按指定编码逐片段解码 Diff 正文，头部仍要求 UTF-8。
 fn format_diff_to_display_text(
     diff: &git2::Diff,
     encoding: &str,
@@ -148,6 +153,7 @@ fn format_diff_to_display_text(
     }
 }
 
+// 修补 libgit2 按单字节换行切分 UTF-16LE 时的跨片段零字节。
 fn normalize_diff_body_fragment<'a>(
     bytes: &'a [u8],
     encoding: &str,

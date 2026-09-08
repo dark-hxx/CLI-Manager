@@ -17,6 +17,8 @@ pub(crate) struct DecodedText {
     pub guessed: bool,
 }
 
+// 优先按 BOM 解码 UTF-8/UTF-16；无 BOM 时先排除疑似二进制，再尝试 UTF-8 和传统编码探测。
+// 返回编码、BOM 和探测标记供原格式保存使用；非法编码不以替换字符吞掉错误。
 pub(crate) fn decode_text(bytes: &[u8]) -> Result<DecodedText, &'static str> {
     if let Some(rest) = bytes.strip_prefix(UTF8_BOM) {
         return Ok(DecodedText {
@@ -70,6 +72,8 @@ pub(crate) fn decode_text(bytes: &[u8]) -> Result<DecodedText, &'static str> {
     })
 }
 
+// 按已知编码解码完整字节片段，不重新猜测编码；仅在请求时剥离片段起始的匹配 BOM。
+// 不保存跨片段解码状态，因此调用方必须保证片段没有截断多字节字符。
 pub(crate) fn decode_text_fragment(
     bytes: &[u8],
     encoding: &str,
@@ -107,6 +111,8 @@ pub(crate) fn decode_text_fragment(
         .ok_or("text_decode_failed")
 }
 
+// 按指定编码严格回写文本；UTF-8/UTF-16 遵循 BOM 标记，传统编码不额外添加 BOM。
+// 无法表示的字符返回独立错误，避免保存时静默丢字或自动转换编码。
 pub(crate) fn encode_text(
     content: &str,
     encoding: &str,
@@ -142,10 +148,12 @@ pub(crate) fn encode_text(
     }
 }
 
+// 忽略大小写比较规范标签 utf-8，不把 utf8 等别名视为匹配。
 pub(crate) fn is_utf8_encoding(encoding: &str) -> bool {
     encoding.eq_ignore_ascii_case(UTF8_LABEL)
 }
 
+// 严格验证探测编码；仅当 GBK 解码失败时追加尝试 GB18030，并返回实际采用的编码。
 fn decode_guessed(
     bytes: &[u8],
     encoding: &'static Encoding,
@@ -161,6 +169,7 @@ fn decode_guessed(
     Err("text_decode_failed")
 }
 
+// 解析传统编码标签，拒绝未知标签、replacement 及由专用分支处理的 UTF-8/UTF-16。
 fn resolve_legacy_encoding(label: &str) -> Result<&'static Encoding, &'static str> {
     Encoding::for_label_no_replacement(label.as_bytes())
         .filter(|encoding| {
@@ -171,16 +180,19 @@ fn resolve_legacy_encoding(label: &str) -> Result<&'static Encoding, &'static st
         .ok_or("unsupported_text_encoding")
 }
 
+// 将编码库的标准名称转成小写，稳定读写接口中持久化的编码标签。
 fn canonical_label(encoding: &'static Encoding) -> String {
     encoding.name().to_ascii_lowercase()
 }
 
+// 只接受合法 UTF-8 字节；BOM 是否剥离由调用方决定。
 fn decode_utf8(bytes: &[u8]) -> Result<String, &'static str> {
     std::str::from_utf8(bytes)
         .map(str::to_string)
         .map_err(|_| "text_decode_failed")
 }
 
+// 按指定端序读取双字节单元，拒绝奇数字节数和非法代理对；输入不含待剥离的 BOM。
 fn decode_utf16(bytes: &[u8], little_endian: bool) -> Result<String, &'static str> {
     if bytes.len() % 2 != 0 {
         return Err("text_decode_failed");
@@ -199,6 +211,7 @@ fn decode_utf16(bytes: &[u8], little_endian: bool) -> Result<String, &'static st
     String::from_utf16(&units).map_err(|_| "text_decode_failed")
 }
 
+// 将文本转换为指定端序的 UTF-16 单元，并按需在开头写入对应 BOM。
 fn encode_utf16(content: &str, little_endian: bool, has_bom: bool) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(content.len() * 2 + usize::from(has_bom) * 2);
     if has_bom {
@@ -219,6 +232,8 @@ fn encode_utf16(content: &str, little_endian: bool, has_bom: bool) -> Vec<u8> {
     bytes
 }
 
+// 仅抽查前 8 KiB：NUL 直接判为二进制，其余异常控制字节需超过两个且占比大于 1%。
+// 常见换行、制表、退格、换页和 ESC 被允许；这是启发式筛选，不是完整文件类型检测。
 fn looks_binary_bytes(bytes: &[u8]) -> bool {
     let sample = &bytes[..bytes.len().min(BINARY_SAMPLE_BYTES)];
     if sample.contains(&0) {
@@ -233,6 +248,7 @@ fn looks_binary_bytes(bytes: &[u8]) -> bool {
     suspicious > 2 && suspicious * 100 > sample.len().max(1)
 }
 
+// 对探测解码结果抽查前 8192 个 Unicode 字符，按 NUL 或异常控制字符密度排除疑似二进制。
 fn looks_binary_text(content: &str) -> bool {
     let mut total = 0usize;
     let mut suspicious = 0usize;
@@ -253,6 +269,7 @@ mod tests {
     use super::{decode_text, decode_text_fragment, encode_text};
 
     #[test]
+    // 验证中文 UTF-8 解码及带 BOM 文本的元数据、内容与字节回写。
     fn utf8_and_utf8_bom_round_trip() {
         let plain = decode_text("你好".as_bytes()).unwrap();
         assert_eq!(plain.encoding, "utf-8");
@@ -270,6 +287,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 UTF-16 大小端均由 BOM 正确识别，并保持原始端序和 BOM 字节。
     fn utf16_bom_round_trip() {
         let le = [0xFF, 0xFE, 0x60, 0x4F, 0x7D, 0x59];
         let decoded_le = decode_text(&le).unwrap();
@@ -291,6 +309,7 @@ mod tests {
     }
 
     #[test]
+    // 用中文样本验证传统编码探测标记，并确认回写后的字节没有变化。
     fn detects_and_preserves_gbk() {
         let source = "你好，世界。这是一个中文编码测试。";
         let (bytes, _, had_errors) = encoding_rs::GBK.encode(source);
@@ -306,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    // 确认含 NUL 的二进制输入与 GBK 无法表示的字符分别返回对应错误。
     fn rejects_binary_and_unmappable_text() {
         assert_eq!(decode_text(b"PNG\0\x01\x02").unwrap_err(), "binary_file");
         assert_eq!(
@@ -315,6 +335,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已知 GBK 片段直接解码，以及 UTF-16 首片段可选择剥离 BOM。
     fn decodes_known_fragments_without_redetecting() {
         assert_eq!(
             decode_text_fragment(&[0xC4, 0xE3, 0xBA, 0xC3], "gbk", false).unwrap(),

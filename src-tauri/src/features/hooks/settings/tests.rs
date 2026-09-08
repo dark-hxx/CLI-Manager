@@ -5,6 +5,7 @@ use super::pi::pi_extension_path;
 use super::*;
 use tempfile::TempDir;
 
+// 为临时 Codex 配置中的托管命令追加匹配的信任哈希测试块。
 fn trust_installed_codex_hooks(codex_dir: &Path) {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let settings = read_json_if_exists(&hooks_path).unwrap();
@@ -41,6 +42,7 @@ fn trust_installed_codex_hooks(codex_dir: &Path) {
 }
 
 #[test]
+// 验证可选目录解析不创建缺失目录，Kimi 仅返回候选路径。
 fn optional_config_resolution_does_not_create_missing_selected_dirs() {
     let tmp = TempDir::new().unwrap();
     let missing_claude_dir = tmp.path().join("missing-claude");
@@ -78,6 +80,7 @@ fn optional_config_resolution_does_not_create_missing_selected_dirs() {
 }
 
 #[test]
+// 验证必需 Claude 目录缺失时返回错误且不创建目录。
 fn required_claude_resolution_rejects_missing_selected_dir() {
     let tmp = TempDir::new().unwrap();
     let missing_claude_dir = tmp.path().join("missing-claude");
@@ -89,6 +92,7 @@ fn required_claude_resolution_rejects_missing_selected_dir() {
 }
 
 #[tokio::test]
+// 验证临时目录完整安装 Codex 命令，补信任后已安装且不生成旧脚本。
 async fn install_codex_allows_existing_selected_dir() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -149,6 +153,7 @@ async fn install_codex_allows_existing_selected_dir() {
 }
 
 #[test]
+// 验证标准 Hook 夹具生成与 Codex 规范格式一致的固定哈希。
 fn codex_hook_trusted_hash_matches_codex_canonical_format() {
     let group = json!({
         "matcher": "",
@@ -167,6 +172,7 @@ fn codex_hook_trusted_hash_matches_codex_canonical_format() {
 }
 
 #[test]
+// 验证基本与字面 TOML 引号表示得到相同信任键。
 fn codex_hook_state_key_normalizes_basic_and_literal_toml_strings() {
     let key = r"C:\Users\1\.codex\hooks.json:session_start:0:0";
     let basic = format!(r#"[hooks.state."{}"]"#, toml_escape_basic_string(key));
@@ -177,6 +183,7 @@ fn codex_hook_state_key_normalizes_basic_and_literal_toml_strings() {
 }
 
 #[test]
+// 验证信任块合并替换等价旧键并保留用户信任块。
 fn codex_hook_state_merge_replaces_equivalent_literal_key() {
     let key = r"C:\Users\1\.codex\hooks.json:session_start:0:0";
     let existing = format!(
@@ -196,6 +203,7 @@ fn codex_hook_state_merge_replaces_equivalent_literal_key() {
 }
 
 #[test]
+// 验证公共配置清理保留用户 Hook 和非 Hook 字段。
 fn claude_common_config_strip_keeps_user_hooks() {
     let managed = r#"{
       "env": {"KEEP": "yes"},
@@ -216,6 +224,7 @@ fn claude_common_config_strip_keeps_user_hooks() {
 }
 
 #[test]
+// 验证 Codex 公共配置清理移除带标记内容并保留用户信任块。
 fn codex_common_config_strip_keeps_user_features_and_state() {
     let managed = format!(
         "[features]\nhooks = true {CODEX_COMMON_CONFIG_HOOKS_MARKER}\n\n{CODEX_COMMON_CONFIG_HOOKS_MARKER}\n[hooks.state.\"owned\"]\ntrusted_hash = \"sha256:owned\"\n\n[hooks.state.\"user\"]\ntrusted_hash = \"sha256:user\"\n"
@@ -229,6 +238,7 @@ fn codex_common_config_strip_keeps_user_features_and_state() {
 }
 
 #[tokio::test]
+// 用临时数据库验证 Claude 全量卸载清理托管公共配置且保留用户内容。
 async fn local_ccswitch_uninstall_removes_claude_owned_common_hooks() {
     let tmp = TempDir::new().unwrap();
     let db_path = tmp.path().join("cc-switch.db");
@@ -284,6 +294,7 @@ async fn local_ccswitch_uninstall_removes_claude_owned_common_hooks() {
 }
 
 #[test]
+// 验证 PreToolUse 名称映射正确且 matcher 变化会改变信任哈希。
 fn codex_pre_tool_use_trust_hash_includes_matcher() {
     let group = json!({
         "matcher": CODEX_QUESTION_TOOL_NAME,
@@ -307,6 +318,7 @@ fn codex_pre_tool_use_trust_hash_includes_matcher() {
 }
 
 #[test]
+// 验证完整安装可修复缺失、禁用和过期信任，同时保留用户块。
 fn codex_status_repairs_disabled_or_stale_hook_trust() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -339,6 +351,7 @@ fn codex_status_repairs_disabled_or_stale_hook_trust() {
 }
 
 #[test]
+// 验证状态检查修复不同引号形成的重复托管信任键。
 fn codex_status_repairs_equivalent_duplicate_hook_state_keys() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -368,6 +381,7 @@ fn codex_status_repairs_equivalent_duplicate_hook_state_keys() {
 }
 
 #[test]
+// 验证缺少必需事件时保持部分安装，不修复过期信任哈希。
 fn codex_status_does_not_repair_trust_when_required_hook_is_missing() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -395,6 +409,7 @@ fn codex_status_does_not_repair_trust_when_required_hook_is_missing() {
 }
 
 #[tokio::test]
+// 验证 Codex 全量安装与卸载同时处理子 Agent 及内部工具进度事件。
 async fn install_codex_registers_and_uninstall_removes_subagent_lifecycle() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -420,6 +435,7 @@ async fn install_codex_registers_and_uninstall_removes_subagent_lifecycle() {
 }
 
 #[test]
+// 验证旧安装缺少 ToolStop 时仍为部分安装且不借信任修复掩盖缺项。
 fn codex_status_requires_internal_tool_lifecycle_upgrade() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -438,6 +454,7 @@ fn codex_status_requires_internal_tool_lifecycle_upgrade() {
 }
 
 #[tokio::test]
+// 验证 Grok 安装命令和跨工具隔离，卸载后不重新开启兼容开关。
 async fn install_then_uninstall_grok_writes_hooks_and_disables_compat() {
     let tmp = TempDir::new().unwrap();
     let grok_dir = tmp.path().join("grok");
@@ -485,6 +502,7 @@ async fn install_then_uninstall_grok_writes_hooks_and_disables_compat() {
 }
 
 #[test]
+// 验证仅卸载 Grok attention 会保留同一原生事件下的 ToolStart。
 fn uninstall_grok_attention_preserves_tool_start_hook() {
     let tmp = TempDir::new().unwrap();
     let grok_dir = tmp.path().join("grok");
@@ -512,6 +530,7 @@ fn uninstall_grok_attention_preserves_tool_start_hook() {
 }
 
 #[test]
+// 验证 Grok attention 升级删除旧 Notification 并注册审批映射。
 fn install_grok_attention_upgrades_obsolete_notification_hook() {
     let tmp = TempDir::new().unwrap();
     let grok_dir = tmp.path().join("grok");
@@ -548,6 +567,7 @@ fn install_grok_attention_upgrades_obsolete_notification_hook() {
 }
 
 #[test]
+// 验证布尔行更新保留同表其他键及相邻配置表。
 fn set_toml_table_bool_updates_existing_and_preserves_other_keys() {
     let input = r#"
 [models]
@@ -568,6 +588,7 @@ yolo = false
 }
 
 #[tokio::test]
+// 验证 Claude 临时配置安装后存在托管命令，卸载后命令消失。
 async fn install_then_uninstall_claude_removes_hook_commands() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -585,6 +606,7 @@ async fn install_then_uninstall_claude_removes_hook_commands() {
 }
 
 #[tokio::test]
+// 验证 Claude 全量安装与卸载处理子 Agent 及前后工具生命周期命令。
 async fn install_claude_registers_and_uninstall_removes_subagent_start() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -615,6 +637,7 @@ async fn install_claude_registers_and_uninstall_removes_subagent_start() {
 }
 
 #[test]
+// 验证 Claude attention 卸载移除提问命令且保留工具与子 Agent 命令。
 fn uninstall_claude_attention_preserves_tool_lifecycle_hooks() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -650,6 +673,7 @@ fn uninstall_claude_attention_preserves_tool_lifecycle_hooks() {
 }
 
 #[test]
+// 验证 Claude 与 Codex 提问 matcher 错误均使状态保持部分安装。
 fn wrong_question_matcher_keeps_local_hook_status_partial() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -700,6 +724,7 @@ fn wrong_question_matcher_keeps_local_hook_status_partial() {
 }
 
 #[tokio::test]
+// 验证单独安装 Claude running 模块不引入其他生命周期事件。
 async fn install_claude_single_module_only_writes_requested_event() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -715,6 +740,7 @@ async fn install_claude_single_module_only_writes_requested_event() {
 }
 
 #[tokio::test]
+// 验证独立特性模块仅开关 TOML 配置，不创建 hooks.json。
 async fn install_codex_hooks_feature_module_only_toggles_config() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -733,6 +759,7 @@ async fn install_codex_hooks_feature_module_only_toggles_config() {
 }
 
 #[tokio::test]
+// 验证空 Codex 配置目录报告未安装。
 async fn empty_codex_status_is_not_installed() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
@@ -744,6 +771,7 @@ async fn empty_codex_status_is_not_installed() {
 }
 
 #[tokio::test]
+// 验证 Claude 重装清理临时旧脚本文件和注册命令。
 async fn install_claude_cleans_legacy_ps1_command() {
     let tmp = TempDir::new().unwrap();
     let claude_dir = tmp.path().join("claude");
@@ -778,6 +806,7 @@ async fn install_claude_cleans_legacy_ps1_command() {
 }
 
 #[test]
+// 验证带空格的 Windows 路径构造预期 PowerShell 命令。
 fn build_command_wraps_windows_native_path_for_powershell() {
     let command = build_command(
         r"D:\Program Files\CLI-Manager\cli-manager.exe",
@@ -792,6 +821,7 @@ fn build_command_wraps_windows_native_path_for_powershell() {
 }
 
 #[test]
+// 验证 Windows 路径中的单引号在 PowerShell 命令中加倍。
 fn build_command_escapes_powershell_single_quote_in_windows_path() {
     let command = build_command(
         r"D:\Program Files\CLI-Manager's\cli-manager.exe",
@@ -806,6 +836,7 @@ fn build_command_escapes_powershell_single_quote_in_windows_path() {
 }
 
 #[test]
+// 验证 WSL 挂载路径保持 POSIX 引号命令格式。
 fn build_command_keeps_wsl_mnt_path_shell_format() {
     let command = build_command(
         "/mnt/d/Program Files/CLI-Manager/cli-manager.exe",
@@ -820,6 +851,7 @@ fn build_command_keeps_wsl_mnt_path_shell_format() {
 }
 
 #[test]
+// 验证 POSIX 路径中的单引号采用闭合、转义再开启的参数格式。
 fn build_command_escapes_posix_single_quote() {
     let command = build_command("/Users/me/CLI-Manager's/cli-manager", "claude", "Stop");
 
@@ -829,6 +861,7 @@ fn build_command_escapes_posix_single_quote() {
     );
 }
 #[tokio::test]
+// 验证 Pi 扩展事件、脱离等待与超时源码，并检查卸载后状态和文件。
 async fn install_then_uninstall_pi_extension() {
     let tmp = TempDir::new().unwrap();
     let pi_dir = tmp.path().join("pi-agent");
@@ -859,6 +892,7 @@ async fn install_then_uninstall_pi_extension() {
 }
 
 #[tokio::test]
+// 验证单个 Pi 模块仅开启所选事件并报告部分安装。
 async fn install_pi_single_module_only_enables_requested_event() {
     let tmp = TempDir::new().unwrap();
     let pi_dir = tmp.path().join("pi-agent");
@@ -873,6 +907,7 @@ async fn install_pi_single_module_only_enables_requested_event() {
 }
 
 #[test]
+// 验证 Pi 安装拒绝无归属标记的同名扩展且保留原文。
 fn install_pi_preserves_unmanaged_extension() {
     let tmp = TempDir::new().unwrap();
     let pi_dir = tmp.path().join("pi-agent");
@@ -889,6 +924,7 @@ fn install_pi_preserves_unmanaged_extension() {
 }
 
 #[test]
+// 模拟暂存后外部修改，验证拒绝覆盖并清理候选文件。
 fn kimi_write_revalidates_live_config_before_replace() {
     let tmp = TempDir::new().unwrap();
     let config_path = tmp.path().join(KIMI_CONFIG_FILE_NAME);
@@ -912,6 +948,7 @@ fn kimi_write_revalidates_live_config_before_replace() {
 }
 
 #[test]
+// 验证无需 Kimi 可执行程序即可检查状态并首次安装九条托管命令。
 fn kimi_status_and_first_install_do_not_require_cli() {
     let tmp = TempDir::new().unwrap();
     let kimi_dir = tmp.path().join("new-kimi-home");
@@ -929,6 +966,7 @@ fn kimi_status_and_first_install_do_not_require_cli() {
 
 #[cfg(windows)]
 #[test]
+// 验证 Windows 下 WSL 目标转换可执行路径，本地目标保留原路径。
 fn hook_exe_for_dir_uses_mnt_form_for_wsl_target() {
     let native = cli_manager_exe().unwrap();
     // WSL/UNC 目标：exe 转 /mnt 形式

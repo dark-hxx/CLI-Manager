@@ -64,6 +64,7 @@ pub struct VerifiedRelease {
 }
 
 impl VerifiedRelease {
+    // 返回发布记录保存的来源标签，不表示安装状态或当前网络可用性。
     pub fn distribution_source(&self) -> &'static str {
         match self.source {
             AgentReleaseSource::Bundled(_) => "bundled",
@@ -72,6 +73,7 @@ impl VerifiedRelease {
     }
 }
 
+// 把两个支持的 Linux 目标映射到固定内置文件名，拒绝其他目标。
 fn bundled_artifact_file(target: &str) -> Result<&'static str, String> {
     match target {
         "linux-x86_64" => Ok(BUNDLED_ARTIFACT_FILES[0]),
@@ -80,6 +82,7 @@ fn bundled_artifact_file(target: &str) -> Result<&'static str, String> {
     }
 }
 
+// 先按元数据检查普通文件与大小，再整体读取；大小检查不是对并发文件变更的原子约束。
 fn read_bundled_file(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     let metadata = std::fs::metadata(path)
         .map_err(|error| format!("ssh_agent_bundled_resource_read_failed:{error}"))?;
@@ -89,6 +92,7 @@ fn read_bundled_file(path: &Path, limit: usize) -> Result<Vec<u8>, String> {
     std::fs::read(path).map_err(|error| format!("ssh_agent_bundled_resource_read_failed:{error}"))
 }
 
+// 检查清单、签名和两种架构文件是否齐备；全无允许回退，部分存在则报错。
 fn bundled_release_presence(root: &Path) -> Result<bool, String> {
     let required = [
         BUNDLED_MANIFEST_FILE,
@@ -109,6 +113,7 @@ fn bundled_release_presence(root: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+// 从首个制品 URL 推导清单来源地址，解析失败时用默认地址；不读取远端内容。
 fn manifest_provenance_url(manifest: &AgentReleaseManifest) -> String {
     manifest
         .artifacts
@@ -119,6 +124,7 @@ fn manifest_provenance_url(manifest: &AgentReleaseManifest) -> String {
         .unwrap_or_else(|| DEFAULT_MANIFEST_URL.to_string())
 }
 
+// 内置资源全无时返回 None；存在时先验签再解析和校验清单，制品哈希留到读取制品时检查。
 fn try_load_bundled_release(root: &Path) -> Result<Option<VerifiedRelease>, String> {
     if !bundled_release_presence(root)? {
         return Ok(None);
@@ -138,6 +144,7 @@ fn try_load_bundled_release(root: &Path) -> Result<Option<VerifiedRelease>, Stri
     }))
 }
 
+// 校验源 URL 的协议、主机和凭据，并拒绝查询串及片段；HTTP 仅在显式允许时接受。
 fn validate_url(value: &str, allow_http: bool) -> Result<Url, String> {
     let url = Url::parse(value).map_err(|_| "ssh_agent_release_url_invalid".to_string())?;
     if url.scheme() != "https" && !(allow_http && url.scheme() == "http") {
@@ -152,6 +159,7 @@ fn validate_url(value: &str, allow_http: bool) -> Result<Url, String> {
     Ok(url)
 }
 
+// 校验重定向目标的协议、主机与凭据，允许 CDN 查询串但拒绝片段；不限制同源。
 fn validate_redirect_target(url: &Url, allow_http: bool) -> Result<(), String> {
     if url.scheme() != "https" && !(allow_http && url.scheme() == "http") {
         return Err("ssh_agent_release_https_required".to_string());
@@ -165,6 +173,7 @@ fn validate_redirect_target(url: &Url, allow_http: bool) -> Result<(), String> {
     Ok(())
 }
 
+// 复用网络配置并设置连接及请求超时，按目标校验与历史跳转次数限制重定向。
 fn release_client(allow_http: bool) -> Result<Client, String> {
     network_client::configure_builder(Client::builder())?
         .connect_timeout(Duration::from_secs(15))
@@ -183,6 +192,7 @@ fn release_client(allow_http: bool) -> Result<Client, String> {
         .map_err(|error| format!("ssh_agent_release_client_failed:{error}"))
 }
 
+// 仅接收成功响应，同时检查声明长度和逐块累计长度，超过上限立即返回错误。
 async fn read_bounded(mut response: Response, limit: usize) -> Result<Vec<u8>, String> {
     if !response.status().is_success() {
         return Err(format!(
@@ -210,6 +220,7 @@ async fn read_bounded(mut response: Response, limit: usize) -> Result<Vec<u8>, S
     Ok(output)
 }
 
+// 接受 minisign 文本或其标准 Base64 包装，统一输出 UTF-8 签名文本供后续解析。
 fn decoded_signature(value: &[u8]) -> Result<String, String> {
     let text = std::str::from_utf8(value)
         .map_err(|_| "ssh_agent_manifest_signature_invalid".to_string())?
@@ -223,6 +234,7 @@ fn decoded_signature(value: &[u8]) -> Result<String, String> {
     String::from_utf8(decoded).map_err(|_| "ssh_agent_manifest_signature_invalid".to_string())
 }
 
+// 解析公钥与签名并验证原始清单字节，分别映射公钥格式错误与签名验证错误。
 fn verify_with_public_key(
     manifest: &[u8],
     encoded_signature: &[u8],
@@ -236,6 +248,8 @@ fn verify_with_public_key(
         .map_err(|_| "ssh_agent_manifest_signature_invalid".to_string())
 }
 
+// 校验 schema、版本、通道、协议覆盖范围及唯一受支持制品的 URL、大小和摘要格式。
+// 发布时间仅要求非空，不做日期解析；本函数不验证签名或制品实际内容。
 fn validate_manifest(manifest: &AgentReleaseManifest, allow_http: bool) -> Result<(), String> {
     if manifest.schema_version != 1 {
         return Err("ssh_agent_manifest_schema_unsupported".to_string());
@@ -282,6 +296,8 @@ fn validate_manifest(manifest: &AgentReleaseManifest, allow_http: bool) -> Resul
     Ok(())
 }
 
+// 无自定义地址时优先内置资源，再依次尝试默认与备用远端；内置资源损坏直接报错。
+// 默认远端成功时保留制品下载回退地址，自定义地址不自动切换到其他发布源。
 pub async fn fetch_verified_release(
     manifest_url: Option<&str>,
     allow_http: bool,
@@ -316,6 +332,7 @@ pub async fn fetch_verified_release(
     Err(last_error.unwrap_or_else(|| "ssh_agent_release_download_failed".to_string()))
 }
 
+// 并发请求清单和签名，检查最终 URL、限制读取大小后先验签，再解析并校验清单。
 async fn fetch_verified_remote_release(
     manifest_url: &str,
     allow_http: bool,
@@ -349,6 +366,7 @@ async fn fetch_verified_remote_release(
     })
 }
 
+// 按目标字符串精确选择首个制品；调用方负责先验证清单及目标唯一性。
 pub fn select_artifact<'a>(
     manifest: &'a AgentReleaseManifest,
     target: &str,
@@ -360,6 +378,8 @@ pub fn select_artifact<'a>(
         .ok_or_else(|| "ssh_agent_release_target_missing".to_string())
 }
 
+// 按发布来源读取并校验制品；远端失败时仅对配置了备用源的记录尝试回退。
+// 备用清单重新验签，版本字符串、制品大小和摘要必须与原记录一致后才下载。
 pub async fn download_artifact(
     release: &VerifiedRelease,
     artifact: &AgentReleaseArtifact,
@@ -400,6 +420,7 @@ pub async fn download_artifact(
     }
 }
 
+// 校验下载及最终重定向 URL，按声明大小限制响应，再验证精确长度与 SHA-256。
 async fn download_remote_artifact(
     artifact: &AgentReleaseArtifact,
     allow_http: bool,
@@ -417,6 +438,7 @@ async fn download_remote_artifact(
     verify_artifact_bytes(bytes, artifact)
 }
 
+// 依次比对字节数与不区分大小写的 SHA-256，成功时返回原字节，不负责验证清单信任。
 fn verify_artifact_bytes(
     bytes: Vec<u8>,
     artifact: &AgentReleaseArtifact,
@@ -445,6 +467,7 @@ mod tests {
     use std::fs;
 
     #[test]
+    // 验证默认清单地址遵循编译期覆盖值，并保留固定 GitHub 备用地址。
     fn default_release_sources_prefer_r2_and_keep_github_fallback() {
         assert_eq!(
             DEFAULT_MANIFEST_URL,
@@ -461,6 +484,7 @@ mod tests {
     const SAMPLE_PUBLIC_KEY: &str = "untrusted comment: minisign public key\nRWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3";
     const SAMPLE_SIGNATURE: &str = "untrusted comment: signature from minisign secret key\nRWQf6LRCGA9i59SLOFxz6NxvASXDJeRtuZykwQepbDEGt87ig1BNpWaVWuNrm73YiIiJbq71Wi+dP9eKL8OC351vwIasSSbXxwA=\ntrusted comment: timestamp:1555779966\tfile:test\nQtKMXWyYcwdpZAlPF7tE2ENJkRd1ujvKjlj1m9RtHTBnZPa5WKU5uWRs5GoP5M/VqE81QFuMKI5k/SfNQUaOAA==";
 
+    // 构造单个 Linux x64 制品的有效清单结构，供纯字段校验测试使用。
     fn manifest() -> AgentReleaseManifest {
         AgentReleaseManifest {
             schema_version: 1,
@@ -479,6 +503,7 @@ mod tests {
     }
 
     #[test]
+    // 用固定签名样本验证原文可通过，而篡改后的字节被拒绝。
     fn minisign_rejects_manifest_tampering() {
         let encoded = base64::engine::general_purpose::STANDARD.encode(SAMPLE_SIGNATURE);
         verify_with_public_key(b"test", encoded.as_bytes(), SAMPLE_PUBLIC_KEY).unwrap();
@@ -488,6 +513,7 @@ mod tests {
     }
 
     #[test]
+    // 验证有效清单通过后，重复加入同一目标会触发目标错误。
     fn manifest_requires_unique_supported_targets() {
         let mut value = manifest();
         validate_manifest(&value, false).unwrap();
@@ -499,6 +525,7 @@ mod tests {
     }
 
     #[test]
+    // 验证制品 HTTP 地址默认被拒绝，显式允许后才通过清单校验。
     fn http_requires_explicit_opt_in() {
         let mut value = manifest();
         value.artifacts[0].url = "http://mirror.example.com/agent".into();
@@ -510,6 +537,7 @@ mod tests {
     }
 
     #[test]
+    // 验证清单中的制品地址带查询串时被拒绝；本用例未单独覆盖片段。
     fn signed_release_urls_reject_queries_and_fragments() {
         let mut value = manifest();
         value.artifacts[0].url = "https://example.com/agent?token=secret".into();
@@ -520,6 +548,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 HTTPS CDN 查询串可用，但 URL 凭据与未获允许的 HTTP 仍被拒绝。
     fn redirect_targets_allow_https_queries_but_retain_transport_guards() {
         let signed_cdn = Url::parse(
             "https://release-assets.githubusercontent.com/asset?sig=temporary&jwt=temporary",
@@ -543,6 +572,7 @@ mod tests {
     }
 
     #[test]
+    // 验证精确目标返回对应制品，不存在的目标不会借用其他架构。
     fn artifact_selection_is_exact() {
         let value = manifest();
         assert_eq!(select_artifact(&value, "linux-x86_64").unwrap().size, 42);
@@ -550,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    // 验证两种 Linux 目标对应固定文件名，并拒绝未支持的架构。
     fn bundled_artifact_names_are_fixed_by_target() {
         assert_eq!(
             bundled_artifact_file("linux-x86_64").unwrap(),
@@ -563,6 +594,7 @@ mod tests {
     }
 
     #[test]
+    // 在按进程 ID 命名的临时目录中验证全无可回退、仅有清单时报资源不完整，并清理目录。
     fn bundled_release_rejects_partial_resources() {
         let root =
             std::env::temp_dir().join(format!("cli-manager-agent-test-{}", std::process::id()));
@@ -578,6 +610,7 @@ mod tests {
     }
 
     #[test]
+    // 验证正确制品原样返回，而错误长度与错误摘要分别产生对应错误码。
     fn artifact_bytes_require_exact_size_and_hash() {
         let bytes = b"agent".to_vec();
         let artifact = AgentReleaseArtifact {

@@ -36,6 +36,7 @@ pub(crate) struct RoutingRuntimeSnapshot {
 }
 
 impl RoutingRuntime {
+    // 创建尚未持有监听器和 HTTP 服务的路由运行态，首选端口使用默认回退起点。
     pub(crate) fn new() -> Self {
         Self {
             lease: None,
@@ -46,10 +47,12 @@ impl RoutingRuntime {
         }
     }
 
+    // 以是否持有监听租约判断运行状态，不主动探测 HTTP 线程健康。
     pub(crate) fn is_running(&self) -> bool {
         self.lease.is_some()
     }
 
+    // 复制运行标志、监听地址及端口配置；停止后仍可包含上一次实际端口。
     pub(crate) fn snapshot(&self) -> RoutingRuntimeSnapshot {
         RoutingRuntimeSnapshot {
             status: if self.is_running() {
@@ -63,6 +66,7 @@ impl RoutingRuntime {
         }
     }
 
+    // 已运行时直接返回现状，否则分配监听器并启动 HTTP 服务，成功后记录配置与租约。
     pub(crate) fn start(
         &mut self,
         listen_addresses: &[String],
@@ -82,6 +86,7 @@ impl RoutingRuntime {
         Ok(self.snapshot())
     }
 
+    // 先准备新租约及共享原状态的 HTTP 服务，再替换旧服务；准备失败时保留旧运行态。
     pub(crate) fn rebind(
         &mut self,
         listen_addresses: &[String],
@@ -109,12 +114,14 @@ impl RoutingRuntime {
         Ok(self.snapshot())
     }
 
+    // 释放 HTTP 服务与监听租约，但保留地址和端口记录供状态展示及后续重启参考。
     pub(crate) fn stop(&mut self) -> RoutingRuntimeSnapshot {
         drop(self.http_server.take());
         self.lease = None;
         self.snapshot()
     }
 
+    // 从当前 HTTP 服务获取熔断快照，未启动服务时返回空列表。
     pub(crate) fn circuit_snapshots(&self) -> Vec<super::circuit::CircuitSnapshot> {
         self.http_server
             .as_ref()
@@ -122,6 +129,7 @@ impl RoutingRuntime {
             .unwrap_or_default()
     }
 
+    // 将指定应用和供应商的熔断重置委派给 HTTP 服务，未启动时不执行操作。
     pub(crate) fn reset_circuit(&self, app_type: &str, provider_id: &str) {
         if let Some(server) = self.http_server.as_ref() {
             server.reset_circuit(app_type, provider_id);
@@ -130,6 +138,7 @@ impl RoutingRuntime {
 }
 
 impl RoutingListenerLease {
+    // 逐个克隆底层监听器句柄供 HTTP 服务使用；任一克隆失败即返回稳定错误。
     fn cloned_listeners(&self) -> Result<Vec<TcpListener>, String> {
         self.listeners
             .iter()
@@ -146,10 +155,12 @@ impl RoutingListenerLease {
 pub(crate) struct PortAllocator;
 
 impl PortAllocator {
+    // 校验并去重监听地址，复用路由分配器的统一地址规则。
     pub(crate) fn validate_addresses(listen_addresses: &[String]) -> Result<Vec<String>, String> {
         normalize_listener_addresses(listen_addresses)
     }
 
+    // 使用真实 TCP 绑定逐个尝试候选端口，直到所有指定地址能共用一个端口。
     pub(crate) fn bind(
         listen_addresses: &[String],
         preferred_port: u16,
@@ -163,6 +174,7 @@ impl PortAllocator {
         )
     }
 
+    // 尝试分配新租约，同地址且同实际端口的监听器优先从旧租约克隆复用。
     pub(crate) fn rebind(
         listen_addresses: &[String],
         preferred_port: u16,
@@ -179,11 +191,13 @@ impl PortAllocator {
     }
 
     #[cfg(test)]
+    // 向测试暴露候选端口顺序与参数校验结果，不执行绑定。
     fn candidates(preferred_port: u16, last_actual_port: Option<u16>) -> Result<Vec<u16>, String> {
         candidate_ports(preferred_port, last_actual_port)
     }
 }
 
+// 拒绝特权端口，按上次实际端口、首选端口、固定回退范围的顺序生成去重候选。
 fn candidate_ports(preferred_port: u16, last_actual_port: Option<u16>) -> Result<Vec<u16>, String> {
     if preferred_port < MIN_PORT {
         return Err("routing_port_invalid".to_string());
@@ -209,6 +223,7 @@ fn candidate_ports(preferred_port: u16, last_actual_port: Option<u16>) -> Result
     Ok(candidates)
 }
 
+// 裁剪并去重地址，只接受回环名称/地址或系统枚举出的本机 IPv4 单播地址；拒绝空列表。
 fn normalize_listener_addresses(listen_addresses: &[String]) -> Result<Vec<String>, String> {
     if listen_addresses.is_empty() {
         return Err("routing_listen_address_invalid".to_string());
@@ -228,6 +243,7 @@ fn normalize_listener_addresses(listen_addresses: &[String]) -> Result<Vec<Strin
     Ok(normalized)
 }
 
+// 用可注入绑定函数尝试各候选端口；任一地址失败即释放本轮已绑定监听器并继续。
 fn bind_with<F>(
     listen_addresses: &[String],
     preferred_port: u16,
@@ -268,6 +284,7 @@ where
     Err("routing_port_range_exhausted".to_string())
 }
 
+// 逐个候选端口复用匹配的旧监听器并绑定新增地址；本轮失败只释放新租约持有的句柄。
 fn bind_with_reuse<F>(
     listen_addresses: &[String],
     preferred_port: u16,
@@ -331,6 +348,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证上次实际端口优先于首选及回退端口，且重复候选只出现一次。
     fn candidate_order_is_last_actual_then_preferred_then_fallback_without_duplicates() {
         assert_eq!(
             PortAllocator::candidates(15_721, Some(15_722)).unwrap()[..4],
@@ -343,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    // 占用一个临时回环端口，验证分配器改用其他候选端口。
     fn preferred_port_occupied_falls_back_to_next_candidate() {
         let occupied = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let preferred = occupied.local_addr().unwrap().port();
@@ -351,6 +370,7 @@ mod tests {
     }
 
     #[test]
+    // 验证端口零在创建监听器前被拒绝，并返回稳定参数错误。
     fn invalid_port_is_rejected_before_bind() {
         assert_eq!(
             PortAllocator::bind(&["127.0.0.1".to_string()], 0, None).unwrap_err(),
@@ -359,6 +379,7 @@ mod tests {
     }
 
     #[test]
+    // 注入始终端口占用的绑定函数，验证候选耗尽时的统一错误。
     fn exhausted_candidates_return_stable_error() {
         let result = bind_with(
             &["127.0.0.1".to_string()],
@@ -370,6 +391,7 @@ mod tests {
     }
 
     #[test]
+    // 验证通配地址及测试指定的非本机局域网地址被拒绝；该局域网断言依赖机器地址配置。
     fn wildcard_and_lan_addresses_are_rejected_before_bind() {
         for address in ["0.0.0.0", "::", "192.168.1.4"] {
             assert_eq!(
@@ -380,6 +402,7 @@ mod tests {
     }
 
     #[test]
+    // 用回环监听验证停止保留实际端口，并能在新运行态中优先复用该端口。
     fn stopping_keeps_actual_port_for_restart_reuse() {
         let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let preferred = probe.local_addr().unwrap().port();
@@ -400,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    // 以非法监听地址触发重绑定失败，验证旧租约及实际端口不变。
     fn failed_rebind_keeps_old_lease_and_actual_port() {
         let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let preferred = probe.local_addr().unwrap().port();
@@ -416,6 +440,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相同地址重绑定时复用旧实际端口，同时更新记录中的首选端口。
     fn rebind_reuses_unchanged_listener_on_same_actual_port() {
         let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let preferred = probe.local_addr().unwrap().port();

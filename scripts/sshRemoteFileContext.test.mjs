@@ -7,14 +7,17 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-ssh-files-"));
+// 退出时清理 SSH 文件上下文测试的临时目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
+// 将测试模块写入临时目录并返回路径。
 function writeModule(name, source) {
   const path = join(tempDir, name);
   writeFileSync(path, source, "utf8");
   return path;
 }
 
+// 转译被测 TypeScript 并将依赖替换为临时桩模块。
 function transpile(relativePath, outputName, replacements) {
   let output = ts.transpileModule(
     readFileSync(new URL(relativePath, import.meta.url), "utf8"),
@@ -103,6 +106,7 @@ const sshHostOnlySession = {
   remotePath: "/srv/session",
 };
 
+// 验证 SSH 文件上下文不要求配置 CLI 工具。
 test("SSH file context does not require a configured CLI tool", async () => {
   const context = await buildSshRemoteFileContext(sshProjectWithoutCliTool);
 
@@ -113,6 +117,7 @@ test("SSH file context does not require a configured CLI tool", async () => {
   assert.match(context.consumerId, /^files:client-1:host-1:project-1$/);
 });
 
+// 验证仅主机附加使用会话目标路径及主机附件根。
 test("Host-only SSH attachment launch uses the session target and Host root", async () => {
   const launch = await buildSshAgentHostLaunch(sshHostOnlySession.sshHostId, sshHostOnlySession.remotePath);
 
@@ -123,6 +128,7 @@ test("Host-only SSH attachment launch uses the session target and Host root", as
   assert.equal(launch.attachmentRoot, "~/host-files");
 });
 
+// 验证远程历史仍要求受支持的 CLI 来源。
 test("remote history still requires a supported CLI source", async () => {
   await assert.rejects(
     buildSshAgentHistoryContext(sshProjectWithoutCliTool),

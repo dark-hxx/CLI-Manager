@@ -6,6 +6,7 @@ use git2::{IndexAddOption, Repository, Signature};
 use std::fs;
 use tempfile::TempDir;
 
+// 构造指定空白模式及上下文行数的 Diff 测试选项。
 fn options(whitespace: GitDiffWhitespaceMode, context_lines: u32) -> GitDiffOptions {
     GitDiffOptions {
         whitespace,
@@ -13,6 +14,7 @@ fn options(whitespace: GitDiffWhitespaceMode, context_lines: u32) -> GitDiffOpti
     }
 }
 
+// 在临时目录用 libgit2 创建含一个已提交文本文件的仓库夹具。
 fn init_repo(content: &str) -> TempDir {
     let temp = tempfile::tempdir().unwrap();
     let repo = Repository::init(temp.path()).unwrap();
@@ -32,6 +34,7 @@ fn init_repo(content: &str) -> TempDir {
     temp
 }
 
+// 读取临时仓库 tracked.txt 的展示 Diff 文本。
 fn diff(temp: &TempDir, whitespace: GitDiffWhitespaceMode, context_lines: u32) -> String {
     get_file_diff(
         temp.path().to_string_lossy().as_ref(),
@@ -43,6 +46,7 @@ fn diff(temp: &TempDir, whitespace: GitDiffWhitespaceMode, context_lines: u32) -
     .content
 }
 
+// 统计首个 hunk 中以空格开头的上下文行。
 fn context_line_count(content: &str) -> usize {
     content
         .lines()
@@ -54,6 +58,7 @@ fn context_line_count(content: &str) -> usize {
 }
 
 #[test]
+// 验证仅允许三、十、二十行上下文并拒绝其他值。
 fn options_accept_only_supported_context_lines() {
     for context_lines in [3, 10, 20] {
         assert!(options(GitDiffWhitespaceMode::Exact, context_lines)
@@ -69,6 +74,7 @@ fn options_accept_only_supported_context_lines() {
 }
 
 #[test]
+// 验证字节与行数上限可取边界值，超出一单位即拒绝。
 fn payload_limits_are_inclusive_and_report_metadata() {
     let byte_boundary = "a".repeat(MAX_DIFF_BYTES);
     let payload = build_diff_payload(byte_boundary, true).unwrap();
@@ -90,6 +96,7 @@ fn payload_limits_are_inclusive_and_report_metadata() {
 }
 
 #[test]
+// 验证空白模式、上下文数量及新增状态映射为预期 Git 参数。
 fn cli_options_match_git_flags() {
     let ignore_eol = cli_diff_args(
         "src/lib.rs",
@@ -113,6 +120,7 @@ fn cli_options_match_git_flags() {
 }
 
 #[test]
+// 验证 libgit2 精确、忽略行尾及全部空白模式的内容和回滚权限。
 fn native_diff_applies_each_whitespace_mode() {
     let trailing = init_repo("alpha\nvalue = 1\nomega\n");
     fs::write(
@@ -150,6 +158,7 @@ fn native_diff_applies_each_whitespace_mode() {
 }
 
 #[test]
+// 验证三种上下文选项在临时仓库生成预期上下文行数。
 fn native_diff_applies_each_context_size() {
     let original = (1..=50)
         .map(|line| format!("line {line}\n"))

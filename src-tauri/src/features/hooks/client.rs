@@ -22,6 +22,7 @@ const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
 
 /// `main` 在初始化 Tauri runtime 之前调用本函数并退出，因此这里
 /// 不依赖任何 Tauri/WebView 状态，冷启动开销极小。
+// 尝试投递 Hook，失败仅记录脱敏诊断，并始终以成功退出隐藏进程。
 pub fn run_and_exit(source: &str, event: &str) -> ! {
     if let Err(err) = try_notify(source, event) {
         write_failure_diagnostic(source, event, err.code());
@@ -29,6 +30,7 @@ pub fn run_and_exit(source: &str, event: &str) -> ! {
     exit(0);
 }
 
+// 序列化既有载荷并按目标列表最多重试两轮，返回是否收到成功响应。
 pub(crate) fn try_notify_prepared_payload(payload: &Value) -> bool {
     let Ok(body) = serde_json::to_vec(payload) else {
         return false;
@@ -61,6 +63,7 @@ enum HookNotifyError {
 }
 
 impl HookNotifyError {
+    // 将通知失败类型映射为稳定诊断码。
     fn code(self) -> &'static str {
         match self {
             Self::MissingPort => "missing_port",
@@ -77,6 +80,7 @@ impl HookNotifyError {
     }
 }
 
+// 读取并规范化标准输入，生成同次重试共用的事件 ID 后投递 Hook。
 fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
     let tab_id =
         non_empty_env("CLI_MANAGER_TAB_ID").unwrap_or_else(|| format!("external:{source}"));
@@ -168,6 +172,7 @@ struct NotifyTarget {
     token: String,
 }
 
+// 优先使用完整回调环境，再补充首个有效且不同的 daemon 发现目标。
 fn resolve_notify_targets() -> Vec<NotifyTarget> {
     let mut targets = Vec::with_capacity(2);
     if let (Some(port), Some(token)) = (
@@ -200,6 +205,7 @@ struct DaemonInfoLite {
     pid: u32,
 }
 
+// 解析发现文件，排除无效端口、空令牌及明确已退出的 daemon。
 fn read_daemon_notify_target(path: &PathBuf) -> Option<NotifyTarget> {
     let raw = fs::read_to_string(path).ok()?;
     let info: DaemonInfoLite = serde_json::from_str(&raw).ok()?;
@@ -215,6 +221,7 @@ fn read_daemon_notify_target(path: &PathBuf) -> Option<NotifyTarget> {
     })
 }
 
+// 向回环端口发送带 Bearer 的 HTTP 请求，并检查首段响应是否为 2xx。
 fn post(port: &str, token: &str, body: &[u8]) -> Result<(), HookNotifyError> {
     let port: u16 = port.parse().map_err(|_| HookNotifyError::InvalidPort)?;
     let mut stream =
@@ -249,6 +256,7 @@ fn post(port: &str, token: &str, body: &[u8]) -> Result<(), HookNotifyError> {
     Ok(())
 }
 
+// 尽力追加白名单诊断行，日志达到一 MiB 时尝试清空后继续写入。
 fn write_failure_diagnostic(source: &str, event: &str, code: &str) {
     let Ok(log_dir) = crate::app_paths::logs_dir() else {
         return;
@@ -275,6 +283,7 @@ fn write_failure_diagnostic(source: &str, event: &str, code: &str) {
     let _ = file.write_all(line.as_bytes());
 }
 
+// 将来源、事件和错误码白名单化，生成带 UTC 时间的单行日志。
 fn failure_diagnostic_line(source: &str, event: &str, code: &str) -> String {
     format!(
         "{} source={} event={} error={}\n",
@@ -285,6 +294,7 @@ fn failure_diagnostic_line(source: &str, event: &str, code: &str) -> String {
     )
 }
 
+// 仅保留已知 Hook 来源名称，其余映射为 unknown。
 fn diagnostic_source(value: &str) -> &'static str {
     match value {
         "claude" => "claude",
@@ -297,6 +307,7 @@ fn diagnostic_source(value: &str) -> &'static str {
     }
 }
 
+// 仅保留已知生命周期和工具事件名称，其余映射为 unknown。
 fn diagnostic_event(value: &str) -> &'static str {
     match value {
         "SessionStart" => "SessionStart",
@@ -317,6 +328,7 @@ fn diagnostic_event(value: &str) -> &'static str {
     }
 }
 
+// 仅保留已知通知错误码，其余映射为 unknown。
 fn diagnostic_error(value: &str) -> &'static str {
     match value {
         "missing_port" => "missing_port",
@@ -333,10 +345,12 @@ fn diagnostic_error(value: &str) -> &'static str {
     }
 }
 
+// 读取有效 Unicode 且非全空白的环境变量，保留原值。
 fn non_empty_env(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
 }
 
+// 优先读取子转录路径的元数据长度，无子路径时才选择父转录。
 fn approval_transcript_bytes(
     agent_transcript_path: Option<&str>,
     transcript_path: Option<&str>,
@@ -353,6 +367,7 @@ fn approval_transcript_bytes(
         .map(|metadata| metadata.len())
 }
 
+// 仅抑制 Codex 非交互审批模式及 Grok bypassPermissions 的审批事件。
 fn should_suppress_codex_permission_request(source: &str, event: &str, hook_input: &Value) -> bool {
     if event != "PermissionRequest" {
         return false;
@@ -373,6 +388,7 @@ fn should_suppress_codex_permission_request(source: &str, event: &str, hook_inpu
     }
 }
 /// 与旧 PowerShell 脚本保持一致的标题文案；新增 source 由前端按当前语言生成标题。
+// 按来源和事件提供兼容标题；Kimi 返回空值交由前端本地化。
 fn title_for(source: &str, event: &str) -> Option<&'static str> {
     if source == "kimi" {
         return None;
@@ -428,12 +444,14 @@ mod tests {
     use std::fs;
 
     #[test]
+    // 验证 Kimi 审批结果与中断事件不携带固定英文标题。
     fn kimi_titles_defer_to_localized_frontend() {
         assert_eq!(title_for("kimi", "PermissionResult"), None);
         assert_eq!(title_for("kimi", "Interrupt"), None);
     }
 
     #[test]
+    // 验证共享规范化能提取并裁剪 Claude 嵌套思考强度。
     fn extract_reasoning_effort_reads_claude_hook_effort_level() {
         let input = json!({
             "session_id": "abc",
@@ -447,6 +465,7 @@ mod tests {
     }
 
     #[test]
+    // 验证兼容旧式扁平 reasoning_effort 字段。
     fn extract_reasoning_effort_reads_flat_legacy_keys() {
         let input = json!({
             "session_id": "abc",
@@ -460,6 +479,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 MCP 工具名可提取服务器，而普通工具返回空值。
     fn extract_mcp_server_reads_claude_tool_name() {
         assert_eq!(
             cli_manager_hook_schema::extract_mcp_server("mcp__exa__web_search_exa").as_deref(),
@@ -469,6 +489,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时转录文件验证子路径优先及父路径回退的字节基线。
     fn transcript_baseline_prefers_child_rollout() {
         let temp = tempfile::tempdir().unwrap();
         let parent = temp.path().join("parent.jsonl");
@@ -483,6 +504,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 两类免交互审批模式会抑制审批通知。
     fn suppresses_codex_permission_request_without_interactive_approval() {
         for permission_mode in ["dontAsk", "bypassPermissions"] {
             let input = json!({ "permission_mode": permission_mode });
@@ -495,6 +517,7 @@ mod tests {
     }
 
     #[test]
+    // 验证交互或未知模式、其他来源和非审批事件不被错误抑制。
     fn preserves_permission_request_for_interactive_or_unknown_modes() {
         for input in [
             json!({ "permission_mode": "default" }),
@@ -521,6 +544,7 @@ mod tests {
     }
 
     #[test]
+    // 验证恶意换行及敏感输入被白名单替换，诊断保持单行。
     fn hook_failure_diagnostic_is_redacted_and_single_line() {
         let line = failure_diagnostic_line(
             "codex\nAuthorization: Bearer secret",
@@ -538,6 +562,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Grok 仅在 bypassPermissions 模式抑制审批事件。
     fn suppresses_only_bypassed_grok_permission_request() {
         assert!(should_suppress_codex_permission_request(
             "grok",
@@ -558,6 +583,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 OpenCode 四类生命周期事件均不进入审批抑制。
     fn opencode_events_never_enter_permission_suppression() {
         for event in ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure"] {
             assert!(!should_suppress_codex_permission_request(

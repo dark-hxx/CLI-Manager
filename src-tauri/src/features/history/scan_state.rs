@@ -18,6 +18,7 @@ pub(crate) struct HistoryRoots {
 }
 
 impl HistoryRoots {
+    // 将各显式历史根目录及默认标记组合成缓存键。
     pub(super) fn cache_key(&self) -> String {
         format!(
             "claude={}|codex={}|grok={}|kimi={}",
@@ -40,6 +41,7 @@ impl HistoryRoots {
         )
     }
 
+    // 规范化 Kimi 配置目录并返回更新后的根目录配置。
     pub(crate) fn with_kimi_config_dir(mut self, kimi_config_dir: Option<String>) -> Self {
         self.kimi_config_dir = normalize_config_dir(kimi_config_dir);
         self
@@ -276,6 +278,7 @@ pub(super) struct RemoteHistoryDetailCache {
 }
 
 impl RemoteHistoryDetailCache {
+    // 克隆命中的远程详情，并将该条目移动到最近使用端。
     pub(super) fn get(&mut self, key: &str) -> Option<Value> {
         let index = self.entries.iter().position(|entry| entry.0 == key)?;
         let entry = self.entries.remove(index)?;
@@ -284,6 +287,7 @@ impl RemoteHistoryDetailCache {
         Some(value)
     }
 
+    // 按序列化字节数和条目上限淘汰旧详情，拒绝单条超限值。
     pub(super) fn insert(&mut self, key: String, value: Value) {
         let size = serde_json::to_vec(&value).map_or(0, |bytes| bytes.len());
         if size > REMOTE_HISTORY_DETAIL_CACHE_BYTES {
@@ -306,6 +310,7 @@ impl RemoteHistoryDetailCache {
         self.entries.push_back((key, value, size));
     }
 
+    // 移除指定来源实例前缀的详情条目，并扣减缓存字节计数。
     pub(super) fn invalidate_instance(&mut self, source_instance_id: &str) {
         let prefix = format!("{source_instance_id}:");
         self.entries.retain(|(key, _, size)| {
@@ -319,6 +324,7 @@ impl RemoteHistoryDetailCache {
     }
 }
 
+// 惰性初始化并返回全局远程详情缓存互斥锁。
 pub(super) fn remote_history_detail_cache() -> &'static Mutex<RemoteHistoryDetailCache> {
     REMOTE_HISTORY_DETAIL_CACHE.get_or_init(|| Mutex::new(RemoteHistoryDetailCache::default()))
 }

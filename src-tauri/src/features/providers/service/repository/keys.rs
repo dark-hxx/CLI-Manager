@@ -8,6 +8,7 @@ use crate::provider::database;
 use sqlx::{Connection, Row};
 use uuid::Uuid;
 
+// 在调用方事务中验证密钥归属与启用状态、切换唯一活动项并将密钥投影回供应商配置；不自行提交或写 CLI Home。
 pub(crate) async fn activate_key_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     provider_id: &str,
@@ -76,6 +77,7 @@ pub(crate) async fn activate_key_in_transaction(
     Ok(())
 }
 
+// 规范化类型并确认供应商存在，再返回该复合身份下的密钥摘要列表。
 pub(crate) async fn list_keys(
     app_type: String,
     provider_id: String,
@@ -86,6 +88,7 @@ pub(crate) async fn list_keys(
     list_keys_for_provider(&mut connection, &app_type, provider_id.trim()).await
 }
 
+// 校验并插入新密钥，可在同一事务中激活及投影；提交后重开连接读取摘要，读取失败不撤销已提交创建。
 pub(crate) async fn create_key(
     input: ProviderKeyCreateInput,
 ) -> Result<ProviderKeySummary, String> {
@@ -158,6 +161,7 @@ pub(crate) async fn create_key(
     key_from_row(&row)
 }
 
+// 合并可选字段并拒绝禁用活动密钥，在事务内更新及重投影活动项；空白密钥输入保留旧值，提交后另读摘要。
 pub(crate) async fn update_key(
     input: ProviderKeyUpdateInput,
 ) -> Result<ProviderKeySummary, String> {
@@ -251,6 +255,7 @@ pub(crate) async fn update_key(
     key_from_row(&row)
 }
 
+// 规范化身份及可选替代项，在自有事务中委托删除流程，成功后提交。
 pub(crate) async fn delete_key(
     app_type: String,
     provider_id: String,
@@ -285,6 +290,7 @@ pub(crate) async fn delete_key(
     Ok(())
 }
 
+// 在调用方事务中删除指定归属的密钥；活动项必须先激活不同的有效替代项并重投影，非活动项直接删除。
 pub(crate) async fn delete_key_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     provider_id: &str,
@@ -338,6 +344,7 @@ pub(crate) async fn delete_key_in_transaction(
     Ok(())
 }
 
+// 先读取并拒绝禁用活动项，再更新启用标记并重开连接返回摘要；检查、更新与回读不是一个事务。
 pub(crate) async fn set_key_enabled(
     app_type: String,
     provider_id: String,
@@ -386,6 +393,7 @@ pub(crate) async fn set_key_enabled(
     key_from_row(&row)
 }
 
+// 确认供应商后，在事务中切换活动密钥并投影配置；提交后另读摘要，不自动应用到 CLI Home。
 pub(crate) async fn activate_key(
     app_type: String,
     provider_id: String,
@@ -423,6 +431,7 @@ pub(crate) async fn activate_key(
     key_from_row(&row)
 }
 
+// 验证非空 ID 列表数量及唯一性，在事务中逐项校验归属并更新排序；提交后重新读取列表。
 pub(crate) async fn reorder_keys(
     app_type: String,
     provider_id: String,
@@ -480,6 +489,7 @@ pub(crate) async fn reorder_keys(
     list_keys(app_type, provider_id).await
 }
 
+// 按类型、供应商与密钥 ID 精确查询并返回密钥原文；不检查启用状态，调用方不得将返回值当作已脱敏摘要。
 pub(crate) async fn reveal_key(
     app_type: String,
     provider_id: String,

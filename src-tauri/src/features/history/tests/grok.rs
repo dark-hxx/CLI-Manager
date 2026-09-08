@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证显式 Grok 会话根目录覆盖默认位置。
 fn explicit_grok_history_root_overrides_default_root() {
     let roots = history_roots(None, None, Some(r"C:\history\grok\sessions".to_string()));
     assert_eq!(
@@ -10,6 +11,7 @@ fn explicit_grok_history_root_overrides_default_root() {
 }
 
 #[test]
+// 验证默认 Grok 根目录指向真实 sessions 目录。
 fn default_grok_history_root_is_the_real_session_root() {
     let roots = history_roots(None, None, None);
     let expected = crate::provider::home::default_history_root("grok")
@@ -20,6 +22,7 @@ fn default_grok_history_root_is_the_real_session_root() {
 }
 
 #[test]
+// 验证显式 Grok sessions 路径不会重复追加目录名。
 fn explicit_grok_session_root_is_scanned_without_appending_sessions() {
     let temp_dir = TempDir::new().unwrap();
     let session_root = temp_dir.path().join(".grok").join("sessions");
@@ -60,6 +63,7 @@ fn explicit_grok_session_root_is_scanned_without_appending_sessions() {
 }
 
 #[test]
+// 验证 Grok 分块消息合并、工具结果、缓存用量与历史扫描链路。
 fn grok_updates_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join(".grok").join("sessions");
@@ -230,6 +234,7 @@ fn grok_updates_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Grok 备份删除仅移除目标会话目录并保留历史根目录。
 fn grok_delete_removes_session_directory_inside_history_home() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".grok").join("sessions");
@@ -254,6 +259,7 @@ fn grok_delete_removes_session_directory_inside_history_home() {
 }
 
 #[test]
+// 验证 Grok 删除拒绝历史根目录之外的会话。
 fn grok_delete_rejects_session_outside_history_home() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".grok").join("sessions");
@@ -280,6 +286,7 @@ fn grok_delete_rejects_session_outside_history_home() {
 }
 
 #[test]
+// 验证 Grok 删除不会将历史根目录本身视为会话目录。
 fn grok_delete_rejects_session_at_history_home() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".grok").join("sessions");
@@ -305,6 +312,7 @@ fn grok_delete_rejects_session_at_history_home() {
 }
 
 #[test]
+// 验证 Grok 删除拒绝将工作区层级目录作为会话。
 fn grok_delete_rejects_workspace_directory_under_history_home() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".grok").join("sessions");
@@ -332,6 +340,7 @@ fn grok_delete_rejects_workspace_directory_under_history_home() {
 }
 
 #[test]
+// 验证 Linux Grok 路径识别不受嵌入 Windows 分隔符影响。
 fn grok_linux_update_paths_do_not_use_host_path_parser() {
     assert!(looks_like_grok_linux_updates(
         "/home/u/.grok/sessions/workspace/abc-123/updates.jsonl"
@@ -355,6 +364,7 @@ fn grok_linux_update_paths_do_not_use_host_path_parser() {
 }
 
 #[test]
+// 验证 Grok 精确查找直接读取磁盘，并拒绝错误项目或越界标识。
 fn exact_grok_session_lookup_bypasses_catalog_miss() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join(".grok").join("sessions");
@@ -404,6 +414,7 @@ fn exact_grok_session_lookup_bypasses_catalog_miss() {
 }
 
 #[test]
+// 验证 Grok 摘要元数据补充标题、消息数、分支、模型及时间。
 fn apply_grok_summary_metadata_fills_list_fields() {
     let temp_dir = TempDir::new().unwrap();
     let session_dir = temp_dir.path().join("sess");

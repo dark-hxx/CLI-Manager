@@ -5,6 +5,7 @@ use super::{
 use cli_manager_history_core::RemoteHistorySyncResult;
 use sqlx::{Connection, Row, SqliteConnection};
 
+// 打开目录并应用远程同步结果，将目录错误映射为远程错误码。
 pub(crate) async fn apply_remote_sync(
     host_id: &str,
     result: &RemoteHistorySyncResult,
@@ -15,12 +16,14 @@ pub(crate) async fn apply_remote_sync(
         .map_err(map_remote_catalog_error)
 }
 
+// 将远程计数安全转换为 SQLite 整数，溢出时拒绝写入。
 pub(super) fn remote_catalog_i64<T: TryInto<i64>>(value: T) -> Result<i64, String> {
     value
         .try_into()
         .map_err(|_| "history_remote_numeric_overflow".to_string())
 }
 
+// 验证远程身份和游标，在事务中更新只读摘要、用量事实与墓碑状态。
 pub(super) async fn apply_remote_sync_with_conn(
     conn: &mut SqliteConnection,
     host_id: &str,
@@ -445,6 +448,7 @@ pub(super) async fn apply_remote_sync_with_conn(
     Ok(true)
 }
 
+// 校验游标代次与请求代次一致并解析分页偏移。
 pub(super) fn remote_cursor_offset(cursor: &str, generation: u64) -> Result<usize, String> {
     let (cursor_generation, offset) = cursor
         .trim()
@@ -458,6 +462,7 @@ pub(super) fn remote_cursor_offset(cursor: &str, generation: u64) -> Result<usiz
         .map_err(|_| "history_remote_cursor_invalid".to_string())
 }
 
+// 事务标记远程实例及其活动会话为过期，并保存同步错误码。
 pub(crate) async fn mark_remote_stale(
     source_instance_id: &str,
     error_code: &str,
@@ -501,6 +506,7 @@ pub(crate) async fn mark_remote_stale(
     Ok(())
 }
 
+// 读取活动远程摘要，按项目与查询筛选后分页返回只读结果。
 pub(crate) async fn list_remote_cached(
     source_instance_id: &str,
     project_path: Option<&str>,

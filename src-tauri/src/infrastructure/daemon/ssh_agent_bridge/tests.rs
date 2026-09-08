@@ -15,6 +15,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{mpsc, Arc, OnceLock};
 use std::time::Duration;
 
+// 构造仅供内存测试使用的 SSH 启动计划，不启动进程或读取密钥。
 fn test_bridge_plan() -> SshLaunchPlan {
     SshLaunchPlan {
         host_id: "host-1".to_string(),
@@ -50,6 +51,7 @@ fn test_bridge_plan() -> SshLaunchPlan {
 }
 
 #[test]
+// 验证缺失 Diff 选项能力时不写请求帧且不递增请求编号。
 fn missing_diff_options_capability_is_rejected_before_request_write() {
     let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
     let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -79,6 +81,7 @@ fn missing_diff_options_capability_is_rejected_before_request_write() {
 }
 
 #[test]
+// 验证缺失 Git 历史能力时在写入前回传能力错误。
 fn missing_git_history_capability_is_rejected_before_request_write() {
     let (_reader_sender, reader_receiver) = mpsc::sync_channel(1);
     let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -108,6 +111,7 @@ fn missing_git_history_capability_is_rejected_before_request_write() {
 }
 
 #[test]
+// 逐项验证附件、上传、下载及删除请求缺失能力时不写帧。
 fn missing_attachment_capabilities_are_rejected_before_request_write() {
     for (kind, expected_error) in [
         ("fileAttachBegin", "ssh_agent_capability_missing:fileAttach"),
@@ -148,6 +152,7 @@ fn missing_attachment_capabilities_are_rejected_before_request_write() {
 }
 
 #[test]
+// 验证请求帧可序列化，响应请求标识不匹配时被拒绝。
 fn bridge_frames_require_matching_request_ids() {
     let frame = ClientFrame {
         request_id: "request-1".to_string(),
@@ -169,6 +174,7 @@ fn bridge_frames_require_matching_request_ids() {
 }
 
 #[test]
+// 验证超过长度限制的远端错误码被替换为通用错误。
 fn remote_error_codes_are_short_and_stable() {
     let error = checked_response(
         ServerFrame {
@@ -184,6 +190,7 @@ fn remote_error_codes_are_short_and_stable() {
 }
 
 #[test]
+// 验证同一消费者可重复占用恢复会话，释放前拒绝其他消费者。
 fn resume_claims_block_other_consumers_until_release() {
     let manager = SshAgentBridgeManager::default();
     let key = "source-instance-1\0claude\0session-1";
@@ -198,6 +205,7 @@ fn resume_claims_block_other_consumers_until_release() {
 }
 
 #[test]
+// 验证 Hook 序号递增批次可接受，逆序批次被拒绝。
 fn hook_batch_requires_monotonic_sequences_and_exact_latest() {
     assert!(validate_hook_batch(
         &json!({
@@ -227,6 +235,7 @@ fn hook_batch_requires_monotonic_sequences_and_exact_latest() {
 }
 
 #[test]
+// 验证去重窗口内拒绝重复普通事件和缺口事件标识。
 fn dedup_window_covers_the_bounded_agent_spool() {
     let mut dedup = EventDedup::default();
     for index in 0..DEDUP_EVENT_IDS {
@@ -238,6 +247,7 @@ fn dedup_window_covers_the_bounded_agent_spool() {
 }
 
 #[test]
+// 验证登录横幅可跳过，而非法随机串会使协议前导失败。
 fn preamble_is_bounded_and_requires_a_hex_nonce() {
     let mut valid = BufReader::new(Cursor::new(
         b"login banner\nCLI_MANAGER_SSH_AGENT/1 0123456789abcdef0123456789abcdef\n",
@@ -252,6 +262,7 @@ fn preamble_is_bounded_and_requires_a_hex_nonce() {
 }
 
 #[test]
+// 验证空响应通道按指定短期限返回超时错误。
 fn response_wait_has_a_hard_timeout() {
     let (_sender, receiver) = mpsc::sync_channel(1);
     assert_eq!(
@@ -261,6 +272,7 @@ fn response_wait_has_a_hard_timeout() {
 }
 
 #[test]
+// 验证响应发送端已断开时返回通道关闭而非超时。
 fn disconnected_response_channel_is_not_reported_as_a_timeout() {
     let (sender, receiver) = mpsc::sync_channel(1);
     drop(sender);
@@ -271,6 +283,7 @@ fn disconnected_response_channel_is_not_reported_as_a_timeout() {
 }
 
 #[test]
+// 验证桥接启动错误被转发给当前排队的业务请求。
 fn bridge_start_failure_is_forwarded_to_queued_requests() {
     let (request_sender, request_receiver) = mpsc::sync_channel(1);
     let (response_sender, response_receiver) = mpsc::sync_channel(1);
@@ -289,6 +302,7 @@ fn bridge_start_failure_is_forwarded_to_queued_requests() {
 }
 
 #[test]
+// 验证主通道借用要求身份匹配且空闲，并与 Hook 占位互斥。
 fn readonly_request_reuses_only_a_request_ready_matching_primary_bridge() {
     let control = Arc::new(BridgeControl::new());
     control.connecting.store(false, Ordering::Release);
@@ -340,6 +354,7 @@ fn readonly_request_reuses_only_a_request_ready_matching_primary_bridge() {
 }
 
 #[test]
+// 验证失效处理只停止原控制对象，不误伤同槽的新桥接。
 fn invalidating_a_reservation_only_stops_the_same_bridge_slot_and_control() {
     let old_control = Arc::new(BridgeControl::new());
     old_control.connecting.store(false, Ordering::Release);
@@ -400,6 +415,7 @@ fn invalidating_a_reservation_only_stops_the_same_bridge_slot_and_control() {
 }
 
 #[test]
+// 验证仅非空缺失能力错误允许一次刷新，其他结果不刷新。
 fn capability_missing_requests_refresh_once_and_only_for_capability_errors() {
     let missing = Err("ssh_agent_capability_missing:fileDelete".to_string());
     assert!(should_refresh_capability_error(false, &missing));
@@ -416,6 +432,7 @@ fn capability_missing_requests_refresh_once_and_only_for_capability_errors() {
 }
 
 #[test]
+// 验证刷新主桥接保留旧项目上下文并采用最新 Agent 身份。
 fn refresh_plan_keeps_primary_context_but_uses_current_agent_identity() {
     let stale_plan = test_bridge_plan();
     let mut current_plan = test_bridge_plan();
@@ -441,6 +458,7 @@ fn refresh_plan_keeps_primary_context_but_uses_current_agent_identity() {
 }
 
 #[test]
+// 验证通道分派、能力门槛及隔离实例标识，自定义附件根另需能力。
 fn readonly_requests_use_an_isolated_bridge_identity() {
     assert_eq!(BridgeLane::for_request("historySync"), BridgeLane::Primary);
     assert_eq!(BridgeLane::for_request("fileList"), BridgeLane::Readonly);
@@ -519,6 +537,7 @@ fn readonly_requests_use_an_isolated_bridge_identity() {
 }
 
 #[test]
+// 验证同一历史详情请求可按顺序拼接多个 JSON 分块。
 fn history_detail_chunks_are_reassembled_within_one_request() {
     let (sender, receiver) = mpsc::sync_channel(2);
     for (index, data) in ["{\"messages\":[", "]}"].into_iter().enumerate() {
@@ -546,6 +565,7 @@ fn history_detail_chunks_are_reassembled_within_one_request() {
 }
 
 #[test]
+// 验证历史详情首块索引不为零时拒绝乱序响应。
 fn history_detail_chunks_reject_out_of_order_frames() {
     let (sender, receiver) = mpsc::sync_channel(1);
     sender
@@ -569,6 +589,7 @@ fn history_detail_chunks_reject_out_of_order_frames() {
 }
 
 #[test]
+// 验证下载分块拼接 Base64 时保留路径与大小元数据。
 fn file_get_chunks_are_reassembled_with_metadata() {
     let (sender, receiver) = mpsc::sync_channel(2);
     for (index, data) in ["aGVs", "bG8="].into_iter().enumerate() {
@@ -607,6 +628,7 @@ fn file_get_chunks_are_reassembled_with_metadata() {
 }
 
 #[test]
+// 验证各退避档位的抖动落在基准时长上下百分之二十内。
 fn reconnect_jitter_stays_within_twenty_percent() {
     for (attempt, base) in [1u64, 2, 5, 10, 30, 60].into_iter().enumerate() {
         let delay = retry_delay(attempt, "host-1").as_millis() as u64;
@@ -616,6 +638,7 @@ fn reconnect_jitter_stays_within_twenty_percent() {
 }
 
 #[test]
+// 验证桥接被占用允许重试且保留队列，协议不兼容则失败。
 fn active_remote_bridge_is_retried_for_takeover() {
     assert!(!permanent_bridge_error("bridge_already_active"));
     assert!(!bridge_failure_should_fail_pending("bridge_already_active"));
@@ -628,6 +651,7 @@ fn active_remote_bridge_is_retried_for_takeover() {
 }
 
 #[test]
+// 验证标准错误模式映射为认证或主机密钥错误，未知文本不分类。
 fn bridge_stderr_classifies_auth_and_host_key_without_logging_raw_text() {
     assert_eq!(
         classify_bridge_stderr(b"user@example: Permission denied (publickey)."),
@@ -642,6 +666,7 @@ fn bridge_stderr_classifies_auth_and_host_key_without_logging_raw_text() {
 }
 
 #[test]
+// 验证并发池占满时停止者无法获取名额，归还后可再次取得。
 fn permit_pool_enforces_the_configured_limit() {
     let state: &'static OnceLock<PermitPool> = Box::leak(Box::new(OnceLock::new()));
     let first_control = BridgeControl::new();
@@ -654,6 +679,7 @@ fn permit_pool_enforces_the_configured_limit() {
 }
 
 #[test]
+// 验证释放部分终端引用不停止桥接，最后一个释放后停止。
 fn bridge_stays_alive_until_the_last_session_releases() {
     let control = Arc::new(BridgeControl::new());
     let (request_sender, _request_receiver) = mpsc::sync_channel(1);
@@ -681,6 +707,7 @@ fn bridge_stays_alive_until_the_last_session_releases() {
 }
 
 #[test]
+// 验证历史消费者在终端关闭后保留桥接，消费者释放后才停止。
 fn history_consumer_keeps_bridge_alive_after_terminal_closes() {
     let control = Arc::new(BridgeControl::new());
     let (request_sender, _request_receiver) = mpsc::sync_channel(1);
@@ -708,6 +735,7 @@ fn history_consumer_keeps_bridge_alive_after_terminal_closes() {
 }
 
 #[test]
+// 验证释放历史消费者时一并清除关联文件及 Git 别名引用。
 fn releasing_history_consumer_also_releases_readonly_aliases() {
     let primary_control = Arc::new(BridgeControl::new());
     let readonly_control = Arc::new(BridgeControl::new());
@@ -753,6 +781,7 @@ fn releasing_history_consumer_also_releases_readonly_aliases() {
 }
 
 #[test]
+// 验证业务错误保留连接，桥接响应超时要求重连。
 fn domain_request_errors_do_not_restart_the_bridge() {
     assert!(!request_error_requires_disconnect(
         "history_session_not_found"

@@ -120,6 +120,7 @@ struct SshHandoffHookForwarder {
 }
 
 impl SshHandoffHookForwarder {
+    // 有有效 Tab 标识时创建有界 Hook 队列，并启动后台线程尝试发送事件。
     fn from_environment(expected_thread_id: Option<String>) -> Option<Self> {
         let tab_id = env::var("CLI_MANAGER_TAB_ID")
             .ok()
@@ -138,6 +139,7 @@ impl SshHandoffHookForwarder {
         })
     }
 
+    // 将服务器行转换为 Hook 事件后非阻塞入队；队列满或关闭时丢弃该事件。
     fn inspect_server_line(&self, line: &[u8]) {
         let Some(payload) =
             ssh_handoff_hook_payload(line, &self.tab_id, self.expected_thread_id.as_deref())
@@ -162,6 +164,7 @@ pub(crate) struct SshCodexLaunch {
 }
 
 impl SshCodexLaunch {
+    // 校验 SSH 启动计划后序列化为 JSON，再编码为 Base64。
     pub(crate) fn encode(&self) -> Result<String, String> {
         self.validate()?;
         let payload = serde_json::to_vec(self)
@@ -169,6 +172,7 @@ impl SshCodexLaunch {
         Ok(BASE64_STANDARD.encode(payload))
     }
 
+    // 从可选环境变量解码 SSH 启动计划，反序列化并校验；缺失时返回 None。
     fn from_environment() -> Result<Option<Self>, String> {
         let Some(encoded) = optional_unicode_env(CODEX_SSH_LAUNCH_ENV)? else {
             return Ok(None);
@@ -182,6 +186,7 @@ impl SshCodexLaunch {
         Ok(Some(launch))
     }
 
+    // 校验传输、远程目录及环境值，并拒绝需要交互认证的接管配置。
     fn validate(&self) -> Result<(), String> {
         self.transport.validate()?;
         validate_remote_work_dir(&self.remote_path)?;
@@ -219,12 +224,14 @@ impl SshCodexLaunch {
         Ok(())
     }
 
+    // 校验当前计划后构造一次性 SSH 启动参数，不在此启动进程。
     fn build_launch(&self, args: &[String]) -> Result<SshTransportLaunch, String> {
         self.validate()?;
         self.transport
             .build_one_shot_launch(self.remote_command(args), SshOneShotOptions::default())
     }
 
+    // 拼接远程登录 shell、初始化及环境导出命令，隔离启动输出并恢复 Codex 协议 stdout。
     fn remote_command(&self, args: &[String]) -> String {
         let mut commands = Vec::new();
         if let Some(command) = self
@@ -259,10 +266,12 @@ impl SshCodexLaunch {
     }
 }
 
+// 检查第一个用户参数是否为代理辅助子命令。
 pub fn is_helper_request(args: &[String]) -> bool {
     args.get(1).map(String::as_str) == Some(HELPER_SUBCOMMAND)
 }
 
+// 跳过辅助入口参数运行代理，并将结果转换为当前进程退出码。
 pub fn run_helper_and_exit(args: &[String]) -> ! {
     let child_args = args
         .get(2..)
@@ -270,6 +279,7 @@ pub fn run_helper_and_exit(args: &[String]) -> ! {
     exit_after_proxy(child_args.and_then(run_proxy))
 }
 
+// 按首个子命令选择 app-server 代理或普通命令透传，然后退出当前进程。
 pub fn run_shim_and_exit(args: &[String]) -> ! {
     let child_args = args
         .get(1..)
@@ -283,6 +293,7 @@ pub fn run_shim_and_exit(args: &[String]) -> ! {
     }))
 }
 
+// 成功时沿用子进程退出码；错误写入 stderr 并以 1 退出。
 fn exit_after_proxy(result: Result<i32, String>) -> ! {
     let exit_code = match result {
         Ok(code) => code,
@@ -294,6 +305,7 @@ fn exit_after_proxy(result: Result<i32, String>) -> ! {
     std::process::exit(exit_code);
 }
 
+// 启动本机或 SSH app-server，双向转发协议并检查恢复结果，输出转发失败时终止子进程。
 fn run_proxy(child_args: &[String]) -> Result<i32, String> {
     if !is_app_server_command(child_args) {
         return Err("refusing to proxy a non app-server Codex command".to_string());
@@ -386,10 +398,12 @@ fn run_proxy(child_args: &[String]) -> Result<i32, String> {
     Ok(status.code().unwrap_or(1))
 }
 
+// 仅依据参数列表首项判断是否为 app-server 命令。
 fn is_app_server_command(child_args: &[String]) -> bool {
     child_args.first().map(String::as_str) == Some("app-server")
 }
 
+// 启动本机或 SSH Codex 普通命令并继承标准流，等待退出后返回退出码。
 fn run_passthrough(child_args: &[String]) -> Result<i32, String> {
     if let Some(ssh_launch) = SshCodexLaunch::from_environment()? {
         let status = command_from_ssh_launch(ssh_launch.build_launch(child_args)?)
@@ -409,6 +423,7 @@ fn run_passthrough(child_args: &[String]) -> Result<i32, String> {
     Ok(status.code().unwrap_or(1))
 }
 
+// 要求远程目录为绝对 POSIX 形式，拒绝控制边界字符、反斜杠及父目录组件。
 fn validate_remote_work_dir(path: &str) -> Result<(), String> {
     let path = path.trim();
     if !path.starts_with('/') || path.contains(['\0', '\r', '\n', '\\']) {
@@ -420,6 +435,7 @@ fn validate_remote_work_dir(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 检查环境键是否符合 ASCII shell 变量命名规则。
 fn is_valid_environment_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
@@ -427,6 +443,7 @@ fn is_valid_environment_key(key: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+// 在 Windows 下以隐藏窗口方式构造 SSH 命令，附加计划中的参数和环境。
 fn command_from_ssh_launch(launch: SshTransportLaunch) -> Command {
     let mut command = silent_command(&launch.executable);
     command.args(launch.args).envs(launch.env);
@@ -434,12 +451,14 @@ fn command_from_ssh_launch(launch: SshTransportLaunch) -> Command {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台构造 SSH 命令，附加计划中的参数和环境。
 fn command_from_ssh_launch(launch: SshTransportLaunch) -> Command {
     let mut command = Command::new(&launch.executable);
     command.args(launch.args).envs(launch.env);
     command
 }
 
+// 读取非空启动器环境变量并转为路径，缺失时返回错误。
 fn codex_launcher_from_environment() -> Result<PathBuf, String> {
     env::var_os(CODEX_LAUNCHER_ENV)
         .filter(|value| !value.is_empty())
@@ -447,6 +466,7 @@ fn codex_launcher_from_environment() -> Result<PathBuf, String> {
         .ok_or_else(|| "real Codex launcher is unavailable".to_string())
 }
 
+// 读取可选启动器参数环境变量，要求 Unicode 后交给结构化参数解析。
 fn codex_launcher_args_from_environment() -> Result<Vec<String>, String> {
     let Some(value) = env::var_os(CODEX_LAUNCHER_ARGS_ENV).filter(|value| !value.is_empty()) else {
         return Ok(Vec::new());
@@ -457,6 +477,7 @@ fn codex_launcher_args_from_environment() -> Result<Vec<String>, String> {
     parse_codex_launcher_args(&value)
 }
 
+// 解析 JSON 字符串数组，并限制参数数量、单项字节数及禁止的控制字符。
 fn parse_codex_launcher_args(value: &str) -> Result<Vec<String>, String> {
     let args = serde_json::from_str::<Vec<String>>(value)
         .map_err(|_| "Codex launcher arguments are invalid".to_string())?;
@@ -486,6 +507,7 @@ struct CodexProviderOverrides {
 }
 
 impl CodexProviderOverrides {
+    // 加载可选供应商 profile 的配置投影及各项运行时覆盖环境变量。
     fn from_environment() -> Result<Self, String> {
         let profile_name = optional_unicode_env(CODEX_PROFILE_NAME_ENV)?;
         let profile_overrides = profile_name
@@ -506,6 +528,7 @@ impl CodexProviderOverrides {
         })
     }
 
+    // 校验供应商覆盖所需字段，按调用场景选择 profile 或展开配置，再追加显式覆盖。
     fn command_args(&self, include_profile: bool) -> Result<Vec<String>, String> {
         let has_any = self.profile_name.is_some()
             || !self.profile_overrides.is_empty()
@@ -580,6 +603,7 @@ impl CodexProviderOverrides {
     }
 }
 
+// 读取可选 Unicode 环境变量，空白视为缺失，非 Unicode 值返回错误。
 fn optional_unicode_env(key: &str) -> Result<Option<String>, String> {
     match env::var(key) {
         Ok(value) if value.trim().is_empty() => Ok(None),
@@ -589,6 +613,7 @@ fn optional_unicode_env(key: &str) -> Result<Option<String>, String> {
     }
 }
 
+// 校验 profile 名称和文件元数据，从 CODEX_HOME 读取 TOML 并展开为数量受限的配置项。
 fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
     if profile_name.is_empty()
         || profile_name.len() > 128
@@ -620,6 +645,7 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
     Ok(overrides)
 }
 
+// 递归展开 TOML 表为点路径配置项；非表值保留其 TOML 文本表示。
 fn flatten_codex_profile_value(
     prefix: Option<&str>,
     value: &toml::Value,
@@ -638,6 +664,7 @@ fn flatten_codex_profile_value(
     Ok(())
 }
 
+// 校验配置键片段，简单 ASCII 键直接使用，其他键采用 JSON 字符串引号。
 fn codex_profile_key_segment(value: &str) -> Result<String, String> {
     if value.is_empty() || value.chars().any(char::is_control) {
         return Err("Codex Provider profile key is invalid".to_string());
@@ -651,6 +678,7 @@ fn codex_profile_key_segment(value: &str) -> Result<String, String> {
     serde_json::to_string(value).map_err(|_| "Codex Provider profile key is invalid".to_string())
 }
 
+// 把供应商配置参数放在子命令之前，并校验 app-server 的命令行预算。
 fn build_codex_child_args(
     child_args: &[String],
     overrides: &CodexProviderOverrides,
@@ -664,6 +692,7 @@ fn build_codex_child_args(
     Ok(args)
 }
 
+// 仅对 app-server 检查保守估算的 Windows 参数长度是否超出预算。
 fn validate_codex_app_server_argument_budget(
     child_args: &[String],
     effective_args: &[String],
@@ -679,6 +708,7 @@ fn validate_codex_app_server_argument_budget(
     Ok(())
 }
 
+// 累计 UTF-16 参数长度，并为分隔符、引号及反斜杠预留转义空间。
 fn estimated_windows_argument_units(args: &[String]) -> usize {
     args.iter()
         .map(|arg| {
@@ -696,6 +726,7 @@ fn estimated_windows_argument_units(args: &[String]) -> usize {
 }
 
 #[cfg(target_os = "windows")]
+// 移除 Windows 扩展路径前缀，将扩展 UNC 转为普通 UNC 供脚本启动器使用。
 fn windows_shell_path(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
     if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
@@ -713,11 +744,13 @@ struct ProtocolTraceState {
 }
 
 #[cfg(target_os = "windows")]
+// 检查脚本启动路径或参数是否包含当前实现禁止的 shell 边界字符。
 fn contains_unsupported_script_characters(value: &str) -> bool {
     value.contains(['&', '|', '<', '>', '^', '%', '!', '\r', '\n'])
 }
 
 #[cfg(target_os = "windows")]
+// 按 Windows 启动器扩展名选择 CMD、PowerShell 或直接运行，并拒绝脚本危险字符。
 fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
     let extension = launcher
         .extension()
@@ -761,12 +794,14 @@ fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台直接构造启动器命令并附加参数。
 fn codex_command(launcher: &Path, args: &[String]) -> Result<Command, String> {
     let mut command = Command::new(launcher);
     command.args(args);
     Ok(command)
 }
 
+// 读取父进程协议行，转发允许的请求或直接写回拒绝响应，并记录协议阶段。
 fn forward_parent_input(
     mut child_stdin: impl Write,
     expected_thread_id: Option<&str>,
@@ -813,6 +848,7 @@ fn forward_parent_input(
     Ok(())
 }
 
+// 读取子进程协议行，投递可选 Hook、压缩恢复响应并串行写回父进程。
 fn forward_child_output(
     child_stdout: impl io::Read,
     pending: &Arc<Mutex<HashMap<String, PendingResume>>>,
@@ -840,6 +876,7 @@ fn forward_child_output(
     Ok(())
 }
 
+// 记录受支持的客户端协议阶段，并有界保存请求 ID 到阶段的关联。
 fn trace_client_protocol_line(
     path: Option<&Path>,
     state: &Arc<Mutex<ProtocolTraceState>>,
@@ -872,6 +909,7 @@ fn trace_client_protocol_line(
     append_protocol_trace(path, &format!("client.{stage}"));
 }
 
+// 记录受支持的服务器事件，或消费请求关联以记录对应响应的成功或错误阶段。
 fn trace_server_protocol_line(
     path: Option<&Path>,
     state: &Arc<Mutex<ProtocolTraceState>>,
@@ -918,6 +956,7 @@ fn trace_server_protocol_line(
     append_protocol_trace(path, &format!("server.{stage}.{outcome}"));
 }
 
+// 尽力向指定文件追加时间戳和阶段信息，不写入协议正文。
 fn append_protocol_trace(path: Option<&Path>, stage: &str) {
     let Some(path) = path else {
         return;
@@ -932,6 +971,7 @@ fn append_protocol_trace(path: Option<&Path>, stage: &str) {
     let _ = writeln!(file, "[{timestamp_ms}] [codex-proxy] stage={stage}");
 }
 
+// 检查接管请求，拒绝新会话和恢复漂移，按需改写恢复参数并注入一次性交付上下文。
 fn inspect_client_line(
     line: &[u8],
     expected_thread_id: Option<&str>,
@@ -1039,6 +1079,7 @@ fn inspect_client_line(
     }
 }
 
+// 仅在有文本输入且上下文结构可写时加入应用级交付说明，保留用户输入。
 fn inject_local_handoff_delivery_context(message: &mut Value) -> bool {
     let has_text_input = message
         .pointer("/params/input")
@@ -1074,6 +1115,7 @@ fn inject_local_handoff_delivery_context(message: &mut Value) -> bool {
     true
 }
 
+// 将匹配会话的服务器活动、审批和终止事件转换为 Hook，忽略重试错误与其他事件。
 fn ssh_handoff_hook_payload(
     line: &[u8],
     tab_id: &str,
@@ -1137,6 +1179,7 @@ fn ssh_handoff_hook_payload(
     }))
 }
 
+// 仅对已跟踪请求的非通知响应消费待恢复状态并生成压缩结果。
 fn transform_server_line(
     line: &[u8],
     pending: &mut HashMap<String, PendingResume>,
@@ -1151,6 +1194,7 @@ fn transform_server_line(
     Some(compact_resume_response(payload, id, &resume))
 }
 
+// 校验恢复响应的线程和供应商身份，保留必要元数据并去掉历史；异常转换为 RPC 错误。
 fn compact_resume_response(payload: &[u8], fallback_id: &Value, resume: &PendingResume) -> Vec<u8> {
     let envelope = match serde_json::from_slice::<ResumeResponseEnvelope>(payload) {
         Ok(envelope) => envelope,
@@ -1247,6 +1291,7 @@ fn compact_resume_response(payload: &[u8], fallback_id: &Value, resume: &Pending
     compact
 }
 
+// 将数字或字符串 RPC ID 序列化为保留类型差异的映射键。
 fn rpc_id_key(id: &Value) -> Option<String> {
     match id {
         Value::Number(_) | Value::String(_) => serde_json::to_string(id).ok(),
@@ -1254,6 +1299,7 @@ fn rpc_id_key(id: &Value) -> Option<String> {
     }
 }
 
+// 生成使用严格恢复错误码的 JSON-RPC 单行错误响应。
 fn rpc_error_response(id: &Value, message: String) -> Vec<u8> {
     json_line(&json!({
         "jsonrpc": "2.0",
@@ -1265,6 +1311,7 @@ fn rpc_error_response(id: &Value, message: String) -> Vec<u8> {
     }))
 }
 
+// 序列化 JSON 并追加换行；序列化失败时返回固定内部错误响应。
 fn json_line(value: &Value) -> Vec<u8> {
     let mut line = serde_json::to_vec(value).unwrap_or_else(|_| {
         b"{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":-32603,\"message\":\"CLI-Manager proxy serialization failed\"}}".to_vec()
@@ -1273,6 +1320,7 @@ fn json_line(value: &Value) -> Vec<u8> {
     line
 }
 
+// 移除字节片段尾部所有 CR/LF，不修改其他内容。
 fn trim_line_ending(mut line: &[u8]) -> &[u8] {
     while line
         .last()
@@ -1283,6 +1331,7 @@ fn trim_line_ending(mut line: &[u8]) -> &[u8] {
     line
 }
 
+// 在追加缓冲前检查行长度上限，读取到换行或 EOF；EOF 时允许返回未换行尾段。
 fn read_protocol_line(reader: &mut impl BufRead, max_bytes: usize) -> io::Result<Option<Vec<u8>>> {
     let mut line = Vec::new();
     loop {
@@ -1308,6 +1357,7 @@ fn read_protocol_line(reader: &mut impl BufRead, max_bytes: usize) -> io::Result
     }
 }
 
+// 锁定父进程 stdout，完整写入并刷新协议行，锁或写入失败返回错误。
 fn write_parent_line(output: &Arc<Mutex<io::Stdout>>, line: &[u8]) -> Result<(), String> {
     let mut output = output
         .lock()

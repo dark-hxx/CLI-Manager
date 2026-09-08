@@ -11,6 +11,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::time::Duration;
 
+// 在给定临时根下构造固定远端身份和项目范围，不读取真实安装或用户环境。
 fn test_scope(root: &std::path::Path, project_paths: Vec<String>) -> ResolvedScope {
     ResolvedScope {
         source: "claude".to_string(),
@@ -26,6 +27,7 @@ fn test_scope(root: &std::path::Path, project_paths: Vec<String>) -> ResolvedSco
     }
 }
 
+// 在测试 Claude projects 布局写入指定 JSONL，返回其规范路径。
 fn write_session(root: &std::path::Path, content: &str) -> std::path::PathBuf {
     let path = root.join("projects").join("-srv-app").join("session.jsonl");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -34,6 +36,7 @@ fn write_session(root: &std::path::Path, content: &str) -> std::path::PathBuf {
 }
 
 #[test]
+// 同时放置目标与干扰会话，验证显式引用只解析指定文件及其消息。
 fn direct_transcript_detail_reads_only_the_referenced_session() {
     let temp = tempfile::TempDir::new().unwrap();
     let target = write_session(
@@ -63,6 +66,7 @@ fn direct_transcript_detail_reads_only_the_referenced_session() {
 }
 
 #[test]
+// 验证根内非 JSONL 文件被拒绝；Unix 分支另验证根外绝对引用被拒绝。
 fn direct_transcript_ref_rejects_outside_root_and_non_jsonl_files() {
     let root = tempfile::TempDir::new().unwrap();
     #[cfg(unix)]
@@ -87,6 +91,7 @@ fn direct_transcript_ref_rejects_outside_root_and_non_jsonl_files() {
 }
 
 #[test]
+// 验证直接详情解析拒绝会话 ID 不符与项目范围不符的请求。
 fn direct_transcript_detail_rejects_session_and_project_mismatches() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = write_session(
@@ -107,12 +112,14 @@ fn direct_transcript_detail_rejects_session_and_project_mismatches() {
 }
 
 #[test]
+// 验证仅返回末尾换行之前的完整 JSONL 前缀，无换行输入不提交。
 fn incomplete_jsonl_tail_is_not_committed() {
     assert_eq!(complete_jsonl_bytes(b"{\"a\":1}\n{\"b\":"), b"{\"a\":1}\n");
     assert!(complete_jsonl_bytes(b"{\"a\":1}").is_empty());
 }
 
 #[test]
+// 验证同 ID 的后续有效名称覆盖旧名称并去除首尾空白，坏 JSON 行不覆盖结果。
 fn codex_thread_name_index_uses_last_valid_name() {
     let names = super::parse_codex_thread_name_index(concat!(
         r#"{"id":"session-1","thread_name":"Old name"}"#,
@@ -126,6 +133,7 @@ fn codex_thread_name_index_uses_last_valid_name() {
 }
 
 #[test]
+// 验证项目路径归一化尾斜杠，并拒绝相对路径和父级段；不测试文件系统归属。
 fn project_paths_are_absolute_and_confined() {
     assert_eq!(validate_project_path("/srv/app/").unwrap(), "/srv/app");
     assert!(validate_project_path("../srv/app").is_err());
@@ -133,6 +141,7 @@ fn project_paths_are_absolute_and_confined() {
 }
 
 #[test]
+// 验证完整已发布索引可复用，而强刷、未覆盖项目或 partial 状态禁止复用；未覆盖 Codex 名称变化。
 fn published_index_reuse_requires_complete_covered_scope() {
     let temp = tempfile::TempDir::new().unwrap();
     let scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
@@ -186,6 +195,7 @@ fn published_index_reuse_requires_complete_covered_scope() {
 }
 
 #[test]
+// 在临时目录先后写两份历史文件，验证发现结果把较新文件排在前面。
 fn discovery_prioritizes_recent_history_files() {
     let temp = tempfile::TempDir::new().unwrap();
     let directory = temp.path().join("projects").join("-srv-app");
@@ -208,6 +218,7 @@ fn discovery_prioritizes_recent_history_files() {
 }
 
 #[test]
+// 验证 Claude 和 Codex 恢复参数包含正确命令、子命令与会话 ID，不启动 CLI。
 fn resume_arguments_are_structured_per_source() {
     assert_eq!(
         build_resume_args("claude", "session-1"),
@@ -220,6 +231,7 @@ fn resume_arguments_are_structured_per_source() {
 }
 
 #[test]
+// 验证恢复工作目录在访问文件系统前拒绝相对路径和父级穿越。
 fn resume_cwd_rejects_relative_and_parent_paths() {
     assert_eq!(
         validate_resume_cwd("relative/path").unwrap_err(),
@@ -232,6 +244,7 @@ fn resume_cwd_rejects_relative_and_parent_paths() {
 }
 
 #[test]
+// 验证相同四维远端范围产生相同身份，分别改变机器、用户、来源或根均改变测试结果。
 fn source_instance_identity_uses_only_stable_remote_scope_dimensions() {
     let base = remote_source_instance_id("machine", "user", "claude", "root");
     assert_eq!(
@@ -257,6 +270,7 @@ fn source_instance_identity_uses_only_stable_remote_scope_dimensions() {
 }
 
 #[test]
+// 验证同一元数据对象重复计算文件身份结果相同，不证明跨文件或修改后的唯一性。
 fn file_identity_is_stable_for_same_metadata() {
     let temp = tempfile::NamedTempFile::new().unwrap();
     let metadata = temp.path().metadata().unwrap();
@@ -264,6 +278,7 @@ fn file_identity_is_stable_for_same_metadata() {
 }
 
 #[test]
+// 先解析带半行尾部的文件，再补全换行，验证最终恰有两行及两条消息。
 fn append_and_partial_tail_are_indexed_once_complete() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = write_session(
@@ -305,6 +320,7 @@ fn append_and_partial_tail_are_indexed_once_complete() {
 }
 
 #[test]
+// 用超过单文件读取预算的一行验证分两次推进偏移，最后完成且不把超长行计入解析行数。
 fn oversized_jsonl_line_is_skipped_with_bounded_progress() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp
@@ -357,6 +373,7 @@ fn oversized_jsonl_line_is_skipped_with_bounded_progress() {
 }
 
 #[test]
+// 缩短已索引文件后再次更新，验证文件代次增长且旧行数与消息计数被重建。
 fn truncate_rebuilds_file_generation() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = write_session(
@@ -398,6 +415,7 @@ fn truncate_rebuilds_file_generation() {
 }
 
 #[test]
+// 改写同长度内容并更新时间后刷新摘要，验证标题来自新内容而非复用旧解析结果。
 fn same_size_rewrite_is_not_treated_as_append() {
     let temp = tempfile::TempDir::new().unwrap();
     let first = "{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"aaa\"},\"cwd\":\"/srv/app\"}\n";
@@ -435,6 +453,7 @@ fn same_size_rewrite_is_not_treated_as_append() {
 }
 
 #[test]
+// 先以不匹配范围索引，再扩展项目范围，验证条目重新纳入并生成完整摘要。
 fn shared_index_can_add_another_project_scope() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = write_session(
@@ -475,6 +494,7 @@ fn shared_index_can_add_another_project_scope() {
 }
 
 #[test]
+// 验证不完整发现保留未见条目，完整发现才移除并返回其源会话删除标记。
 fn tombstones_require_complete_discovery() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = write_session(
@@ -505,6 +525,7 @@ fn tombstones_require_complete_discovery() {
 }
 
 #[test]
+// 用即时陈旧阈值验证当前 PID 的锁仍受保护，随后用无效 PID 模拟旧锁并验证可接管。
 fn writer_lock_keeps_live_owner_and_takes_stale_owner() {
     let temp = tempfile::TempDir::new().unwrap();
     let first = acquire_lock_with_stale_after(temp.path(), -1).unwrap();
@@ -524,6 +545,7 @@ fn writer_lock_keeps_live_owner_and_takes_stale_owner() {
 }
 
 #[test]
+// 以 owner 同名目录阻止锁初始化写入，验证失败码及整个测试锁目录被清理。
 fn failed_writer_lock_initialization_removes_lock_directory() {
     let temp = tempfile::TempDir::new().unwrap();
     let lock = temp.path().join("writer.lock");
@@ -538,6 +560,7 @@ fn failed_writer_lock_initialization_removes_lock_directory() {
 }
 
 #[test]
+// 在临时索引路径写坏 JSON，验证加载返回当前 schema 的空派生索引。
 fn corrupt_index_is_rebuilt_as_derived_state() {
     let temp = tempfile::TempDir::new().unwrap();
     let scope = test_scope(temp.path(), vec!["/srv/app".to_string()]);
@@ -552,6 +575,7 @@ fn corrupt_index_is_rebuilt_as_derived_state() {
 }
 
 #[test]
+// 验证同代次游标保留偏移，代次变化或无效游标回退零。
 fn sync_cursor_resets_when_generation_changes() {
     assert_eq!(sync_cursor_offset("7:40", 7), 40);
     assert_eq!(sync_cursor_offset("7:40", 8), 0);

@@ -19,6 +19,7 @@ pub enum CcConnectAgent {
 }
 
 impl CcConnectAgent {
+    // 返回 cc-connect 配置使用的 Agent 类型标识。
     pub(super) fn config_type(self) -> &'static str {
         match self {
             Self::Claude => "claudecode",
@@ -27,6 +28,7 @@ impl CcConnectAgent {
             Self::Opencode => "opencode",
         }
     }
+    // 返回各 Agent 的默认安全权限模式。
     pub(super) fn safe_mode(self) -> &'static str {
         match self {
             Self::Claude => "default",
@@ -35,6 +37,7 @@ impl CcConnectAgent {
         }
     }
 
+    // 按显式 YOLO 开关选择对应 Agent 权限模式。
     pub(super) fn configured_mode(self, yolo_enabled: bool) -> &'static str {
         if !yolo_enabled {
             return self.safe_mode();
@@ -46,22 +49,27 @@ impl CcConnectAgent {
         }
     }
 
+    // 仅为 Codex 指定 app-server 后端。
     pub(super) fn backend(self) -> Option<&'static str> {
         matches!(self, Self::Codex).then_some("app_server")
     }
 
+    // 仅为 Codex 指定 stdio app-server 地址。
     pub(super) fn app_server_url(self) -> Option<&'static str> {
         matches!(self, Self::Codex).then_some("stdio://")
     }
 
+    // 仅为 Pi 启用 RPC 配置字段。
     pub(super) fn rpc(self) -> Option<bool> {
         matches!(self, Self::Pi).then_some(true)
     }
 
+    // 复用配置类型作为会话类型标识。
     pub(super) fn session_type(self) -> &'static str {
         self.config_type()
     }
 
+    // 返回 Hook 事件使用的 Agent 来源名。
     pub(super) fn hook_source(self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -81,6 +89,7 @@ pub(super) struct ResolvedAgentLauncher {
     pub(super) args: Vec<String>,
 }
 
+// 限制长度、参数数及组合符号并解析带引号的注册命令。
 pub(super) fn parse_registered_command(value: &str) -> Result<Vec<String>, String> {
     if value.len() > MAX_REGISTERED_LAUNCHER_ARG_BYTES
         || value.contains(['\0', '\r', '\n', '&', ';', '|', '<', '>', '(', ')'])
@@ -133,6 +142,7 @@ pub(super) fn parse_registered_command(value: &str) -> Result<Vec<String>, Strin
     Ok(words)
 }
 
+// 去除路径及受支持启动后缀后识别四种 Agent 程序。
 pub(super) fn agent_from_launcher_program(program: &str) -> Option<CcConnectAgent> {
     let name = program
         .rsplit(['/', '\\'])
@@ -152,6 +162,7 @@ pub(super) fn agent_from_launcher_program(program: &str) -> Option<CcConnectAgen
     }
 }
 
+// 解析 CLI 命令首参数并识别对应 Agent。
 pub(super) fn cc_connect_agent_from_cli_tool(value: &str) -> Option<CcConnectAgent> {
     parse_registered_command(value)
         .ok()
@@ -175,6 +186,7 @@ pub(super) const CC_CONNECT_PLATFORMS: [CcConnectPlatform; 4] = [
     CcConnectPlatform::Wecom,
 ];
 
+// 为旧配置反序列化提供 Telegram 默认平台。
 pub(super) fn default_cc_connect_platform() -> CcConnectPlatform {
     CcConnectPlatform::Telegram
 }
@@ -227,10 +239,12 @@ pub struct CcConnectProfile {
     pub codex_config_dir: Option<String>,
 }
 
+// 为缺失的布尔配置字段提供启用默认值。
 pub(super) fn default_true() -> bool {
     true
 }
 
+// 返回默认单轮最大执行分钟数。
 pub(super) fn default_max_turn_time_mins() -> u32 {
     DEFAULT_MAX_TURN_TIME_MINS
 }
@@ -389,6 +403,7 @@ pub(super) struct CcConnectLogBuffer {
 }
 
 impl Default for CcConnectLogBuffer {
+    // 创建从序号一开始的空日志缓冲区。
     fn default() -> Self {
         Self {
             next_seq: 1,
@@ -398,6 +413,7 @@ impl Default for CcConnectLogBuffer {
 }
 
 impl CcConnectLogBuffer {
+    // 附加带时间及递增序号的日志并淘汰超额旧记录。
     pub(super) fn push(&mut self, source: &str, message: String) {
         self.lines.push_back(CcConnectLogLine {
             seq: self.next_seq,
@@ -411,6 +427,7 @@ impl CcConnectLogBuffer {
         }
     }
 
+    // 返回指定序号之后至多 limit 条日志副本。
     pub(super) fn page(&self, after_seq: u64, limit: usize) -> Vec<CcConnectLogLine> {
         self.lines
             .iter()

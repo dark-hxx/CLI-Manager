@@ -2,6 +2,7 @@ use crate::daemon::client::DaemonBridge;
 use crate::ssh_launch::SshLaunchPlan;
 use serde_json::{json, Value};
 
+// 要求 SSH Git 计划具有非空主机、Agent 身份、客户端及远端根路径。
 fn validate_plan(plan: &SshLaunchPlan) -> Result<(), String> {
     if plan.host_id.trim().is_empty()
         || plan.agent_path.trim().is_empty()
@@ -15,6 +16,7 @@ fn validate_plan(plan: &SshLaunchPlan) -> Result<(), String> {
     Ok(())
 }
 
+// 要求请求 rootPath 字符串与 SSH 启动计划远端路径完全相同。
 fn validate_root_binding(remote_path: &str, payload: &Value) -> Result<(), String> {
     let root_path = payload
         .get("rootPath")
@@ -26,6 +28,7 @@ fn validate_root_binding(remote_path: &str, payload: &Value) -> Result<(), Strin
     Ok(())
 }
 
+// 验证计划并取得 daemon 客户端，在阻塞任务中转发 SSH Agent 请求。
 async fn request(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -46,6 +49,7 @@ async fn request(
 }
 
 #[tauri::command]
+// 限制远端 Git 请求种类及根路径绑定，校验仓库字段后转发给 daemon。
 pub async fn ssh_remote_git_request(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -122,6 +126,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    // 验证远端 Git 根路径必须存在且精确匹配计划根路径。
     fn git_root_must_match_launch_plan() {
         assert!(
             validate_root_binding("/srv/project", &json!({ "rootPath": "/srv/project" })).is_ok()

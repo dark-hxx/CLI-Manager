@@ -3,6 +3,7 @@ use crate::installer::InstallationRecord;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 
+// 从已读取的文件字节解析对象；空白内容视为空对象，非法 JSON 或非对象根返回固定错误。
 pub(super) fn read_json(state: &FileState) -> Result<Value, String> {
     if state.bytes.iter().all(u8::is_ascii_whitespace) {
         return Ok(json!({}));
@@ -15,6 +16,7 @@ pub(super) fn read_json(state: &FileState) -> Result<Value, String> {
     Ok(value)
 }
 
+// 遍历各事件条目中的字符串 command，遇到不符合预期层级的值直接跳过，不代替结构校验。
 pub(super) fn command_values(value: &Value) -> impl Iterator<Item = &str> {
     value
         .get("hooks")
@@ -28,6 +30,7 @@ pub(super) fn command_values(value: &Value) -> impl Iterator<Item = &str> {
         .filter_map(|hook| hook.get("command").and_then(Value::as_str))
 }
 
+// 按当前安装身份和来源模板生成事件到完整命令的映射，供精确所有权比较使用。
 pub(super) fn exact_commands(
     installation: &InstallationRecord,
     source: Source,
@@ -44,6 +47,8 @@ pub(super) fn exact_commands(
         .collect()
 }
 
+// 校验相关事件结构，统计匹配命令与 matcher 的模板数；重复匹配标记 outdated，错 matcher 标记 conflict。
+// 另将带本 Agent 标记但不在期望命令集合中的命令标记为冲突；该子串检查不授予修改所有权。
 pub(super) fn inspect_json(
     value: &Value,
     source: Source,
@@ -125,6 +130,7 @@ pub(super) fn inspect_json(
     Ok((managed, conflict, outdated))
 }
 
+// 获取可变 hooks 对象，缺失时补空对象；根或已有 hooks 类型错误时拒绝转换覆盖。
 pub(super) fn hooks_object(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
     let root = value
         .as_object_mut()
@@ -137,6 +143,8 @@ pub(super) fn hooks_object(value: &mut Value) -> Result<&mut Map<String, Value>,
         .ok_or_else(|| "hook_config_hooks_invalid".to_string())
 }
 
+// 在同 matcher 内保留首个精确命令并去重，缺失时追加带 15 秒 timeout 的命令条目。
+// 删除处理后为空的同 matcher 条目；只修改内存值，调用方需先校验结构，途中错误不回滚此前修改。
 pub(super) fn add_exact_hooks(
     value: &mut Value,
     source: Source,
@@ -184,6 +192,8 @@ pub(super) fn add_exact_hooks(
     Ok(())
 }
 
+// 仅在来源模板事件与对应 matcher 下按期望命令删除，再清理空条目、空事件及空 hooks 根。
+// 调用方必须提供完整 expected 表并先校验结构；缺项不会在此报错，不能将其用于任意未验证对象。
 pub(super) fn remove_exact_hooks(
     value: &mut Value,
     source: Source,
@@ -231,6 +241,7 @@ pub(super) fn remove_exact_hooks(
     Ok(())
 }
 
+// 将规划后的 JSON 格式化为字节并追加换行；不写磁盘，也不保留原文件空白排版。
 pub(super) fn serialize_json(value: &Value) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec_pretty(value)
         .map_err(|_| "hook_config_json_serialize_failed".to_string())?;

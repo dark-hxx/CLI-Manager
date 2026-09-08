@@ -182,6 +182,7 @@ struct RequestLogUsageAggregate {
 }
 
 impl RequestLogUsageAggregate {
+    // 饱和累计一次请求的各类 Token 与费用。
     fn add(&mut self, usage: UsageTokenScan, cost: UsageStatsScan) {
         self.requests = self.requests.saturating_add(1);
         self.input_tokens = self.input_tokens.saturating_add(usage.input_tokens);
@@ -196,6 +197,7 @@ impl RequestLogUsageAggregate {
         self.unpriced_tokens = self.unpriced_tokens.saturating_add(cost.unpriced_tokens);
     }
 
+    // 饱和合计输入、输出及两类缓存 Token。
     fn total_tokens(self) -> u64 {
         self.input_tokens
             .saturating_add(self.output_tokens)
@@ -204,11 +206,13 @@ impl RequestLogUsageAggregate {
     }
 }
 
+// 取得串行化请求日志同步的进程内异步锁。
 fn request_log_sync_lock() -> &'static AsyncMutex<()> {
     static LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
+// 每进程调度一次后台路由归属修复，失败后允许重试。
 fn schedule_legacy_route_attribution_repair() {
     static REPAIR_ATTEMPTED: AtomicBool = AtomicBool::new(false);
     if REPAIR_ATTEMPTED.swap(true, Ordering::AcqRel) {
@@ -222,14 +226,17 @@ fn schedule_legacy_route_attribution_repair() {
     });
 }
 
+// 打开统一用量数据库连接并确保用量结构就绪。
 async fn open_cli_manager_db() -> Result<SqliteConnection, String> {
     crate::usage_schema::open_usage_database().await
 }
 
+// 比较请求日志解析器版本及文件指纹是否可复用。
 fn fingerprint_matches(state: RequestLogSyncState, current: SessionFileFingerprint) -> bool {
     state.parser_version == REQUEST_LOG_PARSER_VERSION && state.fingerprint == current
 }
 
+// 检查本地目录可读性，WSL 路径通过发行版内 test 判断。
 fn history_root_available(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&path_str) {
@@ -248,10 +255,12 @@ fn history_root_available(path: &Path) -> bool {
     std::fs::read_dir(path).is_ok()
 }
 
+// 判断来源是否属于请求日志支持集合。
 fn request_log_source_allowed(source: &str) -> bool {
     REQUEST_LOG_SOURCES.contains(&source)
 }
 
+// 收集当前可访问、允许清理缺失日志的来源。
 fn available_cleanup_sources(roots: &HistoryRoots) -> HashSet<&'static str> {
     let mut sources = HashSet::new();
     if history_root_available(&resolve_claude_history_root(roots)) {
@@ -272,6 +281,7 @@ fn available_cleanup_sources(roots: &HistoryRoots) -> HashSet<&'static str> {
     sources
 }
 
+// 按 OpenCode 范围、WSL 路径或本地文件存在性判断会话可打开标记。
 fn session_file_available(file_path: &str) -> bool {
     if parse_opencode_session_locator(file_path).is_some() {
         return opencode_locator_in_default_scope(file_path);
@@ -279,6 +289,7 @@ fn session_file_available(file_path: &str) -> bool {
     crate::wsl::is_wsl_config_dir(file_path) || Path::new(file_path).is_file()
 }
 
+// 由时间、模型和 Token 计数组合缺失事件键的回退值。
 fn fallback_event_key(event: &SessionUsageEventScan, index: usize) -> String {
     format!(
         "fallback:{}:{}:{}:{}:{}:{}",
@@ -291,6 +302,7 @@ fn fallback_event_key(event: &SessionUsageEventScan, index: usize) -> String {
     )
 }
 
+// 将历史索引条目转换为带稳定事件键和顺序的请求日志文档。
 fn document_from_entry(entry: HistoryIndexEntry) -> RequestLogDocument {
     let summary = summary_from_computation(&entry.file_ref, &entry.computed);
     let project_path = summary.cwd.as_deref().map(normalize_history_path);
@@ -313,6 +325,7 @@ fn document_from_entry(entry: HistoryIndexEntry) -> RequestLogDocument {
     }
 }
 
+// 将 OpenCode 解析结果转换为带事件键的请求日志文档。
 fn document_from_opencode(parsed: OpenCodeParsedSession) -> RequestLogDocument {
     let summary = opencode_summary_from_parsed(&parsed);
     let project_path = summary.cwd.as_deref().map(normalize_history_path);
@@ -335,6 +348,7 @@ fn document_from_opencode(parsed: OpenCodeParsedSession) -> RequestLogDocument {
     }
 }
 
+// 读取请求日志文件同步指纹与解析版本映射。
 async fn load_sync_state(
     conn: &mut SqliteConnection,
 ) -> Result<HashMap<String, RequestLogSyncState>, String> {
@@ -383,11 +397,13 @@ async fn load_sync_state(
     Ok(states)
 }
 
+// 对来源、文件路径及事件键生成 SHA256 请求标识。
 fn request_id(source: &str, file_path: &str, event_key: &str) -> String {
     let digest = Sha256::digest(format!("{source}|{file_path}|{event_key}").as_bytes());
     format!("{digest:x}")
 }
 
+// 利用文件对应请求标识删除统一用量及请求日志行。
 async fn delete_document_rows(
     tx: &mut sqlx::Transaction<'_, Sqlite>,
     file_path: &str,
@@ -413,6 +429,7 @@ async fn delete_document_rows(
     Ok(())
 }
 
+// 事务替换单文件请求日志、统一用量记录及同步指纹。
 async fn replace_document(
     conn: &mut SqliteConnection,
     document: &RequestLogDocument,
@@ -538,6 +555,7 @@ async fn replace_document(
     Ok(document.events.len() as u64)
 }
 
+// 在同一事务中清理缺失文件的请求日志、用量和同步状态。
 async fn remove_missing_files(
     conn: &mut SqliteConnection,
     stale_paths: &[String],
@@ -563,6 +581,7 @@ async fn remove_missing_files(
     Ok(stale_paths.len() as u64)
 }
 
+// 扫描支持来源并按指纹增量同步，修复归属且仅清理可访问来源的缺失文件。
 async fn sync_request_logs_with_connection(
     conn: &mut SqliteConnection,
     roots: HistoryRoots,
@@ -658,6 +677,7 @@ async fn sync_request_logs_with_connection(
 }
 
 #[tauri::command]
+// 串行同步历史请求日志，完成后调度旧路由归属修复。
 pub async fn history_sync_request_logs(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -678,12 +698,14 @@ pub async fn history_sync_request_logs(
     Ok(result)
 }
 
+// 去除筛选值首尾空白并忽略空字符串。
 fn normalized_filter(value: Option<&String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
+// 转义 LIKE 特殊字符并构造包含匹配模式。
 fn like_pattern(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
@@ -692,6 +714,7 @@ fn like_pattern(value: &str) -> String {
     format!("%{escaped}%")
 }
 
+// 向统一用量查询追加来源、项目、模型、会话及时间筛选。
 fn push_filters<'a>(builder: &mut QueryBuilder<'a, Sqlite>, filters: &RequestLogFilters) {
     builder.push(" WHERE 1 = 1");
     if let Some(source) = normalized_filter(filters.source.as_ref()) {
@@ -729,6 +752,7 @@ fn push_filters<'a>(builder: &mut QueryBuilder<'a, Sqlite>, filters: &RequestLog
     push_project_path_filters(builder, filters);
 }
 
+// 合并单个与多个项目路径，规范化后排序去重。
 fn normalized_request_log_project_paths(filters: &RequestLogFilters) -> Vec<String> {
     let mut paths = filters.project_paths.clone().unwrap_or_default();
     if let Some(path) = &filters.project_path {
@@ -744,6 +768,7 @@ fn normalized_request_log_project_paths(filters: &RequestLogFilters) -> Vec<Stri
     paths
 }
 
+// 扩展 Windows、WSL 挂载和 UNC 项目路径等价候选。
 fn request_log_project_path_candidates(filters: &RequestLogFilters) -> Vec<String> {
     let mut candidates = Vec::new();
     for path in normalized_request_log_project_paths(filters) {
@@ -767,6 +792,7 @@ fn request_log_project_path_candidates(filters: &RequestLogFilters) -> Vec<Strin
     candidates
 }
 
+// 转义路径中的 LIKE 特殊字符并构造子目录前缀模式。
 fn prefix_like_pattern(value: &str) -> String {
     let escaped = value
         .replace('\\', "\\\\")
@@ -775,6 +801,7 @@ fn prefix_like_pattern(value: &str) -> String {
     format!("{escaped}/%")
 }
 
+// 追加项目路径及 Claude 编码键和旧项目名的兼容筛选。
 fn push_project_path_filters<'a>(
     builder: &mut QueryBuilder<'a, Sqlite>,
     filters: &RequestLogFilters,
@@ -840,6 +867,7 @@ fn push_project_path_filters<'a>(
     builder.push(")");
 }
 
+// 校验筛选并读取统一用量分页，重算费用及全量筛选摘要。
 async fn list_request_logs_with_connection(
     conn: &mut SqliteConnection,
     filters: RequestLogFilters,
@@ -1036,6 +1064,7 @@ async fn list_request_logs_with_connection(
 }
 
 #[tauri::command]
+// 使用默认分页参数读取已持久化的请求日志，不触发历史扫描。
 pub async fn history_list_request_logs(
     filters: Option<RequestLogFilters>,
     page: Option<u32>,
@@ -1062,6 +1091,7 @@ pub async fn history_list_request_logs(
     .await
 }
 
+// 计算缓存读取占输入与两类缓存上下文总量的比例。
 fn request_log_cache_hit_rate(
     input_tokens: u64,
     cache_read_tokens: u64,
@@ -1077,6 +1107,7 @@ fn request_log_cache_hit_rate(
     }
 }
 
+// 按 UTC 小时或天向下对齐请求时间桶。
 fn request_log_bucket_start(timestamp_ms: i64, granularity: &'static str) -> i64 {
     let bucket_ms = if granularity == "hour" {
         60 * 60 * 1000
@@ -1086,6 +1117,7 @@ fn request_log_bucket_start(timestamp_ms: i64, granularity: &'static str) -> i64
     timestamp_ms.div_euclid(bucket_ms) * bucket_ms
 }
 
+// 将来源聚合转换为带 Token 占比的统计条目。
 fn request_log_stats_source_item(
     source: String,
     aggregate: RequestLogUsageAggregate,
@@ -1109,6 +1141,7 @@ fn request_log_stats_source_item(
     }
 }
 
+// 将模型聚合转换为带 Token 占比的统计条目。
 fn request_log_stats_model_item(
     model: String,
     aggregate: RequestLogUsageAggregate,
@@ -1133,6 +1166,7 @@ fn request_log_stats_model_item(
 }
 
 #[tauri::command]
+// 按筛选范围聚合统一用量趋势、来源及模型分布，缺省取最近三十天。
 pub async fn history_get_request_log_stats(
     filters: Option<RequestLogFilters>,
     claude_config_dir: Option<String>,
@@ -1287,6 +1321,7 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    // 建立内存用量数据库并应用请求日志相关迁移夹具。
     async fn test_connection() -> SqliteConnection {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         for statement in crate::MIGRATION_CREATE_REQUEST_LOGS_SQL.split(';') {
@@ -1328,6 +1363,7 @@ mod tests {
         conn
     }
 
+    // 在指定测试配置目录写入固定 Claude 会话日志。
     fn write_claude_session(config: &Path, content: &str) -> std::path::PathBuf {
         let path = config
             .join("projects")
@@ -1339,6 +1375,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证同步去重和幂等、文件变更替换及缺失文件用量清理。
     async fn sync_is_idempotent_and_replaces_changed_files() {
         let temp = TempDir::new().unwrap();
         let claude = temp.path().join("claude");
@@ -1416,6 +1453,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证文件用量清理查询计划使用请求标识索引。
     async fn document_cleanup_uses_indexed_request_ids() {
         let mut conn = test_connection().await;
         let rows = sqlx::query(
@@ -1439,6 +1477,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证请求日志筛选、页大小上限及缓存统计口径。
     async fn list_filters_and_caps_page_size() {
         let mut conn = test_connection().await;
         sqlx::query(
@@ -1492,6 +1531,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证新路由错误码和安全详情保留，旧记录空字段仍兼容。
     async fn list_preserves_route_error_code_and_safe_detail_for_legacy_compatibility() {
         let mut conn = test_connection().await;
         sqlx::query(
@@ -1538,6 +1578,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证统一视图优先使用路由用量替代缓存拆分不同的会话记录。
     async fn route_usage_replaces_cache_split_session_record() {
         let mut conn = test_connection().await;
         sqlx::query(
@@ -1585,6 +1626,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证项目筛选覆盖 Windows、WSL、Claude 编码和旧项目键。
     async fn project_path_filter_uses_materialized_windows_wsl_and_claude_keys() {
         let mut conn = test_connection().await;
         sqlx::query(
@@ -1659,12 +1701,14 @@ mod tests {
     }
 
     #[test]
+    // 验证缓存命中率使用输入及两类缓存作为分母。
     fn cache_hit_rate_uses_input_and_cache_context_tokens() {
         assert!((request_log_cache_hit_rate(100, 25, 5) - (25.0 / 130.0)).abs() < f64::EPSILON);
         assert_eq!(request_log_cache_hit_rate(0, 0, 0), 0.0);
     }
 
     #[tokio::test]
+    // 验证历史根目录不可访问时保留已有请求日志。
     async fn unavailable_root_does_not_purge_existing_logs() {
         let temp = TempDir::new().unwrap();
         let claude = temp.path().join("claude");
@@ -1705,6 +1749,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL 会话不依赖宿主元数据检查即可标记可打开。
     fn wsl_session_path_remains_openable_without_native_metadata_check() {
         assert!(session_file_available(
             r"\\wsl.localhost\Ubuntu\home\me\.claude\projects\p\session.jsonl"

@@ -4,6 +4,7 @@ use std::net::TcpStream;
 use std::thread;
 
 #[test]
+// 验证固定 POST 路由表，并拒绝 CONNECT 及未知路径。
 fn route_matrix_is_fixed_and_rejects_connect() {
     assert_eq!(
         classify_route(&Method::POST, "/v1/messages"),
@@ -32,6 +33,7 @@ fn route_matrix_is_fixed_and_rejects_connect() {
 }
 
 #[test]
+// 验证各应用的路由、上游地址与 SSE 提交规则映射。
 fn failover_protocol_matrix_covers_all_supported_apps() {
     let cases = [
         (RouteKind::ClaudeMessages, "/v1/messages", "claude"),
@@ -76,6 +78,7 @@ fn failover_protocol_matrix_covers_all_supported_apps() {
 }
 
 #[test]
+// 验证自动热切换取决于供应商是否当前及成功状态，而非候选索引。
 fn automatic_failover_hot_switch_uses_provider_identity_not_candidate_index() {
     let cases = [
         (
@@ -130,6 +133,7 @@ fn automatic_failover_hot_switch_uses_provider_identity_not_candidate_index() {
 }
 
 #[test]
+// 验证上游状态区分密钥错误、供应商错误与成功。
 fn upstream_error_classifier_separates_key_and_provider_failures() {
     assert_eq!(
         classify_upstream_status(StatusCode::UNAUTHORIZED),
@@ -162,6 +166,7 @@ fn upstream_error_classifier_separates_key_and_provider_failures() {
 }
 
 #[test]
+// 验证错误摘要提取保留脱敏后的错误文本，不持久化无关请求字段。
 fn provider_error_body_capture_uses_sanitized_error_details() {
     let capture = capture_upstream_error_body(
         br#"{"type":"error","error":{"message":"provider rejected token=private-token"},"request":"must not persist"}"#,
@@ -175,6 +180,7 @@ fn provider_error_body_capture_uses_sanitized_error_details() {
 }
 
 #[test]
+// 验证尝试预算包含首次请求且加法溢出时饱和。
 fn max_attempts_is_initial_attempt_plus_retry_budget() {
     assert_eq!(max_attempts(0), 1);
     assert_eq!(max_attempts(3), 4);
@@ -182,6 +188,7 @@ fn max_attempts_is_initial_attempt_plus_retry_budget() {
 }
 
 #[test]
+// 验证每次发送预留消耗预算，耗尽后不再增加计数。
 fn outbound_attempt_reservation_counts_each_send_and_stops_at_budget() {
     let mut actual_attempts = 0usize;
 
@@ -192,6 +199,7 @@ fn outbound_attempt_reservation_counts_each_send_and_stops_at_budget() {
 }
 
 #[test]
+// 验证流式失败策略将熔断失败阈值降为一次。
 fn stream_failure_policy_opens_after_one_failure() {
     let registry = CircuitRegistry::default();
     let policy = CircuitPolicy {
@@ -207,6 +215,7 @@ fn stream_failure_policy_opens_after_one_failure() {
 }
 
 #[test]
+// 验证签名错误识别要求签名与异常描述同时出现。
 fn signature_classifier_requires_explicit_signature_error_language() {
     assert!(is_thinking_signature_error(
         br#"{"error":"invalid thinking signature"}"#
@@ -223,6 +232,7 @@ fn signature_classifier_requires_explicit_signature_error_language() {
 }
 
 #[test]
+// 验证签名纠偏删除思考块而保留模型及普通文本。
 fn signature_rectifier_removes_only_thinking_blocks_and_preserves_request_data() {
     let mut request = serde_json::json!({
         "model": "fixture",
@@ -245,6 +255,7 @@ fn signature_rectifier_removes_only_thinking_blocks_and_preserves_request_data()
 }
 
 #[test]
+// 验证上游地址避免重复 /v1，保留 Grok 路径并拒绝非 HTTP 协议。
 fn upstream_url_does_not_duplicate_v1_and_rejects_non_http() {
     assert_eq!(
         upstream_url(
@@ -277,6 +288,7 @@ fn upstream_url_does_not_duplicate_v1_and_rejects_non_http() {
 }
 
 #[test]
+// 验证预算错误分类需要预算或思考词与约束表述组合。
 fn budget_classifier_requires_explicit_budget_or_thinking_constraint() {
     assert!(is_thinking_budget_error(
         br#"{"error":"budget_tokens must be less than max_tokens"}"#
@@ -293,6 +305,7 @@ fn budget_classifier_requires_explicit_budget_or_thinking_constraint() {
 }
 
 #[test]
+// 验证预算纠偏设置预设值并保留自适应思考请求原样。
 fn budget_rectifier_sets_safe_values_and_keeps_adaptive_thinking() {
     let mut request = serde_json::json!({
         "thinking": {"type": "enabled", "budget_tokens": 65536, "effort": "max"},
@@ -314,6 +327,7 @@ fn budget_rectifier_sets_safe_values_and_keeps_adaptive_thinking() {
 }
 
 #[test]
+// 验证媒体错误分类要求媒体描述与不支持表述组合。
 fn media_classifier_requires_explicit_unsupported_media_language() {
     assert!(is_media_capability_error(
         br#"{"error":"image input is not supported"}"#
@@ -330,6 +344,7 @@ fn media_classifier_requires_explicit_unsupported_media_language() {
 }
 
 #[test]
+// 验证嵌套 Claude、Codex、工具和 MCP 媒体块均被替换，其他文本和工具调用保留。
 fn media_fallback_replaces_claude_codex_tool_and_mcp_blocks_without_media_leakage() {
     let mut request = serde_json::json!({
         "model": "fixture",
@@ -376,6 +391,7 @@ fn media_fallback_replaces_claude_codex_tool_and_mcp_blocks_without_media_leakag
 }
 
 #[test]
+// 验证关闭模型名启发式时仍采用显式纯文本能力声明。
 fn media_preflight_keeps_explicit_capability_when_heuristic_is_disabled() {
     let mut config = crate::provider::routing::RoutingRectifierConfig {
         schema_version: 1,
@@ -404,6 +420,7 @@ fn media_preflight_keeps_explicit_capability_when_heuristic_is_disabled() {
 }
 
 #[test]
+// 验证显式媒体能力声明及模型名启发式的正反例。
 fn declared_text_only_capability_is_explicit_and_model_heuristic_is_bounded() {
     assert_eq!(
         declared_media_capability(r#"{"advanced":{"supportsImages":false}}"#),
@@ -422,6 +439,7 @@ fn declared_text_only_capability_is_explicit_and_model_heuristic_is_bounded() {
     assert!(!is_text_only_model("claude-3-5-sonnet"));
 }
 
+// 创建全部启用的路由优化器测试配置。
 fn optimizer_config() -> crate::provider::routing::RoutingOptimizerConfig {
     crate::provider::routing::RoutingOptimizerConfig {
         schema_version: 1,
@@ -432,6 +450,7 @@ fn optimizer_config() -> crate::provider::routing::RoutingOptimizerConfig {
 }
 
 #[test]
+// 验证 Bedrock 判定只采用有效环境字段，不依据名称或地址猜测。
 fn bedrock_detection_uses_effective_env_only() {
     assert!(effective_bedrock_enabled(
         r#"{"env":{"CLAUDE_CODE_USE_BEDROCK":"1"}}"#
@@ -445,6 +464,7 @@ fn bedrock_detection_uses_effective_env_only() {
 }
 
 #[test]
+// 验证 Bedrock 各模型代际的思考设置，保留无关字段并处理缺失 max_tokens。
 fn bedrock_thinking_optimizer_applies_generation_rules_without_cross_provider_fields() {
     let config = optimizer_config();
     assert_eq!(
@@ -517,6 +537,7 @@ fn bedrock_thinking_optimizer_applies_generation_rules_without_cross_provider_fi
 }
 
 #[test]
+// 验证缓存注入保留已有标记且总数不超过四个。
 fn bedrock_cache_injection_preserves_existing_and_caps_at_four_breakpoints() {
     let config = optimizer_config();
     let mut request = serde_json::json!({
@@ -546,6 +567,7 @@ fn bedrock_cache_injection_preserves_existing_and_caps_at_four_breakpoints() {
 }
 
 #[test]
+// 验证 beta 头只添加一次，非 Bedrock 请求不获得该优化。
 fn bedrock_beta_header_is_added_once_and_optimizer_is_route_local() {
     let mut headers = Vec::new();
     add_bedrock_beta_header(&mut headers);
@@ -566,12 +588,14 @@ fn bedrock_beta_header_is_added_once_and_optimizer_is_route_local() {
 }
 
 #[test]
+// 验证固定逐跳头被识别，而普通业务头保留。
 fn hop_by_hop_headers_are_not_forwarded() {
     assert!(is_hop_by_hop("Connection"));
     assert!(is_hop_by_hop("Content-Length"));
     assert!(!is_hop_by_hop("anthropic-version"));
 }
 
+// 创建带虚拟密钥文本的密钥池候选。
 fn candidate(id: &str) -> KeyCandidate {
     KeyCandidate {
         id: id.to_string(),
@@ -580,6 +604,7 @@ fn candidate(id: &str) -> KeyCandidate {
 }
 
 #[test]
+// 验证候选按初始顺序轮换，并跳过本次已使用的密钥。
 fn key_pool_is_active_first_then_round_robin_without_duplicate_attempts() {
     let state = RouteState::default();
     let candidates = vec![candidate("active"), candidate("second"), candidate("third")];
@@ -606,6 +631,7 @@ fn key_pool_is_active_first_then_round_robin_without_duplicate_attempts() {
 }
 
 #[test]
+// 验证候选顺序变化时重置游标并递增池代次。
 fn key_pool_reload_resets_cursor_and_generation() {
     let state = RouteState::default();
     state
@@ -629,6 +655,7 @@ fn key_pool_reload_resets_cursor_and_generation() {
 }
 
 #[test]
+// 验证冷却密钥被跳过，并限制 Retry-After 最大秒数。
 fn key_pool_cooldown_skips_key_and_bounds_retry_after() {
     let state = RouteState::default();
     state
@@ -652,6 +679,7 @@ fn key_pool_cooldown_skips_key_and_bounds_retry_after() {
 }
 
 #[test]
+// 验证全部密钥冷却与没有密钥对应不同选择状态。
 fn key_selection_distinguishes_cooldown_from_missing_keys() {
     let state = RouteState::default();
     let candidates = vec![candidate("one"), candidate("two")];
@@ -674,6 +702,7 @@ fn key_selection_distinguishes_cooldown_from_missing_keys() {
 }
 
 #[test]
+// 验证冷却状态不跨新建 RouteState 保留。
 fn key_cooldown_is_runtime_only_and_reload_rebuilds_the_pool() {
     let state = RouteState::default();
     let candidates = vec![candidate("one"), candidate("two")];
@@ -705,6 +734,7 @@ fn key_cooldown_is_runtime_only_and_reload_rebuilds_the_pool() {
 }
 
 #[test]
+// 验证映射配置修剪文本，仅精确替换顶层模型而不修改嵌套模型。
 fn model_mapping_is_trimmed_exact_and_finally_pinned() {
     let mappings = parse_model_mappings(
         "codex",
@@ -727,6 +757,7 @@ fn model_mapping_is_trimmed_exact_and_finally_pinned() {
 }
 
 #[test]
+// 验证 Claude 自定义显示名及其去除 [1m] 后缀的别名映射到同一目标。
 fn claude_model_mapping_accepts_custom_display_name() {
     let mut mappings = Vec::new();
     add_claude_model_mapping(&mut mappings, "fable", "gpt-5.6-sol", "claude-fable-5[1m]");
@@ -740,6 +771,7 @@ fn claude_model_mapping_accepts_custom_display_name() {
 }
 
 #[test]
+// 验证模型映射拒绝空源和重复源。
 fn model_mapping_rejects_empty_and_duplicate_sources() {
     assert_eq!(
         parse_model_mappings(
@@ -760,6 +792,7 @@ fn model_mapping_rejects_empty_and_duplicate_sources() {
 }
 
 #[test]
+// 验证故障转移的每个供应商都从原始请求模型独立映射。
 fn failover_mapping_restarts_from_original_source_for_each_provider() {
     let request = serde_json::json!({"model":"a","messages":[]});
     let first = parse_model_mappings(
@@ -781,6 +814,7 @@ fn failover_mapping_restarts_from_original_source_for_each_provider() {
 }
 
 #[test]
+// 验证通用 SSE 忽略心跳，在首个完整可解析事件提交且不重复提交。
 fn generic_sse_commits_on_first_parseable_event_and_ignores_keepalive() {
     let mut tracker = StreamCommitTracker::new(StreamCommitKind::GenericSse);
     assert_eq!(
@@ -802,6 +836,7 @@ fn generic_sse_commits_on_first_parseable_event_and_ignores_keepalive() {
 }
 
 #[test]
+// 验证 Responses SSE 忽略创建与增量事件，直到完成事件才提交成功。
 fn responses_sse_waits_for_completed_event() {
     let mut tracker = StreamCommitTracker::new(StreamCommitKind::ResponsesSse);
     assert_eq!(
@@ -829,6 +864,7 @@ fn responses_sse_waits_for_completed_event() {
 }
 
 #[test]
+// 验证 Responses SSE 错误事件提交失败。
 fn responses_sse_error_is_a_commit_boundary() {
     let mut tracker = StreamCommitTracker::new(StreamCommitKind::ResponsesSse);
     assert_eq!(
@@ -840,6 +876,7 @@ fn responses_sse_error_is_a_commit_boundary() {
 }
 
 #[test]
+// 用临时 loopback 监听器验证未知路由返回 404，不访问供应商数据。
 fn listener_serves_fixed_router_errors_without_provider_data() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();

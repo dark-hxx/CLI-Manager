@@ -16,10 +16,12 @@ const MAX_HISTORY_ROOT_BYTES: usize = 4096;
 static SSH_GROUP_SCHEMA_READY: AtomicBool = AtomicBool::new(false);
 static SSH_GROUP_SCHEMA_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 
+// 惰性初始化分组兼容结构升级的进程内互斥锁。
 fn ssh_group_schema_lock() -> &'static AsyncMutex<()> {
     SSH_GROUP_SCHEMA_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
+// 以 WAL、外键及十五秒忙等待打开已存在的主数据库。
 async fn open_database() -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(crate::app_paths::db_path()?)
@@ -33,6 +35,7 @@ async fn open_database() -> Result<SqliteConnection, String> {
         .map_err(|error| format!("ssh_database_open_failed: {error}"))
 }
 
+// 在当前连接开始立即写事务。
 async fn begin_immediate(conn: &mut SqliteConnection) -> Result<(), String> {
     sqlx::query("BEGIN IMMEDIATE")
         .execute(conn)
@@ -41,6 +44,7 @@ async fn begin_immediate(conn: &mut SqliteConnection) -> Result<(), String> {
         .map_err(|error| format!("ssh_database_begin_failed: {error}"))
 }
 
+// 按操作结果提交或尝试回滚，并保留原操作错误。
 async fn finish_transaction(
     conn: &mut SqliteConnection,
     result: Result<(), String>,
@@ -56,6 +60,7 @@ async fn finish_transaction(
     result
 }
 
+// 通过表信息查询指定列是否存在。
 async fn has_column(
     conn: &mut SqliteConnection,
     table: &str,
@@ -70,6 +75,7 @@ async fn has_column(
         .any(|row| row.try_get::<String, _>("name").ok().as_deref() == Some(column)))
 }
 
+// 补齐分组表、列及索引，并迁移旧平面分组绑定。
 async fn ensure_group_schema_with_conn(conn: &mut SqliteConnection) -> Result<(), String> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS ssh_host_groups (
@@ -135,6 +141,7 @@ async fn ensure_group_schema_with_conn(conn: &mut SqliteConnection) -> Result<()
 }
 
 #[tauri::command]
+// 串行执行一次分组结构兼容升级并缓存成功状态。
 pub async fn ssh_db_ensure_group_schema() -> Result<(), String> {
     if SSH_GROUP_SCHEMA_READY.load(Ordering::Acquire) {
         return Ok(());
@@ -167,6 +174,7 @@ pub struct SshImportResult {
 }
 
 #[tauri::command]
+// 在单个事务中按不区分大小写别名去重导入主机。
 pub async fn ssh_db_import_config_hosts(
     hosts: Vec<SshImportHostInput>,
     group_id: Option<String>,
@@ -260,6 +268,7 @@ pub async fn ssh_db_import_config_hosts(
 }
 
 #[tauri::command]
+// 在立即事务中删除主机及处理相关绑定。
 pub async fn ssh_db_delete_host(id: String) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
@@ -271,6 +280,7 @@ pub async fn ssh_db_delete_host(id: String) -> Result<(), String> {
     finish_transaction(&mut conn, result).await
 }
 
+// 拒绝仍被用作跳板的主机，解绑项目和集成后删除主机。
 async fn delete_host_with_conn(conn: &mut SqliteConnection, id: &str) -> Result<(), String> {
     let references: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM ssh_hosts WHERE jump_host_id = ?1")
@@ -304,6 +314,7 @@ async fn delete_host_with_conn(conn: &mut SqliteConnection, id: &str) -> Result<
 }
 
 #[tauri::command]
+// 在事务中删除非空分组标识对应的分组。
 pub async fn ssh_db_delete_group(id: String) -> Result<(), String> {
     let id = id.trim();
     if id.is_empty() {
@@ -315,6 +326,7 @@ pub async fn ssh_db_delete_group(id: String) -> Result<(), String> {
     finish_transaction(&mut conn, result).await
 }
 
+// 将子分组和主机迁至父级后删除目标分组。
 async fn delete_group_with_conn(conn: &mut SqliteConnection, id: &str) -> Result<(), String> {
     let Some(group) = sqlx::query("SELECT parent_id FROM ssh_host_groups WHERE id = ?1")
         .bind(id)
@@ -359,6 +371,7 @@ async fn delete_group_with_conn(conn: &mut SqliteConnection, id: &str) -> Result
 }
 
 #[tauri::command]
+// 在单个连接事务内保存四种 CLI 的主机偏好。
 pub async fn ssh_db_save_host_preferences(
     host_id: String,
     claude_root: String,
@@ -385,6 +398,7 @@ pub async fn ssh_db_save_host_preferences(
     finish_transaction(&mut conn, result).await
 }
 
+// 按来源更新根偏好，空字符串对应删除记录。
 async fn save_host_preferences_with_conn(
     conn: &mut SqliteConnection,
     host_id: &str,
@@ -460,6 +474,7 @@ pub struct SshHistorySourceInput {
     config_root_hash: String,
 }
 
+// 返回 Unix 毫秒字符串，异常系统时钟回退为零。
 fn current_time_millis() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -467,6 +482,7 @@ fn current_time_millis() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+// 识别 SQLite 数据库错误中的忙碌与锁定基本或扩展码。
 fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
     error
         .as_database_error()
@@ -479,6 +495,7 @@ fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
         })
 }
 
+// 将历史元数据锁竞争映射为稳定错误，其余保留阶段。
 fn map_history_metadata_error(stage: &str, error: sqlx::Error) -> String {
     if is_sqlite_busy_error(&error) {
         "ssh_agent_history_metadata_busy".to_string()
@@ -487,6 +504,7 @@ fn map_history_metadata_error(stage: &str, error: sqlx::Error) -> String {
     }
 }
 
+// 在入库前校验历史来源、主机身份、根路径和摘要格式。
 fn validate_history_source_input(input: &SshHistorySourceInput) -> Result<(), String> {
     Uuid::parse_str(input.host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
     Uuid::parse_str(input.installation_id.trim())
@@ -538,6 +556,7 @@ fn validate_history_source_input(input: &SshHistorySourceInput) -> Result<(), St
     Ok(())
 }
 
+// 按主机来源及配置根选择已有集成并更新或插入历史身份。
 async fn record_history_source_with_conn(
     conn: &mut SqliteConnection,
     input: &SshHistorySourceInput,
@@ -606,6 +625,7 @@ async fn record_history_source_with_conn(
 }
 
 #[tauri::command]
+// 验证历史请求后使用受限锁等待事务写入来源身份。
 pub async fn ssh_db_record_history_source(input: SshHistorySourceInput) -> Result<(), String> {
     validate_history_source_input(&input)?;
     let options = SqliteConnectOptions::new()
@@ -634,6 +654,7 @@ pub async fn ssh_db_record_history_source(input: SshHistorySourceInput) -> Resul
     result
 }
 
+// 从已存 JSON 读取管理条目数，非法或缺失值视为零。
 fn managed_entries(report: &str) -> u64 {
     serde_json::from_str::<Value>(report)
         .ok()
@@ -642,6 +663,7 @@ fn managed_entries(report: &str) -> u64 {
 }
 
 #[tauri::command]
+// 校验 Hook 顶层与嵌套身份后事务性保存报告。
 pub async fn ssh_db_record_hook_report(input: SshHookReportInput) -> Result<(), String> {
     if input.host_id.trim().is_empty() {
         return Err("ssh_host_not_found".to_string());
@@ -683,6 +705,7 @@ pub async fn ssh_db_record_hook_report(input: SshHookReportInput) -> Result<(), 
     finish_transaction(&mut conn, result).await
 }
 
+// 验证安装记录中历史候选的来源及根身份约束。
 fn valid_hook_history_candidate(report: &Value, source: &str) -> bool {
     let Some(installation) = report.get("installation") else {
         return true;
@@ -706,6 +729,7 @@ fn valid_hook_history_candidate(report: &Value, source: &str) -> bool {
     }
 }
 
+// 更新或保留旧根集成，补回 inspect 安装记录并同步同根镜像。
 async fn record_hook_report_with_conn(
     conn: &mut SqliteConnection,
     input: SshHookReportInput,
@@ -867,6 +891,7 @@ async fn record_hook_report_with_conn(
     Ok(())
 }
 
+// 插入标记为有效且活动的新集成记录。
 async fn insert_integration(
     conn: &mut SqliteConnection,
     id: &str,
@@ -899,6 +924,7 @@ async fn insert_integration(
     .map_err(|error| error.to_string())
 }
 
+// 更新集成元数据，并按显式操作及安装状态确定清理状态。
 async fn update_integration(
     conn: &mut SqliteConnection,
     id: &str,
@@ -947,6 +973,7 @@ mod tests {
     const HISTORY_INSTALLATION_ID: &str = "00000000-0000-4000-8000-000000000002";
 
     #[test]
+    // 验证 Kimi 安装记录省略历史候选且拒绝伪造候选。
     fn kimi_installation_record_omits_history_candidate() {
         let report = serde_json::json!({
             "canonicalConfigRoot": "/home/dev/.kimi-code",
@@ -966,6 +993,7 @@ mod tests {
         assert!(!valid_hook_history_candidate(&invalid, "kimi"));
     }
 
+    // 创建独立内存数据库中的历史集成表。
     async fn history_database() -> SqliteConnection {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -993,6 +1021,7 @@ mod tests {
         conn
     }
 
+    // 构造固定主机及可变历史摘要的有效测试输入。
     fn history_source_input(source_hash: char) -> SshHistorySourceInput {
         SshHistorySourceInput {
             host_id: HISTORY_HOST_ID.to_string(),
@@ -1009,6 +1038,7 @@ mod tests {
     }
 
     #[test]
+    // 验证来源身份格式及 Kimi/Grok 历史拒绝规则。
     fn validates_remote_history_identity_before_database_access() {
         let valid = history_source_input('a');
         assert!(validate_history_source_input(&valid).is_ok());
@@ -1035,6 +1065,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证相同集成重复记录只更新历史身份而不新增行。
     async fn records_remote_history_source_idempotently() {
         let mut conn = history_database().await;
         let first = history_source_input('a');
@@ -1063,6 +1094,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证更新失败不会替换原有历史身份。
     async fn history_source_failure_rolls_back_existing_identity() {
         let mut conn = history_database().await;
         let first = history_source_input('a');
@@ -1092,6 +1124,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证旧分组结构重复升级不会产生重复分组。
     async fn group_schema_upgrade_is_idempotent() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -1129,6 +1162,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证一个来源偏好写入失败时整批记录回滚。
     async fn preference_failure_rolls_back_both_sources() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query("CREATE TABLE ssh_hosts (id TEXT PRIMARY KEY)")
@@ -1172,6 +1206,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证删组同时迁移子组和主机并删除目标记录。
     async fn delete_group_moves_children_and_hosts_atomically() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -1225,6 +1260,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证主机删除失败时项目和集成解绑均回滚。
     async fn delete_host_failure_rolls_back_related_tables() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         for statement in [
@@ -1271,6 +1307,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证新根插入失败时撤销旧根保留状态更新。
     async fn hook_report_failure_rolls_back_retained_root_update() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(

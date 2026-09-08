@@ -7,6 +7,7 @@ use log::{debug, warn};
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
+// 静默启动指定程序并等待其完整输出，启动或等待失败时返回错误。
 pub(super) fn wsl_command_output(program: &str, args: &[&str]) -> Result<Output, String> {
     let mut cmd = silent_command(program);
     cmd.args(args);
@@ -15,6 +16,7 @@ pub(super) fn wsl_command_output(program: &str, args: &[&str]) -> Result<Output,
 }
 
 /// 执行 wsl 命令并返回 stdout + stderr 文本，失败时返回错误信息。
+// 将命令输出解码为文本，非成功退出时返回退出码与标准错误。
 pub(super) fn wsl_command_text(program: &str, args: &[&str]) -> Result<(String, String), String> {
     let output = wsl_command_output(program, args)?;
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -35,6 +37,7 @@ pub(super) fn wsl_command_text(program: &str, args: &[&str]) -> Result<(String, 
 
 /// 通过 `wsl.exe find` 在 WSL 内递归列出 JSONL 会话文件，
 /// 返回路径与 find 一次性带出的基础元数据，避免后续对每个文件再 shell out `stat`。
+// 通过 WSL find 收集匹配文件及大小、修改时间，命令失败时返回空列表。
 pub(super) fn wsl_find_session_files(
     linux_dir: &str,
     distro: &str,
@@ -112,6 +115,7 @@ pub(super) fn wsl_find_session_files(
     }
 }
 
+// 将 find 的秒时间文本四舍五入为正毫秒数，无效值返回零。
 pub(super) fn parse_wsl_find_timestamp_millis(raw: &str) -> i64 {
     raw.trim()
         .parse::<f64>()
@@ -121,6 +125,7 @@ pub(super) fn parse_wsl_find_timestamp_millis(raw: &str) -> i64 {
         .unwrap_or(0)
 }
 
+// 从行尾解析制表符分隔的元数据，为 JSONL 路径构造指纹与项目键。
 pub(super) fn parse_wsl_find_session_file_line(
     line: &str,
     project_key_from_path: &dyn Fn(&str) -> String,
@@ -148,6 +153,7 @@ pub(super) fn parse_wsl_find_session_file_line(
     })
 }
 
+// 将 WSL UNC 路径的指纹及缓存时间写入全局缓存，锁失败时跳过。
 pub(super) fn remember_wsl_session_fingerprint(
     unc_path: &str,
     fingerprint: SessionFileFingerprint,
@@ -164,6 +170,7 @@ pub(super) fn remember_wsl_session_fingerprint(
 }
 
 /// 通过 `wsl.exe stat` 获取文件元数据（size / mtime / ctime）。
+// 通过 WSL stat 读取大小、修改和创建时间，失败时返回默认指纹。
 pub(super) fn wsl_session_fingerprint(linux_path: &str, distro: &str) -> SessionFileFingerprint {
     let wsl_exe = crate::wsl::find_wsl_exe();
     let wsl_exe_str = wsl_exe
@@ -211,6 +218,7 @@ pub(super) fn wsl_session_fingerprint(linux_path: &str, distro: &str) -> Session
 }
 
 /// Claude: 从 Linux 路径提取 project_key（projects 目录下的第一级子目录名）。
+// 取 Linux 路径 projects 后的首个目录名，缺失时回退父目录名。
 pub(super) fn claude_project_key_from_wsl_linux_path(linux_path: &str) -> String {
     let normalized = linux_path.trim_end_matches('/').replace('\\', "/");
     // 路径格式: /home/user/.claude/projects/<project_key>/<session>.jsonl
@@ -231,6 +239,7 @@ pub(super) fn claude_project_key_from_wsl_linux_path(linux_path: &str) -> String
 }
 
 /// Codex: 从 Linux 路径提取 project_key（sessions 目录下的相对路径）。
+// 取 Linux 会话路径相对根目录的首个组件，缺失时回退 sessions。
 pub(super) fn codex_project_key_from_wsl_linux_path(linux_path: &str, linux_root: &str) -> String {
     let normalized = linux_path.trim_end_matches('/').replace('\\', "/");
     let root_normalized = linux_root.trim_end_matches('/').replace('\\', "/");
@@ -245,6 +254,7 @@ pub(super) fn codex_project_key_from_wsl_linux_path(linux_path: &str, linux_root
     "sessions".to_string()
 }
 
+// 将 WSL find 的 Claude JSONL 结果转换为 UNC 会话引用并缓存指纹。
 pub(super) fn collect_wsl_claude_session_files(
     linux_projects_dir: &str,
     distro: &str,
@@ -278,6 +288,7 @@ pub(super) fn collect_wsl_claude_session_files(
     files
 }
 
+// 将 WSL find 的 Codex rollout 结果转换为 UNC 会话引用并缓存指纹。
 pub(super) fn collect_wsl_codex_session_files(
     linux_sessions_dir: &str,
     distro: &str,

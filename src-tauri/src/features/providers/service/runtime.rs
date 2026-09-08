@@ -14,6 +14,7 @@ pub(crate) struct CodexProviderProfile {
 }
 
 impl CodexProviderProfile {
+    // 解析现有配置并替换所选模型供应商的 env_key，返回保留身份的新配置，不修改原对象。
     pub(crate) fn with_env_key(&self, env_key: &str) -> Result<Self, String> {
         let mut document = self
             .profile_text
@@ -37,6 +38,7 @@ pub(crate) struct CodexProviderRuntimeConfig {
     pub(crate) wire_api: Option<String>,
 }
 
+// 读取启用的 Codex 供应商及活动密钥，按元数据合并公共配置并投影密钥，返回含敏感值的运行时配置。
 pub(crate) async fn load_codex_runtime_config(
     provider_id: &str,
 ) -> Result<CodexProviderRuntimeConfig, String> {
@@ -95,6 +97,7 @@ pub(crate) async fn load_codex_runtime_config(
     parse_runtime_config(provider_id, &projected)
 }
 
+// 按 env、JSON 字段和 TOML 回退规则提取运行字段与密钥，复用或生成环境变量名，再生成配置文本；不执行网络请求。
 pub(crate) fn parse_runtime_config(
     provider_id: &str,
     settings_config: &str,
@@ -192,6 +195,7 @@ pub(crate) fn parse_runtime_config(
     })
 }
 
+// 覆盖端点及可选模型后委托全局配置生成器构建 TOML，设置所选供应商的 env_key 和可选协议并返回命名配置。
 fn materialize_codex_profile(
     provider_id: &str,
     effective: &Value,
@@ -238,6 +242,7 @@ fn materialize_codex_profile(
     })
 }
 
+// 在已存在的普通 model_providers 配置表中设置 env_key；缺失或结构不符返回配置错误。
 fn set_profile_env_key(
     document: &mut DocumentMut,
     model_provider: &str,
@@ -253,6 +258,7 @@ fn set_profile_env_key(
     Ok(())
 }
 
+// 创建目标目录并直接写入或覆盖命名配置文件；不是原子替换，配置名和内容由调用方提供。
 pub(crate) fn write_codex_profile_to_dir(
     codex_dir: &Path,
     profile: &CodexProviderProfile,
@@ -265,6 +271,7 @@ pub(crate) fn write_codex_profile_to_dir(
     .map_err(|err| format!("profile_write_failed: {err}"))
 }
 
+// 将供应商 ID 转为至多四十字符的安全短名并附加原始 ID 的十位 SHA-256 前缀，空短名回退 provider。
 pub(crate) fn codex_profile_name(provider_id: &str) -> String {
     let mut slug = provider_id
         .chars()
@@ -285,6 +292,7 @@ pub(crate) fn codex_profile_name(provider_id: &str) -> String {
     format!("cli-manager-{}-{}", slug, &hash[..10])
 }
 
+// 字符串原样返回，其他 JSON 值序列化为文本，包括对象、数组和 null。
 fn env_value_text(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
@@ -292,10 +300,12 @@ fn env_value_text(value: &Value) -> String {
     }
 }
 
+// 从环境对象取指定键并转换成文本，不限制值类型或裁剪空白。
 fn env_text(env: &Map<String, Value>, key: &str) -> Option<String> {
     env.get(key).map(env_value_text)
 }
 
+// 接受非空字符串、数字及布尔值，拒绝空白字符串、对象、数组和 null。
 fn value_text_if_scalar(value: &Value) -> Option<String> {
     match value {
         Value::String(text) if !text.trim().is_empty() => Some(text.clone()),
@@ -307,10 +317,12 @@ fn value_text_if_scalar(value: &Value) -> Option<String> {
     }
 }
 
+// 将横线和点替换为下划线并转 ASCII 大写，供字段模式匹配。
 fn normalize_config_key(key: &str) -> String {
     key.replace(['-', '.'], "_").to_ascii_uppercase()
 }
 
+// 先按给定精确键顺序取非空文本，再按环境对象遍历顺序匹配大写后缀；值允许 JSON 序列化结果。
 fn find_env_by_exact_or_suffix(
     env: &Map<String, Value>,
     exact: &[&str],
@@ -333,6 +345,7 @@ fn find_env_by_exact_or_suffix(
     })
 }
 
+// 先匹配当前对象的键模式与标量值，再递归子对象和数组；精确模式不优先于同层先遇到的后缀匹配。
 fn find_text_by_key_patterns(value: &Value, exact: &[&str], suffixes: &[&str]) -> Option<String> {
     match value {
         Value::Object(map) => {
@@ -357,6 +370,7 @@ fn find_text_by_key_patterns(value: &Value, exact: &[&str], suffixes: &[&str]) -
     }
 }
 
+// 用双引号与反斜杠状态截掉字符串外的井号注释；这是简化扫描，不完整支持 TOML 字面量或多行字符串。
 fn strip_toml_inline_comment(value: &str) -> &str {
     let mut in_string = false;
     let mut escaped = false;
@@ -371,6 +385,7 @@ fn strip_toml_inline_comment(value: &str) -> &str {
     value
 }
 
+// 用简化规则去注释、剥离引号并处理少量转义；其余非空文本原样返回，不是完整 TOML 标量校验。
 fn parse_toml_scalar(value: &str) -> Option<String> {
     let value = strip_toml_inline_comment(value).trim();
     if value.is_empty() {
@@ -402,6 +417,7 @@ fn parse_toml_scalar(value: &str) -> Option<String> {
     Some(value.to_string())
 }
 
+// 识别单方括号行并提取表名，忽略表数组；不解析引号、转义或尾随注释。
 fn toml_table_name(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.starts_with("[[") || !trimmed.starts_with('[') || !trimmed.ends_with(']') {
@@ -416,6 +432,7 @@ fn toml_table_name(line: &str) -> Option<String> {
     )
 }
 
+// 跳过空行、注释及表头后按首个等号拆分键值，裁剪键外围引号，不校验完整 TOML 语法。
 fn toml_assignment(line: &str) -> Option<(String, String)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
@@ -428,6 +445,7 @@ fn toml_assignment(line: &str) -> Option<(String, String)> {
     ))
 }
 
+// 逐行匹配规范化键名并用简化标量解析取首值，不限制所在 TOML 表。
 fn find_toml_value_by_key_patterns(raw: &str, exact: &[&str], suffixes: &[&str]) -> Option<String> {
     raw.lines()
         .filter_map(toml_assignment)
@@ -444,6 +462,7 @@ fn find_toml_value_by_key_patterns(raw: &str, exact: &[&str], suffixes: &[&str])
         })
 }
 
+// 扫描 model_providers 下端点，优先所选供应商，未找到时回退首个端点；表名解析沿用简化规则。
 fn find_codex_toml_provider_base_url(raw: &str) -> Option<String> {
     let selected_provider = find_toml_value_by_key_patterns(raw, &["model_provider"], &[]);
     let mut current_table: Option<String> = None;
@@ -479,6 +498,7 @@ fn find_codex_toml_provider_base_url(raw: &str) -> Option<String> {
     fallback_base_url
 }
 
+// 递归按已知密钥字段与 token 后缀提取首个标量文本，不验证其是否为实际可用凭据。
 fn find_codex_secret_value_in_value(value: &Value) -> Option<String> {
     find_text_by_key_patterns(
         value,
@@ -494,10 +514,12 @@ fn find_codex_secret_value_in_value(value: &Value) -> Option<String> {
     )
 }
 
+// 将环境对象复制为 JSON 值，复用递归密钥字段搜索。
 fn find_codex_secret_value(env: &Map<String, Value>) -> Option<String> {
     find_codex_secret_value_in_value(&Value::Object(env.clone()))
 }
 
+// 仅在 TOML 非空且不含密钥原文时查找所选供应商的 env_key；表名要求简化扫描结果精确匹配。
 fn find_selected_provider_env_key(raw: &str, secret_value: &str) -> Option<String> {
     if raw.trim().is_empty() || raw.contains(secret_value) {
         return None;
@@ -523,6 +545,7 @@ fn find_selected_provider_env_key(raw: &str, secret_value: &str) -> Option<Strin
     None
 }
 
+// 用供应商 ID 的 SHA-256 前十六位生成稳定的大写环境变量名，不包含密钥值。
 fn codex_secret_env_key(provider_id: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(provider_id.as_bytes());
@@ -538,6 +561,7 @@ mod tests {
     use super::parse_runtime_config;
 
     #[test]
+    // 验证环境对象优先提供端点和模型、复用配置中的变量名，并确认此样例生成配置不含密钥。
     fn parses_projected_codex_runtime_fields() {
         let settings = r#"{
             "env": {
@@ -567,6 +591,7 @@ mod tests {
     }
 
     #[test]
+    // 验证从 TOML 读取所选供应商端点、从 auth 取得密钥并生成变量名，样例配置中不写入密钥。
     fn selects_codex_provider_base_url_from_toml() {
         let settings = r#"{
             "config": "model_provider = \"cloud\"\n\n[model_providers.cloud]\nbase_url = \"https://config.example.com\"\nmodel = \"gpt-config\"",

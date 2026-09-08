@@ -10,6 +10,7 @@ use super::{LiveServerManager, LiveServerOpenResult, LiveServerSession};
 const WATCHER_TIMEOUT: Duration = Duration::from_secs(3);
 const POLL_DELAY: Duration = Duration::from_millis(50);
 
+// 请求临时服务的版本端点并将响应解析为整数。
 async fn reload_version(client: &reqwest::Client, session: &LiveServerSession) -> u64 {
     client
         .get(format!("{}{}", session.origin, RELOAD_ENDPOINT))
@@ -23,6 +24,7 @@ async fn reload_version(client: &reqwest::Client, session: &LiveServerSession) -
         .unwrap()
 }
 
+// 在限定时间内轮询回环服务，等待刷新版本变化。
 async fn wait_for_version_change(
     client: &reqwest::Client,
     session: &LiveServerSession,
@@ -41,6 +43,7 @@ async fn wait_for_version_change(
     .expect("watcher did not advance reload version")
 }
 
+// 反复连接临时回环端口，断言服务停止后监听器在期限内关闭。
 async fn assert_listener_closed(port: u16) {
     tokio::time::timeout(WATCHER_TIMEOUT, async {
         loop {
@@ -57,6 +60,7 @@ async fn assert_listener_closed(port: u16) {
     .expect("listener remained reachable after stop");
 }
 
+// 通过真实回环请求验证 HTML 注入、Host、方法、HEAD 及二进制流响应。
 async fn assert_http_contract(client: &reqwest::Client, result: &LiveServerOpenResult) {
     let response = client.get(&result.url).send().await.unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
@@ -92,6 +96,7 @@ async fn assert_http_contract(client: &reqwest::Client, result: &LiveServerOpenR
     assert_eq!(asset.bytes().await.unwrap().len(), 1024 * 1024);
 }
 
+// 修改临时根内样式文件，断言监听刷新版本递增。
 async fn assert_reload_changes(
     client: &reqwest::Client,
     session: &LiveServerSession,
@@ -103,6 +108,7 @@ async fn assert_reload_changes(
     assert!(changed > initial);
 }
 
+// 创建临时新目录并等待登记，再修改其中文件验证刷新。
 async fn assert_new_directory_changes_reload(
     client: &reqwest::Client,
     session: &LiveServerSession,
@@ -116,6 +122,7 @@ async fn assert_new_directory_changes_reload(
     assert!(changed > initial);
 }
 
+// 写入临时 node_modules 文件并确认刷新版本不变。
 async fn assert_ignored_changes_do_not_reload(
     client: &reqwest::Client,
     session: &LiveServerSession,
@@ -129,6 +136,7 @@ async fn assert_ignored_changes_do_not_reload(
 }
 
 #[tokio::test]
+// 在临时目录启动真实回环服务与 watcher，验证复用、HTTP、刷新及关闭。
 async fn starts_reuses_serves_and_stops_project_server() {
     let temp = tempdir().unwrap();
     fs::write(

@@ -20,6 +20,7 @@ enum CircuitStatus {
 }
 
 impl CircuitStatus {
+    // 将内存熔断状态转换为对外快照的稳定标签，半开态使用 halfOpen。
     fn as_str(self) -> &'static str {
         match self {
             Self::Closed => "closed",
@@ -61,6 +62,8 @@ pub(crate) struct CircuitRegistry {
 }
 
 impl CircuitRegistry {
+    // 按应用/供应商取许可，冷却到期将 Open 转为 HalfOpen，半开时只允许一个在途探测。
+    // Closed 不限并发；许可须由调用方显式成功/失败/释放，丢弃许可不会自动清理探测占用。
     pub(crate) fn acquire(
         &self,
         app_type: &str,
@@ -92,6 +95,8 @@ impl CircuitRegistry {
         Ok(CircuitPermit { key, probe: false })
     }
 
+    // 探测成功累加到阈值后重置关闭；普通成功仅在 Closed 清连续失败并增加累计请求数。
+    // 锁中毒或条目缺失时忽略；许可仅关联键，没有状态代次校验。
     pub(crate) fn record_success(&self, permit: CircuitPermit, policy: CircuitPolicy) {
         let Ok(mut entries) = self.entries.lock() else {
             return;
@@ -111,6 +116,8 @@ impl CircuitRegistry {
         }
     }
 
+    // 探测失败立即重开并重置冷却；Closed 普通请求按连续失败或累计错误率阈值打开熔断。
+    // 错误率计数并非滑动窗口，直到 reset_closed 才清零；锁中毒或条目缺失时忽略。
     pub(crate) fn record_failure(&self, permit: CircuitPermit, policy: CircuitPolicy) {
         let Ok(mut entries) = self.entries.lock() else {
             return;
@@ -141,6 +148,7 @@ impl CircuitRegistry {
         }
     }
 
+    // 中性释放半开探测占用，不增加成功/失败计数；普通许可不做任何状态更新。
     pub(crate) fn release(&self, permit: CircuitPermit) {
         if !permit.probe {
             return;
@@ -153,6 +161,7 @@ impl CircuitRegistry {
         }
     }
 
+    // 重置指定供应商；空供应商 ID 表示重置该应用所有条目，保留条目本身且不影响其他应用。
     pub(crate) fn reset(&self, app_type: &str, provider_id: &str) {
         let Ok(mut entries) = self.entries.lock() else {
             return;
@@ -170,6 +179,7 @@ impl CircuitRegistry {
         }
     }
 
+    // 克隆公开状态并按应用/供应商排序；锁中毒返回空列表，不触发 Open 超时状态转换。
     pub(crate) fn snapshots(&self) -> Vec<CircuitSnapshot> {
         let Ok(entries) = self.entries.lock() else {
             return Vec::new();
@@ -193,6 +203,7 @@ impl CircuitRegistry {
     }
 }
 
+// 关闭熔断并清空失败、成功探测、累计请求及在途标志，不删除注册表条目。
 fn reset_closed(entry: &mut CircuitEntry) {
     entry.status = CircuitStatus::Closed;
     entry.consecutive_failures = 0;
@@ -207,6 +218,7 @@ fn reset_closed(entry: &mut CircuitEntry) {
 mod tests {
     use super::*;
 
+    // 提供双失败/双成功阈值和短冷却的测试策略，不创建真实计时任务。
     fn policy() -> CircuitPolicy {
         CircuitPolicy {
             failure_threshold: 2,
@@ -218,6 +230,7 @@ mod tests {
     }
 
     #[test]
+    // 验证连续失败打开熔断并立即拒绝新请求；此测试不等待冷却到期。
     fn opens_on_consecutive_failures_and_blocks_until_timeout() {
         let registry = CircuitRegistry::default();
         let policy = policy();
@@ -230,6 +243,7 @@ mod tests {
     }
 
     #[test]
+    // 用零冷却验证半开仅有一个在途探测，连续两次成功后回到关闭态。
     fn half_open_allows_one_probe_and_closes_after_success_threshold() {
         let registry = CircuitRegistry::default();
         let policy = CircuitPolicy {
@@ -249,6 +263,7 @@ mod tests {
     }
 
     #[test]
+    // 验证单供应商和整应用重置均保留条目，并且其他应用的打开状态不受影响。
     fn reset_can_clear_one_provider_or_all_app_circuits() {
         let registry = CircuitRegistry::default();
         let policy = policy();
@@ -289,6 +304,7 @@ mod tests {
     }
 
     #[test]
+    // 验证中性释放允许下一探测进入，状态仍为半开而不是记失败重开。
     fn neutral_release_clears_half_open_probe_without_counting_failure() {
         let registry = CircuitRegistry::default();
         let policy = CircuitPolicy {
@@ -306,6 +322,7 @@ mod tests {
     }
 
     #[test]
+    // 验证新注册表不继承旧实例熔断状态，同时显式 reset 可关闭旧实例条目。
     fn restart_starts_with_closed_runtime_and_does_not_restore_circuits() {
         let registry = CircuitRegistry::default();
         let policy = policy();

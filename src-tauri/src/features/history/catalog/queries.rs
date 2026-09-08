@@ -7,6 +7,7 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection};
 use std::collections::HashSet;
 
+// 生成项目路径的本地与 WSL 候选、Claude 项目键和目录名。
 pub(super) fn project_candidates(project_path: &str) -> (Vec<String>, Vec<String>, Option<String>) {
     let target = normalize_history_path(project_path);
     let mut cwd_candidates = vec![target.clone()];
@@ -33,6 +34,7 @@ pub(super) fn project_candidates(project_path: &str) -> (Vec<String>, Vec<String
     (cwd_candidates, claude_keys, basename)
 }
 
+// 追加兼容 Claude 项目键、工作目录及旧版项目名的绑定参数筛选。
 pub(super) fn push_project_filter(builder: &mut QueryBuilder<'_, Sqlite>, project_path: &str) {
     let (cwd_candidates, claude_keys, basename) = project_candidates(project_path);
     builder.push(" AND (");
@@ -65,10 +67,12 @@ pub(super) fn push_project_filter(builder: &mut QueryBuilder<'_, Sqlite>, projec
     builder.push(")");
 }
 
+// 将分页偏移加到获取数量上限，溢出时饱和处理。
 pub(super) fn merge_fetch_limit(limit: Option<usize>, offset: Option<usize>) -> Option<usize> {
     limit.map(|value| value.saturating_add(offset.unwrap_or(0)))
 }
 
+// 将数据库行转换为会话摘要，并将负消息数归零。
 pub(super) fn session_summary_from_row(row: SqliteRow) -> Result<HistorySessionSummary, String> {
     Ok(HistorySessionSummary {
         session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
@@ -90,6 +94,7 @@ pub(super) fn session_summary_from_row(row: SqliteRow) -> Result<HistorySessionS
     })
 }
 
+// 优先保留主目录记录，按来源路径去重后排序分页。
 pub(super) fn merge_session_summaries(
     primary: Vec<HistorySessionSummary>,
     fallback: Vec<HistorySessionSummary>,
@@ -118,6 +123,7 @@ pub(super) fn merge_session_summaries(
     }
 }
 
+// 从活动来源的成功解析会话中按条件排序分页。
 pub(super) async fn list_sessions_from_v2(
     conn: &mut SqliteConnection,
     _roots: &HistoryRoots,
@@ -186,6 +192,7 @@ pub(super) async fn list_sessions_from_v2(
         .collect::<Result<Vec<_>, String>>()
 }
 
+// 按根目录键查询旧目录，并剔除根目录范围外的会话。
 pub(super) async fn list_sessions_from_legacy_catalog(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -252,6 +259,7 @@ pub(super) async fn list_sessions_from_legacy_catalog(
         .collect())
 }
 
+// 合并两代目录分页结果，并用 Codex 线程名称覆盖标题。
 pub(crate) async fn list_sessions(
     roots: &HistoryRoots,
     source: Option<String>,
@@ -308,10 +316,12 @@ pub(crate) async fn list_sessions(
     Ok(sessions)
 }
 
+// 为全文检索字面量包裹双引号并转义内部引号。
 pub(super) fn fts_literal(query: &str) -> String {
     format!("\"{}\"", query.replace('"', "\"\""))
 }
 
+// 将查询拆成连续三字符字面量，以 AND 组合候选筛选。
 pub(super) fn fts_trigram_query(query: &str) -> String {
     let chars: Vec<char> = query.chars().collect();
     chars
@@ -321,6 +331,7 @@ pub(super) fn fts_trigram_query(query: &str) -> String {
         .join(" AND ")
 }
 
+// 优先保留主检索结果，按身份与片段去重并限制数量。
 pub(super) fn merge_search_results(
     primary: Vec<HistorySearchResult>,
     fallback: Vec<HistorySearchResult>,
@@ -346,6 +357,7 @@ pub(super) fn merge_search_results(
     hits
 }
 
+// 将旧目录检索行转换为历史搜索结果。
 pub(super) fn search_result_from_legacy_row(row: SqliteRow) -> Result<HistorySearchResult, String> {
     Ok(HistorySearchResult {
         session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
@@ -359,6 +371,7 @@ pub(super) fn search_result_from_legacy_row(row: SqliteRow) -> Result<HistorySea
     })
 }
 
+// 转换第二代检索行，并将毫秒时间转换为 RFC3339。
 pub(super) fn search_result_from_v2_row(row: SqliteRow) -> Result<HistorySearchResult, String> {
     let timestamp_ms = row
         .try_get::<Option<i64>, _>("timestamp_ms")
@@ -375,6 +388,7 @@ pub(super) fn search_result_from_v2_row(row: SqliteRow) -> Result<HistorySearchR
     })
 }
 
+// 先匹配会话标识，再全文搜索旧目录消息并过滤根目录范围。
 pub(super) async fn search_sessions_from_legacy_catalog(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -461,6 +475,7 @@ pub(super) async fn search_sessions_from_legacy_catalog(
     Ok(hits)
 }
 
+// 先匹配活动会话标识，再以三字符索引及子串校验搜索消息。
 pub(super) async fn search_sessions_from_v2(
     conn: &mut SqliteConnection,
     _roots: &HistoryRoots,
@@ -552,6 +567,7 @@ pub(super) async fn search_sessions_from_v2(
     Ok(hits)
 }
 
+// 校验查询长度，合并两代检索结果并补充 Codex 线程标题。
 pub(crate) async fn search_sessions(
     roots: &HistoryRoots,
     query: &str,

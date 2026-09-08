@@ -7,6 +7,7 @@ use super::{
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
+// 按时间与来源查询用量记录质量计数，不按项目或来源实例过滤。
 pub(super) async fn load_history_stats_data_quality(
     bounds: StatsTimeBounds,
     source_filter: Option<&str>,
@@ -45,6 +46,7 @@ pub(super) async fn load_history_stats_data_quality(
     })
 }
 
+// 用匹配路由事实替换本地用量并重建统计，将未匹配路由追加到总量、模型与来源维度。
 pub(super) async fn merge_route_usage_into_history_stats(
     response: &mut HistoryStatsResponse,
     _days: &mut BTreeMap<i64, Vec<HistoryStatsSessionFact>>,
@@ -254,6 +256,7 @@ pub(super) async fn merge_route_usage_into_history_stats(
     Ok(())
 }
 
+// 按来源、会话、两分钟事件窗口及兼容模型和 token 口径判断路由事实是否重复。
 pub(super) fn route_record_matches_fact(
     record: &crate::usage::RouteUsageRecord,
     fact: &HistoryStatsSessionFact,

@@ -19,7 +19,9 @@ use crate::ssh_launch::SshLaunchPlan;
 /// 契约：`data` 已经过 `safe_emit_boundary` 切帧（UTF-8 + ANSI 序列安全边界），
 /// 实现方只允许整帧透传/存储，禁止再分片。
 pub trait PtyEventSink: Send + Sync + 'static {
+    // 接收指定会话的输出字节，由具体事件出口负责转发或保存。
     fn on_output(&self, session_id: &str, data: &[u8]);
+    // 接收会话进程状态变更，由具体出口通知消费者。
     fn on_status(&self, session_id: &str, status: PtyProcessStatus);
 }
 
@@ -51,6 +53,7 @@ struct VtScrollDiag {
 
 /// 调用方需保证 data 处于 ANSI 序列安全边界内（safe_emit_boundary 已保证），
 /// 否则跨块被切半的序列会漏计。
+// 扫描当前字节块中的屏幕切换、清屏和滚动控制序列，累计诊断计数。
 fn scan_vt_scroll_sequences(data: &[u8], diag: &mut VtScrollDiag, session_id: &str) {
     let mut i = 0;
     while i + 1 < data.len() {
@@ -159,6 +162,7 @@ struct ShellLaunchLogContext {
 }
 
 impl PtyManager {
+    // 创建空会话表与共享进程状态表。
     pub fn new() -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
@@ -166,6 +170,7 @@ impl PtyManager {
         }
     }
 
+    // 按 Windows、macOS 和其他平台选择默认 shell 标识。
     fn default_shell_key() -> &'static str {
         if cfg!(target_os = "windows") {
             "powershell"
@@ -176,6 +181,7 @@ impl PtyManager {
         }
     }
 
+    // 将看似路径的 shell 输入检查为现有文件；普通命令标识交给后续解析。
     fn resolve_custom_shell_path(shell: &str) -> Result<Option<String>, String> {
         let trimmed = shell.trim();
         if trimmed.is_empty() {
@@ -193,6 +199,7 @@ impl PtyManager {
         Err(format!("Shell executable not found: {trimmed}"))
     }
 
+    // 解析已支持的 shell 标识或自定义文件路径，返回可执行项及默认参数。
     fn resolve_shell(shell: &str) -> Result<(String, Vec<String>), String> {
         if let Some(custom_shell) = Self::resolve_custom_shell_path(shell)? {
             return Ok((custom_shell, Vec::new()));
@@ -249,6 +256,7 @@ impl PtyManager {
         }
     }
 
+    // 仅在传入环境中运行监控开关等于 1 时启用 shell 集成。
     fn shell_runtime_monitoring_enabled(env_vars: Option<&HashMap<String, String>>) -> bool {
         env_vars
             .and_then(|vars| vars.get("CLI_MANAGER_SHELL_RUNTIME_MONITORING"))
@@ -256,10 +264,12 @@ impl PtyManager {
             .unwrap_or(false)
     }
 
+    // 返回 Git Bash 的交互式登录参数。
     fn git_bash_login_args() -> Vec<String> {
         vec!["--login".to_string(), "-i".to_string()]
     }
 
+    // macOS 下为 zsh 添加登录参数，其他平台保持空参数。
     fn zsh_login_args() -> Vec<String> {
         if cfg!(target_os = "macos") {
             vec!["-l".to_string()]
@@ -268,6 +278,7 @@ impl PtyManager {
         }
     }
 
+    // macOS 下为 bash 添加交互式登录参数，其他平台保持空参数。
     fn bash_login_args() -> Vec<String> {
         if cfg!(target_os = "macos") {
             vec!["--login".to_string(), "-i".to_string()]
@@ -276,10 +287,12 @@ impl PtyManager {
         }
     }
 
+    // 检查参数列表是否显式包含 -l 或 --login。
     fn shell_args_include_login(args: &[String]) -> bool {
         args.iter().any(|arg| arg == "-l" || arg == "--login")
     }
 
+    // 复制 shell 启动诊断字段，并根据参数标记是否登录 shell。
     fn build_shell_launch_log_context(
         requested_shell: Option<&str>,
         shell_key: &str,
@@ -300,6 +313,7 @@ impl PtyManager {
     /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
     /// 既进 Linux shell，又能在 claude 经 interop 调 Windows 端 cli-manager.exe 时回传。
     /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
+    // 合并已有 WSLENV，将本批存在的回调和颜色变量按名称去重后加入。
     fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
         const FORWARD: [&str; 4] = [
             "CLI_MANAGER_TAB_ID",
@@ -342,6 +356,7 @@ impl PtyManager {
         env_vars.insert("WSLENV".to_string(), entries.join(":"));
     }
 
+    // 缺省时补充真彩色能力，非 Windows 另补 TERM，不覆盖显式值。
     fn apply_terminal_capabilities(env_vars: &mut HashMap<String, String>, is_windows: bool) {
         env_vars
             .entry("COLORTERM".to_string())
@@ -353,12 +368,16 @@ impl PtyManager {
         }
     }
 
+    // 构造 PowerShell 启动参数，用 prompt 和读行包装脚本输出 OSC 133 运行标记。
     fn powershell_runtime_monitor_args() -> Vec<String> {
         // 标准 FinalTerm OSC 133 shell integration（前端 XTermTerminal 原始流解析）：
         //   D[;exit] = 命令结束（无 exit 表示没跑命令：空回车 / prompt 处 Ctrl+C）
         //   A = prompt 开始；B = prompt 结束
         //   C = 命令开始执行（PSConsoleHostReadLine 提交非空行时发出）
         // 是否真的跑过命令用 history id 判断，避免空回车误报 command_finished。
+        // 内嵌 global:prompt：保存上一命令状态，按历史 ID 输出 OSC 133 结束码并更新全局历史标记。
+        // 随后调用原 prompt 并包装 A/B 标记；原 prompt 异常未在此捕获，会沿 PowerShell 调用传播。
+        // 内嵌 global:PSConsoleHostReadLine：调用原读行函数，仅非空提交向控制台写 C 标记并原样返回输入；读行错误不吞掉。
         let script = r#"
 $global:CliManagerLastHistoryId = $null
 $global:CliManagerPreviousPrompt = if (Test-Path function:\prompt) { (Get-Command prompt).ScriptBlock } else { $null }
@@ -405,7 +424,9 @@ if (Test-Path function:\PSConsoleHostReadLine) {
     /// 再追加我们的钩子，保证 PROMPT_COMMAND / PS0 不被用户配置覆盖。
     /// PS0 仅在交互式命令真正执行前展开（bash 4.4+），用 `${PS0:0:$((var=1,0))}`
     /// 技巧完成无输出赋值，替代 DEBUG trap（trap 会被 PROMPT_COMMAND 自身误触发）。
+    // 向固定临时 bashrc 写入用户配置加载与 OSC 133 集成脚本，并返回规范分隔符路径。
     fn write_bash_integration_rcfile() -> Result<String, String> {
+        // 内嵌 __cli_manager_prompt：保存上一退出码，按运行标记打印 D 或 D;exit，清零标记后打印 A；无独立错误处理。
         let script = r#"[ -f /etc/profile ] && . /etc/profile
 [ -f ~/.bashrc ] && . ~/.bashrc
 __cli_manager_prompt() {
@@ -429,6 +450,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     /// cmd 经 PROMPT 环境变量注入 133 标记（$E=ESC，$E\ = ST 终止符）。
     /// cmd 拿不到上一条命令的 exit code，D 恒不带参数；running 由前端输入侧
     /// 猜测提供，prompt 重现（A）时收口为 done。
+    // 保留已有 CMD prompt 文本并在其前后加入 OSC 133 标记，不提供命令退出码。
     fn apply_cmd_prompt_integration(env_vars: &mut HashMap<String, String>) {
         let base = env_vars
             .get("PROMPT")
@@ -443,6 +465,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     }
 
     #[cfg(target_os = "windows")]
+    // Windows 下调用 taskkill 强制终止指定根 PID 的进程树，失败返回输出摘要。
     fn kill_process_tree(pid: u32) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         use std::process::Command;
@@ -471,6 +494,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     /// 批量终止多个 PTY 根进程树：taskkill 原生支持多 /PID，单次调用避免
     /// 退出时逐会话 spawn taskkill 造成的串行等待。仅作用于本应用拥有的 PTY 根 PID。
     #[cfg(target_os = "windows")]
+    // Windows 下用一次 taskkill 批量终止给定 PID 的进程树，空列表不执行命令。
     fn kill_process_trees(pids: &[u32]) -> Result<(), String> {
         use std::os::windows::process::CommandExt;
         use std::process::Command;
@@ -503,6 +527,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     }
 
     #[cfg(not(target_os = "windows"))]
+    // 非 Windows 下拒绝零 PID，并调用 kill 向对应进程组发送 TERM。
     fn kill_process_group(pid: u32) -> Result<(), String> {
         if pid == 0 {
             return Err("invalid_pid".to_string());
@@ -526,6 +551,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         ))
     }
 
+    // 按监控开关生成 shell 参数；Git Bash 临时集成写入失败时回退普通启动参数。
     fn build_shell_args(
         shell: &str,
         env_vars: Option<&HashMap<String, String>>,
@@ -566,6 +592,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         }
     }
 
+    // 以普通本机 shell 配置创建 PTY，不指定 SSH 计划或初始颜色。
     pub fn create(
         &self,
         session_id: &str,
@@ -577,6 +604,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         self.create_with_launch(session_id, cwd, env_vars, shell, None, None, sink)
     }
 
+    // 解析本机或 SSH 启动计划并创建 PTY，注册会话及读线程；读线程过滤颜色查询并报告输出和结束状态。
     pub fn create_with_launch(
         &self,
         session_id: &str,
@@ -896,10 +924,12 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         Ok(process_traits)
     }
 
+    // 将字符串转换为字节写入指定 PTY。
     pub fn write(&self, session_id: &str, data: &str) -> Result<(), String> {
         self.write_bytes(session_id, data.as_bytes())
     }
 
+    // 定位会话并串行完整写入、刷新输入，找不到会话或写入失败返回错误。
     pub fn write_bytes(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
         let session_arc = {
             let sessions = self.sessions.read().unwrap();
@@ -925,6 +955,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         Ok(())
     }
 
+    // 校验前景和背景色，并更新供读线程回复颜色查询使用的共享颜色。
     pub fn update_terminal_colors(
         &self,
         session_id: &str,
@@ -952,6 +983,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         Ok(())
     }
 
+    // 限制终端行列尺寸，记录调整诊断后交给平台控制器执行。
     pub fn resize(
         &self,
         session_id: &str,
@@ -989,6 +1021,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             })
     }
 
+    // 尝试终止进程树或进程组并调用子进程终止，释放会话引用后等待读线程退出。
     fn close_session_arc(session_id: &str, session_arc: Arc<Mutex<PtySession>>, reason: &str) {
         // Kill child first, take reader handle out, then drop the Arc.
         // Dropping the last Arc releases the master PTY, which causes the
@@ -1030,6 +1063,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         );
     }
 
+    // 移除指定会话并关闭其进程，最后移除缓存状态；缺失会话视为已关闭。
     pub fn close(&self, session_id: &str) -> Result<(), String> {
         let session_arc = {
             let mut sessions = self.sessions.write().unwrap();
@@ -1044,6 +1078,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         Ok(())
     }
 
+    // 根据非空活动列表跟踪缺席会话，经过创建和缺席宽限期后移除并关闭孤儿会话。
     pub fn reconcile_active_sessions(
         &self,
         active_session_ids: Vec<String>,
@@ -1170,6 +1205,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
     /// taskkill 全部进程树 → 逐会话 child.kill() 兜底并释放 master → 统一 join reader。
     /// 单会话 `close()`（手动关 Tab 路径）保持不变。
     #[cfg(target_os = "windows")]
+    // Windows 下取出全部会话，批量终止进程树后逐个终止子进程、等待读线程并清空状态。
     pub fn close_all(&self) -> Result<(), String> {
         let sessions: Vec<(String, Arc<Mutex<PtySession>>)> = {
             let mut map = self.sessions.write().unwrap();
@@ -1227,6 +1263,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
 
     /// 非 Windows：无批量 taskkill 需求，维持逐个 close 的既有行为。
     #[cfg(not(target_os = "windows"))]
+    // 非 Windows 下取得当前会话 ID 快照并逐一关闭。
     pub fn close_all(&self) -> Result<(), String> {
         let session_ids: Vec<String> = self.sessions.read().unwrap().keys().cloned().collect();
         for session_id in session_ids {
@@ -1235,11 +1272,13 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         Ok(())
     }
 
+    // 克隆当前缓存的进程状态，不主动向子进程查询。
     pub fn status_all(&self) -> HashMap<String, PtyProcessStatus> {
         self.statuses.lock().unwrap().clone()
     }
 }
 
+// 移除与 SSH 启动环境大小写冲突的用户键，再合并受保护的启动值。
 fn merge_ssh_launch_environment(
     ssh_env: HashMap<String, String>,
     mut user_env: HashMap<String, String>,
@@ -1265,15 +1304,18 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     impl PtyEventSink for TestPtySink {
+        // 将测试会话输出追加到共享字节缓冲。
         fn on_output(&self, _session_id: &str, data: &[u8]) {
             self.output.lock().unwrap().extend_from_slice(data);
         }
 
+        // 测试出口忽略进程状态事件。
         fn on_status(&self, _session_id: &str, _status: PtyProcessStatus) {}
     }
 
     #[cfg(target_os = "windows")]
     #[test]
+    // 启动真实 CMD ConPTY，调整尺寸并写入回显命令，验证输出标记后关闭会话。
     fn direct_conpty_can_spawn_write_and_read_cmd() {
         let manager = PtyManager::new();
         let output = Arc::new(Mutex::new(Vec::new()));
@@ -1310,6 +1352,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空活动列表跳过孤儿清理，不关闭任何会话。
     fn reconcile_active_sessions_skips_empty_active_list() {
         let manager = PtyManager::new();
 
@@ -1322,6 +1365,7 @@ mod tests {
     }
 
     #[test]
+    // 验证没有已跟踪会话时可处理非空活动列表。
     fn reconcile_active_sessions_handles_no_tracked_sessions() {
         let manager = PtyManager::new();
 
@@ -1335,6 +1379,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    // 验证 macOS 下 zsh 使用登录 shell 参数。
     fn build_shell_args_starts_zsh_as_login_shell_on_macos() {
         let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
 
@@ -1344,6 +1389,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    // 验证 macOS 下 bash 使用交互式登录参数。
     fn build_shell_args_starts_bash_as_login_shell_on_macos() {
         let (exe, args) = PtyManager::build_shell_args("bash", None).unwrap();
 
@@ -1353,6 +1399,7 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
+    // 验证 macOS 启动诊断保留请求 shell、路径和登录参数信息。
     fn build_shell_launch_log_context_marks_login_shell_details_on_macos() {
         let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
 
@@ -1373,6 +1420,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSLENV 合并回调变量且保留已有带标志的条目。
     fn wsl_env_forwarding_adds_callback_vars_and_keeps_existing() {
         let mut vars = HashMap::new();
         vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
@@ -1391,6 +1439,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未提供任何待转发变量时 WSLENV 保持原样。
     fn wsl_env_forwarding_is_noop_without_callback_vars() {
         let mut vars = HashMap::new();
         vars.insert("WSLENV".to_string(), "FOO/u".to_string());
@@ -1400,6 +1449,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已有回调变量条目不会重复加入 WSLENV。
     fn wsl_env_forwarding_no_duplicate_when_already_listed() {
         let mut vars = HashMap::new();
         vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
@@ -1409,6 +1459,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Windows 默认只补充 COLORTERM，而不添加 TERM。
     fn terminal_capabilities_on_windows_add_only_colorterm() {
         let mut vars = HashMap::new();
         PtyManager::apply_terminal_capabilities(&mut vars, true);
@@ -1418,6 +1469,7 @@ mod tests {
     }
 
     #[test]
+    // 验证非 Windows 默认同时补充 TERM 和 COLORTERM。
     fn terminal_capabilities_off_windows_add_term_and_colorterm() {
         let mut vars = HashMap::new();
         PtyManager::apply_terminal_capabilities(&mut vars, false);
@@ -1427,6 +1479,7 @@ mod tests {
     }
 
     #[test]
+    // 验证终端能力默认值不覆盖显式设置。
     fn terminal_capabilities_preserve_explicit_values() {
         let mut vars = HashMap::from([
             ("COLORTERM".to_string(), "24bit".to_string()),
@@ -1442,6 +1495,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 内部变量按大小写无关规则覆盖用户冲突项，保留无关项。
     fn ssh_internal_environment_overrides_user_values_case_insensitively() {
         let ssh_env = HashMap::from([
             ("SSH_ASKPASS".to_string(), "trusted-helper".to_string()),
@@ -1477,6 +1531,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已有带标志的 COLORTERM 转发条目不会重复追加。
     fn wsl_env_forwarding_adds_colorterm_once() {
         let mut vars = HashMap::from([
             ("COLORTERM".to_string(), "truecolor".to_string()),
@@ -1491,6 +1546,7 @@ mod tests {
     }
 
     #[test]
+    // 验证各类屏幕切换、清屏和滚动序列被准确累计。
     fn vt_diag_counts_scroll_related_sequences() {
         let mut diag = VtScrollDiag::default();
         let data = b"\x1b[?1049hhello\x1b[2J\x1b[3J\x1b[1;24r\x1bMworld\x1b[2J\x1b[?1049l";
@@ -1504,6 +1560,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无关 VT 序列不影响滚动诊断计数。
     fn vt_diag_ignores_unrelated_sequences() {
         let mut diag = VtScrollDiag::default();
         // 光标隐藏、SGR、ED0、DEC 私有模式 restore（? 前缀的 r）、DECSCUSR 都不应计入
@@ -1518,6 +1575,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无参数的滚动区域重置也计入 DECSTBM。
     fn vt_diag_counts_full_screen_decstbm_reset() {
         let mut diag = VtScrollDiag::default();
         scan_vt_scroll_sequences(b"\x1b[r", &mut diag, "test");
@@ -1525,6 +1583,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时普通文件验证自定义 shell 路径解析，不实际执行该文件。
     fn resolve_shell_accepts_custom_executable_path() {
         let path = std::env::temp_dir().join(format!(
             "cli-manager-test-shell-{}",
@@ -1543,6 +1602,7 @@ mod tests {
     }
 
     #[test]
+    // 验证不存在的自定义 shell 文件路径被拒绝。
     fn resolve_shell_rejects_missing_custom_path() {
         let missing = std::env::temp_dir().join("cli-manager-missing-shell.exe");
         let result = PtyManager::resolve_shell(missing.to_str().unwrap());

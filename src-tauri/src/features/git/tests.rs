@@ -14,6 +14,7 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
+// 用 libgit2 初始化临时仓库，并提交 tracked.txt 作为测试基线。
 fn init_temp_repo() -> (TempDir, String) {
     let temp = tempfile::tempdir().unwrap();
     let repo = Repository::init(temp.path()).unwrap();
@@ -34,12 +35,14 @@ fn init_temp_repo() -> (TempDir, String) {
     (temp, path)
 }
 
+// 从测试仓库快照提取 HEAD 和工作区补丁。
 fn snapshot_patch(repo_path: &str) -> (String, String) {
     let repo = Repository::open(repo_path).unwrap();
     let snapshot = build_worktree_snapshot(repo_path, &repo).unwrap();
     (snapshot.head, snapshot.patch)
 }
 
+// 将测试仓库全部路径加入索引，并基于当前 HEAD 创建提交。
 fn commit_all(repo: &Repository, message: &str) {
     let mut index = repo.index().unwrap();
     index.add_all(["*"], IndexAddOption::DEFAULT, None).unwrap();
@@ -52,12 +55,14 @@ fn commit_all(repo: &Repository, message: &str) {
         .unwrap();
 }
 
+// 读取测试跟踪文件并将 CRLF 归一化为 LF。
 fn tracked_file(repo_path: &str) -> String {
     fs::read_to_string(Path::new(repo_path).join("tracked.txt"))
         .unwrap()
         .replace("\r\n", "\n")
 }
 
+// 读取测试仓库 HEAD 的短引用名。
 fn current_branch(repo_path: &str) -> String {
     let repo = Repository::open(repo_path).unwrap();
     let head = repo.head().unwrap();
@@ -65,6 +70,7 @@ fn current_branch(repo_path: &str) -> String {
 }
 
 #[tokio::test]
+// 验证 GBK 文件差异可读且禁用局部回滚。
 async fn file_diff_decodes_gbk_and_disables_partial_revert() {
     let (_temp, repo_path) = init_temp_repo();
     let repo = Repository::open(&repo_path).unwrap();
@@ -90,6 +96,7 @@ async fn file_diff_decodes_gbk_and_disables_partial_revert() {
 }
 
 #[tokio::test]
+// 验证 UTF-16 差异按文本解码并保留上下文，而非显示二进制差异。
 async fn file_diff_decodes_utf16_text_instead_of_treating_it_as_binary() {
     let (_temp, repo_path) = init_temp_repo();
     let repo = Repository::open(&repo_path).unwrap();
@@ -127,6 +134,7 @@ async fn file_diff_decodes_utf16_text_instead_of_treating_it_as_binary() {
 }
 
 #[tokio::test]
+// 验证普通 UTF-8 文件差异仍允许局部回滚。
 async fn utf8_file_diff_keeps_partial_revert_enabled() {
     let (_temp, repo_path) = init_temp_repo();
     fs::write(Path::new(&repo_path).join("tracked.txt"), "changed\n").unwrap();
@@ -141,6 +149,7 @@ async fn utf8_file_diff_keeps_partial_revert_enabled() {
 }
 
 #[test]
+// 验证仓库扫描的根优先、限深和重目录排除规则。
 fn scan_git_repository_paths_respects_depth_and_exclusions() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -174,6 +183,7 @@ fn scan_git_repository_paths_respects_depth_and_exclusions() {
 }
 
 #[test]
+// 验证变更收集保留普通未跟踪文件并跳过嵌套仓库目录。
 fn collect_git_changes_skips_nested_repo_dir() {
     let temp = tempfile::tempdir().unwrap();
     let repo = Repository::init(temp.path()).unwrap();
@@ -195,6 +205,7 @@ fn collect_git_changes_skips_nested_repo_dir() {
 }
 
 #[test]
+// 验证超大未跟踪文件使快照补丁截断，但仍保留脏状态和文件记录。
 fn worktree_snapshot_bounds_large_untracked_patch() {
     let (_temp, repo_path) = init_temp_repo();
     let large_file = Path::new(&repo_path).join("large.txt");
@@ -214,6 +225,7 @@ fn worktree_snapshot_bounds_large_untracked_patch() {
 }
 
 #[test]
+// 验证嵌套仓库判断只命中带尾斜杠且含 .git 的目录。
 fn is_nested_repo_entry_detects_nested_repo_dir_only() {
     let temp = tempfile::tempdir().unwrap();
     let repo = Repository::init(temp.path()).unwrap();
@@ -234,18 +246,21 @@ fn is_nested_repo_entry_detects_nested_repo_dir_only() {
 }
 
 #[test]
+// 验证仓库相对路径接受普通嵌套文件名。
 fn accepts_normal_relative_path() {
     assert!(validate_repo_relative_path("src/main.rs").is_ok());
     assert!(validate_repo_relative_path("a/b/c.txt").is_ok());
 }
 
 #[test]
+// 验证分支名接受功能分支与远程跟踪形式。
 fn accepts_valid_branch_names() {
     assert!(validate_branch_name("feature/git-panel").is_ok());
     assert!(validate_branch_name("origin/main").is_ok());
 }
 
 #[test]
+// 验证分支名拒绝空值、选项前缀和非法路径字符。
 fn rejects_invalid_branch_names() {
     assert_eq!(validate_branch_name("").unwrap_err(), "empty_branch");
     assert_eq!(validate_branch_name("-bad").unwrap_err(), "invalid_branch");
@@ -269,6 +284,7 @@ fn rejects_invalid_branch_names() {
 }
 
 #[test]
+// 验证识别无改动可 stash 的输出而不误判成功创建 stash。
 fn detects_no_stash_created_output() {
     assert!(is_no_stash_created("No local changes to save"));
     assert!(is_no_stash_created("no local changes"));
@@ -278,6 +294,7 @@ fn detects_no_stash_created_output() {
 }
 
 #[test]
+// 验证只在状态数量严格超过阈值时跳过行数统计。
 fn skips_diff_line_stats_only_after_status_limit() {
     assert!(!should_skip_diff_line_stats(
         GIT_DIFF_LINE_STATS_STATUS_LIMIT
@@ -288,6 +305,7 @@ fn skips_diff_line_stats_only_after_status_limit() {
 }
 
 #[test]
+// 验证 WSL Git 参数包含仅针对当前仓库的 safe.directory。
 fn wsl_git_args_include_repo_safe_directory() {
     let args =
         build_wsl_git_command_args("Ubuntu-22.04", "/data/tabGo", &["status", "--porcelain=v1"]);
@@ -310,6 +328,7 @@ fn wsl_git_args_include_repo_safe_directory() {
 }
 
 #[test]
+// 验证中英文非仓库提示可识别，而所有权错误不误归类。
 fn recognizes_wsl_non_git_repository_errors() {
     assert!(is_not_git_repository_output(
         "fatal: not a git repository (or any of the parent directories): .git"
@@ -323,6 +342,7 @@ fn recognizes_wsl_non_git_repository_errors() {
 }
 
 #[test]
+// 验证 libgit2 NotFound 映射稳定非仓库码且保留所有权错误。
 fn maps_libgit2_not_found_to_stable_non_repository_code() {
     let not_found = git2::Error::new(
         git2::ErrorCode::NotFound,
@@ -345,6 +365,7 @@ fn maps_libgit2_not_found_to_stable_non_repository_code() {
 }
 
 #[test]
+// 验证普通临时目录的 Git 状态查询返回稳定非仓库错误码。
 fn native_git_changes_reports_stable_code_for_plain_directory() {
     let temp = tempfile::tempdir().unwrap();
     fs::write(temp.path().join("plain.txt"), "no repo here\n").unwrap();
@@ -356,6 +377,7 @@ fn native_git_changes_reports_stable_code_for_plain_directory() {
 }
 
 #[test]
+// 验证干净临时仓库的原生 Git 状态查询返回空列表。
 fn native_git_changes_succeeds_inside_repository() {
     let (_temp, repo_path) = init_temp_repo();
 
@@ -366,6 +388,7 @@ fn native_git_changes_succeeds_inside_repository() {
 }
 
 #[test]
+// 验证 WSL 状态解析修改、新增、删除及未跟踪条目的暂存标记。
 fn parses_wsl_git_status_basic_entries() {
     let input = b" M src/main.rs\0M  src/lib.rs\0A  added.txt\0 D deleted.txt\0?? notes/new.md\0?? generated/\0";
     let changes = parse_wsl_git_status(input);
@@ -389,6 +412,7 @@ fn parses_wsl_git_status_basic_entries() {
 }
 
 #[test]
+// 验证 WSL 状态解析跳过重命名原路径并识别冲突状态。
 fn parses_wsl_git_status_rename_and_conflict() {
     let input = b"R  new/name.rs\0old/name.rs\0UU conflicted.txt\0";
     let changes = parse_wsl_git_status(input);
@@ -403,6 +427,7 @@ fn parses_wsl_git_status_rename_and_conflict() {
 }
 
 #[test]
+// 验证 WSL 行数统计解析文本增删行并将二进制标记视为零。
 fn parses_wsl_numstat_records() {
     let stats = parse_wsl_numstat(b"12\t3\tsrc/main.rs\0-\t-\tassets/logo.png\0");
 
@@ -411,6 +436,7 @@ fn parses_wsl_numstat_records() {
 }
 
 #[test]
+// 验证仓库相对路径拒绝父目录越界片段。
 fn rejects_parent_escape() {
     assert_eq!(
         validate_repo_relative_path("../etc/passwd").unwrap_err(),
@@ -423,6 +449,7 @@ fn rejects_parent_escape() {
 }
 
 #[test]
+// 验证仓库相对路径拒绝 Unix、盘符及反斜杠绝对路径。
 fn rejects_absolute_path() {
     assert_eq!(
         validate_repo_relative_path("/etc/passwd").unwrap_err(),
@@ -439,11 +466,13 @@ fn rejects_absolute_path() {
 }
 
 #[test]
+// 验证仓库相对路径拒绝空文本。
 fn rejects_empty() {
     assert_eq!(validate_repo_relative_path("").unwrap_err(), "empty_path");
 }
 
 #[test]
+// 验证未跟踪快照文件删除拒绝父目录越界路径。
 fn remove_untracked_snapshot_file_rejects_path_escape() {
     let temp = tempfile::tempdir().unwrap();
     assert_eq!(
@@ -453,6 +482,7 @@ fn remove_untracked_snapshot_file_rejects_path_escape() {
 }
 
 #[test]
+// 验证删除根内未跟踪文件后清理其空父目录。
 fn remove_untracked_snapshot_file_removes_file_inside_workdir() {
     let temp = tempfile::tempdir().unwrap();
     let nested = temp.path().join("tmp").join("note.txt");
@@ -466,6 +496,7 @@ fn remove_untracked_snapshot_file_removes_file_inside_workdir() {
 }
 
 #[tokio::test]
+// 验证未跟踪删除命令移除临时仓库中的未跟踪文件。
 async fn git_delete_untracked_paths_removes_untracked_file() {
     let (temp, repo_path) = init_temp_repo();
     let untracked = temp.path().join("note.txt");
@@ -479,6 +510,7 @@ async fn git_delete_untracked_paths_removes_untracked_file() {
 }
 
 #[tokio::test]
+// 验证未跟踪删除命令拒绝已跟踪文件。
 async fn git_delete_untracked_paths_rejects_tracked_file() {
     let (_temp, repo_path) = init_temp_repo();
 
@@ -490,6 +522,7 @@ async fn git_delete_untracked_paths_rejects_tracked_file() {
 }
 
 #[test]
+// 验证快照分支名称接受普通层级名称并拒绝非法名称。
 fn validate_snapshot_branch_name_rejects_invalid_names() {
     assert!(validate_snapshot_branch_name("replay/test").is_ok());
     assert_eq!(
@@ -507,6 +540,7 @@ fn validate_snapshot_branch_name_rejects_invalid_names() {
 }
 
 #[tokio::test]
+// 验证快照恢复在目标 HEAD 不匹配时拒绝执行。
 async fn restore_worktree_snapshot_rejects_head_mismatch() {
     let (_temp, repo_path) = init_temp_repo();
     fs::write(Path::new(&repo_path).join("tracked.txt"), "target\n").unwrap();
@@ -525,6 +559,7 @@ async fn restore_worktree_snapshot_rejects_head_mismatch() {
 }
 
 #[tokio::test]
+// 验证快照恢复在工作区已偏离预期补丁时拒绝执行。
 async fn restore_worktree_snapshot_rejects_changed_worktree() {
     let (_temp, repo_path) = init_temp_repo();
     let file = Path::new(&repo_path).join("tracked.txt");
@@ -540,6 +575,7 @@ async fn restore_worktree_snapshot_rejects_changed_worktree() {
 }
 
 #[tokio::test]
+// 验证快照恢复将当前工作区改动替换为目标补丁。
 async fn restore_worktree_snapshot_restores_target_patch() {
     let (_temp, repo_path) = init_temp_repo();
     let file = Path::new(&repo_path).join("tracked.txt");
@@ -556,6 +592,7 @@ async fn restore_worktree_snapshot_restores_target_patch() {
 }
 
 #[tokio::test]
+// 验证快照分叉创建并切换目标分支后恢复指定补丁。
 async fn fork_worktree_snapshot_creates_branch_and_restores_target_patch() {
     let (_temp, repo_path) = init_temp_repo();
     let file = Path::new(&repo_path).join("tracked.txt");
@@ -595,6 +632,7 @@ index 1111111..2222222 100644
 ";
 
 #[test]
+// 验证反向补丁仅包含首个 hunk，交换增删行且保留上下文。
 fn reverses_first_hunk_only() {
     let patch = build_reverse_hunk_patch(SAMPLE_DIFF, 0).unwrap();
     // 文件头保留
@@ -613,6 +651,7 @@ fn reverses_first_hunk_only() {
 }
 
 #[test]
+// 验证第二个 hunk 反转后交换行数并排除首个 hunk。
 fn reverses_second_hunk_and_swaps_counts() {
     let patch = build_reverse_hunk_patch(SAMPLE_DIFF, 1).unwrap();
     // 原 @@ -10,2 +10,3 @@ 反向为 @@ -10,3 +10,2 @@
@@ -624,12 +663,14 @@ fn reverses_second_hunk_and_swaps_counts() {
 }
 
 #[test]
+// 验证反向 hunk 构建拒绝超出范围的序号。
 fn rejects_out_of_range_hunk() {
     let err = build_reverse_hunk_patch(SAMPLE_DIFF, 5).unwrap_err();
     assert!(err.starts_with("hunk_index_out_of_range"));
 }
 
 #[test]
+// 验证省略行数的单行 hunk 头按数量一处理。
 fn handles_omitted_count_in_header() {
     // 单行变更，count 省略：@@ -5 +5 @@
     let diff = "--- a/x\n+++ b/x\n@@ -5 +5 @@\n-a\n+b\n";
@@ -641,6 +682,7 @@ fn handles_omitted_count_in_header() {
 }
 
 #[test]
+// 验证行级回滚只删除选中的新增行，不恢复未选中的删除行。
 fn line_revert_removes_selected_insert_only() {
     // 仅选中新增行 new2（new 行号 2）：删除 new2，但不恢复未选中的 old2。
     let sel = vec![("new".to_string(), 2u32)];
@@ -654,6 +696,7 @@ fn line_revert_removes_selected_insert_only() {
 }
 
 #[test]
+// 验证行级回滚只恢复选中的删除行，并保留未选中的新增行。
 fn line_revert_restores_selected_delete_only() {
     // 仅选中删除行 old2（old 行号 2）：恢复 old2，未选中的 new2 降为上下文保留。
     let sel = vec![("old".to_string(), 2u32)];
@@ -664,6 +707,7 @@ fn line_revert_restores_selected_delete_only() {
 }
 
 #[test]
+// 验证行级回滚跳过没有选中行的 hunk。
 fn line_revert_skips_hunks_without_selection() {
     // 仅选中第二个 hunk 的 inserted（new 行号 11）：只反向第二个 hunk。
     let sel = vec![("new".to_string(), 11u32)];
@@ -676,6 +720,7 @@ fn line_revert_skips_hunks_without_selection() {
 }
 
 #[test]
+// 验证选择行号不匹配任何变更时返回无选中行错误。
 fn line_revert_no_match_errors() {
     let sel = vec![("new".to_string(), 999u32)];
     assert_eq!(

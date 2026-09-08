@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+// 定位用户目录下的默认 OpenCode SQLite 文件，缺失用户目录时使用相对路径。
 pub(super) fn resolve_opencode_database_path() -> PathBuf {
     detect_home_dir()
         .map(|home| {
@@ -33,6 +34,7 @@ pub(super) fn resolve_opencode_database_path() -> PathBuf {
         })
 }
 
+// 组合数据库路径和 session 标记为 OpenCode 会话定位器。
 pub(super) fn opencode_session_locator(db_path: &Path, session_id: &str) -> PathBuf {
     PathBuf::from(format!(
         "{}{}{}",
@@ -42,6 +44,7 @@ pub(super) fn opencode_session_locator(db_path: &Path, session_id: &str) -> Path
     ))
 }
 
+// 要求 OpenCode 会话 ID 为 ses_ 前缀加非空 ASCII 字母数字后缀。
 pub(super) fn is_valid_opencode_session_id(session_id: &str) -> bool {
     let Some(suffix) = session_id.strip_prefix("ses_") else {
         return false;
@@ -49,6 +52,7 @@ pub(super) fn is_valid_opencode_session_id(session_id: &str) -> bool {
     !suffix.is_empty() && suffix.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 
+// 从最后一个 session 标记拆分数据库路径并校验会话 ID。
 pub(super) fn parse_opencode_session_locator(file_path: &str) -> Option<(PathBuf, String)> {
     let (db_path, session_id) = file_path.rsplit_once(OPENCODE_SESSION_LOCATOR_MARKER)?;
     let session_id = session_id.trim();
@@ -58,6 +62,7 @@ pub(super) fn parse_opencode_session_locator(file_path: &str) -> Option<(PathBuf
     Some((PathBuf::from(db_path), session_id.to_string()))
 }
 
+// 尽力规范化真实路径，再用平台历史路径规则比较。
 pub(super) fn path_equals_lenient(left: &Path, right: &Path) -> bool {
     let left_canonical = left.canonicalize().unwrap_or_else(|_| left.to_path_buf());
     let right_canonical = right.canonicalize().unwrap_or_else(|_| right.to_path_buf());
@@ -65,12 +70,14 @@ pub(super) fn path_equals_lenient(left: &Path, right: &Path) -> bool {
         == normalize_history_path(&right_canonical.to_string_lossy())
 }
 
+// 检查定位器是否合法且数据库等于默认 OpenCode 数据库。
 pub(super) fn opencode_locator_in_default_scope(file_path: &str) -> bool {
     parse_opencode_session_locator(file_path)
         .map(|(db_path, _)| path_equals_lenient(&db_path, &resolve_opencode_database_path()))
         .unwrap_or(false)
 }
 
+// 构造只读、不创建文件且忙等待五秒的 OpenCode 连接选项。
 pub(super) fn opencode_sqlite_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path)
@@ -79,6 +86,7 @@ pub(super) fn opencode_sqlite_options(path: &Path) -> SqliteConnectOptions {
         .busy_timeout(Duration::from_secs(5))
 }
 
+// 构造可写、不创建文件且忙等待十五秒的 OpenCode 连接选项。
 pub(super) fn opencode_sqlite_mutation_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path)
@@ -87,6 +95,7 @@ pub(super) fn opencode_sqlite_mutation_options(path: &Path) -> SqliteConnectOpti
         .busy_timeout(Duration::from_secs(15))
 }
 
+// 只读打开现有 OpenCode 数据库并验证所需表存在。
 pub(super) async fn open_opencode_database(path: &Path) -> Result<SqliteConnection, String> {
     if !path.is_file() {
         return Err("opencode_database_not_found".to_string());
@@ -98,6 +107,7 @@ pub(super) async fn open_opencode_database(path: &Path) -> Result<SqliteConnecti
     Ok(conn)
 }
 
+// 可写打开现有 OpenCode 数据库并验证所需表存在。
 pub(super) async fn open_opencode_database_for_mutation(
     path: &Path,
 ) -> Result<SqliteConnection, String> {
@@ -111,6 +121,7 @@ pub(super) async fn open_opencode_database_for_mutation(
     Ok(conn)
 }
 
+// 确认 session、message 和 part 三张普通表均存在。
 pub(super) async fn validate_opencode_schema(conn: &mut SqliteConnection) -> Result<(), String> {
     let table_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)
@@ -127,6 +138,7 @@ pub(super) async fn validate_opencode_schema(conn: &mut SqliteConnection) -> Res
     }
 }
 
+// 校验默认数据库范围和来源恢复锁，提交单会话删除后失效历史缓存。
 pub(super) async fn delete_opencode_session_from_locator(file_path: &str) -> Result<(), String> {
     let (db_path, session_id) = parse_opencode_session_locator(file_path)
         .ok_or_else(|| "invalid_session_file".to_string())?;
@@ -139,6 +151,7 @@ pub(super) async fn delete_opencode_session_from_locator(file_path: &str) -> Res
     Ok(())
 }
 
+// 在单事务内依次删除 part、message 与目标 session，目标行数不为一则回滚。
 pub(super) async fn delete_opencode_session_from_database(
     db_path: &Path,
     session_id: &str,
@@ -172,6 +185,7 @@ pub(super) async fn delete_opencode_session_from_database(
     Ok(())
 }
 
+// 默认数据库存在时解析其全部会话，不存在时返回空值。
 pub(super) async fn opencode_catalog_sessions() -> Result<Option<Vec<OpenCodeParsedSession>>, String>
 {
     let db_path = resolve_opencode_database_path();
@@ -181,6 +195,7 @@ pub(super) async fn opencode_catalog_sessions() -> Result<Option<Vec<OpenCodePar
     parse_opencode_database(&db_path, None).await.map(Some)
 }
 
+// 读取全部或指定 OpenCode 会话行，逐会话解析消息、统计及定位元数据。
 pub(super) async fn parse_opencode_database(
     db_path: &Path,
     only_session_id: Option<&str>,
@@ -248,6 +263,7 @@ pub(super) async fn parse_opencode_database(
     Ok(sessions)
 }
 
+// 解析单会话消息与内容块，累计有效正文消息的用量及工具诊断并构造摘要。
 pub(super) async fn parse_opencode_session_row(
     conn: &mut SqliteConnection,
     db_path: &Path,
@@ -425,6 +441,7 @@ pub(super) async fn parse_opencode_session_row(
     })
 }
 
+// 按会话和消息身份读取有序内容块并解析各行 JSON。
 pub(super) async fn opencode_message_parts(
     conn: &mut SqliteConnection,
     session_id: &str,
@@ -449,15 +466,18 @@ pub(super) async fn opencode_message_parts(
         .collect()
 }
 
+// 将可选数值时间规范化为 Unix 毫秒。
 pub(super) fn opencode_time_millis(value: Option<f64>) -> Option<i64> {
     value.and_then(normalize_unix_timestamp_millis)
 }
 
+// 将合法毫秒时间转换为带毫秒精度和 UTC 标记的 RFC3339 字符串。
 pub(super) fn timestamp_millis_to_rfc3339(value: i64) -> Option<String> {
     DateTime::<Utc>::from_timestamp_millis(value)
         .map(|timestamp| timestamp.to_rfc3339_opts(SecondsFormat::Millis, true))
 }
 
+// 读取模型身份，模型未含斜杠且有 Provider 时添加 Provider 前缀。
 pub(super) fn opencode_model(data: &Value) -> Option<String> {
     let model = data
         .get("modelID")
@@ -479,6 +499,7 @@ pub(super) fn opencode_model(data: &Value) -> Option<String> {
     })
 }
 
+// 读取 OpenCode 输入、缓存及输出用量，并把 reasoning 加入输出。
 pub(super) fn opencode_usage_tokens(data: &Value) -> UsageTokenScan {
     let Some(tokens) = data.get("tokens").and_then(Value::as_object) else {
         return UsageTokenScan::default();
@@ -499,6 +520,7 @@ pub(super) fn opencode_usage_tokens(data: &Value) -> UsageTokenScan {
     }
 }
 
+// 按内容块类型提取正文或工具摘要，忽略步骤边界与空白内容。
 pub(super) fn opencode_part_text(part: &Value) -> Option<String> {
     let part_type = part.get("type").and_then(Value::as_str).unwrap_or_default();
     let text = match part_type {
@@ -515,6 +537,7 @@ pub(super) fn opencode_part_text(part: &Value) -> Option<String> {
     (!text.is_empty()).then_some(text)
 }
 
+// 映射 OpenCode 分块类别与工具身份，注入文本归为系统分块。
 pub(super) fn opencode_history_message_part(
     part: &Value,
     role: &str,
@@ -544,6 +567,7 @@ pub(super) fn opencode_history_message_part(
     }
 }
 
+// 从工具、名称及嵌套状态字段寻找首个字符串工具名并修剪。
 pub(super) fn opencode_tool_name(part: &Value) -> Option<String> {
     [
         part.get("tool"),
@@ -559,6 +583,7 @@ pub(super) fn opencode_tool_name(part: &Value) -> Option<String> {
     .map(str::to_string)
 }
 
+// 将工具名与首个可用载荷摘要组合为展示文本。
 pub(super) fn opencode_tool_summary(part: &Value) -> Option<String> {
     let name = opencode_tool_name(part).unwrap_or_else(|| "tool".to_string());
     let payload = part
@@ -574,6 +599,7 @@ pub(super) fn opencode_tool_summary(part: &Value) -> Option<String> {
     })
 }
 
+// 将支持的工具块映射为内置工具诊断事件，保留已有状态、耗时及摘要。
 pub(super) fn opencode_tool_event(
     part: &Value,
     message_index: usize,

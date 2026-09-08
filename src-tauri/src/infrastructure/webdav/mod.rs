@@ -19,6 +19,7 @@ pub struct WebDavError {
 }
 
 impl std::fmt::Display for WebDavError {
+    // 只输出错误消息正文，HTTP 状态码仍保留在结构字段中。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.message)
     }
@@ -35,6 +36,7 @@ pub struct WebDavClient {
 }
 
 impl WebDavClient {
+    // 取得当前共享网络客户端，并将配置中的用户名和密码编码为缓存的 Basic 认证头。
     pub fn new(config: WebDavConfig) -> Self {
         let encoded = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
@@ -48,10 +50,13 @@ impl WebDavClient {
         }
     }
 
+    // 借用缓存的 Basic 认证头；其中包含可解码的凭据，不应写入日志。
     fn auth_header(&self) -> &str {
         &self.auth_header
     }
 
+    // 拒绝非成功 HTTP 状态；成功响应先检查声明长度，再完整读取并检查 16 MiB 上限。
+    // 未声明长度的响应仍会先整体分配内存，末尾大小检查并非流式内存上限。
     async fn handle_response(response: Response) -> Result<Vec<u8>, WebDavError> {
         let status = response.status();
         if status.is_success() {
@@ -82,6 +87,7 @@ impl WebDavClient {
         }
     }
 
+    // 向基础 URL 发送带认证的 OPTIONS，只以 HTTP 成功状态判断连接测试结果，不验证 DAV 能力。
     pub async fn test_connection(&self) -> Result<bool, WebDavError> {
         let url = self.config.url.trim_end_matches('/');
 
@@ -99,6 +105,7 @@ impl WebDavClient {
         Ok(response.status().is_success())
     }
 
+    // 拼接远端路径并发出 HEAD；任意非成功 HTTP 状态均返回 false，不区分不存在与权限失败。
     pub async fn exists(&self, remote_path: &str) -> Result<bool, WebDavError> {
         let url = format!(
             "{}/{}",
@@ -120,6 +127,7 @@ impl WebDavClient {
         Ok(response.status().is_success())
     }
 
+    // 拼接 URL 后发送认证 GET，经统一响应处理返回字节；路径授权与备份文件名校验由上层负责。
     pub async fn download(&self, remote_path: &str) -> Result<Vec<u8>, WebDavError> {
         let url = format!(
             "{}/{}",
@@ -141,6 +149,7 @@ impl WebDavClient {
         Self::handle_response(response).await
     }
 
+    // 以 application/json PUT 上传完整字节并记录 URL 和长度；上传成功后仍会读取和校验响应体。
     pub async fn upload(&self, remote_path: &str, data: Vec<u8>) -> Result<(), WebDavError> {
         let url = format!(
             "{}/{}",
@@ -173,6 +182,7 @@ impl WebDavClient {
         Ok(())
     }
 
+    // 发送 Depth: 1 的 PROPFIND 并收集 XML href 文本；不在此过滤目录自身、解码 URL 或验证备份路径。
     pub async fn list(&self, remote_path: &str) -> Result<Vec<String>, WebDavError> {
         let url = format!(
             "{}/{}",
@@ -221,6 +231,7 @@ impl WebDavClient {
         Ok(paths)
     }
 
+    // 向拼接后的 URL 发送认证 DELETE，再检查响应体；响应读取失败不代表远端删除未发生。
     pub async fn delete(&self, remote_path: &str) -> Result<(), WebDavError> {
         let url = format!(
             "{}/{}",
@@ -241,6 +252,7 @@ impl WebDavClient {
         Ok(())
     }
 
+    // 发送 MKCOL 创建集合，将成功状态或 405 视为成功；不会额外确认 405 对应的资源类型。
     pub async fn mkdir(&self, remote_path: &str) -> Result<(), WebDavError> {
         let url = format!(
             "{}/{}",
@@ -279,6 +291,7 @@ impl WebDavClient {
         }
     }
 
+    // 先 HEAD 探测并尝试直接 MKCOL，只有 409 才逐级创建路径；中途失败不回滚已创建的父目录。
     pub async fn ensure_directory(&self, remote_path: &str) -> Result<(), WebDavError> {
         let path = remote_path.trim_matches('/');
         debug!("Ensuring directory path: {}", path);

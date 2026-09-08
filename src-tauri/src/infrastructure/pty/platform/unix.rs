@@ -16,6 +16,7 @@ struct UnixPtyController {
 }
 
 impl PlatformPtyController for UnixPtyController {
+    // 通过主端 TIOCSWINSZ 更新网格，像素尺寸缺失用零、超出 u16 时截上限，ioctl 失败向上传播。
     fn resize(
         &self,
         cols: u16,
@@ -44,10 +45,12 @@ struct UnixPtyChild {
 }
 
 impl PlatformPtyChild for UnixPtyChild {
+    // 返回启动时记录的 PID，不额外读取系统进程状态。
     fn process_id(&self) -> u32 {
         self.pid
     }
 
+    // 持锁非阻塞检查子进程退出，将原生状态转换为共享结构，信号退出保留空 code 和描述。
     fn try_wait(&self) -> Result<Option<PlatformExitStatus>, String> {
         self.child
             .lock()
@@ -62,6 +65,7 @@ impl PlatformPtyChild for UnixPtyChild {
             .map_err(|err| err.to_string())
     }
 
+    // 先尽力 SIGKILL 整个进程组，再持锁终止直接子进程；组终止错误忽略，不在此等待回收。
     fn kill(&self) -> Result<(), String> {
         let _ = killpg(Pid::from_raw(self.pid as i32), Signal::SIGKILL);
         self.child
@@ -72,6 +76,8 @@ impl PlatformPtyChild for UnixPtyChild {
     }
 }
 
+// 创建 PTY 对并为读/写/控制复制独立主端句柄；子进程执行前恢复信号、建立会话与控制终端、连接标准流。
+// 父进程关闭原始两端并返回独立句柄，环境覆盖继承自宿主环境；不在此启动 IO 线程或等待退出。
 pub fn spawn(options: PtyLaunchOptions) -> Result<SpawnedPty, String> {
     let size = Winsize {
         ws_row: options.rows,
@@ -157,6 +163,7 @@ pub fn spawn(options: PtyLaunchOptions) -> Result<SpawnedPty, String> {
     })
 }
 
+// 在保留原描述符标志的基础上设置 FD_CLOEXEC，防止无关 exec 继承 PTY 句柄；不取得 fd 所有权。
 fn set_close_on_exec(fd: RawFd) -> Result<(), String> {
     let flags = unsafe { nix::libc::fcntl(fd, nix::libc::F_GETFD) };
     if flags == -1 {

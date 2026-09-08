@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-desktop-pet-status-"));
+// 退出时清理本测试生成的临时模块目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(new URL("../src/features/desktop-pet/lib/desktopPetStatus.ts", import.meta.url), "utf8");
@@ -21,6 +22,7 @@ const outputPath = join(tempDir, "desktopPetStatus.mjs");
 writeFileSync(outputPath, output, "utf8");
 const status = await import(pathToFileURL(outputPath).href);
 
+// 以固定时间和默认空状态调用桌宠会话状态解析器。
 function resolve(overrides = {}) {
   return status.resolveDesktopPetOpenSessionStatus({
     frontendStatus: "none",
@@ -30,6 +32,7 @@ function resolve(overrides = {}) {
   });
 }
 
+// 验证后续 PTY 输出不能重新打开已完成或失败的任务。
 test("explicit completed and failed states cannot be reopened by later PTY output", () => {
   assert.deepEqual(resolve({
     frontendStatus: "done",
@@ -43,6 +46,7 @@ test("explicit completed and failed states cannot be reopened by later PTY outpu
   }), { status: "failed", updatedAt: 8_500 });
 });
 
+// 验证注意状态和 daemon 生命周期状态优先于输出活跃提示。
 test("attention and daemon lifecycle states remain authoritative", () => {
   assert.deepEqual(resolve({
     frontendStatus: "attention",
@@ -61,6 +65,7 @@ test("attention and daemon lifecycle states remain authoritative", () => {
   }), { status: "done", updatedAt: 9_200 });
 });
 
+// 验证没有生命周期状态时，仅近期 PTY 输出提供临时运行提示。
 test("recent PTY output only supplies a short-lived hint when no lifecycle state exists", () => {
   assert.deepEqual(resolve({ outputActivityAt: 9_500 }), {
     status: "running",

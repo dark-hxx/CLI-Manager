@@ -20,6 +20,7 @@ const MAX_TERMINAL_PROMPT_CHARS: usize = 1024;
 const ASKPASS_DIAGNOSTIC_LOG_FILE: &str = "ssh-askpass.log";
 
 #[cfg(not(test))]
+// 尽力写入轮转诊断日志，附时间和进程号；调用方负责只传状态/长度等非敏感字段，此处不脱敏。
 fn write_diagnostic_event(event: &str, details: &str) {
     let Ok(log_dir) = crate::app_paths::logs_dir() else {
         return;
@@ -44,9 +45,11 @@ fn write_diagnostic_event(event: &str, details: &str) {
 }
 
 #[cfg(test)]
+// 测试中禁用诊断落盘，避免模拟认证影响真实日志目录。
 fn write_diagnostic_event(_event: &str, _details: &str) {}
 
 /// Invoked by the main executable when OpenSSH launches it as SSH_ASKPASS.
+// 读取提示和显式终端回退开关，路由响应到 stdout；只记录类别/长度/错误种类，并按结果退出 0 或 1。
 pub fn run_helper_and_exit() -> ! {
     let prompt = std::env::args().nth(1).unwrap_or_default();
     let fallback_value = std::env::var(ASKPASS_TTY_FALLBACK_ENV).ok();
@@ -77,10 +80,13 @@ pub fn run_helper_and_exit() -> ! {
     std::process::exit(if result.is_ok() { 0 } else { 1 });
 }
 
+// 仅精确字符串 1 允许控制终端回退，缺失、其他真值写法或多余空白均视为禁用。
 fn terminal_fallback_enabled(value: Option<&str>) -> bool {
     value == Some(ASKPASS_TTY_FALLBACK_ENABLED)
 }
 
+// 清理提示后仅为密码类请求尝试 broker，取不到时按开关决定读控制终端或报不可用。
+// 响应原样写入并 flush，不自动添加换行；闭包注入使路由测试不接触真实凭据或终端。
 fn answer_prompt_with<W, B, T>(
     prompt: &str,
     allow_terminal_fallback: bool,
@@ -165,6 +171,7 @@ where
     Ok(())
 }
 
+// 按英文关键词区分 password、mfa 和 interactive，返回固定类别而不记录提示原文。
 fn prompt_kind(prompt: &str) -> &'static str {
     if is_password_prompt(prompt) {
         return "password";
@@ -190,6 +197,7 @@ fn prompt_kind(prompt: &str) -> &'static str {
     }
 }
 
+// 先排除 MFA/OTP 等关键词，再识别 password/passphrase；这是文本启发式而非认证协议解析。
 fn is_password_prompt(prompt: &str) -> bool {
     let prompt = prompt.to_ascii_lowercase();
     if [
@@ -211,6 +219,7 @@ fn is_password_prompt(prompt: &str) -> bool {
     prompt.contains("password") || prompt.contains("passphrase")
 }
 
+// 统一 CR/CRLF 为换行并删除其他控制字符，最多保留 1024 个字符；不解析或删除完整 ANSI 序列文本。
 fn sanitize_terminal_prompt(prompt: &str) -> String {
     let mut sanitized = String::new();
     let mut chars = prompt.chars().peekable();
@@ -241,6 +250,7 @@ fn sanitize_terminal_prompt(prompt: &str) -> String {
     sanitized
 }
 
+// 用环境中的地址/token 请求 broker，拒绝空或超长响应；连接无显式超时，读写超时设置失败被忽略。
 fn request_broker_password() -> Option<Vec<u8>> {
     let address = std::env::var(ASKPASS_ADDR_ENV).ok()?;
     let token = std::env::var(ASKPASS_TOKEN_ENV).ok()?;
@@ -262,6 +272,7 @@ fn request_broker_password() -> Option<Vec<u8>> {
     (!password.is_empty() && password.len() <= MAX_RESPONSE_BYTES).then_some(password)
 }
 
+// 最多读取字节上限加二至换行/EOF，去掉末尾 CR/LF 后检查长度；不要求一定遇到换行。
 fn read_bounded_line<R: BufRead>(reader: &mut R, max_bytes: usize) -> io::Result<Vec<u8>> {
     let mut response = Vec::new();
     reader
@@ -284,6 +295,7 @@ struct RestoreGuard<F: FnOnce()> {
 }
 
 impl<F: FnOnce()> RestoreGuard<F> {
+    // 保存一次性恢复回调，由守卫析构触发。
     fn new(restore: F) -> Self {
         Self {
             restore: Some(restore),
@@ -292,6 +304,7 @@ impl<F: FnOnce()> RestoreGuard<F> {
 }
 
 impl<F: FnOnce()> Drop for RestoreGuard<F> {
+    // 取走并执行恢复回调，防止同一守卫重复调用。
     fn drop(&mut self) {
         if let Some(restore) = self.restore.take() {
             restore();
@@ -299,6 +312,7 @@ impl<F: FnOnce()> Drop for RestoreGuard<F> {
     }
 }
 
+// 用析构守卫包围动作，使正常返回、错误返回或栈展开时执行恢复；进程直接终止不受此保证。
 fn with_restore<T, F, R>(restore: R, action: F) -> io::Result<T>
 where
     F: FnOnce() -> io::Result<T>,
@@ -309,6 +323,7 @@ where
 }
 
 #[cfg(unix)]
+// 通过 /dev/tty 输出提示并关闭输入回显读取一行，退出动作时尽力恢复 termios；不向 helper stdout 写提示。
 fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
     use nix::libc;
     use std::fs::OpenOptions;
@@ -379,6 +394,7 @@ fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
 }
 
 #[cfg(windows)]
+// 使用继承的 stdin/stderr 保持原 ConPTY 归属，临时关闭回显读取一行后尽力恢复控制台模式。
 fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
     use std::io::BufReader;
     use std::os::windows::io::AsRawHandle;
@@ -448,6 +464,7 @@ fn read_control_terminal(prompt: &str) -> io::Result<Vec<u8>> {
 }
 
 #[cfg(not(any(unix, windows)))]
+// 未实现控制终端的平台直接返回 Unsupported，不尝试其他输入渠道。
 fn read_control_terminal(_prompt: &str) -> io::Result<Vec<u8>> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
@@ -457,6 +474,7 @@ fn read_control_terminal(_prompt: &str) -> io::Result<Vec<u8>> {
 
 /// Starts a one-shot local broker. The password itself never enters the child
 /// environment; only a random token and loopback address do.
+// 从系统凭据库取得非空密码并启动一次性本机 broker，只返回辅助程序所需环境项，不把密码放入环境。
 pub fn prepare(account: &str) -> Result<HashMap<String, String>, String> {
     let password = crate::credential_store::get(account)?
         .filter(|value| !value.is_empty())
@@ -466,6 +484,8 @@ pub fn prepare(account: &str) -> Result<HashMap<String, String>, String> {
     Ok(env)
 }
 
+// 绑定 loopback 随机端口并启动持密码的线程，用随机 token 校验；无效请求不消耗唯一有效请求机会。
+// 有效请求尝试写出后即结束，无论写入是否成功；寿命检查在 accept 循环外侧，不是严格总时限。
 fn prepare_with_password(password: String) -> Result<HashMap<String, String>, String> {
     let listener = TcpListener::bind(("127.0.0.1", 0))
         .map_err(|err| format!("ssh askpass broker bind failed: {err}"))?;
@@ -527,6 +547,7 @@ mod tests {
     use std::net::{Shutdown, TcpStream};
 
     #[test]
+    // 用假密码验证错误 token 不返回数据，也不妨碍后续正确 token 取得响应。
     fn one_shot_broker_requires_a_matching_token_without_consuming_invalid_attempts() {
         let env = prepare_with_password("top-secret".to_string()).unwrap();
         let mut invalid_stream = TcpStream::connect(env.get(ASKPASS_ADDR_ENV).unwrap()).unwrap();
@@ -547,6 +568,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超长 token 被拒绝后，正确 token 仍可读取一次假密码。
     fn one_shot_broker_rejects_an_oversized_token() {
         let env = prepare_with_password("top-secret".to_string()).unwrap();
         let mut stream = TcpStream::connect(env.get(ASKPASS_ADDR_ENV).unwrap()).unwrap();
@@ -570,6 +592,7 @@ mod tests {
     }
 
     #[test]
+    // 验证密码/密钥口令可走凭据路由，混有 OTP/MFA 等标记的提示不得走该路由。
     fn only_password_and_passphrase_prompts_may_use_saved_credentials() {
         assert!(is_password_prompt("Password:"));
         assert!(is_password_prompt("Enter passphrase for key:"));
@@ -581,6 +604,7 @@ mod tests {
     }
 
     #[test]
+    // 验证仅精确 1 启用回退，缺失、true、空串和带空白值都不启用。
     fn terminal_fallback_requires_the_exact_enabled_value() {
         assert!(terminal_fallback_enabled(Some("1")));
         for value in [None, Some("0"), Some("true"), Some("1 "), Some("")] {
@@ -589,6 +613,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 broker 提供响应时只调用它一次，不访问控制终端。
     fn saved_password_wins_without_touching_the_terminal() {
         let broker_calls = Cell::new(0);
         let terminal_calls = Cell::new(0);
@@ -615,6 +640,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 MFA 跳过 broker，把提示交给模拟控制终端并输出其响应。
     fn mfa_skips_the_broker_and_reads_the_interactive_terminal() {
         let broker_calls = Cell::new(0);
         let terminal_prompt = RefCell::new(String::new());
@@ -641,6 +667,7 @@ mod tests {
     }
 
     #[test]
+    // 验证交互模式下 broker 不可用时调用一次手工输入并返回修正后的密码。
     fn consumed_broker_falls_back_to_manual_password_in_interactive_mode() {
         let terminal_calls = Cell::new(0);
         let mut output = Vec::new();
@@ -662,6 +689,7 @@ mod tests {
     }
 
     #[test]
+    // 验证禁用回退时密码和 MFA 均不读取终端，缺少响应返回 NotConnected 且不输出内容。
     fn one_shot_mode_fails_without_reading_a_control_terminal() {
         for prompt in ["Password:", "Please Enter MFA Code."] {
             let terminal_calls = Cell::new(0);
@@ -684,6 +712,7 @@ mod tests {
     }
 
     #[test]
+    // 验证控制终端读取失败原样传播错误且 helper 输出保持为空。
     fn interactive_terminal_failure_returns_no_helper_response() {
         let mut output = Vec::new();
         let result = answer_prompt_with(
@@ -699,6 +728,7 @@ mod tests {
     }
 
     #[test]
+    // 验证清理后的提示只到终端渠道，验证码仅到 helper 输出，两者不混流。
     fn terminal_prompt_and_helper_response_use_separate_outputs() {
         let terminal_output = RefCell::new(Vec::new());
         let mut helper_output = Vec::new();
@@ -725,6 +755,7 @@ mod tests {
     }
 
     #[test]
+    // 验证控制字符删除、换行规范化及 Unicode 字符数量上限，同时保留 ANSI 的可打印残片。
     fn terminal_prompt_filters_controls_normalizes_newlines_and_is_bounded() {
         let sanitized = sanitize_terminal_prompt("\x1b[31mMFA\x1b[0m\r\nCode\x07:\rNext\t");
         assert_eq!(sanitized, "[31mMFA[0m\nCode:\nNext");
@@ -738,6 +769,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 LF/CRLF 被去掉、恰好上限的输入可接受，超限一字节返回 InvalidData。
     fn terminal_input_is_bounded_and_strips_line_endings() {
         for input in [b"123456\n".as_slice(), b"123456\r\n".as_slice()] {
             let mut reader = BufReader::new(Cursor::new(input));
@@ -768,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    // 验证动作成功、空响应和错误返回都执行恢复回调，不操作真实终端模式。
     fn terminal_mode_restore_runs_for_success_eof_and_error() {
         for action in [
             Ok(b"value".to_vec()),

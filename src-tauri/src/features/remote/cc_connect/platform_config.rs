@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self};
 use std::path::Path;
 
+// 返回消息平台在 cc-connect 配置中的类型名称。
 pub(super) fn platform_type(platform: CcConnectPlatform) -> &'static str {
     match platform {
         CcConnectPlatform::Telegram => "telegram",
@@ -21,6 +22,7 @@ pub(super) fn platform_type(platform: CcConnectPlatform) -> &'static str {
     }
 }
 
+// 构造平台选项、凭据环境占位符和经校验的白名单。
 pub(super) fn build_managed_platform(
     profile: &CcConnectProfile,
     platform_profile: &CcConnectPlatformProfile,
@@ -95,6 +97,7 @@ pub(super) fn build_managed_platform(
     ))
 }
 
+// 以无 Codex 启动覆盖构造托管配置。
 pub(super) fn build_managed_config(
     profile: &CcConnectProfile,
     project_list_path: &Path,
@@ -103,6 +106,7 @@ pub(super) fn build_managed_config(
     build_managed_config_with_codex(profile, project_list_path, project_switch_script_path, None)
 }
 
+// 将可选 Codex 启动信息转交完整配置构造入口。
 pub(super) fn build_managed_config_with_codex(
     profile: &CcConnectProfile,
     project_list_path: &Path,
@@ -120,6 +124,7 @@ pub(super) fn build_managed_config_with_codex(
     )
 }
 
+// 构造受限远程命令、启用平台及隔离密钥的 Agent 配置。
 pub(super) fn build_managed_config_with_agent_launch(
     profile: &CcConnectProfile,
     project_list_path: &Path,
@@ -276,6 +281,7 @@ pub(super) fn build_managed_config_with_agent_launch(
     })
 }
 
+// 构造仅启用微信且清空授权凭据的临时 TOML。
 pub(super) fn build_weixin_authorization_config(
     profile: &CcConnectProfile,
 ) -> Result<String, String> {
@@ -323,6 +329,7 @@ pub(super) struct WeixinAuthorizationResult {
     pub(super) allow_from: String,
 }
 
+// 从指定项目的微信配置读取非空令牌及合法授权用户。
 pub(super) fn parse_weixin_authorization_result(
     path: &Path,
     project_name: &str,
@@ -376,6 +383,7 @@ pub(super) fn parse_weixin_authorization_result(
     Ok(WeixinAuthorizationResult { token, allow_from })
 }
 
+// 验证并按首次顺序合并已有和扫码微信用户名单。
 pub(super) fn merge_weixin_allow_from(existing: &str, scanned: &str) -> Result<String, String> {
     let mut seen = HashSet::new();
     let mut values = Vec::new();

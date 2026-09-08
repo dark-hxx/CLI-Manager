@@ -59,12 +59,14 @@ pub struct SshLaunchPlan {
 pub type SshProcessLaunch = SshTransportLaunch;
 
 impl SshLaunchPlan {
+    // 校验计划后构造交互式 SSH 启动参数；凭据模式可能由传输层创建 AskPass broker。
     pub fn build_process_launch(&self) -> Result<SshProcessLaunch, String> {
         self.validate()?;
         self.transport_spec()
             .build_interactive_launch(self.remote_command())
     }
 
+    // 要求完整 Agent 身份，生成固定协议版本的 stdio bridge 命令，不执行终端初始化脚本。
     pub(crate) fn build_agent_bridge_launch(&self) -> Result<SshProcessLaunch, String> {
         self.validate()?;
         if self.agent_path.is_empty() {
@@ -79,6 +81,8 @@ impl SshLaunchPlan {
         )
     }
 
+    // 检查传输字段、绑定标识、Agent 身份完整性与环境变量格式；不验证远端路径是否存在。
+    // 初始化与启动命令仅拒绝 NUL，仍按用户提供的 shell 程序执行，并非受限命令白名单。
     fn validate(&self) -> Result<(), String> {
         if self.host_id.trim().is_empty() {
             return Err("ssh_host_not_found".to_string());
@@ -161,6 +165,7 @@ impl SshLaunchPlan {
         Ok(())
     }
 
+    // 复制连接、认证、代理和超时字段给共享传输层，不携带项目绑定或远端启动脚本。
     fn transport_spec(&self) -> SshTransportSpec {
         SshTransportSpec {
             host: self.host.clone(),
@@ -182,6 +187,8 @@ impl SshLaunchPlan {
         }
     }
 
+    // 按路径切换、连接标记、排序后的环境变量构造 setup，再进入登录 shell。
+    // 有用户命令时依次按换行拼接，末尾进入非登录交互 shell；命令之间未追加失败短路。
     fn remote_command(&self) -> String {
         let mut setup = vec![
             format!("cd -- {}", posix_quote(self.remote_path.trim())),
@@ -231,6 +238,7 @@ impl SshLaunchPlan {
     }
 }
 
+// 对去除首尾空白的路径检查绝对形式、控制字符和父级段，不访问远端文件系统。
 fn validate_remote_path(path: &str) -> Result<(), String> {
     let path = path.trim();
     if !path.starts_with('/') || path.contains(['\0', '\r', '\n']) {
@@ -242,6 +250,7 @@ fn validate_remote_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 复用远端 HOME 路径校验，并把格式与父级穿越错误转换为工具配置根目录错误码。
 fn validate_tool_config_root(path: &str) -> Result<(), String> {
     match validate_remote_home_path(path) {
         Ok(()) => Ok(()),
@@ -252,10 +261,12 @@ fn validate_tool_config_root(path: &str) -> Result<(), String> {
     }
 }
 
+// 委托共享格式化器保留受控 HOME 展开；调用方应先校验路径。
 fn format_tool_config_root(path: &str) -> String {
     format_remote_home_path(path)
 }
 
+// 仅接受 ASCII 字母或下划线开头、后续可含数字的非空 shell 环境变量名。
 fn is_valid_environment_key(key: &str) -> bool {
     let mut chars = key.chars();
     matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
@@ -266,6 +277,7 @@ fn is_valid_environment_key(key: &str) -> bool {
 mod tests {
     use super::SshLaunchPlan;
 
+    // 创建含空格、中文路径和引号命令的密钥认证测试计划，不连接 SSH 主机。
     fn plan() -> SshLaunchPlan {
         SshLaunchPlan {
             host_id: "host-1".into(),
@@ -301,6 +313,7 @@ mod tests {
     }
 
     #[test]
+    // 验证端口、密钥、跳板参数及远端路径、环境值和嵌套 shell 命令的精确引用结果。
     fn builds_structured_ssh_arguments_and_quotes_remote_values() {
         let launch = plan().build_process_launch().unwrap();
         assert_eq!(launch.executable, "ssh");
@@ -316,6 +329,7 @@ mod tests {
     }
 
     #[test]
+    // 验证启动命令在登录 shell 中执行后切到非登录交互 shell，避免再次登录。
     fn startup_command_returns_to_interactive_shell_without_second_login() {
         let command = plan().remote_command();
         assert!(command.contains("exec \"${SHELL:-/bin/sh}\" -lic"));
@@ -324,6 +338,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 配置别名作为目标时，不额外传入显式端口或遗留密钥参数。
     fn config_alias_owns_host_and_port_resolution() {
         let mut value = plan();
         value.config_alias = "prod".into();
@@ -337,6 +352,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时文件验证自定义 SSH 配置以独立 -F 参数传递，不启动 SSH 进程。
     fn custom_config_file_is_forwarded_to_terminal_launch() {
         let temp = tempfile::NamedTempFile::new().unwrap();
         let mut value = plan();
@@ -353,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧版序列化计划缺少 configFile 时仍可解码，并默认使用空配置路径。
     fn config_file_defaults_for_legacy_serialized_plans() {
         let value = plan();
         let mut serialized = serde_json::to_value(&value).unwrap();
@@ -364,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无初始化或启动命令时，setup 后直接执行登录 shell。
     fn interactive_shell_is_started_when_no_startup_command_exists() {
         let mut value = plan();
         value.startup_command = None;
@@ -371,6 +389,7 @@ mod tests {
     }
 
     #[test]
+    // 验证四类工具配置根目录分别保留受控 HOME 展开或绝对路径引用。
     fn tool_config_roots_are_exported_with_safe_home_expansion() {
         let mut value = plan();
         value.environment_overrides = [
@@ -391,6 +410,7 @@ mod tests {
     }
 
     #[test]
+    // 验证单独的波浪号配置根目录转换为引用的 HOME，而非字面量波浪号。
     fn tool_config_root_accepts_home_itself() {
         let mut value = plan();
         value.environment_overrides = [("CODEX_HOME".to_string(), "~".to_string())].into();
@@ -399,6 +419,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 kimi 来源与带空格的 KIMI_CODE_HOME 可同时通过校验并生成导出命令。
     fn kimi_source_and_config_home_are_admitted_together() {
         let mut value = plan();
         value.tool_source = "kimi".to_string();
@@ -409,6 +430,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 grok 来源与带空格的 GROK_HOME 可同时通过校验并生成导出命令。
     fn grok_source_and_config_home_are_admitted_together() {
         let mut value = plan();
         value.tool_source = "grok".to_string();
@@ -419,6 +441,7 @@ mod tests {
     }
 
     #[test]
+    // 验证配置根目录拒绝父级穿越、变量或反引号展开、相对路径及非法控制字符。
     fn tool_config_root_rejects_traversal_and_shell_expansion() {
         for invalid in [
             "~/../secret",
@@ -441,6 +464,7 @@ mod tests {
     }
 
     #[test]
+    // 验证直连 SOCKS5 代理生成辅助 ProxyCommand，并抑制跳板 -J 参数。
     fn direct_proxy_takes_precedence_over_jump_host() {
         let mut value = plan();
         value.proxy_type = "socks5".into();
@@ -455,6 +479,7 @@ mod tests {
     }
 
     #[test]
+    // 验证远端工作路径的父级段和跳板参数中的换行分别返回对应错误码。
     fn rejects_parent_traversal_and_multiline_arguments() {
         let mut value = plan();
         value.remote_path = "/srv/../root".into();
@@ -471,6 +496,7 @@ mod tests {
     }
 
     #[test]
+    // 验证密码提示模式同时启用密码与键盘交互认证，禁用公钥且忽略遗留密钥。
     fn password_mode_supports_password_and_keyboard_interactive() {
         let mut value = plan();
         value.auth_mode = "password_prompt".into();
@@ -491,6 +517,7 @@ mod tests {
     }
 
     #[test]
+    // 验证键盘交互模式不传遗留密钥，并指定 keyboard-interactive 认证优先级。
     fn interactive_mode_does_not_use_stale_identity_file() {
         let mut value = plan();
         value.auth_mode = "interactive".into();
@@ -503,6 +530,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Agent 认证模式不传遗留密钥，并指定公钥认证优先级。
     fn agent_mode_does_not_use_stale_identity_file() {
         let mut value = plan();
         value.auth_mode = "agent".into();

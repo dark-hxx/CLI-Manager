@@ -14,6 +14,7 @@ use std::path::Path;
 
 /// Stream parsed messages from a session file. Callback returns `false` to break early.
 /// 同一条消息的多个流式行携带相同 usage，去重后仅首行保留 token 字段，避免前端求和虚高。
+// 按格式读取消息并回调，普通 JSONL 去重用量字段；回调返回 false 时停止输出。
 pub(super) fn iter_session_messages<F>(path: &Path, mut callback: F) -> Result<(), String>
 where
     F: FnMut(usize, HistoryMessage) -> bool,
@@ -113,6 +114,7 @@ where
     Ok(())
 }
 
+// 按候选层级取首个非零 token 用量，并保留此前发现的显式成本。
 pub(super) fn extract_usage_tokens(value: &Value) -> UsageTokenScan {
     let candidates = [
         Some(value),
@@ -151,6 +153,7 @@ pub(super) struct CodexCumulativeUsage {
     pub(super) total_tokens: u64,
 }
 
+// 从 Codex token_count 的累计用量对象读取计数，缺失字段补零。
 pub(super) fn extract_codex_token_count(value: &Value) -> Option<CodexCumulativeUsage> {
     let payload = value.get("payload")?;
     if payload.get("type").and_then(Value::as_str) != Some("token_count") {
@@ -166,6 +169,7 @@ pub(super) fn extract_codex_token_count(value: &Value) -> Option<CodexCumulative
 }
 
 /// Codex token_count 事件附带的上下文信息：模型窗口大小与最近一次请求的上下文占用。
+// 从 payload.info 提取显式窗口及最近请求的正上下文用量。
 pub(super) fn extract_codex_context_info(value: &Value) -> (Option<u64>, Option<u64>) {
     let Some(info) = value.get("payload").and_then(|payload| payload.get("info")) else {
         return (None, None);
@@ -188,6 +192,7 @@ pub(super) fn extract_codex_context_info(value: &Value) -> (Option<u64>, Option<
     (window, last_context)
 }
 
+// 按已知日志层级寻找首个正数上下文窗口字段。
 pub(super) fn extract_context_window(value: &Value) -> Option<u64> {
     let candidates = [
         Some(value),
@@ -206,6 +211,7 @@ pub(super) fn extract_context_window(value: &Value) -> Option<u64> {
         .find_map(extract_context_window_from_value)
 }
 
+// 从对象的兼容窗口字段名中读取正数窗口大小。
 pub(super) fn extract_context_window_from_value(value: &Value) -> Option<u64> {
     let map = value.as_object()?;
     extract_u64_by_keys(

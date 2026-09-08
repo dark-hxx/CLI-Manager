@@ -120,6 +120,7 @@ const WEBVIEW_DEFAULT_BROWSER_ARGS: &str =
 const WEBVIEW_DISABLE_GPU_ARGS: &str =
     "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu";
 
+// 尝试显示、还原并聚焦主窗口，窗口不存在或操作失败时忽略。
 fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -131,6 +132,7 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 #[derive(Default)]
 struct PendingBackgroundSession(Mutex<Option<String>>);
 
+// 从相邻命令行参数中提取非空后台会话恢复目标。
 fn background_session_arg(args: &[String]) -> Option<String> {
     args.windows(2).find_map(|pair| {
         (pair[0] == "--restore-background-session" && !pair[1].trim().is_empty())
@@ -138,6 +140,7 @@ fn background_session_arg(args: &[String]) -> Option<String> {
     })
 }
 
+// 缓存待恢复后台会话并广播激活请求，锁失败仍尝试发送事件。
 fn set_pending_background_session<R: Runtime>(app: &AppHandle<R>, session_id: String) {
     if let Ok(mut pending) = app.state::<PendingBackgroundSession>().0.lock() {
         *pending = Some(session_id.clone());
@@ -146,6 +149,7 @@ fn set_pending_background_session<R: Runtime>(app: &AppHandle<R>, session_id: St
 }
 
 #[tauri::command]
+// 一次性取走缓存的后台会话目标，锁异常时返回空。
 fn take_pending_background_session(
     pending: tauri::State<'_, PendingBackgroundSession>,
 ) -> Option<String> {
@@ -153,17 +157,20 @@ fn take_pending_background_session(
 }
 
 #[tauri::command]
+// 通过 IPC 请求唤起主窗口，底层窗口操作失败不向调用方传播。
 fn app_show_main_window(app: AppHandle) -> Result<(), String> {
     show_main_window(&app);
     Ok(())
 }
 
 #[tauri::command]
+// 请求 Tauri 以成功退出码结束应用，由退出事件执行相关清理。
 fn app_exit(app: AppHandle) {
     app.exit(0);
 }
 
 #[tauri::command]
+// 打开主窗口开发者工具，主窗口不存在时返回错误。
 fn app_open_devtools(app: AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window("main")
@@ -172,6 +179,7 @@ fn app_open_devtools(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+// 初始化守护进程治理与崩溃记录，运行服务后按结果终止当前进程。
 pub fn run_daemon_and_exit() -> ! {
     use crate::daemon::discovery::daemon_info_path;
     use crate::daemon::server::{DaemonServer, DaemonServerConfig};
@@ -210,24 +218,29 @@ mod simple_stderr_logger {
     struct StderrLogger;
 
     impl log::Log for StderrLogger {
+        // 仅允许 Info 及更严重级别进入守护进程标准错误日志。
         fn enabled(&self, metadata: &Metadata) -> bool {
             metadata.level() <= Level::Info
         }
+        // 按级别过滤后将原日志参数写入标准错误，不额外脱敏。
         fn log(&self, record: &Record) {
             if self.enabled(record.metadata()) {
                 eprintln!("[{}] {}", record.level(), record.args());
             }
         }
+        // 实现日志刷新接口；当前标准错误记录器不维护待刷缓存。
         fn flush(&self) {}
     }
 
     static LOGGER: StderrLogger = StderrLogger;
 
+    // 安装静态标准错误记录器，成功后将全局最高日志级别设为 Info。
     pub fn init() -> Result<(), log::SetLoggerError> {
         log::set_logger(&LOGGER).map(|_| log::set_max_level(log::LevelFilter::Info))
     }
 }
 
+// 读取硬件加速禁用偏好，路径、读取或解析失败时使用 false。
 fn load_disable_hardware_acceleration_setting() -> bool {
     let settings_path = match app_paths::cli_manager_data_dir() {
         Ok(dir) => dir.join("settings.json"),
@@ -247,6 +260,7 @@ fn load_disable_hardware_acceleration_setting() -> bool {
         .unwrap_or(false)
 }
 
+// 为所有窗口补入禁用 GPU 参数，保留已有浏览器参数。
 fn apply_webview_disable_gpu_config(config: &mut tauri::Config) {
     for window in &mut config.app.windows {
         let browser_args = window
@@ -264,6 +278,7 @@ fn apply_webview_disable_gpu_config(config: &mut tauri::Config) {
 }
 
 #[cfg(target_os = "windows")]
+// 用 Windows 消息框显示数据目录初始化错误及中英文提示。
 fn show_startup_error(error: &str) {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -291,11 +306,13 @@ fn show_startup_error(error: &str) {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台将启动数据目录错误写入标准错误。
 fn show_startup_error(error: &str) {
     eprintln!("CLI-Manager data directory initialization failed: {error}");
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+// 准备数据目录并注册插件、状态、IPC 和后台初始化，运行桌面事件循环及退出清理。
 pub fn run() {
     if let Err(err) = app_paths::prepare_gui_startup() {
         show_startup_error(&err);
@@ -946,6 +963,7 @@ mod ssh_migration_tests {
     use sqlx::{Connection, Row, SqliteConnection};
 
     #[tokio::test]
+    // 在内存数据库验证 SSH 主机迁移的本地默认值及删除主机后的外键置空。
     async fn ssh_host_migration_preserves_local_defaults_and_foreign_keys() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -1009,6 +1027,7 @@ mod ssh_migration_tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证旧平面主机分组迁移为根分组并关联原主机。
     async fn ssh_group_migration_preserves_flat_groups_as_roots() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -1048,6 +1067,7 @@ mod ssh_migration_tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证删除主机保留集成身份元数据，同时级联删除偏好。
     async fn ssh_agent_integration_migration_preserves_rebind_metadata() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -1136,6 +1156,7 @@ mod ssh_migration_tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证新增 SSH 配置文件列为空串，表示沿用系统配置。
     async fn ssh_config_file_migration_defaults_existing_hosts_to_system_config() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query(
@@ -1168,6 +1189,7 @@ mod ssh_migration_tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证附件根默认空串且可写入自定义值，不访问远程缓存。
     async fn ssh_attachment_root_migration_defaults_existing_hosts_to_agent_cache() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query(
@@ -1226,6 +1248,7 @@ mod provider_migration_tests {
     };
 
     #[test]
+    // 验证旧供应商迁移与原生供应商迁移仍登记且版本顺序正确。
     fn registry_keeps_legacy_v25_before_native_v26() {
         let registry = migrations();
         let legacy = registry
@@ -1242,6 +1265,7 @@ mod provider_migration_tests {
     }
 
     #[test]
+    // 验证新增标题、用量路径、错误详情和项目设置迁移的版本、SQL 标记及顺序。
     fn history_generated_titles_and_request_project_path_migrations_are_additive() {
         let registry = migrations();
         let title_migrations: Vec<_> = registry
@@ -1355,6 +1379,7 @@ mod request_log_project_path_migration_tests {
     use sqlx::{Connection, Row, SqliteConnection};
 
     #[tokio::test]
+    // 在内存数据库重复执行路径回填，验证唯一匹配、歧义保留和已有值不覆盖。
     async fn materialized_project_path_migration_backfills_legacy_rows_idempotently() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query(
@@ -1441,6 +1466,7 @@ mod request_log_project_path_migration_tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证错误详情迁移保留旧错误码并重建含空详情的统一视图。
     async fn route_usage_error_detail_migration_preserves_legacy_rows_and_rebuilds_view() {
         let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::raw_sql(MIGRATION_CREATE_REQUEST_LOGS_SQL)

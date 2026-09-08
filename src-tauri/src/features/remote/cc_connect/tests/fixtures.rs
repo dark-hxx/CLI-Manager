@@ -1,5 +1,6 @@
 use super::*;
 
+// 构造指定工作目录的默认本地 Claude 连接测试配置。
 pub(super) fn sample_profile(project_path: &Path) -> CcConnectProfile {
     CcConnectProfile {
         auto_start: false,
@@ -23,6 +24,7 @@ pub(super) fn sample_profile(project_path: &Path) -> CcConnectProfile {
     }
 }
 
+// 构造无 Provider 覆盖的本地注册项目样例。
 pub(super) fn sample_registered_project(
     id: &str,
     name: &str,
@@ -48,6 +50,7 @@ pub(super) fn sample_registered_project(
     }
 }
 
+// 构造具有指定父组和排序值的分组样例。
 pub(super) fn sample_group(
     id: &str,
     name: &str,
@@ -62,6 +65,7 @@ pub(super) fn sample_group(
     }
 }
 
+// 构造含 Agent、分组及 Provider JSON 的项目查询行样例。
 pub(super) fn sample_project_row(
     id: &str,
     name: &str,
@@ -90,6 +94,7 @@ pub(super) fn sample_project_row(
     }
 }
 
+// 构造带可选模拟 Provider 的 Codex 启动计划，不启动进程。
 pub(super) fn sample_remote_codex_launch(provider: bool) -> RemoteCodexLaunch {
     let provider = provider.then(|| RemoteCodexProviderLaunch {
             name: "Project Provider".to_string(),

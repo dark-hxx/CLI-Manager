@@ -54,12 +54,14 @@ pub(crate) struct PreparedReadPath {
 }
 
 impl PreparedReadPath {
+    // 借用可读取的数据库路径；是否为临时快照由此对象管理。
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
 }
 
 impl Drop for PreparedReadPath {
+    // 仅对临时快照尝试删除主数据库文件，忽略清理错误，不删除原始数据库。
     fn drop(&mut self) {
         if self.temporary {
             let _ = std::fs::remove_file(&self.path);
@@ -67,11 +69,13 @@ impl Drop for PreparedReadPath {
     }
 }
 
+// 将 WSL UNC 路径解析为发行版与 Linux 路径，拒绝无法识别的路径。
 fn wsl_target(path: &Path) -> Result<(String, String), String> {
     crate::wsl::parse_wsl_unc_path(&path.to_string_lossy())
         .ok_or_else(|| "invalid_wsl_db_path".to_string())
 }
 
+// 在目标发行版执行带十五秒等待上限的 test -f；命令非零退出均视为不存在，启动或等待错误另行返回。
 pub(crate) fn wsl_file_exists(path: &Path) -> Result<bool, String> {
     let (distro, linux_path) = wsl_target(path)?;
     let wsl = crate::wsl::find_wsl_exe().ok_or_else(|| "wsl_unavailable".to_string())?;
@@ -86,6 +90,7 @@ pub(crate) fn wsl_file_exists(path: &Path) -> Result<bool, String> {
         .map_err(|err| format!("wsl_db_check_failed: {err}"))
 }
 
+// 在指定 WSL 发行版执行 Python 脚本并限时等待，返回去除首尾空白的输出或包含标准错误的失败信息。
 fn run_wsl_python(distro: &str, script: &str, args: &[&str]) -> Result<String, String> {
     let wsl = crate::wsl::find_wsl_exe().ok_or_else(|| "wsl_unavailable".to_string())?;
     let mut command = crate::shell_resolver::silent_command(wsl.to_string_lossy().as_ref());
@@ -110,6 +115,7 @@ fn run_wsl_python(distro: &str, script: &str, args: &[&str]) -> Result<String, S
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+// 将请求经标准输入交给 WSL Python 并收集输出；此路径的写入和等待没有显式超时。
 fn run_wsl_python_with_stdin(
     distro: &str,
     script: &str,
@@ -149,6 +155,7 @@ fn run_wsl_python_with_stdin(
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+// 本机路径原样保留；WSL 数据库通过只读连接的 SQLite backup 生成本机临时快照，成功后由返回对象负责清理。
 pub(crate) async fn prepare_read_path(path: &Path) -> Result<PreparedReadPath, String> {
     if !crate::wsl::is_wsl_config_dir(&path.to_string_lossy()) {
         return Ok(PreparedReadPath {
@@ -184,6 +191,7 @@ struct SettingWriteRequest<'a> {
     upsert: bool,
 }
 
+// 经标准输入传递设置请求，在 WSL 事务中比较旧值后更新或插入；缺表返回 false，值冲突返回专用错误。
 pub(crate) async fn write_wsl_setting(
     path: &Path,
     key: &str,
@@ -219,6 +227,7 @@ mod tests {
 
     #[tokio::test]
     #[ignore = "requires CLI_MANAGER_TEST_WSL_DISTRO and a working WSL Python sqlite3 runtime"]
+    // 手动集成测试：在指定 WSL 发行版创建临时数据库，验证快照可只读查询预置值，再尽力清理源文件。
     async fn wsl_database_snapshot_is_read_only() {
         let distro = std::env::var("CLI_MANAGER_TEST_WSL_DISTRO").unwrap();
         let linux_path = format!("/tmp/cli-manager-ccswitch-test-{}.db", Uuid::new_v4());

@@ -6,6 +6,7 @@ use crate::shell_resolver::{output_with_timeout, silent_command};
 use std::process::Command;
 use std::time::Duration;
 
+// 取有损 UTF-8 输出中的首个非空去空白行。
 pub(super) fn single_line(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .lines()
@@ -15,6 +16,7 @@ pub(super) fn single_line(bytes: &[u8]) -> String {
         .to_string()
 }
 
+// 从 ssh -G 输出解析仅含键和值的 user 行。
 pub(super) fn parse_effective_ssh_user(bytes: &[u8]) -> Option<String> {
     String::from_utf8_lossy(bytes).lines().find_map(|line| {
         let mut fields = line.split_whitespace();
@@ -32,6 +34,7 @@ pub(super) fn parse_effective_ssh_user(bytes: &[u8]) -> Option<String> {
     })
 }
 
+// 按连接配置构造只展开配置的 ssh -G 命令。
 pub(super) fn effective_ssh_user_command(spec: &SshConnectionSpec) -> Result<Command, String> {
     validate_spec(spec)?;
     let mut command = silent_command("ssh");
@@ -54,6 +57,7 @@ pub(super) fn effective_ssh_user_command(spec: &SshConnectionSpec) -> Result<Com
     Ok(command)
 }
 
+// 优先取显式用户名，否则限时展开 SSH 配置解析用户。
 pub(super) fn resolve_effective_ssh_user(spec: &SshConnectionSpec) -> Result<String, String> {
     if !spec.username.trim().is_empty() {
         return Ok(spec.username.trim().to_string());
@@ -72,6 +76,7 @@ pub(super) fn resolve_effective_ssh_user(spec: &SshConnectionSpec) -> Result<Str
     parse_effective_ssh_user(&output.stdout).ok_or_else(|| "ssh_user_required".to_string())
 }
 
+// 从调试输出提取首条服务端主机密钥说明。
 pub(super) fn host_key_fingerprint(stderr: &str) -> Option<String> {
     stderr.lines().find_map(|line| {
         line.split_once("Server host key:")
@@ -80,10 +85,12 @@ pub(super) fn host_key_fingerprint(stderr: &str) -> Option<String> {
     })
 }
 
+// 识别 OpenSSH 已认证日志标记。
 pub(super) fn is_authenticated_log(line: &str) -> bool {
     line.contains("Authenticated to ")
 }
 
+// 读取认证日志并在成功标记、进程结束或超时时收集结果。
 pub(super) fn run_ssh_auth_probe(
     mut command: Command,
     timeout: Duration,
@@ -174,6 +181,7 @@ pub(super) fn run_ssh_auth_probe(
     }
 }
 
+// 保留限额内字节并持续排空超出部分，返回截断标志。
 pub(super) fn read_bounded(mut reader: impl std::io::Read, limit: usize) -> (Vec<u8>, bool) {
     let mut output = Vec::with_capacity(limit.min(8 * 1024));
     let mut truncated = false;
@@ -193,6 +201,7 @@ pub(super) fn read_bounded(mut reader: impl std::io::Read, limit: usize) -> (Vec
     (output, truncated)
 }
 
+// 并行限量读取探测输出，轮询退出并在超时时终止子进程。
 pub(super) fn run_agent_probe_process(
     mut command: Command,
     timeout: Duration,
@@ -245,6 +254,7 @@ pub(super) fn run_agent_probe_process(
     })
 }
 
+// 并行写入操作输入与限量读取输出，等待完成或超时终止。
 pub(super) fn run_agent_input_process(
     mut command: Command,
     input: Vec<u8>,

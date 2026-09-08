@@ -2,6 +2,7 @@ use super::*;
 
 #[cfg(unix)]
 #[test]
+// 验证 Unix PATH 解析跳过托管包装器并选取真实程序。
 fn unix_codex_launcher_resolution_skips_the_managed_wrapper() {
     let directory = tempfile::tempdir().unwrap();
     let wrapper_dir = directory.path().join("managed");
@@ -22,6 +23,7 @@ fn unix_codex_launcher_resolution_skips_the_managed_wrapper() {
 }
 
 #[test]
+// 验证 app-server 帮助必须同时声明 stdio 传输。
 fn codex_app_server_help_requires_stdio_transport() {
     assert!(codex_app_server_help_supported(
         "Usage: codex app-server [OPTIONS]\n--listen <URL>\n[default: stdio://]"
@@ -32,6 +34,7 @@ fn codex_app_server_help_requires_stdio_transport() {
 }
 
 #[test]
+// 验证 Codex 配置仅引用 Provider 密钥环境且不持久化秘密。
 fn managed_codex_config_forwards_provider_key_without_persisting_secret() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -73,6 +76,7 @@ fn managed_codex_config_forwards_provider_key_without_persisting_secret() {
 }
 
 #[test]
+// 验证隔离模型目录包含完整回退能力但不含凭据。
 fn codex_model_discovery_catalog_is_isolated_and_contains_no_credentials() {
     let directory = tempfile::tempdir().unwrap();
     let launch = sample_remote_codex_launch(true);
@@ -120,6 +124,7 @@ fn codex_model_discovery_catalog_is_isolated_and_contains_no_credentials() {
 }
 
 #[test]
+// 验证模型目录复用临时本机缓存模板的能力字段。
 fn codex_model_discovery_reuses_installed_catalog_capabilities() {
     let source = tempfile::tempdir().unwrap();
     let destination = tempfile::tempdir().unwrap();
@@ -159,6 +164,7 @@ fn codex_model_discovery_reuses_installed_catalog_capabilities() {
 }
 
 #[test]
+// 验证模型端点、响应解析、非聊天过滤及去重顺序。
 fn codex_model_discovery_parses_filters_and_deduplicates_models() {
     assert_eq!(
         codex_models_endpoint("https://provider.example.com/v1")
@@ -181,6 +187,7 @@ fn codex_model_discovery_parses_filters_and_deduplicates_models() {
 
 #[cfg(windows)]
 #[test]
+// 验证启动环境保留真实 Home 和覆盖信息而不内嵌密钥。
 fn codex_launch_environment_forces_provider_without_embedding_secrets() {
     let mut command = Command::new("cc-connect");
     let mut launch = sample_remote_codex_launch(true);
@@ -257,6 +264,7 @@ fn codex_launch_environment_forces_provider_without_embedding_secrets() {
 
 #[cfg(windows)]
 #[test]
+// 验证未选择 Provider 时清除所有旧 Provider 覆盖环境。
 fn codex_launch_environment_clears_provider_overrides_when_unregistered() {
     let mut command = Command::new("cc-connect");
     let launch = sample_remote_codex_launch(false);
@@ -291,6 +299,7 @@ fn codex_launch_environment_clears_provider_overrides_when_unregistered() {
 
 #[cfg(windows)]
 #[test]
+// 验证空注册启动参数不会写入代理参数环境。
 fn codex_launch_environment_omits_empty_registered_launcher_args() {
     let mut command = Command::new("cc-connect");
     let mut launch = sample_remote_codex_launch(false);
@@ -310,6 +319,7 @@ fn codex_launch_environment_omits_empty_registered_launcher_args() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 验证临时原生代理文件按内容变化复制和更新。
 fn native_codex_proxy_is_copied_atomically_and_refreshed() {
     let directory = tempfile::tempdir().unwrap();
     let source = directory.path().join("cli-manager-codex-proxy.exe");
@@ -324,6 +334,7 @@ fn native_codex_proxy_is_copied_atomically_and_refreshed() {
 }
 
 #[test]
+// 验证 Provider 启动覆盖拒绝命令注入字符及非 HTTP 端点。
 fn codex_app_server_overrides_reject_command_injection_characters() {
     assert_eq!(
         codex_base_url_override("custom", "https://provider.example.com/v1").unwrap(),
@@ -344,6 +355,7 @@ fn codex_app_server_overrides_reject_command_injection_characters() {
 }
 
 #[test]
+// 验证 Provider 探测诊断替换明文秘密。
 fn codex_provider_probe_reports_startup_errors_without_leaking_secrets() {
     let detail = redact_remote_codex_probe_output(
         &sample_remote_codex_launch(true),
@@ -356,6 +368,7 @@ fn codex_provider_probe_reports_startup_errors_without_leaking_secrets() {
 }
 
 #[test]
+// 验证仅有托管模型目录时启用严格配置探测参数。
 fn codex_provider_probe_uses_strict_config_only_for_managed_catalog() {
     assert_eq!(
         codex_app_server_probe_args(true),
@@ -368,6 +381,7 @@ fn codex_provider_probe_uses_strict_config_only_for_managed_catalog() {
 }
 
 #[test]
+// 验证 Codex 默认审批模式以及明确启用的 YOLO 行为。
 fn codex_uses_app_server_approvals_and_yolo_is_explicit() {
     let project = tempfile::tempdir().unwrap();
     let render = |profile: &CcConnectProfile| {
@@ -410,6 +424,7 @@ fn codex_uses_app_server_approvals_and_yolo_is_explicit() {
 
 #[cfg(not(target_os = "windows"))]
 #[test]
+// 验证 Unix 包装器将自定义启动参数转交代理执行。
 fn unix_codex_wrapper_routes_registered_launcher_args_through_proxy() {
     let payload = codex_profile_wrapper_payload();
     assert!(payload.contains(&format!("${{{CODEX_LAUNCHER_ARGS_ENV}:-}}")));
@@ -417,6 +432,7 @@ fn unix_codex_wrapper_routes_registered_launcher_args_through_proxy() {
 }
 
 #[test]
+// 验证非 Codex Agent 复用结构化启动器并按需加入 Claude 快照。
 fn managed_config_reuses_registered_launcher_for_non_codex_agents() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());

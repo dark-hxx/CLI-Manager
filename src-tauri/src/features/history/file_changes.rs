@@ -16,18 +16,21 @@ use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 /// 仅需 summary + stats 的调用方（list / stats 聚合）使用，不收集消息体。
+// 调用统一扫描器获取摘要与统计，不返回消息正文列表。
 pub(super) fn scan_session_combined(path: &Path) -> (SessionSummaryScan, SessionStatsScan) {
     let (summary, stats, _) = scan_session_inner(path, false);
     (summary, stats)
 }
 
 /// detail 路径使用：单遍同时取得 summary、stats 与完整消息列表，避免二次读取与解析。
+// 调用统一扫描器同时返回摘要、统计与消息列表。
 pub(super) fn scan_session_detail(
     path: &Path,
 ) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
     scan_session_inner(path, true)
 }
 
+// 按来源分派工具诊断扫描，普通 JSONL 将事件关联到可解析消息索引。
 pub(super) fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     if looks_like_grok_updates_file(path) {
         return scan_grok_tool_events(path);
@@ -82,6 +85,7 @@ pub(super) fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     events
 }
 
+// 扫描 Grok 工具生命周期记录，按调用 ID 去重并回填结果状态。
 pub(super) fn scan_grok_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let Ok(file) = File::open(path) else {
         return Vec::new();
@@ -152,6 +156,7 @@ pub(super) fn scan_grok_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     events
 }
 
+// 解析 Cline API 消息工具事件并补 UI 时间与结果正文。
 pub(super) fn scan_cline_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let Ok(raw) = fs::read_to_string(path) else {
         return Vec::new();
@@ -191,6 +196,7 @@ pub(super) fn scan_cline_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     events
 }
 
+// 将 Cline tool_result 内容按调用 ID 回填到既有事件并标记完成。
 pub(super) fn update_cline_tool_results(entry: &Value, events: &mut [HistoryToolEvent]) {
     let Some(blocks) = entry.get("content").and_then(Value::as_array) else {
         return;
@@ -213,6 +219,7 @@ pub(super) fn update_cline_tool_results(entry: &Value, events: &mut [HistoryTool
     }
 }
 
+// 扫描 JSONL 工具输入与补丁操作，按消息和操作组关联后汇总文件变更。
 pub(super) fn scan_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
     if looks_like_cline_session_file(path) {
         return scan_cline_file_changes(path);
@@ -263,6 +270,7 @@ pub(super) fn scan_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
     summarize_file_change_operations(operations)
 }
 
+// 从 Cline API 消息提取编辑操作并按文件汇总。
 pub(super) fn scan_cline_file_changes(path: &Path) -> Vec<HistoryFileChangeSummary> {
     let Ok(raw) = fs::read_to_string(path) else {
         return Vec::new();
@@ -293,6 +301,7 @@ pub(super) fn scan_cline_file_changes(path: &Path) -> Vec<HistoryFileChangeSumma
     summarize_file_change_operations(operations)
 }
 
+// 按调用 ID 去重提取 Claude、Codex 工具编辑输入及文件快照补丁。
 pub(super) fn collect_file_changes_from_value(
     value: &Value,
     message_index: Option<usize>,
@@ -398,6 +407,7 @@ pub(super) fn collect_file_changes_from_value(
     operations
 }
 
+// 先将参数解析为 JSON 编辑输入，未命中时尝试直接补丁文本。
 pub(super) fn extract_file_changes_from_arguments(
     tool_name: Option<&str>,
     arguments: &str,
@@ -429,6 +439,7 @@ pub(super) fn extract_file_changes_from_arguments(
     operations
 }
 
+// 解析文件路径与文本编辑数组，缺失编辑操作时尝试字符串或字段补丁。
 pub(super) fn extract_file_changes_from_input_value(
     tool_name: Option<&str>,
     input: &Value,
@@ -516,6 +527,7 @@ pub(super) fn extract_file_changes_from_input_value(
     operations
 }
 
+// 存在任一新旧文本时构造编辑操作并计算行级增删数。
 pub(super) fn build_text_file_change_operation(
     file_path: String,
     tool_name: Option<String>,
@@ -545,6 +557,7 @@ pub(super) fn build_text_file_change_operation(
     })
 }
 
+// 按文件拆分补丁并生成带增删计数与消息定位的变更操作。
 pub(super) fn build_patch_file_change_operations(
     patch_text: &str,
     tool_name: Option<&str>,
@@ -574,6 +587,7 @@ pub(super) fn build_patch_file_change_operations(
         .collect()
 }
 
+// 按操作顺序分组文件，累计增删数并选取最新状态和定位信息。
 pub(super) fn summarize_file_change_operations(
     mut operations: Vec<HistoryFileChangeOperation>,
 ) -> Vec<HistoryFileChangeSummary> {
@@ -630,6 +644,7 @@ pub(super) fn summarize_file_change_operations(
     summaries
 }
 
+// 依次按操作组、消息索引和时间字符串比较变更先后。
 pub(super) fn is_newer_file_change(
     candidate_group_index: Option<usize>,
     candidate_message_index: Option<usize>,
@@ -645,6 +660,7 @@ pub(super) fn is_newer_file_change(
         .is_gt()
 }
 
+// 优先从补丁头判断新增或删除，否则依据新旧文本是否为空推断状态。
 pub(super) fn derive_file_change_status(operation: &HistoryFileChangeOperation) -> String {
     if let Some(patch) = &operation.patch {
         for line in patch.lines() {
@@ -677,6 +693,7 @@ pub(super) fn derive_file_change_status(operation: &HistoryFileChangeOperation) 
     }
 }
 
+// 从兼容路径字段读取字符串并排除空白路径。
 pub(super) fn extract_file_path_from_value(value: &Value) -> Option<String> {
     extract_string_field(
         value,
@@ -686,6 +703,7 @@ pub(super) fn extract_file_path_from_value(value: &Value) -> Option<String> {
     .filter(|path| !path.is_empty())
 }
 
+// 取首个存在的候选字段，仅在其为字符串时返回内容。
 pub(super) fn extract_string_field(value: &Value, keys: &[&str]) -> Option<String> {
     let object = value.as_object()?;
     keys.iter()
@@ -694,6 +712,7 @@ pub(super) fn extract_string_field(value: &Value, keys: &[&str]) -> Option<Strin
         .map(str::to_string)
 }
 
+// 统计加减号开头的补丁行，排除三加号和三减号文件头。
 pub(super) fn count_patch_changes(patch: &str) -> (u64, u64) {
     let mut additions = 0u64;
     let mut deletions = 0u64;
@@ -708,6 +727,7 @@ pub(super) fn count_patch_changes(patch: &str) -> (u64, u64) {
     (additions, deletions)
 }
 
+// 使用有界行数乘积的最长公共子序列计算增删，大文本回退全部替换计数。
 pub(super) fn count_text_changes(old_text: Option<&str>, new_text: Option<&str>) -> (u64, u64) {
     let old_text = old_text.unwrap_or_default();
     let new_text = new_text.unwrap_or_default();
@@ -748,6 +768,7 @@ pub(super) fn count_text_changes(old_text: Option<&str>, new_text: Option<&str>)
     )
 }
 
+// 返回非空文本的行数，空文本为零。
 pub(super) fn count_text_lines(text: &str) -> u64 {
     if text.is_empty() {
         0
@@ -756,6 +777,7 @@ pub(super) fn count_text_lines(text: &str) -> u64 {
     }
 }
 
+// 解码可识别的嵌入补丁后按格式拆文件块，未拆分的补丁保留整体。
 pub(super) fn split_patch_blocks(content: &str) -> Vec<String> {
     let decoded = decode_embedded_apply_patch(content);
     let content = decoded.as_deref().unwrap_or(content);
@@ -781,6 +803,7 @@ pub(super) fn split_patch_blocks(content: &str) -> Vec<String> {
     Vec::new()
 }
 
+// 截取完整 Begin/End Patch 区间并解码常见反斜杠转义。
 pub(super) fn decode_embedded_apply_patch(content: &str) -> Option<String> {
     let start = content.find("*** Begin Patch")?;
     let patch = &content[start..];
@@ -813,6 +836,7 @@ pub(super) fn decode_embedded_apply_patch(content: &str) -> Option<String> {
     Some(decoded)
 }
 
+// 按 Update、Add 或 Delete File 头拆分 Codex 补丁并忽略全局起止标记。
 pub(super) fn split_apply_patch_blocks(content: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current = Vec::new();
@@ -846,6 +870,7 @@ pub(super) fn split_apply_patch_blocks(content: &str) -> Vec<String> {
     blocks
 }
 
+// 按 diff --git 文件头拆分统一差异块。
 pub(super) fn split_unified_diff_blocks(content: &str) -> Vec<String> {
     let mut blocks = Vec::new();
     let mut current = Vec::new();
@@ -873,6 +898,7 @@ pub(super) fn split_unified_diff_blocks(content: &str) -> Vec<String> {
     blocks
 }
 
+// 从 Codex 或统一 diff 头提取目标路径，未识别时回退 unknown-file。
 pub(super) fn extract_patch_file_path(patch: &str) -> String {
     for line in patch.lines() {
         if let Some(path) = line.strip_prefix("*** Update File: ") {

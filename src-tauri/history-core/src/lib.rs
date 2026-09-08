@@ -40,6 +40,7 @@ pub struct RemoteHistoryUsage {
 }
 
 impl RemoteHistoryUsage {
+    // 饱和累加输入、输出和两类缓存 Token，避免计数溢出回绕。
     pub fn total(self) -> u64 {
         self.input_tokens
             .saturating_add(self.output_tokens)
@@ -47,6 +48,7 @@ impl RemoteHistoryUsage {
             .saturating_add(self.cache_creation_tokens)
     }
 
+    // 将一条用量逐字段饱和累加到当前统计，不在这里做去重或累计值转增量。
     fn add_assign(&mut self, other: Self) {
         self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
         self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
@@ -190,6 +192,9 @@ pub struct ParserState {
     pub search_text: String,
 }
 
+// 将一条完整 JSONL 记录累积到摘要状态；坏 JSON 跳过，元数据首次命中后保留。
+// Codex 累计用量转为饱和差值，其他来源按消息/请求键去重；消息数量不随用量去重撤回。
+// 用量明细达到上限后仅按物理行号间隔合并到末项，完整总量仍独立累计。
 pub fn apply_jsonl_line(
     state: &mut ParserState,
     source: &str,
@@ -280,6 +285,8 @@ pub fn apply_jsonl_line(
     }
 }
 
+// 由已有解析状态生成 SSH 摘要和远程原文定位符，不读写文件，也不把 artifact 当本地路径。
+// 标题优先首条用户文本；主模型按出现次数选择，同票时取字典序较小者。
 pub fn build_summary(
     state: &ParserState,
     source: &str,
@@ -338,6 +345,8 @@ pub fn build_summary(
     }
 }
 
+// 顺序解析传入记录，保留物理行索引，提取消息、分块和文件变更，并复用摘要累计逻辑。
+// 单条消息/分块按字符截断；不限制传入记录总数，也不负责远程身份或文件访问校验。
 pub fn parse_detail(
     source: &str,
     source_instance_id: &str,
@@ -404,6 +413,7 @@ pub fn parse_detail(
     }
 }
 
+// 裁剪空白、统一斜杠并去掉非根路径的尾斜杠；不解析 ..、符号链接或文件系统身份。
 pub fn normalize_remote_path(value: &str) -> String {
     let mut normalized = value.trim().replace('\\', "/");
     while normalized.len() > 1 && normalized.ends_with('/') {
@@ -412,6 +422,7 @@ pub fn normalize_remote_path(value: &str) -> String {
     normalized
 }
 
+// 用 cwd 的路径段前缀或不区分大小写的 Claude 项目键匹配范围；只作筛选，不作访问授权。
 pub fn path_matches_scope(cwd: Option<&str>, project_key: &str, project_paths: &[String]) -> bool {
     let cwd = cwd.map(normalize_remote_path);
     project_paths.iter().any(|project| {
@@ -425,10 +436,13 @@ pub fn path_matches_scope(cwd: Option<&str>, project_key: &str, project_paths: &
     })
 }
 
+// 将规范化路径中的斜杠替换为短横线，构造兼容 Claude 目录命名的比较键。
 pub fn claude_project_key(path: &str) -> String {
     normalize_remote_path(path).replace('/', "-")
 }
 
+// 识别 Claude user/assistant 及 Codex 用户事件/消息记录，统一角色、平铺文本和结构分块。
+// 没有可提取文本的记录返回 None；Claude 用户记录若全部是工具结果则归为 tool。
 fn parse_message(value: &Value) -> Option<(String, String, Vec<RemoteHistoryMessagePart>)> {
     let root_type = value
         .get("type")
@@ -477,6 +491,7 @@ fn parse_message(value: &Value) -> Option<(String, String, Vec<RemoteHistoryMess
     None
 }
 
+// 从字符串或常见内容字段提取文本，数组项以换行拼接；不直接序列化任意对象为正文。
 fn content_text(value: &Value) -> Option<String> {
     match value {
         Value::String(text) => non_empty(text),
@@ -502,6 +517,7 @@ fn content_text(value: &Value) -> Option<String> {
     }
 }
 
+// 仅当内容是非空数组且每项都标为工具结果时成立，避免把混合用户消息改成工具角色。
 fn content_items_are_tool_results(value: &Value) -> bool {
     value.as_array().is_some_and(|items| {
         !items.is_empty()
@@ -514,6 +530,7 @@ fn content_items_are_tool_results(value: &Value) -> bool {
     })
 }
 
+// 通过已知上下文标题/XML 标记启发式识别注入说明，仅影响显示分类，不执行或信任其内容。
 fn injected_prompt(content: &str) -> bool {
     let lower = content.trim_start().to_ascii_lowercase();
     let first_line = lower
@@ -538,6 +555,7 @@ fn injected_prompt(content: &str) -> bool {
         || lower.contains("### available skills")
 }
 
+// 注入上下文优先显示为 system，其余按消息角色映射无明确类型的分块。
 fn fallback_part_kind(role: &str, content: &str) -> &'static str {
     if injected_prompt(content) {
         return "system";
@@ -550,6 +568,7 @@ fn fallback_part_kind(role: &str, content: &str) -> &'static str {
     }
 }
 
+// 将平铺正文包装成一个兜底分块，不伪造工具名称或调用 ID。
 fn fallback_part(role: &str, content: &str) -> RemoteHistoryMessagePart {
     RemoteHistoryMessagePart {
         kind: fallback_part_kind(role, content).to_string(),
@@ -559,6 +578,7 @@ fn fallback_part(role: &str, content: &str) -> RemoteHistoryMessagePart {
     }
 }
 
+// 统一不同来源的推理/工具/系统类型别名；缺失类型按角色回退，未知显式类型保留为 unknown。
 fn part_kind(value: &Value, role: &str, content: &str) -> &'static str {
     let kind = value
         .get("type")
@@ -583,6 +603,7 @@ fn part_kind(value: &Value, role: &str, content: &str) -> &'static str {
     }
 }
 
+// 按别名优先级取首个字符串并裁剪；首个字符串为空时返回 None，不继续改取后续别名。
 fn part_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key))
@@ -592,6 +613,7 @@ fn part_string(value: &Value, keys: &[&str]) -> Option<String> {
         .map(str::to_string)
 }
 
+// 优先提取普通文本，再尝试推理/工具参数和结果；非字符串工具载荷转为 JSON 文本展示。
 fn part_content(value: &Value) -> Option<String> {
     content_text(value).or_else(|| {
         [
@@ -613,6 +635,7 @@ fn part_content(value: &Value) -> Option<String> {
     })
 }
 
+// 保持内容项顺序构建有正文的分块，提取工具名/调用 ID；全无可用项时包装平铺正文。
 fn content_parts(value: &Value, role: &str, flat_content: &str) -> Vec<RemoteHistoryMessagePart> {
     let values: Vec<&Value> = match value {
         Value::Array(items) => items.iter().collect(),
@@ -640,6 +663,7 @@ fn content_parts(value: &Value, role: &str, flat_content: &str) -> Vec<RemoteHis
     }
 }
 
+// 在有深度上限的 JSON 搜索中找到 usage 对象，再按兼容字段名读取四类用量，缺值记零。
 fn usage_from_value(value: &Value) -> Option<RemoteHistoryUsage> {
     let usage = deep_object(value, "usage", 0)?;
     let input_tokens = number(usage, &["input_tokens", "inputTokens"]);
@@ -669,6 +693,7 @@ fn usage_from_value(value: &Value) -> Option<RemoteHistoryUsage> {
     })
 }
 
+// 只读取 Codex token_count 的 total_token_usage 累计字段，差值计算交给摘要状态处理。
 fn codex_cumulative_usage(value: &Value) -> Option<RemoteHistoryUsage> {
     let payload = value.get("payload")?;
     if payload.get("type").and_then(Value::as_str) != Some("token_count") {
@@ -690,6 +715,7 @@ fn codex_cumulative_usage(value: &Value) -> Option<RemoteHistoryUsage> {
     })
 }
 
+// 由 message.id 与请求 ID 组成去重键；两者都为空或没有 message 时不提供去重身份。
 fn usage_key(value: &Value) -> Option<String> {
     let message = value.get("message")?;
     let id = message
@@ -704,6 +730,8 @@ fn usage_key(value: &Value) -> Option<String> {
     (!id.is_empty() || !request.is_empty()).then(|| format!("{id}:{request}"))
 }
 
+// 从工具输入提取路径、替换文本或 patch；Codex 非 JSON 参数按原始 patch 文本处理。
+// 每条记录最多返回一项变更，路径不做文件访问校验，传入的消息索引/时间戳原样关联。
 fn parse_file_change(
     value: &Value,
     message_index: usize,
@@ -777,6 +805,7 @@ fn parse_file_change(
     })
 }
 
+// 从 Codex Update/Add/Delete File 标记取首个非空路径；不解析 Unified Diff 的路径头。
 fn patch_path(patch: &str) -> Option<String> {
     patch.lines().find_map(|line| {
         line.strip_prefix("*** Update File: ")
@@ -788,6 +817,7 @@ fn patch_path(patch: &str) -> Option<String> {
     })
 }
 
+// 按行首 +/- 粗略统计增删，排除 +++/--- 文件头；不验证 patch 是否完整或可应用。
 fn patch_counts(patch: &str) -> (u64, u64) {
     patch.lines().fold((0, 0), |(additions, deletions), line| {
         if line.starts_with('+') && !line.starts_with("+++") {
@@ -800,6 +830,7 @@ fn patch_counts(patch: &str) -> (u64, u64) {
     })
 }
 
+// 先查本层候选键，再深度遍历子对象/数组，返回首个非空字符串；depth 大于 5 时停止。
 fn deep_string(value: &Value, keys: &[&str], depth: usize) -> Option<String> {
     if depth > 5 {
         return None;
@@ -819,6 +850,7 @@ fn deep_string(value: &Value, keys: &[&str], depth: usize) -> Option<String> {
     }
 }
 
+// 在深度上限内找指定键对应的首个对象，借用原 JSON；同名非对象值不作为结果。
 fn deep_object<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Value> {
     if depth > 5 {
         return None;
@@ -835,6 +867,7 @@ fn deep_object<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Valu
     }
 }
 
+// session_meta 专用记录取 payload.id；其他记录在有限深度内寻找 session_id/sessionId。
 fn session_id(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) == Some("session_meta") {
         return value
@@ -846,10 +879,12 @@ fn session_id(value: &Value) -> Option<String> {
     deep_string(value, &["session_id", "sessionId"], 0)
 }
 
+// 取已知时间字段的首个非空字符串，保留原格式，不把数字时间转换为文本。
 fn timestamp_text(value: &Value) -> Option<String> {
     deep_string(value, &["timestamp", "created_at", "createdAt"], 0)
 }
 
+// 按字段优先级解析整数或 RFC3339 时间；整数绝对值小于阈值时按秒换算，否则按毫秒。
 fn timestamp_ms(value: &Value) -> Option<i64> {
     for key in ["timestamp", "created_at", "createdAt"] {
         if let Some(raw) = deep_value(value, key, 0) {
@@ -870,6 +905,7 @@ fn timestamp_ms(value: &Value) -> Option<i64> {
     None
 }
 
+// 在 depth 不超过 5 的范围内返回首个同名字段，不筛选值类型，后续解析由调用方决定。
 fn deep_value<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Value> {
     if depth > 5 {
         return None;
@@ -886,6 +922,7 @@ fn deep_value<'a>(value: &'a Value, key: &str, depth: usize) -> Option<&'a Value
     }
 }
 
+// 选首个存在的别名字段转为非负整数；浮点先截负再转换，类型不支持或无字段时记零。
 fn number(value: &Value, keys: &[&str]) -> u64 {
     keys.iter()
         .find_map(|key| value.get(*key))
@@ -897,6 +934,7 @@ fn number(value: &Value, keys: &[&str]) -> u64 {
         .unwrap_or_default()
 }
 
+// 按 user/human、tool、developer/system 子串的优先级统一角色，其余回退为 assistant。
 fn normalize_role(value: &str) -> String {
     let lower = value.to_ascii_lowercase();
     if lower.contains("user") || lower.contains("human") {
@@ -910,6 +948,8 @@ fn normalize_role(value: &str) -> String {
     }
 }
 
+// 当现有文本未达阈值时追加换行和截取内容；现有长度按字节算，新增截取按字符算。
+// 因此 SEARCH_TEXT_LIMIT 不是多字节文本的严格字节上限。
 fn append_search_text(target: &mut String, value: &str) {
     if target.len() >= SEARCH_TEXT_LIMIT {
         return;
@@ -921,14 +961,17 @@ fn append_search_text(target: &mut String, value: &str) {
     target.push_str(&truncate_chars(value, remaining));
 }
 
+// 去掉首尾空白后按 Unicode 字符数截取标题摘要，不追加省略号。
 fn excerpt(value: &str, limit: usize) -> String {
     truncate_chars(value.trim(), limit)
 }
 
+// 按 Unicode 标量值取前 limit 项，保持 UTF-8 合法；不保证字素簇或显示宽度完整。
 fn truncate_chars(value: &str, limit: usize) -> String {
     value.chars().take(limit).collect()
 }
 
+// 裁剪首尾空白并返回拥有所有权的非空字符串，空内容转为 None。
 fn non_empty(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -941,6 +984,7 @@ mod tests {
     };
 
     #[test]
+    // 验证重复 Claude 消息/请求身份不会重复累计用量。
     fn claude_duplicate_usage_is_counted_once() {
         let line = r#"{"type":"assistant","requestId":"r1","message":{"id":"m1","role":"assistant","content":"ok","usage":{"input_tokens":10,"output_tokens":2}}}"#;
         let mut state = ParserState::default();
@@ -951,6 +995,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 累计值先缩小再增长时，不回退高水位或重复统计已计部分。
     fn codex_cumulative_shrink_does_not_reduce_high_water() {
         let mut state = ParserState::default();
         for line in [
@@ -965,6 +1010,7 @@ mod tests {
     }
 
     #[test]
+    // 验证详情采用真实会话 ID，并保留远程 artifact 定位键而非伪造本地路径。
     fn detail_keeps_remote_locator_without_local_path() {
         let detail = parse_detail(
             "codex",
@@ -991,6 +1037,7 @@ mod tests {
     }
 
     #[test]
+    // 验证远程推理、正文及工具调用分块保持顺序和类型，并保留工具名。
     fn detail_preserves_remote_message_part_kinds() {
         let detail = parse_detail(
             "claude",
@@ -1015,6 +1062,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧载荷缺少 parts 字段时仍可反序列化，默认使用空分块列表。
     fn old_remote_message_payload_defaults_parts_to_empty() {
         let message: RemoteHistoryMessage = serde_json::from_str(
             r#"{"role":"user","content":"hello","timestamp":null,"model":null,"inputTokens":null,"outputTokens":null,"cacheReadTokens":null,"cacheCreationTokens":null,"lineIndex":0}"#,
@@ -1025,6 +1073,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex developer 消息的角色及分块均按 system 展示。
     fn developer_messages_are_normalized_as_system() {
         let line = r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>internal context</skills_instructions>"}]}}"#;
         let detail = parse_detail(
@@ -1044,6 +1093,7 @@ mod tests {
     }
 
     #[test]
+    // 验证用户角色携带的 Codex 权限/技能上下文可识别为系统分块。
     fn embedded_codex_context_is_classified_as_system_part() {
         let detail = parse_detail(
             "codex",
@@ -1061,6 +1111,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 技能目录提示不会被当作普通用户正文分块。
     fn skill_directory_context_is_classified_as_system_part() {
         let detail = parse_detail(
             "claude",
@@ -1078,6 +1129,7 @@ mod tests {
     }
 
     #[test]
+    // 验证工作树 cwd 或 Claude 编码项目键可匹配项目，其他项目路径不匹配。
     fn project_scope_matches_cwd_or_claude_key() {
         let projects = vec!["/srv/app".to_string()];
         assert!(path_matches_scope(

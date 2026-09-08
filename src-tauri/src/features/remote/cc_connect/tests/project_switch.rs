@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证未选运行项目时清单显示待接管说明。
 fn project_list_uses_standby_copy_without_a_runtime_target() {
     let project = tempfile::tempdir().unwrap();
     let profile = sample_profile(project.path());
@@ -17,6 +18,7 @@ fn project_list_uses_standby_copy_without_a_runtime_target() {
 }
 
 #[test]
+// 验证项目单行显示、可用性、稳定切换令牌及脚本边界。
 fn project_list_and_switch_tokens_are_stable_and_safe() {
     let current = tempfile::tempdir().unwrap();
     let unavailable = current.path().join("missing");
@@ -80,6 +82,7 @@ fn project_list_and_switch_tokens_are_stable_and_safe() {
 }
 
 #[test]
+// 验证分组清单通过 Agent、Provider 和语言区分同名项目。
 fn project_list_groups_directories_and_disambiguates_provider() {
     let project_dir = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project_dir.path());
@@ -138,6 +141,7 @@ fn project_list_groups_directories_and_disambiguates_provider() {
 }
 
 #[test]
+// 验证项目 Provider 覆盖优先并解析全局或目录名称。
 fn project_provider_prefers_project_override_and_resolves_global_names() {
     let mut catalog = ProviderCatalog::default();
     catalog.current_by_app.insert(
@@ -191,6 +195,7 @@ fn project_provider_prefers_project_override_and_resolves_global_names() {
 }
 
 #[test]
+// 验证项目按侧栏树顺序排列并保留孤立和未分组项目。
 fn registered_projects_follow_sidebar_tree_order_and_keep_ungrouped_entries() {
     let project_dir = tempfile::tempdir().unwrap();
     let groups = vec![
@@ -272,6 +277,7 @@ fn registered_projects_follow_sidebar_tree_order_and_keep_ungrouped_entries() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 通过 PowerShell 读取临时清单验证 UTF-8 输出。
 fn project_list_command_returns_utf8_manifest() {
     let project = tempfile::tempdir().unwrap();
     let profile = sample_profile(project.path());
@@ -298,6 +304,7 @@ fn project_list_command_returns_utf8_manifest() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 运行临时切换脚本验证无效及越界输入在启动应用前被拒绝。
 fn project_switch_script_rejects_invalid_or_out_of_range_arguments() {
     let project = tempfile::tempdir().unwrap();
     let profile = sample_profile(project.path());
@@ -354,7 +361,9 @@ fn project_switch_script_rejects_invalid_or_out_of_range_arguments() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 模拟远端参数编码并验证 PowerShell 注入片段不被执行。
 fn project_switch_command_encodes_user_arguments() {
+    // 模拟固定 cc-connect 版本的空白分词与 ASCII 引号处理。
     fn split_cc_connect_v1_4_1_args(raw: &str) -> Vec<String> {
         let mut tokens = Vec::new();
         let mut current = String::new();

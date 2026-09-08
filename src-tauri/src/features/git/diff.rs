@@ -28,6 +28,7 @@ pub struct GitDiffOptions {
 }
 
 impl Default for GitDiffOptions {
+    // 默认按精确空白生成三行上下文的 Diff。
     fn default() -> Self {
         Self {
             whitespace: GitDiffWhitespaceMode::Exact,
@@ -37,6 +38,7 @@ impl Default for GitDiffOptions {
 }
 
 impl GitDiffOptions {
+    // 仅允许三、十或二十行上下文选项。
     pub fn validate(self) -> Result<Self, String> {
         if matches!(self.context_lines, 3 | 10 | 20) {
             Ok(self)
@@ -45,6 +47,7 @@ impl GitDiffOptions {
         }
     }
 
+    // 只有精确空白模式允许后续考虑局部回滚。
     pub(super) fn allows_partial_revert(self) -> bool {
         self.whitespace == GitDiffWhitespaceMode::Exact
     }
@@ -59,6 +62,7 @@ pub struct GitFileDiffPayload {
     pub line_count: usize,
 }
 
+// 统计 UTF-8 字节和文本行数，超过展示上限即拒绝，不截断 Patch。
 pub(super) fn build_diff_payload(
     content: String,
     can_revert_hunks: bool,
@@ -76,6 +80,7 @@ pub(super) fn build_diff_payload(
     })
 }
 
+// 验证相对路径并按本地或 WSL 运行环境选择 Diff 生成方式。
 pub(super) fn get_file_diff(
     project_path: &str,
     file_path: &str,
@@ -105,6 +110,7 @@ pub(super) fn get_file_diff(
     get_native_diff(root, file_path, status, options)
 }
 
+// 为未跟踪文件生成全新增 Diff，否则按状态及编码选项构造 libgit2 Diff。
 fn get_native_diff(
     root: &Path,
     file_path: &str,
@@ -148,6 +154,7 @@ fn get_native_diff(
     format_diff_for_display(diff, file_path, encoding.as_ref(), options)
 }
 
+// 未跟踪文件通过 UNC 读取，已跟踪文件通过 WSL Git 生成展示 Diff。
 fn get_wsl_diff(
     unc_root: &str,
     distro: &str,
@@ -166,6 +173,7 @@ fn get_wsl_diff(
     format_cli_diff(&bytes, file_path, options)
 }
 
+// 构造关闭外部 Diff、textconv 和颜色的参数，并应用空白、上下文及路径选项。
 fn cli_diff_args(file_path: &str, status: &str, options: GitDiffOptions) -> Vec<String> {
     let mut args = vec![
         "-c".to_string(),
@@ -192,6 +200,7 @@ fn cli_diff_args(file_path: &str, status: &str, options: GitDiffOptions) -> Vec<
     args
 }
 
+// 拒绝目录，解码文件并生成全新增只读 Diff，再检查展示长度限制。
 fn untracked_diff(root: &Path, file_path: &str) -> Result<GitFileDiffPayload, String> {
     let full_path = root.join(file_path);
     if full_path.is_dir() {

@@ -123,6 +123,9 @@ enum CandidateKind {
     Conflict,
 }
 
+// 在内存中检查或规划目标模块的 Hook 安装/卸载，保留第三方条目及未修改的原文。
+// 检查模式只报告冲突；写操作遇到所有权冲突会失败，实际文件写入与并发校验由调用方负责。
+// installed_bridge_events 记录扫描/安装阶段发现的事件，不能当作卸载后重新检查的结果。
 pub fn plan(
     original: &str,
     expected_commands: &BTreeMap<String, String>,
@@ -273,6 +276,8 @@ pub fn plan(
     })
 }
 
+// 校验全部九种桥接事件的预期命令：必须可识别、来源为 kimi、事件匹配且所有者一致。
+// 即便只操作部分模块，也要求完整的预期命令表，避免所有权判定缺少参照。
 fn parse_expected_commands(
     commands: &BTreeMap<String, String>,
 ) -> Result<BTreeMap<String, ParsedCommand>, String> {
@@ -296,6 +301,7 @@ fn parse_expected_commands(
     Ok(parsed)
 }
 
+// 允许缺少 hooks；存在时要求表数组及正确类型的必需/可选字段，不删除额外字段。
 fn validate_hooks_shape(document: &DocumentMut) -> Result<(), String> {
     let Some(item) = document.get("hooks") else {
         return Ok(());
@@ -319,6 +325,7 @@ fn validate_hooks_shape(document: &DocumentMut) -> Result<(), String> {
     Ok(())
 }
 
+// 仅在 hooks 缺失时创建空表数组；已有值类型不符则报错，不以新数组覆盖。
 fn ensure_hooks(document: &mut DocumentMut) -> Result<&mut ArrayOfTables, String> {
     if !document.contains_key("hooks") {
         document["hooks"] = Item::ArrayOfTables(ArrayOfTables::new());
@@ -329,6 +336,8 @@ fn ensure_hooks(document: &mut DocumentMut) -> Result<&mut ArrayOfTables, String
         .ok_or_else(|| "hook_config_toml_hooks_invalid".to_string())
 }
 
+// 按解析后的来源、所有者家族、原生/桥接事件及 matcher 判定第三方、冲突、精确或过期条目。
+// 同一家族中可执行文件或安装身份变动属于过期；事件或来源不一致不能作为可升级条目。
 fn classify_candidate(
     parsed: Option<&ParsedCommand>,
     definition: Option<&KimiHookDefinition>,
@@ -366,6 +375,7 @@ fn classify_candidate(
     }
 }
 
+// 将精确本地所有者和 SSH 所有者前缀区分为两个家族，未知标记不归属任一方。
 fn owner_family(owner: &str) -> Option<&'static str> {
     if owner == LOCAL_OWNER {
         Some("local")
@@ -376,6 +386,8 @@ fn owner_family(owner: &str) -> Option<&'static str> {
     }
 }
 
+// 只识别参数顺序与数量完全匹配的本地/SSH 托管命令，不执行命令或用子串认领所有权。
+// SSH 命令还要求 owner 后缀与 installation-id 相同；来源与事件有效性留给上层核对。
 fn parse_command(command: &str) -> Option<ParsedCommand> {
     let tokens = shell_tokens(command)?;
     match tokens.as_slice() {
@@ -417,6 +429,7 @@ fn parse_command(command: &str) -> Option<ParsedCommand> {
     }
 }
 
+// 精确匹配应用生成的 PowerShell 包装器，否则使用有限的 POSIX 风格拆词；不调用 shell。
 fn shell_tokens(command: &str) -> Option<Vec<String>> {
     const POWERSHELL_PREFIX: &str = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& ";
     if let Some(inner) = command.strip_prefix(POWERSHELL_PREFIX) {
@@ -426,6 +439,8 @@ fn shell_tokens(command: &str) -> Option<Vec<String>> {
     posix_tokens(command)
 }
 
+// 读取单引号包裹的可执行路径并还原成对单引号，路径后的参数仅允许无引号/反斜杠形式。
+// 不支持一般 PowerShell 表达式，防止把相似的复杂脚本误认成标准托管命令。
 fn powershell_inner_tokens(command: &str) -> Option<Vec<String>> {
     let rest = command.strip_prefix('\'')?;
     let mut executable = String::new();
@@ -453,6 +468,8 @@ fn powershell_inner_tokens(command: &str) -> Option<Vec<String>> {
     Some(tokens)
 }
 
+// 按字节处理空白、单引号及引号外反斜杠；未闭合引号或悬空转义返回 None。
+// 这是托管命令的有限拆词器，不做变量展开，也不是完整 shell 或 Unicode 解析器。
 fn posix_tokens(command: &str) -> Option<Vec<String>> {
     let bytes = command.as_bytes();
     let mut tokens = Vec::new();
@@ -496,6 +513,7 @@ fn posix_tokens(command: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
 
+    // 为全部事件构造同一本地所有者的测试命令，使用调用方提供的可执行路径。
     fn local_commands(executable: &str) -> BTreeMap<String, String> {
         DEFINITIONS
             .iter()
@@ -511,6 +529,7 @@ mod tests {
             .collect()
     }
 
+    // 构造 owner 后缀与 installation-id 一致的 SSH 测试命令表。
     fn ssh_commands(executable: &str, installation: &str) -> BTreeMap<String, String> {
         DEFINITIONS
             .iter()
@@ -527,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    // 验证安装保留注释和用户 Hook，重复安装不再改变配置文本或报告过期。
     fn installs_idempotently_and_preserves_comments_order_and_user_hooks() {
         let original = r#"# provider comment
 model = "kimi-k2"
@@ -557,6 +577,7 @@ timeout = 9
     }
 
     #[test]
+    // 验证带有相似托管参数但含额外命令内容的用户 Hook 在安装/卸载后仍保留。
     fn similar_substrings_are_never_owned_or_removed() {
         let original = r#"[[hooks]]
 event = "Stop"
@@ -576,6 +597,7 @@ command = "echo __hook --source kimi --event Stop --owner cli-manager-local late
     }
 
     #[test]
+    // 验证旧 SSH 可执行路径与安装身份先被报告为过期，再由显式安装更新。
     fn install_converges_stale_executable_and_ssh_installation() {
         let old = ssh_commands("/old/agent", "00000000-0000-4000-8000-000000000001");
         let current = ssh_commands("/new/agent", "00000000-0000-4000-8000-000000000002");
@@ -601,6 +623,7 @@ command = "echo __hook --source kimi --event Stop --owner cli-manager-local late
     }
 
     #[test]
+    // 验证卸载可删除同一 owner 的旧路径命令，但不能删除其他 SSH 安装身份的条目。
     fn uninstall_removes_stale_executable_only_for_the_exact_owner() {
         let old_local = local_commands("/old/cli-manager");
         let current_local = local_commands("/new/cli-manager");
@@ -630,6 +653,7 @@ command = "echo __hook --source kimi --event Stop --owner cli-manager-local late
     }
 
     #[test]
+    // 验证重复的精确条目被检查为过期，并在安装后收敛为单一事件命令。
     fn install_converges_duplicate_exact_entries() {
         let commands = local_commands("/cli-manager");
         let stop = commands.get("Stop").unwrap();
@@ -651,6 +675,7 @@ command = "echo __hook --source kimi --event Stop --owner cli-manager-local late
     }
 
     #[test]
+    // 验证卸载 attention 同时移除请求/结果事件，而保留运行与中断事件。
     fn module_uninstall_removes_both_attention_definitions_only() {
         let commands = local_commands("/cli-manager");
         let installed = plan("", &commands, &ALL_MODULES, KimiPlanAction::Install).unwrap();
@@ -668,6 +693,7 @@ command = "echo __hook --source kimi --event Stop --owner cli-manager-local late
     }
 
     #[test]
+    // 验证 owner 相同但原生事件与桥接事件不匹配时报告冲突并拒绝安装。
     fn exact_owner_with_wrong_event_is_a_conflict() {
         let commands = local_commands("/cli-manager");
         let config = r#"[[hooks]]
@@ -683,6 +709,7 @@ command = "'/cli-manager' __hook --source kimi --event Interrupt --owner cli-man
     }
 
     #[test]
+    // 验证精确托管 owner 携带其他 CLI 来源时不能作为 Kimi 配置更新。
     fn exact_owner_with_wrong_source_is_a_conflict() {
         let commands = local_commands("/cli-manager");
         let config = r#"[[hooks]]
@@ -698,6 +725,7 @@ command = "'/cli-manager' __hook --source codex --event Stop --owner cli-manager
     }
 
     #[test]
+    // 区分 hooks 类型错误与 TOML 语法错误，确保返回各自的稳定错误码。
     fn invalid_hooks_shape_is_explicit() {
         let commands = local_commands("/cli-manager");
         assert_eq!(
@@ -723,6 +751,7 @@ command = "'/cli-manager' __hook --source codex --event Stop --owner cli-manager
     }
 
     #[test]
+    // 验证含空格的 Windows 路径可解析，而在标准包装器前增加 echo 后不再认领。
     fn parses_exact_powershell_command_without_substring_ownership() {
         let command = "powershell -NoProfile -ExecutionPolicy Bypass -Command \"& 'C:\\Program Files\\CLI Manager\\cli-manager.exe' __hook --source kimi --event Stop --owner cli-manager-local\"";
         let parsed = parse_command(command).unwrap();

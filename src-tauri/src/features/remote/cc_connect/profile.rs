@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 
+// 仅在目标尚非文件且源为文件时复制旧状态字节。
 pub(super) fn copy_profile_state_file_if_missing(
     source: &Path,
     target: &Path,
@@ -21,6 +22,7 @@ pub(super) fn copy_profile_state_file_if_missing(
     write_file_atomically(target, &payload, label)
 }
 
+// 将旧项目会话及微信状态复制到控制身份路径，保留旧文件。
 pub(super) fn migrate_legacy_profile_state_at(
     profile: &CcConnectProfile,
     control_path: &Path,
@@ -57,6 +59,7 @@ pub(super) fn migrate_legacy_profile_state_at(
     Ok(())
 }
 
+// 使用当前托管数据根执行旧配置状态迁移。
 pub(super) fn migrate_legacy_profile_state(
     profile: &CcConnectProfile,
     control_path: &Path,
@@ -64,6 +67,7 @@ pub(super) fn migrate_legacy_profile_state(
     migrate_legacy_profile_state_at(profile, control_path, &data_dir()?)
 }
 
+// 归一化控制项目身份及运行项目标识并返回是否变化。
 pub(super) fn set_control_profile_values(
     profile: &mut CcConnectProfile,
     control_path: &Path,
@@ -90,6 +94,7 @@ pub(super) fn set_control_profile_values(
     changed
 }
 
+// 创建控制工作区并在身份变化时复制旧项目状态。
 pub(super) fn apply_control_profile(profile: &mut CcConnectProfile) -> Result<bool, String> {
     let control_path = control_work_dir()?;
     let legacy_profile = profile.clone();
@@ -100,6 +105,7 @@ pub(super) fn apply_control_profile(profile: &mut CcConnectProfile) -> Result<bo
     Ok(changed)
 }
 
+// 读取并补齐配置；无活动接管时迁移控制身份并持久化。
 pub(super) fn load_profile() -> Result<Option<CcConnectProfile>, String> {
     let path = profile_path()?;
     let raw = match fs::read_to_string(&path) {
@@ -117,6 +123,7 @@ pub(super) fn load_profile() -> Result<Option<CcConnectProfile>, String> {
     Ok(Some(profile))
 }
 
+// 序列化连接配置并通过同目录临时文件替换。
 pub(super) fn persist_profile(profile: &CcConnectProfile) -> Result<(), String> {
     let path = profile_path()?;
     if let Some(parent) = path.parent() {
@@ -128,6 +135,7 @@ pub(super) fn persist_profile(profile: &CcConnectProfile) -> Result<(), String> 
     write_file_atomically(&path, payload.as_bytes(), "cc-connect profile")
 }
 
+// 返回多平台配置，旧单平台配置兼容为启用条目。
 pub(super) fn profile_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlatformProfile> {
     if profile.platforms.is_empty() {
         return vec![CcConnectPlatformProfile {
@@ -139,6 +147,7 @@ pub(super) fn profile_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlat
     profile.platforms.clone()
 }
 
+// 去重补齐四个平台并同步当前编辑平台的旧 allow_from 字段。
 pub(super) fn hydrate_profile_platforms(profile: &mut CcConnectProfile) {
     let legacy_platform = profile.platform;
     let legacy_allow_from = profile.allow_from.clone();
@@ -177,6 +186,7 @@ pub(super) fn hydrate_profile_platforms(profile: &mut CcConnectProfile) {
         .unwrap_or_default();
 }
 
+// 返回配置中实际启用的平台条目。
 pub(super) fn enabled_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlatformProfile> {
     profile_platforms(profile)
         .into_iter()
@@ -184,6 +194,7 @@ pub(super) fn enabled_platforms(profile: &CcConnectProfile) -> Vec<CcConnectPlat
         .collect()
 }
 
+// 查找指定平台的配置副本。
 pub(super) fn platform_profile(
     profile: &CcConnectProfile,
     platform: CcConnectPlatform,
@@ -193,6 +204,7 @@ pub(super) fn platform_profile(
         .find(|item| item.platform == platform)
 }
 
+// 更新指定平台白名单并同步兼容字段。
 pub(super) fn set_platform_allow_from(
     profile: &mut CcConnectProfile,
     platform: CcConnectPlatform,
@@ -211,6 +223,7 @@ pub(super) fn set_platform_allow_from(
     }
 }
 
+// 隔离微信授权草稿，保留合法旧名单并禁用无效的其他平台草稿。
 pub(super) fn prepare_weixin_authorization_platforms(
     profile: &mut CcConnectProfile,
 ) -> Result<String, String> {
@@ -239,6 +252,7 @@ pub(super) fn prepare_weixin_authorization_platforms(
     Ok(existing_allow_from)
 }
 
+// 归一化控制身份、平台白名单、路径与代理并检测显式程序。
 pub(super) fn normalize_profile(
     manager: &CcConnectManager,
     mut profile: CcConnectProfile,
@@ -297,6 +311,7 @@ pub(super) fn normalize_profile(
     Ok(profile)
 }
 
+// 校验受支持的代理协议、主机及无内嵌凭据要求。
 pub(super) fn normalize_proxy_url(raw: Option<&str>) -> Result<Option<String>, String> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -314,6 +329,7 @@ pub(super) fn normalize_proxy_url(raw: Option<&str>) -> Result<Option<String>, S
     Ok(Some(url.to_string()))
 }
 
+// 按平台验证显式用户标识，拒绝通配符并按首次顺序去重。
 pub(super) fn normalize_allow_from(
     platform: CcConnectPlatform,
     raw: &str,
@@ -364,6 +380,7 @@ pub(super) fn normalize_allow_from(
     Ok(values.join(","))
 }
 
+// 将白名单校验错误映射为包含平台标识的稳定代码。
 pub(super) fn normalize_profile_allow_from(
     platform: CcConnectPlatform,
     raw: &str,
@@ -378,6 +395,7 @@ pub(super) fn normalize_profile_allow_from(
     })
 }
 
+// 收集无启用平台、无效白名单及无效代理等配置问题。
 pub(super) fn profile_issue_codes(profile: &CcConnectProfile) -> Vec<String> {
     let mut issues = Vec::new();
     let enabled = enabled_platforms(profile);

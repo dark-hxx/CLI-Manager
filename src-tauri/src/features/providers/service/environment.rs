@@ -94,21 +94,25 @@ pub(crate) struct EnvironmentReport {
     pub pending_recovery: bool,
 }
 
+// 保留未指定类型的全量检查语义；指定类型交给供应商目录规范化并传播校验错误。
 fn normalize_type(value: Option<&str>) -> Result<Option<String>, String> {
     value
         .map(crate::provider::repository::normalize_app_type)
         .transpose()
 }
 
+// 将原始字符串转为带算法前缀的 SHA-256 指纹，报告中不直接返回变量值。
 fn mask_fingerprint(value: &str) -> String {
     format!("sha256:{:x}", Sha256::digest(value.as_bytes()))
 }
 
+// 以五秒超时执行探测；执行错误折叠为 None，退出状态由调用方另行判断。
 fn command_output(command: Command) -> Option<std::process::Output> {
     shell_resolver::output_with_timeout(command, PROBE_TIMEOUT).ok()
 }
 
 #[cfg(target_os = "windows")]
+// 在指定发行版直接执行 test 参数与路径；非零退出返回 false，启动或超时失败映射为打开失败。
 fn wsl_target_test(distro: &str, test: &str, linux_path: &str) -> Result<bool, String> {
     let exe = wsl::find_wsl_exe().ok_or_else(|| "provider_wsl_unavailable".to_string())?;
     let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -119,6 +123,7 @@ fn wsl_target_test(distro: &str, test: &str, linux_path: &str) -> Result<bool, S
 }
 
 #[cfg(target_os = "windows")]
+// 确认 WSL 目标存在后启动资源管理器；普通文件默认选中，明确打开时直接传入规范化 UNC 路径。
 fn open_wsl_target(
     path: &str,
     distro: &str,
@@ -143,6 +148,7 @@ fn open_wsl_target(
 }
 
 #[cfg(not(target_os = "windows"))]
+// 非 Windows 平台不支持此 WSL 目标打开路径，直接返回稳定错误码。
 fn open_wsl_target(
     _path: &str,
     _distro: &str,
@@ -152,6 +158,7 @@ fn open_wsl_target(
     Err("provider_environment_open_failed".to_string())
 }
 
+// 拒绝空路径后分派 WSL UNC 与本机打开流程；未指定 open_file 时 WSL 文件默认仅选中。
 pub(crate) async fn open_target(path: String, open_file: Option<bool>) -> Result<(), String> {
     let path = path.trim();
     if path.is_empty() {
@@ -163,6 +170,7 @@ pub(crate) async fn open_target(path: String, open_file: Option<bool>) -> Result
     crate::commands::shell::open_folder_in_explorer(path.to_string(), open_file).await
 }
 
+// 通过 where/which 首个非空结果定位 CLI，再单独探测版本；可用性只取决于是否定位到路径。
 fn local_cli(name: &str) -> CliEnvironmentStatus {
     let mut where_command =
         shell_resolver::silent_command(if cfg!(windows) { "where.exe" } else { "which" });
@@ -197,6 +205,7 @@ fn local_cli(name: &str) -> CliEnvironmentStatus {
     }
 }
 
+// 在发行版登录 shell 中探测 CLI 路径和版本；name 来自本模块固定名单，直接嵌入脚本而非接受任意输入。
 fn wsl_cli(name: &str, distro: &str) -> CliEnvironmentStatus {
     let probe = wsl::find_wsl_exe().and_then(|exe| {
         let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -225,6 +234,7 @@ fn wsl_cli(name: &str, distro: &str) -> CliEnvironmentStatus {
 }
 
 #[cfg(target_os = "windows")]
+// 在指定 WSL 发行版用 printenv 读取变量，成功时返回去首尾空白的文本，探测失败返回 None。
 fn wsl_environment_value(distro: &str, variable: &str) -> Option<String> {
     let exe = wsl::find_wsl_exe()?;
     let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -235,10 +245,12 @@ fn wsl_environment_value(distro: &str, variable: &str) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 非 Windows 平台不读取 WSL 环境变量，统一返回 None。
 fn wsl_environment_value(_distro: &str, _variable: &str) -> Option<String> {
     None
 }
 
+// 区分缺失、无效 JSON 与非对象根节点；valid 仅表示 JSON 对象语法有效，不校验 CLI 配置字段。
 fn json_syntax(bytes: Option<&[u8]>) -> String {
     let Some(bytes) = bytes else {
         return "missing".to_string();
@@ -250,6 +262,7 @@ fn json_syntax(bytes: Option<&[u8]>) -> String {
     }
 }
 
+// 将缺失与无效 UTF-8/TOML 区分；空白文档有效，不额外校验供应商配置语义。
 fn toml_syntax(bytes: Option<&[u8]>) -> String {
     let Some(bytes) = bytes else {
         return "missing".to_string();
@@ -266,6 +279,7 @@ fn toml_syntax(bytes: Option<&[u8]>) -> String {
     }
 }
 
+// 读取目标并汇总语法、可写性和内容指纹；读取错误沿用 exists=true 的报告约定，不代表独立确认存在。
 fn target_status(name: &str, path: &str, is_toml: bool) -> TargetEnvironmentStatus {
     match global::read_live(path) {
         Ok(bytes) => TargetEnvironmentStatus {
@@ -296,6 +310,7 @@ fn target_status(name: &str, path: &str, is_toml: bool) -> TargetEnvironmentStat
     }
 }
 
+// 仅在指定类型时查询当前供应商及启用的活动 Key 数量；返回存在性元数据，不读取密钥内容。
 async fn current_provider(app_type: Option<&str>) -> Result<CurrentProviderStatus, String> {
     let Some(app_type) = app_type else {
         return Ok(CurrentProviderStatus {
@@ -344,6 +359,7 @@ async fn current_provider(app_type: Option<&str>) -> Result<CurrentProviderStatu
     })
 }
 
+// 比较三个 CLI 根目录环境变量与 Home；缺失视为无冲突，WSL 按 Linux 路径精确比较，本机忽略大小写。
 fn conflicts(home: &ProviderHomeState) -> Vec<EnvironmentConflict> {
     let expected = [
         ("CLAUDE_CONFIG_DIR", &home.targets.claude_config_dir),
@@ -388,6 +404,7 @@ fn conflicts(home: &ProviderHomeState) -> Vec<EnvironmentConflict> {
         .collect()
 }
 
+// 按 CLI 类型提取非空显式根目录；仅裁剪空白，不验证路径存在性或所属环境。
 fn configured_root(overrides: Option<&EnvironmentRootOverrides>, app_type: &str) -> Option<String> {
     let value = match app_type {
         "claude" => overrides.and_then(|value| value.claude.as_deref()),
@@ -399,6 +416,7 @@ fn configured_root(overrides: Option<&EnvironmentRootOverrides>, app_type: &str)
     (!value.is_empty()).then(|| value.to_string())
 }
 
+// 按 CLI 类型在配置根目录下拼接历史子目录，未知类型使用 history。
 fn history_root(config_root: &str, app_type: &str) -> String {
     PathBuf::from(config_root)
         .join(match app_type {
@@ -411,10 +429,12 @@ fn history_root(config_root: &str, app_type: &str) -> String {
         .into_owned()
 }
 
+// 仅进行忽略大小写的字符串比较，不规范化分隔符、解析链接或检查文件系统。
 fn paths_match(left: &str, right: &str) -> bool {
     left.eq_ignore_ascii_case(right)
 }
 
+// 优先采用非空显式配置并记录覆盖名称；历史模式追加对应子目录，否则保留配置根目录。
 fn explicit_or_default(
     overrides: Option<&EnvironmentRootOverrides>,
     app_type: &str,
@@ -434,6 +454,7 @@ fn explicit_or_default(
     }
 }
 
+// 比较显式配置根目录与期望路径；没有覆盖时视为对齐。
 fn configured_matches(
     overrides: Option<&EnvironmentRootOverrides>,
     app_type: &str,
@@ -444,6 +465,7 @@ fn configured_matches(
         .unwrap_or(true)
 }
 
+// Claude/Codex 覆盖值按配置根目录追加历史子目录，Grok 覆盖值直接作为历史目录。
 fn configured_history_root(
     overrides: Option<&EnvironmentRootOverrides>,
     app_type: &str,
@@ -456,6 +478,7 @@ fn configured_history_root(
     }
 }
 
+// 比较解析后的显式历史目录与期望目录；没有覆盖时视为对齐。
 fn history_matches(
     overrides: Option<&EnvironmentRootOverrides>,
     app_type: &str,
@@ -466,6 +489,7 @@ fn history_matches(
         .unwrap_or(true)
 }
 
+// 分别解析 Hook 与历史根目录及显式覆盖标记，汇总六项字符串路径比较；不探测目录是否存在。
 fn alignment(
     home: &ProviderHomeState,
     configured_roots: Option<&EnvironmentRootOverrides>,
@@ -555,6 +579,7 @@ fn alignment(
     }
 }
 
+// 解析草稿或已保存 Home，探测固定三个 CLI，并按类型收集配置状态、当前供应商、恢复日志和目录对齐信息。
 pub(crate) async fn inspect(input: EnvironmentInspectInput) -> Result<EnvironmentReport, String> {
     let home = match input.home_input {
         Some(home_input) => home::preview(home_input).await?,
@@ -619,6 +644,7 @@ pub(crate) async fn inspect(input: EnvironmentInspectInput) -> Result<Environmen
 mod tests {
     use super::*;
 
+    // 构造纯内存本机 Home 与三种 CLI 派生目录，供路径对齐测试复用。
     fn sample_home() -> ProviderHomeState {
         let home = PathBuf::from(r"C:\Users\tester");
         let claude = home.join(".claude");
@@ -646,12 +672,14 @@ mod tests {
     }
 
     #[test]
+    // 验证未知 CLI 类型返回规范化错误，避免静默转换成全量检查。
     fn normalize_type_rejects_unknown_app_type() {
         let error = normalize_type(Some("unknown")).unwrap_err();
         assert_eq!(error, "provider_invalid_app_type:unknown");
     }
 
     #[test]
+    // 验证未指定类型保持 None，Grok 别名规范化为 grokbuild。
     fn normalize_type_keeps_unfiltered_inspection_explicit() {
         assert_eq!(normalize_type(None).unwrap(), None);
         assert_eq!(
@@ -661,6 +689,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无显式覆盖时六类目录采用所选 Home，覆盖列表为空且对齐状态为真。
     fn alignment_defaults_to_selected_home_targets() {
         let home = sample_home();
         let result = alignment(&home, None, None);
@@ -676,6 +705,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Hook 与历史覆盖独立生效、Grok 历史路径不重复追加 sessions，并标记与 Home 不对齐。
     fn alignment_keeps_explicit_hook_and_history_roots_independent() {
         let home = sample_home();
         let configured_roots = EnvironmentRootOverrides {

@@ -1,5 +1,6 @@
 use super::*;
 
+// 构造指定来源、时间、模型与用量的请求去重测试事实。
 pub(super) fn request_log_dedup_fixture(
     source: &str,
     session_id: &str,
@@ -27,15 +28,18 @@ pub(super) fn request_log_dedup_fixture(
     }
 }
 
+// 为测试写入包含单行空对象的文件。
 pub(super) fn write_file(path: &Path) {
     write_text(path, "{}\n");
 }
 
+// 创建父目录并写入测试文本，失败时直接终止测试。
 pub(super) fn write_text(path: &Path, content: &str) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, content).unwrap();
 }
 
+// 提取预期的字符串错误，结果成功时使测试失败。
 pub(super) fn expect_string_err<T>(result: Result<T, String>) -> String {
     match result {
         Ok(_) => panic!("expected error"),
@@ -43,6 +47,7 @@ pub(super) fn expect_string_err<T>(result: Result<T, String>) -> String {
     }
 }
 
+// 构造不发起网络连接的固定 SSH 历史请求配置。
 pub(super) fn remote_history_plan() -> SshLaunchPlan {
     SshLaunchPlan {
         host_id: "host-1".to_string(),
@@ -77,6 +82,7 @@ pub(super) fn remote_history_plan() -> SshLaunchPlan {
     }
 }
 
+// 构造具有固定身份和空会话列表的远程同步结果。
 pub(super) fn remote_sync_result() -> RemoteHistorySyncResult {
     serde_json::from_value(json!({
         "sourceInstanceId": "instance-1",
@@ -102,6 +108,7 @@ pub(super) fn remote_sync_result() -> RemoteHistorySyncResult {
     .unwrap()
 }
 
+// 构造所有计数归零的会话用量测试值。
 pub(super) fn empty_usage() -> HistorySessionUsage {
     HistorySessionUsage {
         input_tokens: 0,
@@ -122,6 +129,7 @@ pub(super) fn empty_usage() -> HistorySessionUsage {
     }
 }
 
+// 构造指定来源的双消息会话详情测试样本。
 pub(super) fn sample_detail(source: &str) -> HistorySessionDetail {
     HistorySessionDetail {
         session_id: "source-session".to_string(),
@@ -170,6 +178,7 @@ pub(super) fn sample_detail(source: &str) -> HistorySessionDetail {
     }
 }
 
+// 写入 Kimi 主代理日志、状态、索引及不应列出的子代理夹具。
 pub(super) fn write_kimi_session_fixture(
     home: &Path,
     session_id: &str,
@@ -226,6 +235,7 @@ pub(super) fn write_kimi_session_fixture(
     wire
 }
 
+// 在指定测试路径创建最小 OpenCode 会话、消息与片段表。
 pub(super) async fn open_opencode_test_database(db_path: &Path) -> SqliteConnection {
     let mut conn = SqliteConnection::connect_with(
         &SqliteConnectOptions::new()

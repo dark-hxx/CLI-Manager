@@ -12,6 +12,7 @@ pub(crate) struct FailoverProviderRecord {
     pub in_failover_queue: bool,
 }
 
+// 合并供应商卡片与另次查询的队列标记，以启用、配置有效及活动密钥标签判断就绪；结果沿用卡片顺序，不是事务快照。
 pub(crate) async fn list_failover_providers(
     app_type: &str,
 ) -> Result<Vec<FailoverProviderRecord>, String> {
@@ -54,6 +55,7 @@ pub(crate) async fn list_failover_providers(
         .collect())
 }
 
+// 校验非空唯一 ID 及供应商就绪状态后，在事务内替换该类型的队列成员标记；允许空列表，不保存输入顺序或切换运行时。
 pub(crate) async fn set_failover_queue(
     app_type: &str,
     provider_ids: &[String],

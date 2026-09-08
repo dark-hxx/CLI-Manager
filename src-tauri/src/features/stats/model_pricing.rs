@@ -87,6 +87,7 @@ pub enum CachedModelPricingLookup {
 }
 
 #[tauri::command]
+// 过滤无效价格并整体替换运行时缓存，标记已加载后失效历史统计缓存。
 pub fn model_prices_set_cache(prices: Vec<ModelPriceEntry>) -> Result<(), String> {
     let mut next = HashMap::new();
     for price in prices {
@@ -114,6 +115,7 @@ pub fn model_prices_set_cache(prices: Vec<ModelPriceEntry>) -> Result<(), String
 }
 
 #[tauri::command]
+// 获取远端价格并按目标模型分类为确定匹配、候选和未匹配，不写数据库。
 pub async fn model_prices_sync(targets: Vec<String>) -> Result<ModelPriceSyncResult, String> {
     if targets.len() > MAX_SYNC_TARGETS {
         return Err(format!(
@@ -175,6 +177,7 @@ pub async fn model_prices_sync(targets: Vec<String>) -> Result<ModelPriceSyncRes
     })
 }
 
+// 查询已加载的价格缓存，区分命中、缺失和缓存不可用。
 pub fn find_cached_model_pricing(model: &str) -> CachedModelPricingLookup {
     let Some(normalized) = normalize_model_id(model) else {
         return CachedModelPricingLookup::Missing;
@@ -205,6 +208,7 @@ pub fn find_cached_model_pricing(model: &str) -> CachedModelPricingLookup {
     })
 }
 
+// 优先查找规范键，缺失时选择最长的兼容版本价格键。
 fn find_model_price_entry<'a>(
     prices: &'a HashMap<String, ModelPriceEntry>,
     normalized: &str,
@@ -239,6 +243,7 @@ struct RankedRemotePrice {
     remote: RemoteModelPrice,
 }
 
+// 仅允许精确、忽略大小写或完整规范化匹配自动应用。
 fn is_auto_match_kind(kind: MatchKind) -> bool {
     matches!(
         kind,
@@ -246,6 +251,7 @@ fn is_auto_match_kind(kind: MatchKind) -> bool {
     )
 }
 
+// 并发读取两个价格源，只要存在可用价格就返回合并结果。
 async fn fetch_remote_prices() -> Result<Vec<RemoteModelPrice>, String> {
     let client = network_client::configure_builder(reqwest::Client::builder())?
         .user_agent("CLI-Manager model pricing sync")
@@ -280,6 +286,7 @@ async fn fetch_remote_prices() -> Result<Vec<RemoteModelPrice>, String> {
     Ok(prices)
 }
 
+// 读取 LiteLLM 模型价格并转换为每百万 Token 单位。
 async fn fetch_litellm_prices(client: &reqwest::Client) -> Result<Vec<RemoteModelPrice>, String> {
     let response = client
         .get(LITELLM_PRICES_URL)
@@ -336,6 +343,7 @@ async fn fetch_litellm_prices(client: &reqwest::Client) -> Result<Vec<RemoteMode
     Ok(prices)
 }
 
+// 读取 OpenRouter 模型目录并提取价格及原始元数据。
 async fn fetch_openrouter_prices(
     client: &reqwest::Client,
 ) -> Result<Vec<RemoteModelPrice>, String> {
@@ -385,6 +393,7 @@ async fn fetch_openrouter_prices(
     Ok(prices)
 }
 
+// 按兼容字段优先级读取 OpenRouter 缓存命中单价。
 fn openrouter_cache_read_per_million(pricing: &Value) -> f64 {
     per_million(number_field(
         pricing,
@@ -392,6 +401,7 @@ fn openrouter_cache_read_per_million(pricing: &Value) -> f64 {
     ))
 }
 
+// 按兼容字段优先级读取 OpenRouter 缓存写入单价。
 fn openrouter_cache_creation_per_million(pricing: &Value) -> f64 {
     per_million(number_field(
         pricing,
@@ -399,6 +409,7 @@ fn openrouter_cache_creation_per_million(pricing: &Value) -> f64 {
     ))
 }
 
+// 按模型身份、推理变体和相似度排序达到阈值的远端候选。
 fn rank_candidates(target: &str, remotes: &[RemoteModelPrice]) -> Vec<RankedRemotePrice> {
     let target_norm = normalize_for_compare(target);
     let target_base_norm = strip_reasoning_effort_suffix(&target_norm);
@@ -456,6 +467,7 @@ fn rank_candidates(target: &str, remotes: &[RemoteModelPrice]) -> Vec<RankedRemo
     ranked
 }
 
+// 规范化模型名称、来源前缀及版本后缀，保留推理强度差异。
 pub fn normalize_model_id(model: &str) -> Option<String> {
     let mut value = model.trim().to_lowercase();
     if let Some(idx) = value.find('[') {
@@ -493,6 +505,7 @@ pub fn normalize_model_id(model: &str) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+// 将括号中的已知推理强度转为后缀，否则去掉括号部分。
 fn normalize_reasoning_effort_parenthetical_suffix(value: &str) -> String {
     let trimmed = value.trim();
     let Some(open) = trimmed.rfind('(') else {
@@ -515,6 +528,7 @@ fn normalize_reasoning_effort_parenthetical_suffix(value: &str) -> String {
     trimmed[..open].trim_end().to_string()
 }
 
+// 提取已支持推理强度的规范键。
 fn normalize_reasoning_effort_key(value: &str) -> Option<&'static str> {
     let key: String = value
         .trim()
@@ -531,6 +545,7 @@ fn normalize_reasoning_effort_key(value: &str) -> Option<&'static str> {
     }
 }
 
+// 判断模型是否为给定价格键的受支持版本后缀变体。
 fn is_pricing_variant_of(normalized_model: &str, normalized_pricing_key: &str) -> bool {
     if !normalized_model.starts_with(normalized_pricing_key)
         || normalized_model
@@ -543,6 +558,7 @@ fn is_pricing_variant_of(normalized_model: &str, normalized_pricing_key: &str) -
     is_version_like_suffix(&normalized_model[normalized_pricing_key.len() + 1..])
 }
 
+// 识别 latest、数字版本或日期形状的后缀。
 fn is_version_like_suffix(suffix: &str) -> bool {
     suffix == "latest"
         || suffix
@@ -552,6 +568,7 @@ fn is_version_like_suffix(suffix: &str) -> bool {
         || is_dash_date_suffix(suffix)
 }
 
+// 检查后缀是否具有 YYYY-MM-DD 数字分隔形状。
 fn is_dash_date_suffix(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 10
@@ -563,10 +580,12 @@ fn is_dash_date_suffix(value: &str) -> bool {
             .all(|(idx, byte)| matches!(idx, 4 | 7) || byte.is_ascii_digit())
 }
 
+// 使用模型规范键比较，无法生成时回退小写原值。
 fn normalize_for_compare(model: &str) -> String {
     normalize_model_id(model).unwrap_or_else(|| model.trim().to_lowercase())
 }
 
+// 取得规范化模型标识的末级名称。
 fn canonical_tail(model: &str) -> String {
     normalize_for_compare(model)
         .rsplit('/')
@@ -575,6 +594,7 @@ fn canonical_tail(model: &str) -> String {
         .to_string()
 }
 
+// 仅保留 ASCII 字母数字用于宽松相似度比较。
 fn normalized_alnum(model: &str) -> String {
     model
         .chars()
@@ -583,6 +603,7 @@ fn normalized_alnum(model: &str) -> String {
 }
 
 /// Split a normalized model tail into dash tokens, dropping empties.
+// 按连字符拆分模型词元并丢弃空项。
 fn model_tokens(model: &str) -> Vec<String> {
     model
         .split('-')
@@ -595,6 +616,7 @@ fn model_tokens(model: &str) -> Vec<String> {
 /// When one side is a continuous dash-token prefix of the other (e.g. `grok-4-5`
 /// vs `grok-4-5-build-free`), score as a base-model candidate. Requires at least
 /// 2 shared tokens to avoid over-broad single-token hits like `gpt` vs anything.
+// 对至少两个词元的连续基础前缀生成仅供候选的评分。
 fn token_prefix_base_score(a: &[String], b: &[String]) -> Option<f64> {
     if a.is_empty() || b.is_empty() || a == b {
         return None;
@@ -614,6 +636,7 @@ fn token_prefix_base_score(a: &[String], b: &[String]) -> Option<f64> {
 }
 
 /// Fraction of the shorter token sequence that also appears in the longer one.
+// 计算较短词元序列在较长序列中的包含比例。
 fn token_containment(a: &[String], b: &[String]) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
@@ -627,6 +650,7 @@ fn token_containment(a: &[String], b: &[String]) -> f64 {
     hits as f64 / shorter.len() as f64
 }
 
+// 移除已支持的推理强度后缀并返回基础模型。
 fn strip_reasoning_effort_suffix(model: &str) -> Option<&str> {
     for suffix in ["-minimal", "-medium", "-xhigh", "-high", "-low"] {
         if let Some(base) = model.strip_suffix(suffix) {
@@ -638,6 +662,7 @@ fn strip_reasoning_effort_suffix(model: &str) -> Option<&str> {
     None
 }
 
+// 移除模型尾部具有连字符日期形状的后缀。
 fn strip_model_date_suffix(model: &str) -> Option<String> {
     let bytes = model.as_bytes();
     if bytes.len() < 11 {
@@ -657,6 +682,7 @@ fn strip_model_date_suffix(model: &str) -> Option<String> {
     Some(model[..date_start - 1].to_string())
 }
 
+// 按字段优先级提取非负有限数值，兼容数字字符串。
 fn number_field(value: &Value, keys: &[&str]) -> Option<f64> {
     for key in keys {
         let Some(raw) = value.get(*key) else {
@@ -674,10 +700,12 @@ fn number_field(value: &Value, keys: &[&str]) -> Option<f64> {
     None
 }
 
+// 将每 Token 价格换算为每百万价格，缺失值按零处理。
 fn per_million(value: Option<f64>) -> f64 {
     value.unwrap_or(0.0) * 1_000_000.0
 }
 
+// 检查模型名称非空且四种单价均为非负有限数。
 fn is_valid_price_entry(price: &ModelPriceEntry) -> bool {
     !price.model.trim().is_empty()
         && [
@@ -690,6 +718,7 @@ fn is_valid_price_entry(price: &ModelPriceEntry) -> bool {
         .all(|value| value.is_finite() && value >= 0.0)
 }
 
+// 为远端来源排序，优先 LiteLLM 再 OpenRouter。
 fn source_priority(source: &str) -> u8 {
     match source {
         "litellm" => 0,
@@ -698,6 +727,7 @@ fn source_priority(source: &str) -> u8 {
     }
 }
 
+// 按字符集合计算 Jaccard 相似度。
 fn jaccard(a: &str, b: &str) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
@@ -713,6 +743,7 @@ fn jaccard(a: &str, b: &str) -> f64 {
     }
 }
 
+// 将字符编辑距离归一化为非负相似度。
 fn levenshtein_similarity(a: &str, b: &str) -> f64 {
     if a.is_empty() || b.is_empty() {
         return 0.0;
@@ -726,6 +757,7 @@ fn levenshtein_similarity(a: &str, b: &str) -> f64 {
     }
 }
 
+// 使用单行动态规划计算 Unicode 字符编辑距离。
 fn levenshtein(a: &str, b: &str) -> usize {
     let b_chars: Vec<char> = b.chars().collect();
     let mut costs: Vec<usize> = (0..=b_chars.len()).collect();
@@ -747,6 +779,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // 构造指定输入价格的本地测试条目。
     fn test_price(model: &str, input_per_1m: f64) -> ModelPriceEntry {
         ModelPriceEntry {
             model: model.to_string(),
@@ -762,6 +795,7 @@ mod tests {
         }
     }
 
+    // 构造指定模型和来源的远端测试价格。
     fn remote_price(model: &str, source: &str) -> RemoteModelPrice {
         RemoteModelPrice {
             model: model.to_string(),
@@ -776,6 +810,7 @@ mod tests {
     }
 
     #[test]
+    // 验证推理强度模型保持独立价格键而不复用基础价格。
     fn reasoning_effort_suffix_keeps_model_price_distinct() {
         assert_eq!(
             normalize_model_id("gpt-5.4(xhigh)").as_deref(),
@@ -799,6 +834,7 @@ mod tests {
     }
 
     #[test]
+    // 验证规范化后的来源前缀匹配允许自动应用。
     fn normalized_provider_prefix_match_can_auto_apply() {
         let remotes = vec![remote_price("chatgpt/gpt-5.3-codex-spark", "litellm")];
         let ranked = rank_candidates("gpt-5.3-codex-spark", &remotes);
@@ -809,6 +845,7 @@ mod tests {
     }
 
     #[test]
+    // 验证推理强度变体仅将基础模型作为候选。
     fn reasoning_effort_variant_uses_base_model_as_candidate_only() {
         let remotes = vec![remote_price("openai/gpt-5.6", "openrouter")];
         let ranked = rank_candidates("gpt-5.6(xhigh)", &remotes);
@@ -819,6 +856,7 @@ mod tests {
     }
 
     #[test]
+    // 验证仅字母数字等价的匹配不能自动应用。
     fn alnum_match_remains_candidate_only() {
         let remotes = vec![remote_price("provider/model-a", "litellm")];
         let ranked = rank_candidates("model_a", &remotes);
@@ -829,6 +867,7 @@ mod tests {
     }
 
     #[test]
+    // 验证基础前缀匹配保留 Grok 后缀模型候选并排除无关模型。
     fn base_prefix_match_surfaces_grok_build_free_candidate() {
         let remotes = vec![
             remote_price("xai/grok-4.5", "litellm"),
@@ -847,6 +886,7 @@ mod tests {
     }
 
     #[test]
+    // 验证单个共享词元不能触发基础前缀匹配。
     fn base_prefix_requires_at_least_two_tokens() {
         let remotes = vec![remote_price("provider/gpt-extra-suffix", "litellm")];
         // single shared token "gpt" must not become a base-prefix hit
@@ -855,6 +895,7 @@ mod tests {
     }
 
     #[test]
+    // 验证词元包含率以较短序列为分母且区别于连续前缀。
     fn token_containment_scores_shared_tokens_against_shorter_side() {
         let a = model_tokens("grok-4-5-build-free");
         let b = model_tokens("grok-4-5");
@@ -868,6 +909,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 OpenRouter 新缓存读写字段的单位换算。
     fn openrouter_cache_prices_support_input_cache_fields() {
         let pricing = json!({
             "prompt": "0.000003",
@@ -881,6 +923,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 OpenRouter 旧缓存字段仍作为兼容回退。
     fn openrouter_cache_prices_keep_legacy_field_fallbacks() {
         let pricing = json!({
             "cache_read": "0.000001",

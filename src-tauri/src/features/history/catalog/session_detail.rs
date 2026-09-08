@@ -4,6 +4,7 @@ use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 use std::path::Path;
 
+// 解析原始指针数组并取首个有效行索引。
 pub(super) fn v2_raw_pointer_line_index(raw_pointers_json: Option<String>) -> Option<usize> {
     let raw = raw_pointers_json?;
     let pointers = serde_json::from_str::<Vec<Value>>(&raw).ok()?;
@@ -13,6 +14,7 @@ pub(super) fn v2_raw_pointer_line_index(raw_pointers_json: Option<String>) -> Op
         .map(|value| value as usize)
 }
 
+// 打开历史目录连接并读取第二代缓存会话详情。
 pub(crate) async fn get_session_detail_from_v2(
     roots: &HistoryRoots,
     file_path: &str,
@@ -23,6 +25,7 @@ pub(crate) async fn get_session_detail_from_v2(
     get_session_detail_from_v2_with_conn(&mut conn, roots, file_path, source, project_key).await
 }
 
+// 校验源文件指纹后组装第二代详情、消息、用量、工具与文件变更。
 pub(super) async fn get_session_detail_from_v2_with_conn(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,

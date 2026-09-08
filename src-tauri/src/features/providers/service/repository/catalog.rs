@@ -17,6 +17,7 @@ use sqlx::Connection;
 use std::time::Duration;
 use uuid::Uuid;
 
+// 按可选规范化类型筛选并排序供应商，再用同一连接逐个补齐卡片信息；多次查询不构成事务快照。
 pub(crate) async fn list_providers(app_type: Option<String>) -> Result<Vec<ProviderCard>, String> {
     let normalized_type = app_type.as_deref().map(normalize_app_type).transpose()?;
     let mut connection = database::open_connection().await?;
@@ -40,6 +41,7 @@ pub(crate) async fn list_providers(app_type: Option<String>) -> Result<Vec<Provi
     Ok(providers)
 }
 
+// 汇总供应商卡片、密钥摘要和配置文档；有效配置合并失败时回退原脱敏设置，再对展示配置执行脱敏。
 pub(crate) async fn get_provider(
     app_type: String,
     provider_id: String,
@@ -74,6 +76,7 @@ pub(crate) async fn get_provider(
     })
 }
 
+// 以已有对象的敏感键覆盖传入值，非敏感节点按对象或数组对应位置递归；不补回整个缺失父节点，也不拦截新增敏感键。
 fn preserve_json_secrets(existing: &Value, incoming: &mut Value) {
     match (existing, incoming) {
         (Value::Object(existing), Value::Object(incoming)) => {
@@ -94,6 +97,7 @@ fn preserve_json_secrets(existing: &Value, incoming: &mut Value) {
     }
 }
 
+// 要求传入设置为 JSON 对象并恢复可遍历的旧敏感值；非 Claude 另按 TOML 保留规则处理 config，缺失 config 时沿用旧值。
 fn merge_settings_config_update(
     app_type: &str,
     existing_raw: &str,
@@ -130,6 +134,7 @@ fn merge_settings_config_update(
     serde_json::to_string(&incoming).map_err(|_| error("provider_settings_serialize_failed", ""))
 }
 
+// 校验并投影配置后创建启用、非当前的新供应商，排序追加到末尾，再另读详情；不创建密钥记录或写 CLI Home。
 pub(crate) async fn create_provider(input: ProviderCreateInput) -> Result<ProviderDetail, String> {
     let app_type = normalize_app_type(&input.app_type)?;
     let name = super::support::required_name(&input.name)?;
@@ -187,6 +192,7 @@ pub(crate) async fn create_provider(input: ProviderCreateInput) -> Result<Provid
     get_provider(app_type, id).await
 }
 
+// 基于已读记录合并可选属性与配置并写库，再另读详情；无跨读取与写入的事务或版本校验。
 pub(crate) async fn update_provider(input: ProviderUpdateInput) -> Result<ProviderDetail, String> {
     let app_type = normalize_app_type(&input.app_type)?;
     let provider_id = input.provider_id.trim();
@@ -266,6 +272,7 @@ pub(crate) async fn update_provider(input: ProviderUpdateInput) -> Result<Provid
     get_provider(app_type, provider_id.to_string()).await
 }
 
+// 复制供应商属性与清理凭据后的配置，生成新 ID 并设为启用、非当前；不复制密钥表记录，随后读取新详情。
 pub(crate) async fn duplicate_provider(
     app_type: String,
     provider_id: String,
@@ -317,6 +324,7 @@ pub(crate) async fn duplicate_provider(
     get_provider(app_type, new_id).await
 }
 
+// 只读打开应用主数据库统计引用，文件不存在时返回零；与供应商数据库的后续修改不构成跨库事务。
 async fn provider_reference_count(app_type: &str, provider_id: &str) -> Result<i64, String> {
     let path =
         app_paths::db_path().map_err(|_| error("provider_reference_check_failed", "database"))?;
@@ -333,6 +341,7 @@ async fn provider_reference_count(app_type: &str, provider_id: &str) -> Result<i
     provider_reference_count_in_app_database(&mut connection, app_type, provider_id).await
 }
 
+// 读取项目及活动 Worktree 的覆盖配置，按作用域解析器统计匹配类型和 ID 的原生引用，忽略无效或旧格式值。
 pub(super) async fn provider_reference_count_in_app_database(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -364,6 +373,7 @@ pub(super) async fn provider_reference_count_in_app_database(
     Ok(count)
 }
 
+// 拒绝当前或已被引用的供应商，再在事务内删除并登记内置项删除标记；引用检查发生在事务之前。
 pub(crate) async fn delete_provider(app_type: String, provider_id: String) -> Result<(), String> {
     let app_type = normalize_app_type(&app_type)?;
     let mut connection = database::open_connection().await?;
@@ -396,6 +406,7 @@ pub(crate) async fn delete_provider(app_type: String, provider_id: String) -> Re
     Ok(())
 }
 
+// 禁用前拒绝当前项及被引用项，更新元数据启用标记后另读详情；检查与更新不是同一事务。
 pub(crate) async fn set_provider_enabled(
     app_type: String,
     provider_id: String,
@@ -422,6 +433,7 @@ pub(crate) async fn set_provider_enabled(
     get_provider(app_type, provider.id).await
 }
 
+// 验证非空且唯一的完整 ID 列表，在事务内逐项验证归属并更新排序，提交后重新读取卡片列表。
 pub(crate) async fn reorder_providers(
     app_type: String,
     provider_ids: Vec<String>,
@@ -477,6 +489,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    // 验证 Codex 更新中的 JSON/TOML 遮罩值恢复为既有测试凭据，同时允许模型修改。
     fn provider_update_preserves_key_manager_owned_codex_secrets() {
         let existing = r#"{
             "auth": {"OPENAI_API_KEY": "sk-real"},
@@ -497,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 更新保留已有认证值并接受新的模型字段。
     fn provider_update_preserves_key_manager_owned_claude_secrets() {
         let existing = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"sk-real","ANTHROPIC_MODEL":"old"}}"#;
         let incoming = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"***","ANTHROPIC_MODEL":"new"}}"#;

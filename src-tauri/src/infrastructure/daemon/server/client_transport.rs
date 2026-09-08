@@ -30,6 +30,7 @@ pub(super) enum ClientWireFrame {
 }
 
 impl ClientTransport {
+    // 持传输锁执行实际写出；NDJSON 拒绝二进制帧，WebSocket 将 Output 的 base64 转为二进制负载。
     pub(super) fn send_frame(&self, frame: &ClientWireFrame) -> Result<(), String> {
         match self {
             Self::Ndjson(writer) => match frame {
@@ -94,10 +95,12 @@ impl ClientTransport {
         }
     }
 
+    // 仅判断传输变体，供入队时选择 WebSocket 回放展开策略。
     pub(super) fn is_websocket(&self) -> bool {
         matches!(self, Self::WebSocket(_))
     }
 
+    // 尽力关闭传输及底层 TCP 双向通信；锁中毒和关闭错误均不向上传播。
     pub(super) fn close(&self) {
         match self {
             Self::Ndjson(stream) => {
@@ -115,6 +118,8 @@ impl ClientTransport {
     }
 }
 
+// 把 Attached 展开为可选 reset、逐条二进制 replay、末尾空回放控制帧，保持原顺序。
+// 此处只构造帧；非 Attached 或无效 base64 返回错误，不执行网络发送。
 pub(super) fn websocket_attached_frames(
     frame: &DaemonFrame,
 ) -> Result<Vec<ClientWireFrame>, String> {
@@ -182,6 +187,7 @@ pub(super) struct ClientWriterState {
 }
 
 impl ClientWriterState {
+    // 优先取控制帧，否则取最早输出帧并扣除其计费字节；回放条目的计费值为零。
     pub(super) fn pop_next(&mut self) -> Option<ClientWireFrame> {
         if let Some(frame) = self.control.pop_front() {
             return Some(frame);
@@ -198,6 +204,8 @@ pub(super) struct ClientWriter {
 }
 
 impl ClientWriter {
+    // 启动独立写线程，空队列时等待通知，取帧后释放队列锁再执行网络 IO。
+    // 关闭标记使线程停止而非排空队列；发送失败退出后不会回写 shared.closed。
     pub(super) fn new(transport: ClientTransport) -> Arc<Self> {
         let websocket = transport.is_websocket();
         let shared = Arc::new((
@@ -242,6 +250,7 @@ impl ClientWriter {
         Arc::new(Self { shared, websocket })
     }
 
+    // 按传输和帧类型分流到回放、实时输出或控制队列；成功仅表示入队，不代表已送达。
     pub(super) fn send_frame(&self, frame: &DaemonFrame) -> Result<(), String> {
         if self.websocket && matches!(frame, DaemonFrame::Attached { .. }) {
             return self.send_attached(frame);
@@ -254,6 +263,7 @@ impl ClientWriter {
         }
     }
 
+    // 在同一队列锁内追加整组回放帧与 Attached 屏障；不计入实时字节预算，也不在此限制组大小。
     pub(super) fn send_attached(&self, frame: &DaemonFrame) -> Result<(), String> {
         let frames = websocket_attached_frames(frame)?;
         let (lock, changed) = &*self.shared;
@@ -273,6 +283,7 @@ impl ClientWriter {
         Ok(())
     }
 
+    // 向高优先级控制队列入帧并唤醒写线程；已关闭或达到帧数上限时标记关闭并报错。
     pub(super) fn send_control(&self, frame: ClientWireFrame) -> Result<(), String> {
         let (lock, changed) = &*self.shared;
         let mut state = lock
@@ -288,6 +299,7 @@ impl ClientWriter {
         Ok(())
     }
 
+    // 按调用方给定字节数计费入队；超预算或已关闭时拒绝新帧、标记关闭并通知等待线程。
     pub(super) fn send_output(&self, frame: ClientWireFrame, bytes: usize) -> Result<(), String> {
         let (lock, changed) = &*self.shared;
         let mut state = lock
@@ -308,6 +320,7 @@ impl ClientWriter {
         Ok(())
     }
 
+    // 只设置共享关闭标记并唤醒写线程，不等待线程退出，也不直接操作 socket。
     pub(super) fn close(&self) {
         let (lock, changed) = &*self.shared;
         if let Ok(mut state) = lock.lock() {
@@ -317,6 +330,7 @@ impl ClientWriter {
     }
 }
 
+// 实时输出按 base64 文本长度计费，其他帧返回零；此值不是实际二进制线缆字节数。
 pub(super) fn frame_payload_bytes(frame: &DaemonFrame) -> usize {
     match frame {
         DaemonFrame::Output { data_base64, .. } => data_base64.len(),

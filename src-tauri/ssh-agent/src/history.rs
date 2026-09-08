@@ -150,6 +150,7 @@ struct IndexLock {
 }
 
 impl Drop for IndexLock {
+    // 释放索引写锁时尽力删除 owner 文件和空锁目录，不传播清理错误。
     fn drop(&mut self) {
         let _ = fs::remove_file(self.path.join("owner"));
         let _ = fs::remove_dir(&self.path);
@@ -167,14 +168,18 @@ struct DiscoveredFile {
     modified_ns: i128,
 }
 
+// 为未指定分页大小的请求提供默认 200 条上限。
 fn default_limit() -> usize {
     200
 }
 
+// 旧索引缺少 partial 字段时按未完成处理，避免直接复用不明完整性的缓存。
 fn default_partial() -> bool {
     true
 }
 
+// 仅在未强刷、索引已发布且完整、项目范围已覆盖并且 Codex 名称指纹未变时复用。
+// 不扫描转录文件来检查新内容；新文件或追加内容本身不会使此判断失效。
 fn can_reuse_published_index(
     force_refresh: bool,
     project_paths: &[String],
@@ -191,6 +196,7 @@ fn can_reuse_published_index(
             || index.codex_thread_name_fingerprint == codex_thread_names.fingerprint)
 }
 
+// 按请求项目范围筛选并排序摘要，结合当前代次游标分页；仅第一页附带本次删除标记。
 fn sync_result(
     request: &HistoryScopeRequest,
     scope: &ResolvedScope,
@@ -241,6 +247,8 @@ fn sync_result(
     }
 }
 
+// 解析范围后优先复用完整索引，否则持锁发现文件并在扫描预算内增量解析、更新摘要和发布索引。
+// 项目范围累积合并，只有完整发现且全部解析完成才移除缺失条目；该调用可能创建并写入索引状态。
 pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, String> {
     let scope = resolve_scope(&request)?;
     let published_codex_thread_names = load_codex_thread_name_index(&scope);
@@ -335,6 +343,7 @@ pub fn sync(request: HistoryScopeRequest) -> Result<RemoteHistorySyncResult, Str
     ))
 }
 
+// 仅解析与当前代次一致的 generation:offset 游标，无效格式或旧代次从零开始。
 fn sync_cursor_offset(cursor: &str, generation: u64) -> usize {
     let Some((cursor_generation, offset)) = cursor.trim().split_once(':') else {
         return 0;
@@ -345,6 +354,8 @@ fn sync_cursor_offset(cursor: &str, generation: u64) -> usize {
     offset.parse::<usize>().unwrap_or_default()
 }
 
+// 查询至少三字符时检索已有索引的范围内摘要与搜索文本，应用 Codex 名称覆盖后返回限量命中。
+// 不刷新索引；片段的字节切点若不是字符边界则回退整个搜索文本。
 pub fn search(request: HistorySearchRequest) -> Result<Vec<RemoteHistorySearchHit>, String> {
     let query = request.query.trim().to_lowercase();
     if query.chars().count() < 3 {
@@ -400,6 +411,8 @@ pub fn search(request: HistorySearchRequest) -> Result<Vec<RemoteHistorySearchHi
     Ok(hits)
 }
 
+// 有显式转录引用时直接读取并校验会话身份与项目范围，否则从已发布索引选择条目解析详情。
+// 读取前按元数据检查大小，仅解析完整 JSONL 行；不是并发改写下的文件快照。
 pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, String> {
     let source_session_id = request.source_session_id.trim();
     if source_session_id.is_empty() || source_session_id.len() > 512 {
@@ -455,6 +468,7 @@ pub fn get(request: HistoryGetRequest) -> Result<RemoteHistorySessionDetail, Str
     Ok(detail)
 }
 
+// 从已定位文件重建详情和 Codex 标题，再严格比对请求会话 ID 与项目范围；调用方负责路径定位。
 fn detail_from_path(
     scope: &ResolvedScope,
     path: &Path,
@@ -506,6 +520,8 @@ fn detail_from_path(
     Ok(detail)
 }
 
+// 核对远端身份、索引会话文件可打开、工作目录与 PATH 候选后返回结构化恢复参数和配置环境。
+// 不刷新索引、不执行 CLI，也不重新解析源文件来核对摘要；可选身份字段为空时按现有规则跳过比较。
 pub fn resume_preflight(
     request: HistoryResumePreflightRequest,
 ) -> Result<HistoryResumePreflight, String> {
@@ -597,6 +613,7 @@ pub fn resume_preflight(
     })
 }
 
+// 生成包含命令名的 Claude --resume 或 Codex resume 参数列表，非 claude 按 Codex 分支处理。
 fn build_resume_args(source: &str, source_session_id: &str) -> Vec<String> {
     if source == "claude" {
         vec![
@@ -613,6 +630,7 @@ fn build_resume_args(source: &str, source_session_id: &str) -> Vec<String> {
     }
 }
 
+// 拒绝非绝对形式、控制字符和父级段，规范化后要求现存目录；不限制在历史配置根内。
 fn validate_resume_cwd(value: &str) -> Result<String, String> {
     let value = value.trim();
     if !value.starts_with('/')
@@ -631,6 +649,7 @@ fn validate_resume_cwd(value: &str) -> Result<String, String> {
     Ok(path_text(&canonical))
 }
 
+// 仅检查 PATH 中是否有同名文件，不验证执行权限、版本或实际可运行性。
 fn command_available(command: &str) -> bool {
     std::env::var_os("PATH")
         .into_iter()
@@ -639,6 +658,8 @@ fn command_available(command: &str) -> bool {
         .any(|path| path.is_file())
 }
 
+// 校验 Claude/Codex 来源与一至六十四个项目路径，规范化现存配置根并读取安装及 SSH 用户信息。
+// 由机器、用户、来源和根哈希形成稳定源身份及索引目录，不在此扫描历史或验证配置目录所有者。
 fn resolve_scope(request: &HistoryScopeRequest) -> Result<ResolvedScope, String> {
     let source = request.source.trim().to_lowercase();
     if !matches!(source.as_str(), "claude" | "codex") {
@@ -693,6 +714,7 @@ fn resolve_scope(request: &HistoryScopeRequest) -> Result<ResolvedScope, String>
     })
 }
 
+// 选择来源默认根或展开受控 HOME 路径，拒绝变量、反引号、控制字符和父级段；存在性由调用方检查。
 fn resolve_config_root(
     layout: &AgentLayout,
     source: &str,
@@ -725,6 +747,7 @@ fn resolve_config_root(
     Ok(path)
 }
 
+// 经共享远端路径归一化后检查绝对形式、控制字符及父级段，不访问项目目录。
 fn validate_project_path(value: &str) -> Result<String, String> {
     let value = cli_manager_history_core::normalize_remote_path(value);
     if !value.starts_with('/')
@@ -741,6 +764,8 @@ struct UpdateOutcome {
     complete: bool,
 }
 
+// 按文件身份、截断、同大小重写和范围变化决定重建或从偏移续读，消费本轮单文件及总扫描预算。
+// 只提交完整行，超长行推进偏移时跳过解析；范围外条目仅保留 cwd 等定位状态，不保存摘要内容。
 fn update_entry(
     scope: &ResolvedScope,
     index: &mut HistoryIndex,
@@ -880,6 +905,7 @@ fn update_entry(
     })
 }
 
+// 用条目解析出的 cwd 与项目键委托共享规则判断是否落在请求项目范围。
 fn entry_matches_scope(entry: &HistoryIndexEntry, project_paths: &[String]) -> bool {
     path_matches_scope(
         entry.parser_state.cwd.as_deref(),
@@ -888,6 +914,7 @@ fn entry_matches_scope(entry: &HistoryIndexEntry, project_paths: &[String]) -> b
     )
 }
 
+// 只有扫描完整才移除本轮未发现条目，并为带摘要的删除项返回源会话 ID。
 fn remove_missing_entries(
     index: &mut HistoryIndex,
     seen: &BTreeSet<String>,
@@ -910,6 +937,7 @@ fn remove_missing_entries(
         .collect()
 }
 
+// 为累计范围内条目按当前索引代次重建摘要，再覆盖 Codex 自定义名称；范围外条目不在此处理。
 fn refresh_summaries(
     scope: &ResolvedScope,
     index: &mut HistoryIndex,
@@ -941,6 +969,7 @@ fn refresh_summaries(
     }
 }
 
+// Codex 读取有大小限制的 session_index.jsonl，按元数据形成名称指纹；缺失或读取失败返回空名称表。
 fn load_codex_thread_name_index(scope: &ResolvedScope) -> CodexThreadNameIndex {
     if scope.source != "codex" {
         return CodexThreadNameIndex {
@@ -981,6 +1010,7 @@ fn load_codex_thread_name_index(scope: &ResolvedScope) -> CodexThreadNameIndex {
     CodexThreadNameIndex { names, fingerprint }
 }
 
+// 逐行忽略坏 JSON 或缺失名称，兼容两种 ID/名称字段并限制标题为 240 字符，同 ID 后写覆盖。
 fn parse_codex_thread_name_index(text: &str) -> BTreeMap<String, String> {
     let mut names = BTreeMap::new();
     for line in text.lines() {
@@ -1013,6 +1043,7 @@ fn parse_codex_thread_name_index(text: &str) -> BTreeMap<String, String> {
     names
 }
 
+// 仅对 Codex 且名称表含匹配会话时替换标题，否则保留原值。
 fn apply_codex_thread_name(
     scope: &ResolvedScope,
     codex_thread_names: &CodexThreadNameIndex,
@@ -1027,6 +1058,7 @@ fn apply_codex_thread_name(
     }
 }
 
+// 选择 Claude projects 或 Codex 当前及归档会话目录，收集 JSONL 后按修改时间降序、路径次序排序。
 fn discover_files(scope: &ResolvedScope) -> WalkResult {
     let roots = if scope.source == "claude" {
         vec![scope.canonical_root.join("projects")]
@@ -1071,6 +1103,8 @@ fn discover_files(scope: &ResolvedScope) -> WalkResult {
     result
 }
 
+// 递归发现根内普通 JSONL 文件并跳过枚举到的符号链接，访问失败或深度限制会标记扫描不完整。
+// 文件数上限在每次递归入口检查，而非每次追加检查，因此不构成严格的总文件数上限。
 fn walk_jsonl(path: &Path, canonical_root: &Path, depth: usize, result: &mut WalkResult) {
     if depth > MAX_WALK_DEPTH || result.files.len() >= MAX_HISTORY_FILES {
         result.complete = false;
@@ -1131,6 +1165,8 @@ fn walk_jsonl(path: &Path, canonical_root: &Path, depth: usize, result: &mut Wal
     }
 }
 
+// 读取派生索引，缺失、过大、解析失败或版本/身份不匹配时重建为空；读取错误仍返回失败。
+// 大小检查在整体读取之后进行，不是内存读取硬上限。
 fn load_index(scope: &ResolvedScope) -> Result<HistoryIndex, String> {
     let path = scope.index_dir.join("index.json");
     if !path.exists() {
@@ -1154,6 +1190,7 @@ fn load_index(scope: &ResolvedScope) -> Result<HistoryIndex, String> {
     Ok(index)
 }
 
+// 按当前源身份构造零代次、未发现完成且 partial 的空派生索引。
 fn empty_index(scope: &ResolvedScope) -> HistoryIndex {
     HistoryIndex {
         schema_version: INDEX_SCHEMA_VERSION,
@@ -1172,6 +1209,8 @@ fn empty_index(scope: &ResolvedScope) -> HistoryIndex {
     }
 }
 
+// 序列化并检查索引大小，写入按 PID 命名的临时文件、同步后重命名并设置最终权限。
+// 调用方负责持锁；发布后权限失败仍返回错误，不统一清理失败时的临时文件。
 fn write_index(scope: &ResolvedScope, index: &HistoryIndex) -> Result<(), String> {
     let bytes = serde_json::to_vec(index).map_err(|_| "history_index_encode_failed".to_string())?;
     if bytes.len() as u64 > MAX_INDEX_BYTES {
@@ -1198,10 +1237,13 @@ fn write_index(scope: &ResolvedScope, index: &HistoryIndex) -> Result<(), String
     set_file_permissions(&path)
 }
 
+// 以默认一分钟陈旧阈值委托目录锁申请。
 fn acquire_lock(index_dir: &Path) -> Result<IndexLock, String> {
     acquire_lock_with_stale_after(index_dir, LOCK_STALE_MS)
 }
 
+// 独占创建 writer.lock；旧锁仅在超过阈值且持有者不存活时尝试删除并递归重试。
+// 删除结果被忽略，若陈旧锁持续无法删除，递归重试没有次数上限。
 fn acquire_lock_with_stale_after(
     index_dir: &Path,
     stale_after_ms: i64,
@@ -1231,6 +1273,7 @@ fn acquire_lock_with_stale_after(
     }
 }
 
+// 设置锁目录权限并写入当前 PID/时间，初始化失败时尽力清理目录再返回错误。
 fn initialize_lock_dir(path: PathBuf) -> Result<IndexLock, String> {
     let result = set_dir_permissions(&path).and_then(|_| {
         fs::write(
@@ -1246,6 +1289,7 @@ fn initialize_lock_dir(path: PathBuf) -> Result<IndexLock, String> {
     Ok(IndexLock { path })
 }
 
+// 读取 owner 首行 PID 并按平台存活规则判断，缺失或格式错误视为不存活。
 fn lock_owner_alive(lock_path: &Path) -> bool {
     let Some(pid) = fs::read_to_string(lock_path.join("owner"))
         .ok()
@@ -1257,15 +1301,18 @@ fn lock_owner_alive(lock_path: &Path) -> bool {
 }
 
 #[cfg(unix)]
+// Unix 上仅凭非零 PID 的 /proc 项存在性判断，不校验进程身份。
 fn process_is_alive(pid: u32) -> bool {
     pid > 0 && Path::new("/proc").join(pid.to_string()).exists()
 }
 
 #[cfg(not(unix))]
+// 非 Unix 仅认为当前进程 PID 存活，不探测其他进程。
 fn process_is_alive(pid: u32) -> bool {
     pid == std::process::id()
 }
 
+// 返回截至最后一个换行的完整前缀，未换行尾部暂不提交，无换行时返回空。
 fn complete_jsonl_bytes(bytes: &[u8]) -> &[u8] {
     bytes
         .iter()
@@ -1274,6 +1321,7 @@ fn complete_jsonl_bytes(bytes: &[u8]) -> &[u8] {
         .unwrap_or_default()
 }
 
+// Claude projects 路径使用其下一段作为项目键，其他路径退回父目录末段。
 fn project_key(scope: &ResolvedScope, relative: &str) -> String {
     if scope.source == "claude" {
         let mut parts = relative.split('/');
@@ -1289,6 +1337,7 @@ fn project_key(scope: &ResolvedScope, relative: &str) -> String {
         .to_string()
 }
 
+// 拒绝绝对引用、父级段与非法控制字符，规范化相对路径后要求仍在根内且为文件。
 fn safe_artifact_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.contains(['\0', '\r', '\n', '\\'])
         || Path::new(relative).is_absolute()
@@ -1306,6 +1355,7 @@ fn safe_artifact_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 接受绝对或相对转录引用，规范化后要求根内 JSONL 文件；相对形式另走制品路径校验。
 fn safe_transcript_ref(root: &Path, reference: &str) -> Result<PathBuf, String> {
     let reference = reference.trim();
     if reference.is_empty() || reference.contains(['\0', '\r', '\n', '\\']) {
@@ -1328,12 +1378,14 @@ fn safe_transcript_ref(root: &Path, reference: &str) -> Result<PathBuf, String> 
     Ok(canonical)
 }
 
+// 仅对根路径前缀下的路径返回有损字符串，并统一为正斜杠；不做 canonicalize。
 fn relative_string(root: &Path, path: &Path) -> Option<String> {
     path.strip_prefix(root)
         .ok()
         .map(|path| path.to_string_lossy().replace('\\', "/"))
 }
 
+// 通过根内制品路径校验读取创建时间，路径或元数据失败返回零。
 fn file_created_ms_from_path(root: &Path, relative: &str) -> i64 {
     safe_artifact_path(root, relative)
         .ok()
@@ -1342,6 +1394,7 @@ fn file_created_ms_from_path(root: &Path, relative: &str) -> i64 {
         .unwrap_or_default()
 }
 
+// 通过根内制品路径校验读取修改时间，路径或元数据失败返回零。
 fn file_modified_ms_from_path(root: &Path, relative: &str) -> i64 {
     safe_artifact_path(root, relative)
         .ok()
@@ -1350,6 +1403,7 @@ fn file_modified_ms_from_path(root: &Path, relative: &str) -> i64 {
         .unwrap_or_default()
 }
 
+// 优先创建时间、不可用则修改时间，转换为纪元毫秒；失败或纪元前时间返回零。
 fn file_created_ms(metadata: &fs::Metadata) -> i64 {
     metadata
         .created()
@@ -1360,6 +1414,7 @@ fn file_created_ms(metadata: &fs::Metadata) -> i64 {
         .unwrap_or_default()
 }
 
+// 将修改时间转换为纪元毫秒，缺失或纪元前时间返回零。
 fn file_modified_ms(metadata: &fs::Metadata) -> i64 {
     metadata
         .modified()
@@ -1369,6 +1424,7 @@ fn file_modified_ms(metadata: &fs::Metadata) -> i64 {
         .unwrap_or_default()
 }
 
+// 将修改时间转换为纪元纳秒用于变化判定，失败或纪元前时间返回零。
 fn file_modified_ns(metadata: &fs::Metadata) -> i128 {
     metadata
         .modified()
@@ -1379,28 +1435,33 @@ fn file_modified_ns(metadata: &fs::Metadata) -> i128 {
 }
 
 #[cfg(unix)]
+// Unix 使用设备号和 inode 组成文件身份，便于区分替换与追加。
 fn file_id(metadata: &fs::Metadata) -> String {
     use std::os::unix::fs::MetadataExt;
     format!("{}:{}", metadata.dev(), metadata.ino())
 }
 
 #[cfg(not(unix))]
+// 非 Unix 用长度和修改时间近似文件身份；内容追加也可能改变该身份。
 fn file_id(metadata: &fs::Metadata) -> String {
     format!("{}:{}", metadata.len(), file_modified_ns(metadata))
 }
 
+// 对操作系统编码的路径字节计算 SHA-256，不先规范化路径。
 fn hash_path(path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.as_os_str().as_encoded_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+// 对 UTF-8 文本计算小写十六进制 SHA-256。
 fn hash_text(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+// 以 NUL 分隔机器、SSH 用户、来源和根哈希再计算带 ssh- 前缀的稳定源身份，不包含安装 ID。
 fn remote_source_instance_id(
     remote_machine_id: &str,
     ssh_user: &str,
@@ -1415,10 +1476,12 @@ fn remote_source_instance_id(
     )
 }
 
+// 将路径有损转换为报告字符串，不执行合法性或范围检查。
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+// 返回当前 Unix 纪元毫秒，系统时间早于纪元时回退零。
 fn now_ms() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1427,6 +1490,7 @@ fn now_ms() -> i64 {
 }
 
 #[cfg(unix)]
+// Unix 将索引或锁目录权限设置为 0700，失败返回权限错误。
 fn set_dir_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
@@ -1434,11 +1498,13 @@ fn set_dir_permissions(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 不设置目录权限，直接返回成功。
 fn set_dir_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(unix)]
+// Unix 将已发布索引文件权限设置为 0600，失败返回权限错误。
 fn set_file_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
@@ -1446,6 +1512,7 @@ fn set_file_permissions(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 不设置文件权限，直接返回成功。
 fn set_file_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }

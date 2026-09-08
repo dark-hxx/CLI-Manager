@@ -12,6 +12,7 @@ pub struct ResourceDiagnosticInput {
 }
 
 #[tauri::command]
+// 同时调整 Rust 最大日志级别与进程周期采样开关，只改变运行状态，不持久化用户设置。
 pub async fn set_debug_logging(enabled: bool) -> Result<(), String> {
     let level = if enabled {
         LevelFilter::Debug
@@ -28,6 +29,7 @@ pub async fn set_debug_logging(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 将前端诊断条目交给专用路由/大小校验和写入器，不经过普通日志与崩溃 breadcrumbs 链路。
 pub async fn resource_diagnostics_write(entry: ResourceDiagnosticInput) -> Result<(), String> {
     crate::runtime_diagnostics::write_frontend_entry(
         &entry.level,

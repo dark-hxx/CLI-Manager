@@ -202,6 +202,7 @@ pub struct CcConnectManager {
 }
 
 impl Default for CcConnectManager {
+    // 初始化共享进程、日志和探测状态，非测试构造时清理旧微信授权文件。
     fn default() -> Self {
         #[cfg(not(test))]
         if let Ok((config, qr, stdout, stderr)) = weixin_authorization_paths() {
@@ -220,10 +221,12 @@ impl Default for CcConnectManager {
 }
 
 impl CcConnectManager {
+    // 创建使用默认状态的 cc-connect 管理器。
     pub fn new() -> Self {
         Self::default()
     }
 
+    // 按需创建轮转日志写入器并缓存在共享槽位。
     fn ensure_log_writer(&self) -> Result<(), String> {
         let mut writer = self
             .log_writer
@@ -241,6 +244,7 @@ impl CcConnectManager {
         Ok(())
     }
 
+    // 仅在配置启用日志时追加系统日志。
     fn append_system_log(&self, message: impl Into<String>) {
         if !load_profile()
             .ok()
@@ -253,6 +257,7 @@ impl CcConnectManager {
         push_log_line(&self.logs, &self.log_writer, "system", &message.into(), &[]);
     }
 
+    // 按显式路径复用探测缓存，要求刷新时重新校验二进制。
     fn detect(&self, explicit_path: Option<&str>, refresh: bool) -> Result<DetectedBinary, String> {
         let requested_path = explicit_path
             .map(str::trim)
@@ -277,6 +282,7 @@ impl CcConnectManager {
         result
     }
 
+    // 强制探测指定程序路径并返回安装、摘要和兼容性状态。
     fn inspect_executable(&self, explicit_path: &str) -> CcConnectExecutableStatus {
         let requested_path = explicit_path.trim();
         let executable_path =
@@ -312,6 +318,7 @@ impl CcConnectManager {
         }
     }
 
+    // 按需刷新并缓存本地 Codex app-server 探测结果。
     fn check_codex_app_server(&self, refresh: bool) -> Result<(), String> {
         if !refresh {
             if let Ok(cache) = self.codex_app_server_check.lock() {
@@ -327,6 +334,7 @@ impl CcConnectManager {
         result
     }
 
+    // 轮询受管子进程退出状态并记录退出时间和日志。
     fn refresh_process_state(&self) {
         let exited = {
             let Ok(mut state) = self.process.lock() else {
@@ -358,6 +366,7 @@ impl CcConnectManager {
         }
     }
 
+    // 按序号分页读取有上限的日志，关闭日志时返回空页。
     fn log_page(
         &self,
         after_seq: Option<u64>,
@@ -397,6 +406,7 @@ struct RemoteSwitchOutcome {
 }
 
 impl CcConnectManager {
+    // 取得操作锁后执行配置保存事务。
     fn save_profile(&self, request: CcConnectSaveProfileRequest) -> Result<(), String> {
         let _operation = self
             .operation
@@ -405,6 +415,7 @@ impl CcConnectManager {
         self.save_profile_locked(request)
     }
 
+    // 在无活动接管时保存凭据与配置，失败则恢复快照及原运行状态。
     fn save_profile_locked(&self, request: CcConnectSaveProfileRequest) -> Result<(), String> {
         handoff::ensure_handoff_inactive()?;
         self.refresh_process_state();
@@ -484,6 +495,7 @@ impl CcConnectManager {
         Ok(())
     }
 
+    // 在主进程停止时准备临时配置并启动受管微信扫码授权进程。
     fn start_weixin_authorization(
         &self,
         request: CcConnectWeixinAuthorizeRequest,
@@ -622,6 +634,7 @@ impl CcConnectManager {
         Ok(status)
     }
 
+    // 解析成功授权、合并白名单并保存凭据，随后清理授权临时文件。
     fn finish_weixin_authorization(
         &self,
         process: WeixinAuthorizationProcess,
@@ -675,6 +688,7 @@ impl CcConnectManager {
         }
     }
 
+    // 读取授权错误详情并清理临时文件，生成失败状态。
     fn failed_weixin_authorization(
         &self,
         process: WeixinAuthorizationProcess,
@@ -700,6 +714,7 @@ impl CcConnectManager {
         }
     }
 
+    // 串行轮询授权进程与二维码，进程结束后落盘成功结果或缓存失败状态。
     fn weixin_authorization_status(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
         let _operation = self
             .operation
@@ -770,6 +785,7 @@ impl CcConnectManager {
         }
     }
 
+    // 终止正在运行的微信授权进程并清理临时文件，保留取消状态。
     fn cancel_weixin_authorization(&self) -> Result<CcConnectWeixinAuthorizationStatus, String> {
         let _operation = self
             .operation
@@ -809,6 +825,7 @@ impl CcConnectManager {
         Ok(status)
     }
 
+    // 校验远程项目令牌并保存运行目标，失败回滚配置且返回是否需重启。
     fn switch_project_from_remote(&self, token: &str) -> Result<RemoteSwitchOutcome, String> {
         let _operation = self
             .operation
@@ -889,6 +906,7 @@ impl CcConnectManager {
         })
     }
 
+    // 在主进程停止时清除指定平台或全部凭据，失败恢复凭据快照。
     fn clear_credentials(&self, platform: Option<CcConnectPlatform>) -> Result<(), String> {
         let _operation = self
             .operation
@@ -940,6 +958,7 @@ impl CcConnectManager {
         Ok(())
     }
 
+    // 综合配置、凭据、程序探测及进程状态生成阻塞项和警告。
     fn status(&self, refresh_detection: bool) -> Result<CcConnectStatus, String> {
         let _operation = self
             .operation
@@ -1063,6 +1082,7 @@ impl CcConnectManager {
         })
     }
 
+    // 取得操作锁后启动受管进程。
     fn start(&self) -> Result<(), String> {
         let _operation = self
             .operation
@@ -1071,6 +1091,7 @@ impl CcConnectManager {
         self.start_inner()
     }
 
+    // 设置启动标记并准备进程，成功后登记进程，失败时清除标记。
     fn start_inner(&self) -> Result<(), String> {
         self.refresh_process_state();
         {
@@ -1107,6 +1128,7 @@ impl CcConnectManager {
         }
     }
 
+    // 校验有效目标和代理后端，生成配置与环境后启动并检查受管进程。
     fn prepare_process(&self) -> Result<ManagedProcess, String> {
         let base_profile =
             load_profile()?.ok_or_else(|| "cc-connect profile is not configured".to_string())?;
@@ -1267,6 +1289,7 @@ impl CcConnectManager {
         })
     }
 
+    // 取得操作锁后停止受管进程。
     fn stop(&self) -> Result<(), String> {
         let _operation = self
             .operation
@@ -1275,6 +1298,7 @@ impl CcConnectManager {
         self.stop_inner()
     }
 
+    // 取出并终止受管进程，Windows 限时等待后记录退出状态。
     fn stop_inner(&self) -> Result<(), String> {
         self.refresh_process_state();
         let mut process = {
@@ -1328,6 +1352,7 @@ impl CcConnectManager {
         Ok(())
     }
 
+    // 在同一操作锁内停止并重新启动受管进程。
     fn restart(&self) -> Result<(), String> {
         let _operation = self
             .operation
@@ -1337,6 +1362,7 @@ impl CcConnectManager {
         self.start_inner()
     }
 
+    // 暂停原运行进程后应用更新，清空探测缓存并尝试恢复运行状态。
     fn apply_prepared_update(
         &self,
         prepared: update::CcConnectPreparedUpdate,
@@ -1403,6 +1429,7 @@ impl CcConnectManager {
         }
     }
 
+    // 仅在已配置自动启动时启动受管进程。
     fn auto_start_if_enabled(&self) -> Result<(), String> {
         let _operation = self
             .operation
@@ -1417,6 +1444,7 @@ impl CcConnectManager {
         self.start_inner()
     }
 
+    // 退出时取消微信授权并停止主进程，将清理失败写入日志。
     pub fn shutdown(&self) {
         if let Err(err) = self.cancel_weixin_authorization() {
             log::warn!("Weixin authorization shutdown cleanup failed: {err}");
@@ -1427,6 +1455,7 @@ impl CcConnectManager {
     }
 }
 
+// 消费单实例远程切换参数，后台写回结果并按需延迟重启连接。
 pub fn handle_single_instance_args(app: &AppHandle, args: &[String]) -> bool {
     let Some(request) = remote_switch_request_from_args(args) else {
         return false;
@@ -1495,6 +1524,7 @@ pub fn handle_single_instance_args(app: &AppHandle, args: &[String]) -> bool {
 }
 
 #[tauri::command]
+// 在阻塞任务中获取状态，可选刷新程序与后端探测。
 pub async fn cc_connect_get_status(
     manager: State<'_, CcConnectManager>,
     refresh_detection: Option<bool>,
@@ -1505,6 +1535,7 @@ pub async fn cc_connect_get_status(
         .map_err(|err| format!("cc-connect status task failed: {err}"))?
 }
 #[tauri::command]
+// 在阻塞任务中检查指定可执行文件。
 pub async fn cc_connect_inspect_executable(
     manager: State<'_, CcConnectManager>,
     executable_path: String,
@@ -1516,6 +1547,7 @@ pub async fn cc_connect_inspect_executable(
 }
 
 #[tauri::command]
+// 异步获取指定通道的 cc-connect 更新检查结果。
 pub async fn cc_connect_check_update(
     request: update::CcConnectCheckUpdateRequest,
 ) -> Result<update::CcConnectUpdateCheck, String> {
@@ -1523,6 +1555,7 @@ pub async fn cc_connect_check_update(
 }
 
 #[tauri::command]
+// 先异步准备已校验载荷，再在阻塞任务中应用更新和恢复进程。
 pub async fn cc_connect_update(
     manager: State<'_, CcConnectManager>,
     request: update::CcConnectInstallUpdateRequest,
@@ -1535,6 +1568,7 @@ pub async fn cc_connect_update(
 }
 
 #[tauri::command]
+// 在阻塞任务中保存配置并返回重新探测后的状态。
 pub async fn cc_connect_save_profile(
     manager: State<'_, CcConnectManager>,
     request: CcConnectSaveProfileRequest,
@@ -1548,6 +1582,7 @@ pub async fn cc_connect_save_profile(
     .map_err(|err| format!("cc-connect save task failed: {err}"))?
 }
 #[tauri::command]
+// 在阻塞任务中清除平台凭据并返回状态。
 pub async fn cc_connect_clear_credentials(
     manager: State<'_, CcConnectManager>,
     platform: Option<CcConnectPlatform>,
@@ -1562,6 +1597,7 @@ pub async fn cc_connect_clear_credentials(
 }
 
 #[tauri::command]
+// 在阻塞任务中启动微信扫码授权。
 pub async fn cc_connect_weixin_authorization_start(
     manager: State<'_, CcConnectManager>,
     request: CcConnectWeixinAuthorizeRequest,
@@ -1573,6 +1609,7 @@ pub async fn cc_connect_weixin_authorization_start(
 }
 
 #[tauri::command]
+// 在阻塞任务中轮询微信授权进度与完成结果。
 pub async fn cc_connect_weixin_authorization_status(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectWeixinAuthorizationStatus, String> {
@@ -1583,6 +1620,7 @@ pub async fn cc_connect_weixin_authorization_status(
 }
 
 #[tauri::command]
+// 在阻塞任务中取消微信授权并清理临时文件。
 pub async fn cc_connect_weixin_authorization_cancel(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectWeixinAuthorizationStatus, String> {
@@ -1593,6 +1631,7 @@ pub async fn cc_connect_weixin_authorization_cancel(
 }
 
 #[tauri::command]
+// 在阻塞任务中启动连接并返回最新状态。
 pub async fn cc_connect_start(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectStatus, String> {
@@ -1605,6 +1644,7 @@ pub async fn cc_connect_start(
     .map_err(|err| format!("cc-connect start task failed: {err}"))?
 }
 #[tauri::command]
+// 在阻塞任务中停止连接并返回最新状态。
 pub async fn cc_connect_stop(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectStatus, String> {
@@ -1617,6 +1657,7 @@ pub async fn cc_connect_stop(
     .map_err(|err| format!("cc-connect stop task failed: {err}"))?
 }
 #[tauri::command]
+// 在阻塞任务中重启连接并返回最新状态。
 pub async fn cc_connect_restart(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectStatus, String> {
@@ -1629,6 +1670,7 @@ pub async fn cc_connect_restart(
     .map_err(|err| format!("cc-connect restart task failed: {err}"))?
 }
 #[tauri::command]
+// 返回指定序号之后、限定条数的连接日志页。
 pub fn cc_connect_get_logs(
     manager: State<'_, CcConnectManager>,
     after_seq: Option<u64>,
@@ -1637,6 +1679,7 @@ pub fn cc_connect_get_logs(
     manager.log_page(after_seq, limit)
 }
 
+// 从应用状态获取管理器并按配置执行自动启动。
 pub fn auto_start(app: &AppHandle) -> Result<(), String> {
     app.state::<CcConnectManager>().auto_start_if_enabled()
 }

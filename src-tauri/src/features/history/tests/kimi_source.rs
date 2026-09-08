@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证 Kimi 消息去重、步骤用量、工具关联及历史扫描完整链路。
 fn kimi_wire_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -172,6 +173,7 @@ fn kimi_wire_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Kimi 精确查找直接命中磁盘会话，并拒绝错误项目或非法标识。
 fn exact_kimi_session_lookup_bypasses_catalog_miss() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -205,6 +207,7 @@ fn exact_kimi_session_lookup_bypasses_catalog_miss() {
 }
 
 #[test]
+// 验证索引会话目录通过父目录越界时无法被精确查找。
 fn exact_kimi_lookup_rejects_index_session_dir_escape() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -241,6 +244,7 @@ fn exact_kimi_lookup_rejects_index_session_dir_escape() {
 }
 
 #[test]
+// 验证工作目录回退使用最新活动索引，墓碑同时影响发现与精确查找。
 fn kimi_workspace_fallback_uses_latest_active_index_record() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -292,6 +296,7 @@ fn kimi_workspace_fallback_uses_latest_active_index_record() {
 }
 
 #[test]
+// 验证 Kimi 删除移除会话目录并追加墓碑，保留其他会话索引。
 fn kimi_delete_removes_session_dir_and_index_row() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -340,6 +345,7 @@ fn kimi_delete_removes_session_dir_and_index_row() {
 }
 
 #[test]
+// 验证 Kimi 删除拒绝历史根目录之外的会话。
 fn kimi_delete_rejects_session_outside_history_home() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -369,6 +375,7 @@ fn kimi_delete_rejects_session_outside_history_home() {
 }
 
 #[test]
+// 验证显式 Kimi 根目录生效且旧版日志布局不会被收集。
 fn kimi_history_root_uses_explicit_config_dir_and_ignores_legacy_home() {
     let temp_dir = TempDir::new().unwrap();
     let custom = temp_dir.path().join("custom-kimi");
@@ -392,6 +399,7 @@ fn kimi_history_root_uses_explicit_config_dir_and_ignores_legacy_home() {
 }
 
 #[test]
+// 验证 Kimi 从应用发现、详情、精确查找到备份删除和缓存失效的链路。
 fn kimi_application_pipeline_lists_details_and_deletes_like_history_workspace() {
     let temp_dir = TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");

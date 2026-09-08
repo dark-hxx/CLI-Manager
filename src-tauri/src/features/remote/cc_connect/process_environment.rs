@@ -16,6 +16,7 @@ pub(super) struct ResolvedProxy {
     pub(super) source: ProxySource,
 }
 
+// 优先使用合法显式代理，否则按端口探测本机代理候选。
 pub(super) fn resolve_proxy_url(
     configured: Option<&str>,
     local_ports: &[u16],
@@ -34,6 +35,7 @@ pub(super) fn resolve_proxy_url(
     )
 }
 
+// 代理开关关闭时不解析地址也不进行端口探测。
 pub(super) fn resolve_proxy_url_if_enabled(
     enabled: bool,
     configured: Option<&str>,
@@ -45,6 +47,7 @@ pub(super) fn resolve_proxy_url_if_enabled(
     resolve_proxy_url(configured, local_ports)
 }
 
+// 按顺序 TCP 连接回环端口，将首个可连端口视为 HTTP 代理。
 pub(super) fn detect_local_proxy_on_ports(ports: &[u16]) -> Option<String> {
     ports.iter().find_map(|port| {
         let address = SocketAddr::from(([127, 0, 0, 1], *port));
@@ -54,6 +57,7 @@ pub(super) fn detect_local_proxy_on_ports(ports: &[u16]) -> Option<String> {
     })
 }
 
+// 生成大小写代理变量及回环绕过清单。
 pub(super) fn proxy_environment(proxy_url: &str) -> Vec<(String, String)> {
     PROXY_ENV_KEYS
         .into_iter()
@@ -71,6 +75,7 @@ pub(super) fn proxy_environment(proxy_url: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+// 关闭代理时移除继承变量，否则注入已解析代理设置。
 pub(super) fn apply_proxy_environment(
     command: &mut Command,
     proxy_enabled: bool,
@@ -90,6 +95,7 @@ pub(super) fn apply_proxy_environment(
     }
 }
 
+// 将本地路径转为配置格式后生成临时 Git 信任环境。
 pub(super) fn git_safe_directory_environment(
     project_path: &Path,
     inherited_count: Option<&str>,
@@ -97,6 +103,7 @@ pub(super) fn git_safe_directory_environment(
     git_safe_directory_environment_for_value(&config_path_value(project_path), inherited_count)
 }
 
+// 在合法继承配置计数后追加一个指定路径的 safe.directory 条目。
 pub(super) fn git_safe_directory_environment_for_value(
     project_path: &str,
     inherited_count: Option<&str>,
@@ -118,6 +125,7 @@ pub(super) fn git_safe_directory_environment_for_value(
     ]
 }
 
+// 读取继承 Git 配置计数并向子进程追加项目目录信任。
 pub(super) fn apply_git_safe_directory_environment(command: &mut Command, project_path: &Path) {
     let inherited_count = env::var("GIT_CONFIG_COUNT").ok();
     for (key, value) in git_safe_directory_environment(project_path, inherited_count.as_deref()) {

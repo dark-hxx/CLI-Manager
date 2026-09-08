@@ -93,16 +93,19 @@ struct AgentProbeProcessOutput {
     stdout_truncated: bool,
 }
 
+// 委托共享传输模型校验 SSH 连接参数。
 fn validate_spec(spec: &SshConnectionSpec) -> Result<(), String> {
     spec.validate()
 }
 
+// 将主机 UUID 规范化为凭据存储账户名。
 fn ssh_password_account(host_id: &str) -> Result<String, String> {
     let id = Uuid::parse_str(host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
     Ok(format!("ssh:{id}:password"))
 }
 
 #[tauri::command]
+// 拒绝空密码并在阻塞任务中保存凭据，返回账户引用。
 pub async fn ssh_save_password(host_id: String, password: String) -> Result<String, String> {
     if password.is_empty() {
         return Err("ssh_password_required".to_string());
@@ -118,6 +121,7 @@ pub async fn ssh_save_password(host_id: String, password: String) -> Result<Stri
 }
 
 #[tauri::command]
+// 查询该主机的凭据是否存在且非空。
 pub async fn ssh_password_status(host_id: String) -> Result<bool, String> {
     let account = ssh_password_account(&host_id)?;
     tokio::task::spawn_blocking(move || {
@@ -129,6 +133,7 @@ pub async fn ssh_password_status(host_id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
+// 在阻塞任务中删除该主机保存的密码。
 pub async fn ssh_delete_password(host_id: String) -> Result<(), String> {
     let account = ssh_password_account(&host_id)?;
     tokio::task::spawn_blocking(move || crate::credential_store::delete(&account))
@@ -136,6 +141,7 @@ pub async fn ssh_delete_password(host_id: String) -> Result<(), String> {
         .map_err(|err| format!("ssh credential task failed: {err}"))?
 }
 
+// 校验绝对 POSIX 路径并拒绝控制换行及父级段。
 fn validate_remote_path(path: &str) -> Result<&str, String> {
     let path = path.trim();
     if !path.starts_with('/') || path.contains('\0') || path.contains('\n') || path.contains('\r') {
@@ -147,6 +153,7 @@ fn validate_remote_path(path: &str) -> Result<&str, String> {
     Ok(path)
 }
 
+// 拒绝需要真实终端交互的认证方式。
 fn ensure_non_interactive(spec: &SshConnectionSpec) -> Result<(), String> {
     if matches!(spec.auth_mode.as_str(), "password_prompt" | "interactive") {
         return Err("ssh_interactive_auth_required".to_string());
@@ -154,6 +161,7 @@ fn ensure_non_interactive(spec: &SshConnectionSpec) -> Result<(), String> {
     Ok(())
 }
 
+// 按一次性传输选项构造远程命令进程。
 fn ssh_remote_command_with_options(
     spec: &SshConnectionSpec,
     remote_command: &str,
@@ -220,16 +228,19 @@ enum ParsedAgentProbe {
     },
 }
 
+// 将传输计划转换为静默进程及其参数、环境。
 fn command_from_transport_launch(launch: SshTransportLaunch) -> Command {
     let mut command = silent_command(&launch.executable);
     command.args(launch.args).envs(launch.env);
     command
 }
 
+// 以默认一次性选项构造远程命令。
 fn ssh_remote_command(spec: &SshConnectionSpec, remote_command: &str) -> Result<Command, String> {
     ssh_remote_command_with_options(spec, remote_command, false, false)
 }
 
+// 构造带详细认证日志及主机密钥策略的 true 探测命令。
 fn ssh_probe_command(
     spec: &SshConnectionSpec,
     accept_new_host_key: bool,
@@ -237,6 +248,7 @@ fn ssh_probe_command(
     ssh_remote_command_with_options(spec, "true", true, accept_new_host_key)
 }
 
+// 生成依次检查显式路径、PATH 和标准目录的 Agent 发现脚本。
 fn agent_discovery_script(agent_path: Option<&str>) -> Result<String, String> {
     let explicit = match agent_path.map(str::trim).filter(|path| !path.is_empty()) {
         Some(path) => {
@@ -262,6 +274,7 @@ fn agent_discovery_script(agent_path: Option<&str>) -> Result<String, String> {
     ))
 }
 
+// 生成输出探测标记、路径及 doctor 报告的脚本。
 fn build_agent_probe_script(agent_path: Option<&str>) -> Result<String, String> {
     let discovery = agent_discovery_script(agent_path)?;
     Ok(format!(
@@ -280,6 +293,7 @@ struct RemoteAgentEnvironment {
     install_path: String,
 }
 
+// 生成识别 Linux 架构和 HOME/XDG 安装布局的脚本。
 fn build_agent_environment_script() -> String {
     format!(
         "set -eu\n\
@@ -293,6 +307,7 @@ fn build_agent_environment_script() -> String {
     )
 }
 
+// 解析受限 banner 后的环境标记、目标和三个远程路径。
 fn parse_agent_environment(stdout: &[u8]) -> Result<RemoteAgentEnvironment, String> {
     let text = std::str::from_utf8(stdout)
         .map_err(|_| "ssh_agent_environment_output_invalid".to_string())?;
@@ -343,6 +358,7 @@ fn parse_agent_environment(stdout: &[u8]) -> Result<RemoteAgentEnvironment, Stri
     Ok(environment)
 }
 
+// 运行非交互环境探测并转换输出或连接失败原因。
 async fn detect_remote_agent_environment(
     spec: &SshConnectionSpec,
 ) -> Result<RemoteAgentEnvironment, String> {
@@ -404,11 +420,13 @@ struct SshAgentInstallProgress {
     progress: u8,
 }
 
+// 向该主机的安装进度事件发送阶段及百分比。
 fn emit_agent_install_progress(app: &AppHandle, host_id: &str, phase: &'static str, progress: u8) {
     let event = format!("ssh-agent-install-progress-{}", host_id.trim());
     let _ = app.emit(&event, SshAgentInstallProgress { phase, progress });
 }
 
+// 解析桌面资源中的内置 Agent 发布目录。
 fn bundled_agent_release_dir(app: &AppHandle) -> Result<std::path::PathBuf, String> {
     app.path()
         .resolve(SSH_AGENT_RESOURCE_ROOT, BaseDirectory::Resource)
@@ -455,6 +473,7 @@ pub struct SshAgentOperationResult {
     previous_version: String,
 }
 
+// 解析操作标记后的 JSON 并校验安装元数据。
 fn parse_agent_operation(stdout: &[u8]) -> Result<AgentOperationReport, String> {
     let text = std::str::from_utf8(stdout)
         .map_err(|_| "ssh_agent_operation_output_invalid".to_string())?;
@@ -476,6 +495,7 @@ fn parse_agent_operation(stdout: &[u8]) -> Result<AgentOperationReport, String> 
     Ok(report)
 }
 
+// 校验操作类型以及对应安装身份、版本、路径和来源字段。
 fn validate_agent_operation(report: &AgentOperationReport) -> Result<(), String> {
     let needs_installation = matches!(
         report.action.as_str(),
@@ -565,6 +585,7 @@ fn validate_agent_operation(report: &AgentOperationReport) -> Result<(), String>
     Ok(())
 }
 
+// 将操作报告展开为响应，缺失安装信息时使用空字段。
 fn operation_result(report: AgentOperationReport) -> SshAgentOperationResult {
     let installation = report.installation;
     SshAgentOperationResult {
@@ -615,6 +636,7 @@ fn operation_result(report: AgentOperationReport) -> SshAgentOperationResult {
     }
 }
 
+// 选取请求或默认安装根目录并校验远程路径语法。
 fn validated_install_root(
     requested: Option<&str>,
     environment: &RemoteAgentEnvironment,
@@ -646,6 +668,7 @@ pub struct SshAgentAvailableRelease {
     distribution_source: String,
 }
 
+// 组合已验证发布信息及基于当前版本的动作预览。
 fn available_release_preview(
     manifest_url: String,
     channel: String,
@@ -674,6 +697,7 @@ fn available_release_preview(
     }
 }
 
+// 比较语义版本确定安装、升级、重装或降级。
 fn install_action(current_version: Option<&str>, incoming_version: &str) -> String {
     let Some(current) = current_version
         .map(str::trim)
@@ -693,6 +717,7 @@ fn install_action(current_version: Option<&str>, incoming_version: &str) -> Stri
     .to_string()
 }
 
+// 生成接收二进制、执行安装并清理随机暂存目录的脚本。
 fn build_agent_install_script(
     environment: &RemoteAgentEnvironment,
     install_root: &str,
@@ -724,6 +749,7 @@ fn build_agent_install_script(
     )
 }
 
+// 生成仅允许回滚或卸载的 Agent 管理脚本。
 fn build_agent_management_script(
     agent_path: Option<&str>,
     command: &str,
@@ -742,6 +768,7 @@ fn build_agent_management_script(
     ))
 }
 
+// 规范化并限制 Hook 来源为支持的四种 CLI。
 fn validate_hook_source(source: &str) -> Result<&str, String> {
     match source.trim() {
         "claude" => Ok("claude"),
@@ -752,6 +779,7 @@ fn validate_hook_source(source: &str) -> Result<&str, String> {
     }
 }
 
+// 允许默认空根目录，否则校验远程 HOME 路径语法。
 fn validate_hook_config_root(root: &str) -> Result<&str, String> {
     let root = root.trim();
     if root.is_empty() {
@@ -764,6 +792,7 @@ fn validate_hook_config_root(root: &str) -> Result<&str, String> {
     Ok(root)
 }
 
+// 生成受限动作的 Agent Hook 配置调用脚本。
 fn build_agent_hook_config_script(
     agent_path: Option<&str>,
     action: &str,
@@ -783,16 +812,19 @@ fn build_agent_hook_config_script(
     ))
 }
 
+// 判断指纹是否为 missing 或 64 位十六进制摘要。
 fn validate_hook_fingerprint(value: &str) -> bool {
     value == "missing" || (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
+// 检查报告路径为无父级段和禁用字符的绝对 POSIX 路径。
 fn validate_hook_remote_path(value: &str) -> bool {
     value.starts_with('/')
         && !value.contains(['\0', '\r', '\n', '\\'])
         && !value.split('/').any(|segment| segment == "..")
 }
 
+// 解析 Hook 配置标记后的单个 JSON 报告。
 fn parse_agent_hook_config(stdout: &[u8]) -> Result<HookConfigReport, String> {
     let text =
         std::str::from_utf8(stdout).map_err(|_| "ssh_agent_hook_output_invalid".to_string())?;
@@ -812,6 +844,7 @@ fn parse_agent_hook_config(stdout: &[u8]) -> Result<HookConfigReport, String> {
         .map_err(|_| "ssh_agent_hook_output_contaminated".to_string())
 }
 
+// 校验 Hook 报告与请求身份、根目录、文件变更及安装记录一致。
 fn validate_agent_hook_report(
     report: &HookConfigReport,
     expected_action: &str,
@@ -982,6 +1015,7 @@ fn validate_agent_hook_report(
     Ok(())
 }
 
+// 发送 Hook 配置请求并校验成功响应的身份和文件契约。
 async fn run_agent_hook_config(
     spec: &SshConnectionSpec,
     agent_path: Option<&str>,
@@ -1044,6 +1078,7 @@ async fn run_agent_hook_config(
     Ok(report)
 }
 
+// 执行可带二进制输入的 Agent 管理操作并转换结果。
 async fn run_agent_operation(
     spec: &SshConnectionSpec,
     script: String,
@@ -1079,6 +1114,7 @@ async fn run_agent_operation(
     }
 }
 
+// 在输出及 banner 限额内解析 Agent 缺失或 doctor 报告。
 fn parse_agent_probe_stdout(stdout: &[u8]) -> Result<ParsedAgentProbe, String> {
     if stdout.len() > MAX_AGENT_PROBE_REPORT_BYTES {
         return Err("ssh_agent_probe_output_too_large".to_string());
@@ -1121,6 +1157,7 @@ fn parse_agent_probe_stdout(stdout: &[u8]) -> Result<ParsedAgentProbe, String> {
     }
 }
 
+// 构造不携带安装元数据的探测状态结果。
 fn agent_probe_result(status: &str, code: &str, detail: String) -> SshAgentProbeResult {
     SshAgentProbeResult {
         status: status.to_string(),
@@ -1136,6 +1173,7 @@ fn agent_probe_result(status: &str, code: &str, detail: String) -> SshAgentProbe
     }
 }
 
+// 依据 doctor 状态和协议要求组合探测结果及可用安装身份。
 fn result_from_agent_report(install_path: String, report: AgentDoctorProbe) -> SshAgentProbeResult {
     let installation = report.installation.filter(|installation| {
         Uuid::parse_str(&installation.installation_id).is_ok()
@@ -1179,6 +1217,7 @@ fn result_from_agent_report(install_path: String, report: AgentDoctorProbe) -> S
 }
 
 #[tauri::command]
+// 限时运行 ssh -V 并返回客户端可用性与版本输出。
 pub async fn ssh_client_status() -> SshClientStatus {
     tauri::async_runtime::spawn_blocking(|| {
         let mut command = silent_command("ssh");
@@ -1210,6 +1249,7 @@ pub async fn ssh_client_status() -> SshClientStatus {
 }
 
 #[tauri::command]
+// 在阻塞任务中解析 SSH 最终用户名。
 pub async fn ssh_resolve_user(spec: SshConnectionSpec) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || resolve_effective_ssh_user(&spec))
         .await
@@ -1217,6 +1257,7 @@ pub async fn ssh_resolve_user(spec: SshConnectionSpec) -> Result<String, String>
 }
 
 #[tauri::command]
+// 依次检查客户端、代理及认证并返回分阶段诊断。
 pub async fn ssh_test_connection(
     spec: SshConnectionSpec,
     accept_new_host_key: Option<bool>,
@@ -1338,6 +1379,7 @@ pub async fn ssh_test_connection(
 }
 
 #[tauri::command]
+// 执行显式 Agent 探测并分类缺失、损坏、不可达或已安装状态。
 pub async fn ssh_agent_probe(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1404,6 +1446,7 @@ pub async fn ssh_agent_probe(
 }
 
 #[tauri::command]
+// 读取已验证发布信息并比较版本，不建立 SSH 连接。
 pub async fn ssh_agent_available_release(
     app: AppHandle,
     manifest_url: Option<String>,
@@ -1431,6 +1474,7 @@ pub async fn ssh_agent_available_release(
 }
 
 #[tauri::command]
+// 验证发布和远端环境后返回安装目标与动作预览。
 pub async fn ssh_agent_install_preview(
     app: AppHandle,
     host_id: String,
@@ -1473,6 +1517,7 @@ pub async fn ssh_agent_install_preview(
 }
 
 #[tauri::command]
+// 重新验证发布、下载校验产物并上传安装，发送阶段进度。
 pub async fn ssh_agent_install(
     app: AppHandle,
     host_id: String,
@@ -1513,6 +1558,7 @@ pub async fn ssh_agent_install(
 }
 
 #[tauri::command]
+// 校验主机与非交互认证后执行远端 Agent 回滚。
 pub async fn ssh_agent_rollback(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1526,6 +1572,7 @@ pub async fn ssh_agent_rollback(
 }
 
 #[tauri::command]
+// 校验主机与非交互认证后执行卸载及可选状态清理。
 pub async fn ssh_agent_uninstall(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1539,6 +1586,7 @@ pub async fn ssh_agent_uninstall(
     run_agent_operation(&spec, script, None).await
 }
 
+// 校验来源、根目录和预期文件后组装 Hook 请求。
 fn hook_request(
     source: String,
     configured_config_root: String,
@@ -1582,6 +1630,7 @@ fn hook_request(
 }
 
 #[tauri::command]
+// 读取指定远端 Hook 配置并验证 Agent 身份。
 pub async fn ssh_agent_hook_inspect(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1606,6 +1655,7 @@ pub async fn ssh_agent_hook_inspect(
 }
 
 #[tauri::command]
+// 映射安装或卸载预览动作并校验保留根目录限制。
 pub async fn ssh_agent_hook_preview(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1645,6 +1695,7 @@ pub async fn ssh_agent_hook_preview(
 }
 
 #[tauri::command]
+// 携带预期文件指纹执行远端 Hook 安装或卸载。
 pub async fn ssh_agent_hook_apply(
     host_id: String,
     spec: SshConnectionSpec,
@@ -1685,6 +1736,7 @@ pub async fn ssh_agent_hook_apply(
 }
 
 #[tauri::command]
+// 通过远端目录和 Git 探测返回存在及可进入状态。
 pub async fn ssh_check_path(
     spec: SshConnectionSpec,
     path: String,
@@ -1734,6 +1786,7 @@ pub async fn ssh_check_path(
 }
 
 #[tauri::command]
+// 通过 find 读取直接子目录并按名称不区分大小写排序。
 pub async fn ssh_list_directories(
     spec: SshConnectionSpec,
     path: String,

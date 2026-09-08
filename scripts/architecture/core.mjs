@@ -11,11 +11,14 @@ export const EXCLUDED_PREFIXES = [
   "vendor/", "vendor-patches/", "src-tauri/gen/",
 ];
 
+// 按扩展名和显式排除目录识别需要结构检查的代码文件。
 export function isSource(file) {
   return /\.(?:rs|[cm]?[jt]sx?|css|py|ps1|sh)$/.test(file)
+    // 判断文件是否位于工具生成或第三方排除目录。
     && !EXCLUDED_PREFIXES.some((prefix) => file.startsWith(prefix));
 }
 
+// 计算物理行数、UTF-8 字节与长行摘要，token 数只是字节除四的估算。
 export function measure(file, source) {
   const lines = source === "" ? [] : source.replace(/\r\n/g, "\n").split("\n");
   if (lines.at(-1) === "") lines.pop();
@@ -28,14 +31,17 @@ export function measure(file, source) {
   return {
     file, lines: lines.length, bytes: Buffer.byteLength(source),
     estimatedTokens: Math.ceil(Buffer.byteLength(source) / 4),
+    // 将每行映射为字符长度以求最长行，空文件长度为零。
     maxLineLength: Math.max(0, ...lines.map((line) => line.length)), longLines,
   };
 }
 
+// 按语言提取静态依赖标识，JS/TS 使用语法树，Rust 先屏蔽非代码。
 export function imports(file, source) {
   const result = new Set();
   if (/\.[cm]?[jt]sx?$/.test(file)) {
     const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+    // 遍历声明、类型导入和字面量动态导入或 require，忽略非字面量依赖。
     const visit = (node) => {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node))
         && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) {
@@ -57,11 +63,13 @@ export function imports(file, source) {
   return [...result];
 }
 
+// 从物理路径识别应用、功能、共享或基础设施层及功能域。
 function layer(file) {
   const match = /^(src|src-tauri\/src)\/(app|features|shared|infrastructure)(?:\/([^/]+))?/.exec(file);
   return match && { root: match[1], name: match[2], domain: match[2] === "features" ? match[3] : null };
 }
 
+// 解析相对路径与兼容入口，报告违反层级或跨功能公开入口规则的依赖。
 export function dependencyViolations(file, specifiers, rustRoutes = []) {
   const from = layer(file);
   if (!from) return [];
@@ -97,7 +105,9 @@ export function dependencyViolations(file, specifiers, rustRoutes = []) {
   return violations;
 }
 
+// 仅保留已有超行数及长行债务，生成迁移基线。
 export function baselineFor(metrics) {
+  // 将有存量违规的文件度量映射为基线项，无违规文件不写入。
   return Object.fromEntries(metrics.flatMap((metric) => {
     const entry = {};
     if (metric.lines > MAX_LINES) entry.lines = metric.lines;
@@ -106,6 +116,7 @@ export function baselineFor(metrics) {
   }));
 }
 
+// 检查文件行数和长行出现次数是否超出硬限制或已有基线。
 export function checkMetrics(metrics, baseline = {}) {
   const errors = [];
   for (const metric of metrics) {

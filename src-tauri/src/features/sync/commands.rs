@@ -76,10 +76,12 @@ pub struct BackupDatabaseStatement {
     values: Vec<Value>,
 }
 
+// 惰性创建进程内异步互斥锁，用于串行化数据库恢复入口。
 fn backup_database_restore_lock() -> &'static AsyncMutex<()> {
     BACKUP_DATABASE_RESTORE_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
+// 只放行指定表的整表 DELETE 或精确列序 INSERT 前缀及受限 VALUES 字符；不校验占位符数量与 SQL 完整语法。
 fn validate_backup_database_statement(statement: &BackupDatabaseStatement) -> Result<(), String> {
     let sql = statement.sql.trim();
     if sql.is_empty()
@@ -112,6 +114,8 @@ fn validate_backup_database_statement(statement: &BackupDatabaseStatement) -> Re
     Ok(())
 }
 
+// 预检语句数量及白名单后，在同一连接执行 BEGIN IMMEDIATE、参数绑定和提交；执行失败尝试回滚。
+// JSON 复合值和越界整数在事务内拒绝；回滚错误被忽略，COMMIT 失败不会在此另行回滚。
 async fn execute_backup_database_restore(
     conn: &mut SqliteConnection,
     statements: &[BackupDatabaseStatement],
@@ -209,6 +213,7 @@ pub struct DeviceNameResult {
 }
 
 #[tauri::command]
+// 将服务层生成的默认设备名包装为 IPC 响应。
 pub async fn sync_get_default_device_name() -> Result<DeviceNameResult, String> {
     Ok(DeviceNameResult {
         device_name: default_device_name(),
@@ -216,6 +221,7 @@ pub async fn sync_get_default_device_name() -> Result<DeviceNameResult, String> 
 }
 
 #[tauri::command]
+// 转换 WebDAV 配置并委派旧版设备快照查询，沿用服务层路径及错误处理。
 pub async fn sync_list_device_snapshots(
     config: SyncConfigInput,
     device_names: Vec<String>,
@@ -230,6 +236,7 @@ pub async fn sync_list_device_snapshots(
 }
 
 #[tauri::command]
+// 把连接探测结果包装为 success/message；非成功 HTTP 状态统一显示认证失败，异常也作为正常响应返回。
 pub async fn sync_test_connection(config: SyncConfigInput) -> Result<SyncTestResult, String> {
     let webdav_config = WebDavConfig {
         url: config.url,
@@ -254,6 +261,7 @@ pub async fn sync_test_connection(config: SyncConfigInput) -> Result<SyncTestRes
 }
 
 #[tauri::command]
+// 委派旧版数据上传，成功响应沿用输入的修改时间；失败记录日志并返回错误。
 pub async fn sync_upload(
     config: SyncConfigInput,
     data: SyncData,
@@ -289,6 +297,7 @@ pub async fn sync_upload(
 }
 
 #[tauri::command]
+// 下载旧版数据，仅在未强制且两侧时间可解析、本地较新时返回冲突；不执行本地恢复。
 pub async fn sync_download(
     config: SyncConfigInput,
     local_data: Option<SyncData>,
@@ -342,6 +351,7 @@ pub struct LocalExportResult {
 }
 
 #[tauri::command]
+// 在阻塞线程中委派旧版 ZIP 导出，区分任务失败与导出错误并返回文件路径。
 pub async fn sync_local_export(dir: String, data: SyncData) -> Result<LocalExportResult, String> {
     debug!("Starting sync_local_export to {}", dir);
     let path = tokio::task::spawn_blocking(move || local_export(&dir, &data))
@@ -355,6 +365,7 @@ pub async fn sync_local_export(dir: String, data: SyncData) -> Result<LocalExpor
 }
 
 #[tauri::command]
+// 在阻塞线程中读取旧版 ZIP 并返回同步数据，不在此写入项目数据库。
 pub async fn sync_local_import(zip_path: String) -> Result<SyncData, String> {
     debug!("Starting sync_local_import from {}", zip_path);
     let data = tokio::task::spawn_blocking(move || local_import(&zip_path))
@@ -363,6 +374,7 @@ pub async fn sync_local_import(zip_path: String) -> Result<SyncData, String> {
     Ok(data)
 }
 
+// 将 IPC 配置字段原样转换为 WebDAV 配置，不额外校验 URL 或读取保存的密码。
 fn webdav_config(config: SyncConfigInput) -> WebDavConfig {
     WebDavConfig {
         url: config.url,
@@ -372,6 +384,7 @@ fn webdav_config(config: SyncConfigInput) -> WebDavConfig {
 }
 
 #[tauri::command]
+// 委派 V3 快照上传并返回服务层结果，目录与快照校验留在服务层。
 pub async fn backup_upload(
     config: SyncConfigInput,
     snapshot: BackupSnapshotV3,
@@ -381,6 +394,7 @@ pub async fn backup_upload(
 }
 
 #[tauri::command]
+// 委派备份目录枚举，返回服务层整理的快照信息。
 pub async fn backup_list(
     config: SyncConfigInput,
     remote_dir: Option<String>,
@@ -389,6 +403,7 @@ pub async fn backup_list(
 }
 
 #[tauri::command]
+// 委派指定远端快照下载，路径范围和快照校验由服务层执行，不自动恢复。
 pub async fn backup_download(
     config: SyncConfigInput,
     remote_path: String,
@@ -398,6 +413,7 @@ pub async fn backup_download(
 }
 
 #[tauri::command]
+// 委派指定远端快照删除，服务层负责确认路径属于备份范围。
 pub async fn backup_delete(
     config: SyncConfigInput,
     remote_path: String,
@@ -407,6 +423,7 @@ pub async fn backup_delete(
 }
 
 #[tauri::command]
+// 启用旧版共享文件回退下载云端同步数据，作为显式导入输入返回。
 pub async fn backup_import_legacy_cloud(
     config: SyncConfigInput,
     device_name: Option<String>,
@@ -416,6 +433,7 @@ pub async fn backup_import_legacy_cloud(
 }
 
 #[tauri::command]
+// 在阻塞线程中委派 JSON 快照 ZIP 导出，返回输出路径或任务/导出错误。
 pub async fn backup_local_export(
     dir: String,
     snapshot: serde_json::Value,
@@ -426,6 +444,7 @@ pub async fn backup_local_export(
 }
 
 #[tauri::command]
+// 在阻塞线程中委派备份 ZIP 读取并返回 JSON，不执行恢复写操作。
 pub async fn backup_local_import(zip_path: String) -> Result<serde_json::Value, String> {
     tokio::task::spawn_blocking(move || import_backup_zip(&zip_path))
         .await
@@ -433,6 +452,7 @@ pub async fn backup_local_import(zip_path: String) -> Result<serde_json::Value, 
 }
 
 #[tauri::command]
+// 在阻塞线程中委派按目标哈希保存待上传快照，文件布局与输入校验由服务层负责。
 pub async fn backup_outbox_save(
     target_hash: String,
     snapshot: serde_json::Value,
@@ -443,6 +463,7 @@ pub async fn backup_outbox_save(
 }
 
 #[tauri::command]
+// 在阻塞线程中委派目标 outbox 快照读取，不触发网络重试。
 pub async fn backup_outbox_list(target_hash: String) -> Result<Vec<serde_json::Value>, String> {
     tokio::task::spawn_blocking(move || list_outbox(&target_hash))
         .await
@@ -450,6 +471,7 @@ pub async fn backup_outbox_list(target_hash: String) -> Result<Vec<serde_json::V
 }
 
 #[tauri::command]
+// 在阻塞线程中委派删除指定目标及快照标识的 outbox 条目。
 pub async fn backup_outbox_remove(target_hash: String, snapshot_id: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || remove_outbox(&target_hash, &snapshot_id))
         .await
@@ -457,6 +479,7 @@ pub async fn backup_outbox_remove(target_hash: String, snapshot_id: String) -> R
 }
 
 #[tauri::command]
+// 在阻塞线程中委派保存恢复安全快照，返回服务层生成的路径。
 pub async fn backup_restore_safety_save(snapshot: serde_json::Value) -> Result<String, String> {
     tokio::task::spawn_blocking(move || save_restore_safety(&snapshot))
         .await
@@ -464,6 +487,7 @@ pub async fn backup_restore_safety_save(snapshot: serde_json::Value) -> Result<S
 }
 
 #[tauri::command]
+// 在阻塞线程中读取可选安全快照，不自动应用恢复。
 pub async fn backup_restore_safety_load() -> Result<Option<serde_json::Value>, String> {
     tokio::task::spawn_blocking(load_restore_safety)
         .await
@@ -471,6 +495,7 @@ pub async fn backup_restore_safety_load() -> Result<Option<serde_json::Value>, S
 }
 
 #[tauri::command]
+// 在阻塞线程中委派清除安全快照，不影响其他备份。
 pub async fn backup_restore_safety_clear() -> Result<(), String> {
     tokio::task::spawn_blocking(clear_restore_safety)
         .await
@@ -478,6 +503,8 @@ pub async fn backup_restore_safety_clear() -> Result<(), String> {
 }
 
 #[tauri::command]
+// 持有进程内恢复锁，以 WAL、外键和 15 秒忙等待打开现有数据库，在独占连接完成恢复并关闭。
+// 恢复失败优先返回原错误；恢复成功而关闭失败仍返回关闭错误，不在此创建安全快照。
 pub async fn backup_restore_database(
     statements: Vec<BackupDatabaseStatement>,
 ) -> Result<(), String> {
@@ -505,6 +532,7 @@ pub async fn backup_restore_database(
 }
 
 #[tauri::command]
+// 支持的平台在阻塞线程保存 WebDAV 凭据，空密码改为删除；其他平台返回安全存储不支持。
 pub async fn sync_save_password(password: String) -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
@@ -525,6 +553,7 @@ pub async fn sync_save_password(password: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 支持的平台在阻塞线程读取可选 WebDAV 密码；其他平台返回空值。
 pub async fn sync_load_password() -> Result<Option<String>, String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
@@ -537,6 +566,7 @@ pub async fn sync_load_password() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
+// 支持的平台在阻塞线程删除 WebDAV 凭据；其他平台按无操作成功处理。
 pub async fn sync_delete_password() -> Result<(), String> {
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     {
@@ -552,6 +582,7 @@ pub async fn sync_delete_password() -> Result<(), String> {
 mod tests {
     use super::*;
 
+    // 创建含旧分组记录的独立内存数据库，供恢复事务测试复用。
     async fn restore_test_connection() -> SqliteConnection {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -579,6 +610,7 @@ mod tests {
         conn
     }
 
+    // 构造合法的分组整表删除测试语句，不执行数据库操作。
     fn delete_groups_statement() -> BackupDatabaseStatement {
         BackupDatabaseStatement {
             sql: "DELETE FROM groups".to_string(),
@@ -587,6 +619,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证恢复删除旧记录并提交新记录，保留整数存储类型以及图标、颜色字段。
     async fn database_restore_executes_statements_in_one_transaction() {
         let mut conn = restore_test_connection().await;
         let statements = [
@@ -630,6 +663,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证包含 bound_path 的分组恢复语句保留绑定路径文本，不访问该路径。
     async fn database_restore_preserves_group_binding_path() {
         let mut conn = restore_test_connection().await;
         let statements = [
@@ -663,6 +697,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SQL 白名单接受含 path_mode 的列清单；此测试不执行 INSERT 或验证参数数量。
     fn database_restore_accepts_project_path_mode_column() {
         let statement = BackupDatabaseStatement {
             sql: "INSERT INTO projects (id,name,path,path_mode,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,icon,color,created_at,updated_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)".to_string(),
@@ -673,6 +708,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在启用外键的内存数据库恢复主机组、主机和项目，验证关联及远端路径保留。
     async fn database_restore_preserves_ssh_host_project_binding() {
         let mut conn = restore_test_connection().await;
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -877,6 +913,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在删除后插入重复主键触发失败，验证整个恢复事务回滚并保留旧分组。
     async fn database_restore_rolls_back_all_statements_on_failure() {
         let mut conn = restore_test_connection().await;
         let statements = [
@@ -915,6 +952,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证含分号的多语句 SQL 被拒绝；该夹具不单独测试一个未授权表名。
     async fn database_restore_rejects_statements_outside_owned_tables() {
         let mut conn = restore_test_connection().await;
         let statements = [BackupDatabaseStatement {

@@ -133,6 +133,7 @@ enum StreamCommitOutcome {
 }
 
 impl StreamCommitTracker {
+    // 创建指定协议类型的 SSE 提交跟踪器，初始尚未判定结果。
     fn new(kind: StreamCommitKind) -> Self {
         Self {
             kind,
@@ -141,6 +142,7 @@ impl StreamCommitTracker {
         }
     }
 
+    // 追加有损解码的分块文本并按双换行解析事件，只返回首次确定的提交结果。
     fn observe(&mut self, chunk: &Bytes) -> StreamCommitOutcome {
         if self.settled {
             return StreamCommitOutcome::None;
@@ -158,6 +160,7 @@ impl StreamCommitTracker {
         StreamCommitOutcome::None
     }
 
+    // 解析 SSE 数据 JSON；通用流以首个有效数据判成功，Responses 流等待完成或失败事件。
     fn event_outcome(&self, event: &str) -> StreamCommitOutcome {
         let mut event_name = None;
         let mut data = String::new();
@@ -232,6 +235,7 @@ struct TimedBodyState<S> {
 }
 
 impl<S> Drop for TimedBodyState<S> {
+    // 流状态销毁时尽力提交取消用量，并释放仍持有的熔断许可。
     fn drop(&mut self) {
         finish_usage_commit(self, Some("routing_client_cancelled"));
         if let Some(circuit) = self.circuit.take() {
@@ -269,6 +273,7 @@ pub(crate) struct RouteState {
 }
 
 impl RouteState {
+    // 按池 ID 创建或更新密钥池；候选内容变化时重置游标和冷却状态，再选择可用密钥。
     fn select_key_status(
         &self,
         pool_id: &str,
@@ -294,6 +299,7 @@ impl RouteState {
     }
 
     #[cfg(test)]
+    // 为测试将密钥选择状态转换为候选或具体不可用错误。
     fn select_key(
         &self,
         pool_id: &str,
@@ -306,11 +312,13 @@ impl RouteState {
         }
     }
 
+    // 在指定池中寻找未使用且未冷却的下一个密钥，锁或池缺失时返回 None。
     fn next_key(&self, pool_id: &str, used: &HashSet<String>) -> Option<KeyCandidate> {
         let mut pools = self.pools.lock().ok()?;
         pools.get_mut(pool_id)?.next_key(used)
     }
 
+    // 根据状态码与 Retry-After 为指定池内密钥登记冷却截止时间。
     fn mark_cooldown(
         &self,
         pool_id: &str,
@@ -331,6 +339,7 @@ impl RouteState {
 }
 
 impl KeyPool {
+    // 将池的下一次选择状态简化为可用候选或 None。
     fn next_key(&mut self, used: &HashSet<String>) -> Option<KeyCandidate> {
         match self.next_key_status(used) {
             KeySelection::Ready(candidate) => Some(candidate),
@@ -338,6 +347,7 @@ impl KeyPool {
         }
     }
 
+    // 清除过期冷却并轮询候选，区分全部用尽与仍有候选但处于冷却。
     fn next_key_status(&mut self, used: &HashSet<String>) -> KeySelection {
         let now = Instant::now();
         self.cooldowns.retain(|_, deadline| *deadline > now);
@@ -372,10 +382,12 @@ pub(crate) struct RouteHttpServer {
 }
 
 impl RouteHttpServer {
+    // 以新的共享路由状态启动监听工作线程。
     pub(crate) fn start(listeners: &[TcpListener]) -> Result<Self, String> {
         Self::start_with_state(listeners, None)
     }
 
+    // 为每个监听器建立独立运行时线程，可复用旧密钥和熔断状态；启动失败时收拢已建线程。
     pub(crate) fn start_with_state(
         listeners: &[TcpListener],
         existing_state: Option<Arc<RouteState>>,
@@ -433,19 +445,23 @@ impl RouteHttpServer {
         })
     }
 
+    // 取得当前共享熔断器的状态快照。
     pub(crate) fn circuit_snapshots(&self) -> Vec<CircuitSnapshot> {
         self.state.circuits.snapshots()
     }
 
+    // 克隆共享路由状态引用，供重建 HTTP 服务时保留状态。
     pub(crate) fn shared_state(&self) -> Arc<RouteState> {
         Arc::clone(&self.state)
     }
 
+    // 重置指定应用与供应商的熔断状态。
     pub(crate) fn reset_circuit(&self, app_type: &str, provider_id: &str) {
         self.state.circuits.reset(app_type, provider_id);
     }
 }
 
+// 设置停止标记并等待所有工作线程退出。
 fn stop_workers(stop: &Arc<AtomicBool>, workers: &mut Vec<JoinHandle<()>>) {
     stop.store(true, Ordering::Release);
     for worker in workers.drain(..) {
@@ -454,6 +470,7 @@ fn stop_workers(stop: &Arc<AtomicBool>, workers: &mut Vec<JoinHandle<()>>) {
 }
 
 impl Drop for RouteHttpServer {
+    // 销毁 HTTP 服务时通知停止并等待工作线程结束。
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         for worker in self.workers.drain(..) {
@@ -462,6 +479,7 @@ impl Drop for RouteHttpServer {
     }
 }
 
+// 轮询监听器与停止标记，为接收的连接启动本地 HTTP/1 处理任务。
 async fn serve_listener(listener: TcpListener, stop: Arc<AtomicBool>, state: Arc<RouteState>) {
     let Ok(listener) = tokio::net::TcpListener::from_std(listener) else {
         return;
@@ -486,6 +504,7 @@ async fn serve_listener(listener: TcpListener, stop: Arc<AtomicBool>, state: Arc
     }
 }
 
+// 调用上游转发，将稳定错误元组包装为 HTTP JSON 错误响应。
 async fn handle_request(
     request: Request<Incoming>,
     state: Arc<RouteState>,
@@ -496,6 +515,7 @@ async fn handle_request(
     })
 }
 
+// 仅识别受支持的 POST 路由，区分已知路径的方法错误与未知路径。
 fn classify_route(method: &Method, path: &str) -> Result<RouteKind, (StatusCode, &'static str)> {
     if *method != Method::POST {
         let known = matches!(
@@ -519,6 +539,7 @@ fn classify_route(method: &Method, path: &str) -> Result<RouteKind, (StatusCode,
     }
 }
 
+// 将路由种类映射到对应供应商应用类型。
 fn route_app_type(route: RouteKind) -> &'static str {
     match route {
         RouteKind::ClaudeMessages => "claude",
@@ -527,6 +548,7 @@ fn route_app_type(route: RouteKind) -> &'static str {
     }
 }
 
+// 返回路由种类的固定路径或 Grok 路径前缀。
 fn route_path(route: RouteKind) -> &'static str {
     match route {
         RouteKind::ClaudeMessages => "/v1/messages",
@@ -536,6 +558,7 @@ fn route_path(route: RouteKind) -> &'static str {
     }
 }
 
+// 选择当前启用的供应商，再读取其完整路由快照。
 async fn load_provider_snapshot(route: RouteKind) -> Result<ProviderSnapshot, String> {
     let app_type = route_app_type(route);
     let providers = crate::provider::repository::list_providers(Some(app_type.to_string())).await?;
@@ -546,6 +569,7 @@ async fn load_provider_snapshot(route: RouteKind) -> Result<ProviderSnapshot, St
     load_provider_snapshot_for_provider(route, &card.id).await
 }
 
+// 读取供应商详情与启用密钥，优先排列活动密钥并解析模型、媒体及 Bedrock 配置。
 async fn load_provider_snapshot_for_provider(
     route: RouteKind,
     provider_id: &str,
@@ -656,6 +680,7 @@ async fn load_provider_snapshot_for_provider(
     })
 }
 
+// 仅在自动故障转移启用、选中非当前供应商且响应成功时允许热切换。
 fn should_hot_switch_provider(
     auto_failover_enabled: bool,
     selected_provider_is_current: bool,
@@ -666,6 +691,7 @@ fn should_hot_switch_provider(
         && classify_upstream_status(status) == UpstreamErrorClass::Success
 }
 
+// 按当前供应商或故障转移队列加载快照，队列中无有效候选时返回最后错误。
 async fn load_provider_snapshots(
     route: RouteKind,
     auto_failover_enabled: bool,
@@ -706,6 +732,7 @@ async fn load_provider_snapshots(
     Ok(snapshots)
 }
 
+// 添加 Claude 角色和可选显示名映射，并为带 [1m] 后缀的显示名添加基础别名。
 fn add_claude_model_mapping(
     mappings: &mut Vec<ModelMapping>,
     role: &str,
@@ -736,6 +763,7 @@ fn add_claude_model_mapping(
     }
 }
 
+// 读取非 Claude 配置中的高级模型映射，要求源和目标非空且源不重复。
 fn parse_model_mappings(
     app_type: &str,
     settings_config: &str,
@@ -780,6 +808,7 @@ fn parse_model_mappings(
     Ok(result)
 }
 
+// 复制请求并替换精确匹配的顶层模型名，返回序列化 JSON 字节。
 fn apply_model_mapping(
     request: &serde_json::Value,
     mappings: &[ModelMapping],
@@ -801,6 +830,7 @@ fn apply_model_mapping(
     serde_json::to_vec(&request).map_err(|_| "routing_request_serialize_failed".to_string())
 }
 
+// 计算请求经过精确模型映射后的名称，未命中时保留原模型。
 fn effective_model_for_request(
     request: &serde_json::Value,
     mappings: &[ModelMapping],
@@ -813,6 +843,7 @@ fn effective_model_for_request(
         .or_else(|| Some(model.to_string()))
 }
 
+// 根据显式纯文本能力或已启用的模型名启发式决定是否预先降级媒体。
 fn should_preflight_media_fallback(
     config: &crate::provider::routing::RoutingRectifierConfig,
     capability: MediaCapability,
@@ -822,6 +853,7 @@ fn should_preflight_media_fallback(
         || (config.request_media_heuristic && model.is_some_and(is_text_only_model))
 }
 
+// 解析配置中的纯文本声明，解析失败或未声明时返回未知能力。
 fn declared_media_capability(settings_config: &str) -> MediaCapability {
     let Ok(settings) = serde_json::from_str::<serde_json::Value>(settings_config) else {
         return MediaCapability::Unknown;
@@ -833,6 +865,7 @@ fn declared_media_capability(settings_config: &str) -> MediaCapability {
     }
 }
 
+// 递归检查显式纯文本、禁用图像或仅文本输入模态声明。
 fn contains_explicit_text_only_declaration(value: &serde_json::Value) -> bool {
     match value {
         serde_json::Value::Object(object) => {
@@ -870,6 +903,7 @@ fn contains_explicit_text_only_declaration(value: &serde_json::Value) -> bool {
     }
 }
 
+// 按内置模型列表及 text-only 名称片段识别纯文本模型。
 fn is_text_only_model(model: &str) -> bool {
     let normalized = model.trim().to_ascii_lowercase();
     TEXT_ONLY_MODEL_IDS
@@ -879,6 +913,7 @@ fn is_text_only_model(model: &str) -> bool {
         || normalized.contains("text_only")
 }
 
+// 判断 HTTP 状态是否属于媒体能力纠偏的候选状态。
 fn is_media_capability_status(status: StatusCode) -> bool {
     matches!(
         status,
@@ -889,6 +924,7 @@ fn is_media_capability_status(status: StatusCode) -> bool {
     )
 }
 
+// 通过媒体名词与不支持表述的组合判断错误正文是否提示媒体能力不足。
 fn is_media_capability_error(body: &[u8]) -> bool {
     let body = String::from_utf8_lossy(body).to_ascii_lowercase();
     let mentions_media = ["image", "picture", "photo", "vision", "media", "file"]
@@ -908,6 +944,7 @@ fn is_media_capability_error(body: &[u8]) -> bool {
     mentions_media && rejects_media
 }
 
+// 遍历 JSON 子项，将识别出的媒体块替换为文本占位，不短路后续分支。
 fn replace_unsupported_media(value: &mut serde_json::Value) -> bool {
     match value {
         serde_json::Value::Array(items) => {
@@ -944,6 +981,7 @@ fn replace_unsupported_media(value: &mut serde_json::Value) -> bool {
     }
 }
 
+// 按块类型或图像和文件相关字段识别媒体对象。
 fn is_media_block(value: &serde_json::Value) -> bool {
     let Some(object) = value.as_object() else {
         return false;
@@ -986,6 +1024,7 @@ const BEDROCK_BETA: &str = "interleaved-thinking-2025-05-14";
 const BEDROCK_CACHE_TTL: &str = "5m";
 const MAX_BEDROCK_CACHE_BREAKPOINTS: usize = 4;
 
+// 仅在有效配置 env 中 Bedrock 开关字符串为 1 时启用。
 fn effective_bedrock_enabled(settings_config: &str) -> bool {
     let Ok(settings) = serde_json::from_str::<serde_json::Value>(settings_config) else {
         return false;
@@ -998,6 +1037,7 @@ fn effective_bedrock_enabled(settings_config: &str) -> bool {
         == Some("1")
 }
 
+// 按模型名片段将 Bedrock 模型分为 Haiku、自适应或旧版思考策略。
 fn bedrock_model_generation(model: Option<&str>) -> BedrockModelGeneration {
     let normalized = model.unwrap_or_default().trim().to_ascii_lowercase();
     if normalized.contains("haiku") {
@@ -1014,6 +1054,7 @@ fn bedrock_model_generation(model: Option<&str>) -> BedrockModelGeneration {
     }
 }
 
+// 按开关应用 Bedrock 思考与缓存优化，返回是否需要追加 beta 请求头。
 fn apply_bedrock_optimizations(
     request: &mut serde_json::Value,
     config: &crate::provider::routing::RoutingOptimizerConfig,
@@ -1053,6 +1094,7 @@ fn apply_bedrock_optimizations(
     adds_beta
 }
 
+// 确保 thinking 为对象并设置类型与预算或 effort，预算模式移除旧 effort。
 fn set_thinking_object(
     request: &mut serde_json::Value,
     thinking_type: &str,
@@ -1100,6 +1142,7 @@ fn set_thinking_object(
     }
 }
 
+// 没有任何 anthropic-beta 头时添加预设 beta 值，不覆盖已有值。
 fn add_bedrock_beta_header(headers: &mut Vec<(HeaderName, HeaderValue)>) {
     if headers
         .iter()
@@ -1113,6 +1156,7 @@ fn add_bedrock_beta_header(headers: &mut Vec<(HeaderName, HeaderValue)>) {
     ));
 }
 
+// 在总断点预算内依次尝试工具、系统、最新消息和较早用户消息的缓存标记。
 fn inject_bedrock_cache_breakpoints(request: &mut serde_json::Value) -> bool {
     let mut remaining =
         MAX_BEDROCK_CACHE_BREAKPOINTS.saturating_sub(cache_breakpoint_count(request));
@@ -1160,6 +1204,7 @@ fn inject_bedrock_cache_breakpoints(request: &mut serde_json::Value) -> bool {
     changed
 }
 
+// 递归统计包含 cache_control 字段的对象数量。
 fn cache_breakpoint_count(value: &serde_json::Value) -> usize {
     match value {
         serde_json::Value::Object(object) => {
@@ -1171,6 +1216,7 @@ fn cache_breakpoint_count(value: &serde_json::Value) -> usize {
     }
 }
 
+// 尝试给非空数组的最后一个元素添加缓存标记。
 fn add_cache_to_last_array_item(value: &mut serde_json::Value) -> bool {
     value
         .as_array_mut()
@@ -1178,6 +1224,7 @@ fn add_cache_to_last_array_item(value: &mut serde_json::Value) -> bool {
         .is_some_and(add_cache_to_block)
 }
 
+// 尝试给消息内容对象或内容数组末项添加缓存标记。
 fn add_cache_to_message(message: &mut serde_json::Value) -> bool {
     let Some(content) = message.get_mut("content") else {
         return false;
@@ -1188,6 +1235,7 @@ fn add_cache_to_message(message: &mut serde_json::Value) -> bool {
     add_cache_to_block(content)
 }
 
+// 为尚无 cache_control 的对象添加固定 TTL 的临时缓存声明。
 fn add_cache_to_block(value: &mut serde_json::Value) -> bool {
     let Some(object) = value.as_object_mut() else {
         return false;
@@ -1202,6 +1250,7 @@ fn add_cache_to_block(value: &mut serde_json::Value) -> bool {
     true
 }
 
+// 按 signature 与无效、缺失或修改等关键字组合识别思考签名错误。
 fn is_thinking_signature_error(body: &[u8]) -> bool {
     let body = String::from_utf8_lossy(body).to_ascii_lowercase();
     body.contains("signature")
@@ -1212,6 +1261,7 @@ fn is_thinking_signature_error(body: &[u8]) -> bool {
             || body.contains("altered"))
 }
 
+// 按预算相关与约束相关关键字组合识别思考预算错误。
 fn is_thinking_budget_error(body: &[u8]) -> bool {
     let body = String::from_utf8_lossy(body).to_ascii_lowercase();
     let mentions_budget = body.contains("budget")
@@ -1227,6 +1277,7 @@ fn is_thinking_budget_error(body: &[u8]) -> bool {
             || body.contains("too large"))
 }
 
+// 对非自适应请求设置固定思考预算，并将不足的 max_tokens 提升到预设值。
 fn rectify_thinking_budget(request: &mut serde_json::Value) -> bool {
     let Some(object) = request.as_object_mut() else {
         return false;
@@ -1262,6 +1313,7 @@ fn rectify_thinking_budget(request: &mut serde_json::Value) -> bool {
     true
 }
 
+// 递归删除数组中的 thinking 与 redacted_thinking 块，保留其他元素继续处理。
 fn remove_invalid_thinking_blocks(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Array(items) => {
@@ -1284,6 +1336,7 @@ fn remove_invalid_thinking_blocks(value: &mut serde_json::Value) {
     }
 }
 
+// 校验 HTTP(S) 基址并拼接路由路径，避免普通路由重复 /v1，清除查询参数。
 fn upstream_url(base_url: &str, route: RouteKind, request_path: &str) -> Result<String, ()> {
     let mut url = reqwest::Url::parse(base_url.trim()).map_err(|_| ())?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
@@ -1307,6 +1360,7 @@ fn upstream_url(base_url: &str, route: RouteKind, request_path: &str) -> Result<
     Ok(url.to_string())
 }
 
+// 将上游状态划分为密钥错误、供应商错误、成功或其他客户端类别。
 fn classify_upstream_status(status: StatusCode) -> UpstreamErrorClass {
     match status.as_u16() {
         401 | 403 | 429 => UpstreamErrorClass::Key,
@@ -1316,12 +1370,14 @@ fn classify_upstream_status(status: StatusCode) -> UpstreamErrorClass {
     }
 }
 
+// 尝试解析错误 JSON 并提取用量/错误摘要，解析失败返回默认捕获结果。
 fn capture_upstream_error_body(body: &[u8]) -> usage::UsageCapture {
     serde_json::from_slice::<serde_json::Value>(body)
         .map(|value| usage::parse_response_json(&value))
         .unwrap_or_default()
 }
 
+// 在时限及诊断字节预算内读取错误响应，超时返回默认用量捕获。
 async fn capture_upstream_error_response(
     response: reqwest::Response,
     timeout: Duration,
@@ -1350,6 +1406,7 @@ async fn capture_upstream_error_response(
         .unwrap_or_default()
 }
 
+// 消费可选熔断许可并记录成功，防止重复提交。
 fn record_circuit_success(
     state: &RouteState,
     permit: &mut Option<CircuitPermit>,
@@ -1360,6 +1417,7 @@ fn record_circuit_success(
     }
 }
 
+// 消费可选熔断许可并记录失败，防止重复提交。
 fn record_circuit_failure(
     state: &RouteState,
     permit: &mut Option<CircuitPermit>,
@@ -1370,10 +1428,12 @@ fn record_circuit_failure(
     }
 }
 
+// 将重试次数转换为包含首次请求的尝试数，溢出时饱和。
 fn max_attempts(max_retries: u32) -> u32 {
     max_retries.saturating_add(1)
 }
 
+// 在共享尝试预算内预留一次发送，返回该次零基索引。
 fn reserve_provider_attempt(actual_attempts: &mut usize, max_attempts: usize) -> Option<usize> {
     if *actual_attempts >= max_attempts {
         return None;
@@ -1383,6 +1443,7 @@ fn reserve_provider_attempt(actual_attempts: &mut usize, max_attempts: usize) ->
     Some(attempt_index)
 }
 
+// 复制熔断策略并将流式失败阈值设为一次。
 fn stream_failure_policy(policy: CircuitPolicy) -> CircuitPolicy {
     CircuitPolicy {
         failure_threshold: 1,
@@ -1390,6 +1451,7 @@ fn stream_failure_policy(policy: CircuitPolicy) -> CircuitPolicy {
     }
 }
 
+// 流结束时将未确定提交的流记为失败，否则释放剩余熔断许可。
 fn finish_stream_circuit<S>(state: &mut TimedBodyState<S>) {
     let Some(circuit) = state.circuit.take() else {
         return;
@@ -1416,6 +1478,7 @@ fn finish_stream_circuit<S>(state: &mut TimedBodyState<S>) {
     }
 }
 
+// 包装上游分块流以施加首块、空闲或总时限，并协调熔断、热切换和用量提交。
 fn timed_body_stream<S>(
     stream: S,
     mode: BodyTimeoutMode,
@@ -1549,6 +1612,7 @@ where
     )
 }
 
+// 仅消费一次流式用量状态，合并错误信息并异步尽力写入用量记录。
 fn finish_usage_commit<S>(state: &mut TimedBodyState<S>, error_code: Option<&'static str>) {
     let Some(commit) = state.usage_commit.take() else {
         return;
@@ -1585,10 +1649,12 @@ fn finish_usage_commit<S>(state: &mut TimedBodyState<S>, error_code: Option<&'st
     });
 }
 
+// 判断状态码是否属于可轮换密钥重试的错误类别。
 fn is_key_retryable(status: reqwest::StatusCode) -> bool {
     classify_upstream_status(status) == UpstreamErrorClass::Key
 }
 
+// 优先采用限幅的整数 Retry-After 秒数，否则按 429 或其他错误选择默认冷却。
 fn retry_cooldown(status: u16, headers: &reqwest::header::HeaderMap) -> Duration {
     if let Some(seconds) = headers
         .get("retry-after")
@@ -1604,6 +1670,7 @@ fn retry_cooldown(status: u16, headers: &reqwest::header::HeaderMap) -> Duration
     }
 }
 
+// 仅对指定 Anthropic 格式和 API key 字段使用 x-api-key 认证头。
 fn use_claude_api_key_header(snapshot: &ProviderSnapshot) -> bool {
     snapshot.app_type == "claude"
         && snapshot
@@ -1616,6 +1683,7 @@ fn use_claude_api_key_header(snapshot: &ProviderSnapshot) -> bool {
             .is_some_and(|value| value == "ANTHROPIC_API_KEY")
 }
 
+// 复制请求头，移除固定逐跳头、Host 及调用方认证头，供上游重新注入认证。
 fn request_headers(request: &Request<Incoming>) -> Vec<(HeaderName, HeaderValue)> {
     request
         .headers()
@@ -1630,6 +1698,7 @@ fn request_headers(request: &Request<Incoming>) -> Vec<(HeaderName, HeaderValue)
         .collect()
 }
 
+// 累计头名称与值的字节数，不包含 HTTP 分隔符开销。
 fn header_bytes(headers: &hyper::HeaderMap) -> usize {
     headers
         .iter()
@@ -1637,6 +1706,7 @@ fn header_bytes(headers: &hyper::HeaderMap) -> usize {
         .sum()
 }
 
+// 按固定名称集合识别需移除的逐跳、Host 与内容长度头。
 fn is_hop_by_hop(name: &str) -> bool {
     matches!(
         name.to_ascii_lowercase().as_str(),
@@ -1654,6 +1724,7 @@ fn is_hop_by_hop(name: &str) -> bool {
         || name.eq_ignore_ascii_case(CONTENT_LENGTH.as_str())
 }
 
+// 构造 JSON 错误响应，并附加 POST 方法提示。
 fn error_response(status: StatusCode, message: &'static str) -> Response<RouteBody> {
     let body = Full::new(Bytes::from(json!({ "error": message }).to_string()))
         .map_err(|error| match error {})

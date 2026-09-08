@@ -58,6 +58,7 @@ struct SamplingOptions {
 }
 
 impl SamplingOptions {
+    // 字段级选项优先；嵌套 fullDetail 覆盖旧参数，基础项默认开启，额外项默认跟随 fullDetail。
     fn from_args(
         full_detail: Option<bool>,
         options: Option<SystemResourceSnapshotOptions>,
@@ -205,6 +206,7 @@ struct ResourceCollector {
 }
 
 impl ResourceCollector {
+    // 初始化 CPU/平台内存采样器及空缓存，网络/磁盘列表和 GPU 查询随后按需加载。
     fn new() -> Self {
         Self {
             system: System::new_with_specifics(
@@ -229,6 +231,8 @@ impl ResourceCollector {
         }
     }
 
+    // 按选项刷新 CPU/内存，其余昂贵项按独立时钟复用缓存；关闭项返回空值但不清除旧缓存。
+    // 保留物理核与逻辑线程区分；进程排行会额外读取前五项命令行/程序路径，不能用作脱敏日志。
     fn snapshot(&mut self, options: SamplingOptions) -> SystemResourceSnapshot {
         if options.cpu {
             self.system.refresh_cpu_usage();
@@ -355,28 +359,34 @@ impl ResourceCollector {
         }
     }
 
+    // 以八秒公共间隔限制本机 IP 的再次探测，首次允许刷新。
     fn should_refresh_system(&self, now: Instant) -> bool {
         should_refresh(self.last_system_refresh, now)
     }
 
+    // 网络使用独立的一秒刷新间隔，未采样过时立即刷新。
     fn should_refresh_network(&self, now: Instant) -> bool {
         self.last_network_refresh
             .map(|last| now.duration_since(last) >= Duration::from_secs(1))
             .unwrap_or(true)
     }
 
+    // 磁盘缓存为空时立即重试，否则遵循八秒昂贵采样间隔。
     fn should_refresh_disks(&self, now: Instant) -> bool {
         self.cached_disks.is_empty() || should_refresh(self.last_disk_refresh, now)
     }
 
+    // GPU 查询按八秒间隔刷新，即使上次没有采到值也等待此间隔。
     fn should_refresh_gpu(&self, now: Instant) -> bool {
         should_refresh(self.last_gpu_refresh, now)
     }
 
+    // 进程排行榜为空时立即重采，否则复用八秒内缓存。
     fn should_refresh_processes(&self, now: Instant) -> bool {
         self.cached_top_processes.is_empty() || should_refresh(self.last_process_refresh, now)
     }
 
+    // 刷新网络接口并饱和汇总传输计数，以实际间隔换算速率；首轮速率为零，同时建立日内基线。
     fn sample_network(&mut self, now: Instant) -> NetworkSnapshot {
         let previous_refresh = self.last_network_refresh;
         let elapsed_secs = now
@@ -414,6 +424,7 @@ impl ResourceCollector {
         }
     }
 
+    // 以本地日历日期更新当前采集器的网络累计基线，仅保存在内存，不恢复应用启动前流量。
     fn today_network_totals(
         &mut self,
         total_uploaded_bytes: u64,
@@ -435,6 +446,7 @@ struct NetworkDailyBaseline {
     total_downloaded_bytes: u64,
 }
 
+// 返回相对日内基线的收发增量；首次、跨日或任一计数低于基线时同时重置两项基线。
 fn network_daily_totals(
     baseline: &mut Option<NetworkDailyBaseline>,
     day: NaiveDate,
@@ -466,12 +478,14 @@ fn network_daily_totals(
     )
 }
 
+// 判断首次或距上次采样至少八秒；调用方应传入不早于上次刷新的单调时间。
 fn should_refresh(last_refresh: Option<Instant>, now: Instant) -> bool {
     last_refresh
         .map(|last| now.duration_since(last) >= EXPENSIVE_REFRESH_INTERVAL)
         .unwrap_or(true)
 }
 
+// 从已刷新磁盘列表生成容量与 IO 速率快照，不另行刷新设备；已用空间采用饱和减法。
 fn collect_disks(disks: &Disks, elapsed_secs: f64) -> Vec<DiskSnapshot> {
     disks
         .iter()
@@ -493,6 +507,7 @@ fn collect_disks(disks: &Disks, elapsed_secs: f64) -> Vec<DiskSnapshot> {
         .collect()
 }
 
+// 对系统快照全部进程按 CPU 降序、内存次序排序取前五 PID，不限定本应用进程树。
 fn collect_top_process_pids(system: &System) -> Vec<Pid> {
     let mut processes = system
         .processes()
@@ -514,6 +529,7 @@ fn collect_top_process_pids(system: &System) -> Vec<Pid> {
         .collect()
 }
 
+// 按给定 PID 顺序构造展示行，拼接命令行并补充缓存图标/名称；已消失进程跳过，数据未脱敏。
 fn collect_top_processes(
     system: &System,
     top_pids: &[Pid],
@@ -550,6 +566,7 @@ fn collect_top_processes(
         .collect()
 }
 
+// 以可执行路径或名称缓存展示信息，包括缺失结果；达到 96 项时整体清空，不采用 LRU 淘汰。
 fn process_presentation(
     exe_path: Option<&Path>,
     process_name: &str,
@@ -580,6 +597,7 @@ fn process_presentation(
     presentation
 }
 
+// Windows 优先取版本资源描述，其余情况回退可执行文件主名；没有路径不以进程名补齐。
 fn process_display_name(exe_path: Option<&Path>) -> Option<String> {
     #[cfg(target_os = "windows")]
     if let Some(path) = exe_path {
@@ -594,6 +612,7 @@ fn process_display_name(exe_path: Option<&Path>) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 提取程序小图标并编码为 BMP Data URL，缺失路径或提取失败返回 None。
 fn process_icon_data_url(exe_path: Option<&Path>) -> Option<String> {
     let path = exe_path?;
     windows_file_icon_bmp(path).map(|bytes| {
@@ -605,10 +624,12 @@ fn process_icon_data_url(exe_path: Option<&Path>) -> Option<String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 非 Windows 不提供进程图标，交由前端使用无图标展示。
 fn process_icon_data_url(_exe_path: Option<&Path>) -> Option<String> {
     None
 }
 
+// 去除首尾空白，将空展示文本转换为 None，不修改内部空白或大小写。
 fn normalize_display_text(value: &str) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -627,6 +648,7 @@ struct LangAndCodePage {
 }
 
 #[cfg(target_os = "windows")]
+// 读取文件版本资源，按声明语言/代码页及英语回退组合寻找 FileDescription，再尝试 ProductName。
 fn windows_file_display_name(path: &Path) -> Option<String> {
     let wide_path = path_wide_null(path);
     let mut handle = 0_u32;
@@ -663,6 +685,7 @@ fn windows_file_display_name(path: &Path) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 从有效 Windows 版本资源缓冲提取语言/代码页对，查询失败或无完整条目时返回空列表。
 fn windows_version_translations(data: &[u8]) -> Vec<(u16, u16)> {
     let mut value_ptr: *mut c_void = ptr::null_mut();
     let mut len = 0_u32;
@@ -692,6 +715,7 @@ fn windows_version_translations(data: &[u8]) -> Vec<(u16, u16)> {
 }
 
 #[cfg(target_os = "windows")]
+// 按子键读取版本资源 UTF-16 字符串，截到首个 NUL 并过滤空文本；缓冲由系统版本 API 提供。
 fn windows_version_string(data: &[u8], key: &str) -> Option<String> {
     let mut value_ptr: *mut c_void = ptr::null_mut();
     let mut len = 0_u32;
@@ -719,6 +743,7 @@ fn windows_version_string(data: &[u8], key: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 获取 Shell 小图标并转为 16×16 BMP，转换后销毁获得的 HICON，不将句柄交给调用方。
 fn windows_file_icon_bmp(path: &Path) -> Option<Vec<u8>> {
     let wide_path = path_wide_null(path);
     let mut info = SHFILEINFOW::default();
@@ -743,6 +768,8 @@ fn windows_file_icon_bmp(path: &Path) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "windows")]
+// 将有效 HICON 绘制到顶向下 32 位 DIB 并复制像素，正常收尾恢复选中对象并释放位图/DC。
+// 调用方须保证图标有效、尺寸为可分配的正值，并自行管理传入 HICON 的生命周期。
 unsafe fn icon_to_bmp_bytes(icon: HICON, size: i32) -> Option<Vec<u8>> {
     let hdc = CreateCompatibleDC(ptr::null_mut());
     if hdc.is_null() {
@@ -792,6 +819,7 @@ unsafe fn icon_to_bmp_bytes(icon: HICON, size: i32) -> Option<Vec<u8>> {
 }
 
 #[cfg(target_os = "windows")]
+// 将现有 32 位顶向下像素拼为 BMP 文件头、信息头与数据；不校验尺寸和像素长度的一致性。
 fn build_bmp_data(size: i32, pixels: &[u8]) -> Vec<u8> {
     let header_size = 14_u32 + size_of::<BITMAPINFOHEADER>() as u32;
     let file_size = header_size + pixels.len() as u32;
@@ -819,6 +847,7 @@ fn build_bmp_data(size: i32, pixels: &[u8]) -> Vec<u8> {
 }
 
 #[cfg(target_os = "windows")]
+// 以 Windows 原生宽字符编码路径并追加 NUL，供 Win32 API 使用，不规范化路径。
 fn path_wide_null(path: &Path) -> Vec<u16> {
     path.as_os_str()
         .encode_wide()
@@ -826,10 +855,12 @@ fn path_wide_null(path: &Path) -> Vec<u16> {
         .collect()
 }
 
+// 用字节增量除以采样秒数并四舍五入为非负整数，正常调用方负责提供正的时间间隔。
 fn bytes_per_second(bytes: u64, elapsed_secs: f64) -> u64 {
     ((bytes as f64) / elapsed_secs).round().max(0.0) as u64
 }
 
+// 将有限百分比限制到 0~100，NaN/无穷大归零，用于面板的归一化展示字段。
 fn clamp_percent(value: f32) -> f32 {
     if value.is_finite() {
         value.clamp(0.0, 100.0)
@@ -838,6 +869,7 @@ fn clamp_percent(value: f32) -> f32 {
     }
 }
 
+// 返回 epoch 毫秒时间戳，限制到 u64 最大值；时间回退到 epoch 之前时返回 0。
 fn current_epoch_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -848,6 +880,7 @@ fn current_epoch_millis() -> u64 {
 static COLLECTOR: OnceLock<Mutex<ResourceCollector>> = OnceLock::new();
 
 #[tauri::command]
+// IPC 惰性初始化全局采集器并持锁同步采样，复用刷新缓存；锁中毒时返回明确错误。
 pub fn system_resources_get_snapshot(
     full_detail: Option<bool>,
     options: Option<SystemResourceSnapshotOptions>,
@@ -869,10 +902,12 @@ struct MemoryCollector;
 
 #[cfg(not(target_os = "windows"))]
 impl MemoryCollector {
+    // 非 Windows 无额外平台句柄，内存数据直接复用 sysinfo 快照。
     fn new() -> Self {
         Self
     }
 
+    // 非 Windows 从系统快照取内存量并估算缓存，所有分项不超过总量，差值使用饱和减法。
     fn sample(&mut self, system: &System) -> MemorySnapshot {
         let total = system.total_memory();
         let used = system.used_memory().min(total);
@@ -892,12 +927,14 @@ impl MemoryCollector {
 
 #[cfg(target_os = "windows")]
 impl MemoryCollector {
+    // Windows 尝试建立 PDH 内存查询，失败保留 None，此实例后续不重新初始化。
     fn new() -> Self {
         Self {
             inner: MemoryPdhQuery::new().ok(),
         }
     }
 
+    // 总量/已用/可用来自 sysinfo，缓存/空闲优先 PDH；PDH 失败时缓存为零、空闲回退 sysinfo。
     fn sample(&mut self, system: &System) -> MemorySnapshot {
         let total = system.total_memory();
         let used = system.used_memory().min(total);
@@ -938,6 +975,7 @@ unsafe impl Send for MemoryPdhQuery {}
 
 #[cfg(target_os = "windows")]
 impl MemoryPdhQuery {
+    // 建立缓存与空闲页计数器并预采样；添加计数器失败时关闭已打开查询，预采样失败不阻止返回。
     fn new() -> Result<Self, ()> {
         use windows_sys::Win32::System::Performance::{
             PdhAddEnglishCounterW, PdhCollectQueryData, PdhOpenQueryW, PDH_HCOUNTER, PDH_HQUERY,
@@ -971,6 +1009,7 @@ impl MemoryPdhQuery {
         })
     }
 
+    // 刷新查询并要求两个内存计数器均有效，任一失败则本次样本整体缺失。
     fn sample(&mut self) -> Option<MemoryPdhSample> {
         use windows_sys::Win32::System::Performance::PdhCollectQueryData;
 
@@ -989,6 +1028,7 @@ impl MemoryPdhQuery {
 
 #[cfg(target_os = "windows")]
 impl Drop for MemoryPdhQuery {
+    // 释放内存 PDH 查询及其关联计数器，忽略关闭失败。
     fn drop(&mut self) {
         unsafe {
             let _ = windows_sys::Win32::System::Performance::PdhCloseQuery(self.query);
@@ -997,6 +1037,7 @@ impl Drop for MemoryPdhQuery {
 }
 
 #[cfg(target_os = "windows")]
+// 按大整数读取 PDH 计数器，拒绝调用失败、非零状态和负值，不把无效计数伪装成零。
 fn read_pdh_u64(counter: windows_sys::Win32::System::Performance::PDH_HCOUNTER) -> Option<u64> {
     use windows_sys::Win32::System::Performance::{
         PdhGetFormattedCounterValue, PDH_FMT_COUNTERVALUE, PDH_FMT_LARGE,
@@ -1026,10 +1067,12 @@ struct GpuCollector;
 
 #[cfg(not(target_os = "windows"))]
 impl GpuCollector {
+    // 非 Windows 创建无状态 GPU 占位采集器，不访问系统 GPU API。
     fn new() -> Self {
         Self
     }
 
+    // 非 Windows 当前未实现 GPU 采样，稳定返回 None。
     fn sample(&mut self) -> Option<GpuSnapshot> {
         None
     }
@@ -1037,12 +1080,14 @@ impl GpuCollector {
 
 #[cfg(target_os = "windows")]
 impl GpuCollector {
+    // Windows 尝试一次建立 GPU PDH 查询，初始化失败后此实例保持不可用。
     fn new() -> Self {
         Self {
             inner: GpuPdhQuery::new().ok(),
         }
     }
 
+    // 对成功取得的引擎利用率合计做 0~100 限制；查询不存在或读取失败则不返回 GPU 数值。
     fn sample(&mut self) -> Option<GpuSnapshot> {
         let query = self.inner.as_mut()?;
         query.sample().map(|usage_percent| GpuSnapshot {
@@ -1063,6 +1108,7 @@ unsafe impl Send for GpuPdhQuery {}
 
 #[cfg(target_os = "windows")]
 impl GpuPdhQuery {
+    // 打开所有 GPU Engine 利用率通配计数器并预采样，添加失败释放查询；预采样错误暂不传播。
     fn new() -> Result<Self, ()> {
         use windows_sys::Win32::System::Performance::{
             PdhAddEnglishCounterW, PdhCollectQueryData, PdhOpenQueryW, PDH_HCOUNTER, PDH_HQUERY,
@@ -1086,6 +1132,7 @@ impl GpuPdhQuery {
         Ok(Self { query, counter })
     }
 
+    // 刷新 GPU 查询，两阶段获取计数数组并累加有效项的非负利用率，不在此层限制总和为 100。
     fn sample(&mut self) -> Option<f32> {
         use windows_sys::Win32::System::Performance::{
             PdhCollectQueryData, PdhGetFormattedCounterArrayW, PDH_FMT_COUNTERVALUE_ITEM_W,
@@ -1136,6 +1183,7 @@ impl GpuPdhQuery {
 
 #[cfg(target_os = "windows")]
 impl Drop for GpuPdhQuery {
+    // 关闭 GPU PDH 查询以释放系统资源，不在析构中传播错误。
     fn drop(&mut self) {
         unsafe {
             let _ = windows_sys::Win32::System::Performance::PdhCloseQuery(self.query);
@@ -1144,6 +1192,7 @@ impl Drop for GpuPdhQuery {
 }
 
 #[cfg(target_os = "windows")]
+// 将字符串编码为以 NUL 结尾的 UTF-16，供版本资源及 PDH 子键调用使用。
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -1153,11 +1202,13 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证传输字节按实际秒数转换为速率，而非直接当作每秒字节。
     fn bytes_per_second_uses_elapsed_time() {
         assert_eq!(bytes_per_second(2_000, 2.0), 1_000);
     }
 
     #[test]
+    // 验证负值、超百值和 NaN 的面板百分比归一化行为。
     fn clamp_percent_bounds_values() {
         assert_eq!(clamp_percent(-1.0), 0.0);
         assert_eq!(clamp_percent(120.0), 100.0);
@@ -1165,6 +1216,7 @@ mod tests {
     }
 
     #[test]
+    // 验证日内增量及低于基线/跨日时两项计数一起归零。
     fn network_daily_totals_use_day_baseline_and_reset_on_counter_drop() {
         let day = NaiveDate::from_ymd_opt(2026, 7, 9).unwrap();
         let mut baseline = None;
@@ -1184,6 +1236,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧 fullDetail=false 仍保留系统/CPU/内存，同时关闭四项额外采样。
     fn sampling_options_keep_legacy_full_detail_behavior() {
         let options = SamplingOptions::from_args(Some(false), None);
         assert!(options.system);
@@ -1196,6 +1249,7 @@ mod tests {
     }
 
     #[test]
+    // 验证首次立即采样、刚刷新时复用缓存、超过昂贵刷新间隔后允许采样。
     fn should_refresh_respects_expensive_interval() {
         let now = Instant::now();
         assert!(should_refresh(None, now));

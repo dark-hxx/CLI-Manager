@@ -165,6 +165,7 @@ enum CommonConfigSyncMode {
 }
 
 #[tauri::command]
+// 汇总五类 Hook 状态，按请求修复 Claude，并检查、必要时修复 Codex 信任。
 pub async fn hook_settings_get_status(
     _app: AppHandle,
     selected_dir: Option<String>,
@@ -216,6 +217,7 @@ pub async fn hook_settings_get_status(
 }
 
 #[tauri::command]
+// 安装 Claude 全部或所选模块，尽力同步 cc-switch 后返回各工具状态。
 pub async fn hook_settings_install(
     _app: AppHandle,
     selected_dir: Option<String>,
@@ -262,6 +264,7 @@ pub async fn hook_settings_install(
 }
 
 #[tauri::command]
+// 卸载 Claude 全部或所选模块，按剩余模块同步公共配置并返回状态。
 pub async fn hook_settings_uninstall(
     _app: AppHandle,
     selected_dir: Option<String>,
@@ -308,6 +311,7 @@ pub async fn hook_settings_uninstall(
 }
 
 #[tauri::command]
+// 安装 Codex 全部或所选模块，尽力同步公共配置并汇总工具状态。
 pub async fn hook_settings_install_codex(
     _app: AppHandle,
     selected_dir: Option<String>,
@@ -354,6 +358,7 @@ pub async fn hook_settings_install_codex(
 }
 
 #[tauri::command]
+// 卸载 Codex 全部或所选模块，按剩余安装项同步公共配置。
 pub async fn hook_settings_uninstall_codex(
     _app: AppHandle,
     selected_dir: Option<String>,
@@ -400,6 +405,7 @@ pub async fn hook_settings_uninstall_codex(
 }
 
 #[tauri::command]
+// 安装指定或全部 Kimi 模块，再返回五类工具的检查结果。
 pub async fn hook_settings_install_kimi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -428,6 +434,7 @@ pub async fn hook_settings_install_kimi(
 }
 
 #[tauri::command]
+// 卸载指定或全部 Kimi 模块，再返回五类工具的检查结果。
 pub async fn hook_settings_uninstall_kimi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -456,6 +463,7 @@ pub async fn hook_settings_uninstall_kimi(
 }
 
 #[tauri::command]
+// 允许创建 Pi 目录，安装指定或全部扩展模块并汇总状态。
 pub async fn hook_settings_install_pi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -492,6 +500,7 @@ pub async fn hook_settings_install_pi(
 }
 
 #[tauri::command]
+// 在已有 Pi 目录卸载指定或全部扩展模块并汇总状态。
 pub async fn hook_settings_uninstall_pi(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -528,6 +537,7 @@ pub async fn hook_settings_uninstall_pi(
 }
 
 #[tauri::command]
+// 安装 Grok 模块并关闭跨工具 Hook 兼容，再汇总各工具状态。
 pub async fn hook_settings_install_grok(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -566,6 +576,7 @@ pub async fn hook_settings_install_grok(
 }
 
 #[tauri::command]
+// 卸载 Grok 模块但不重新开启跨工具兼容，再汇总各工具状态。
 pub async fn hook_settings_uninstall_grok(
     selected_dir: Option<String>,
     codex_selected_dir: Option<String>,
@@ -603,6 +614,7 @@ pub async fn hook_settings_uninstall_grok(
 }
 
 #[tauri::command]
+// 打开阻塞式目录选择器，将选择结果转换为路径字符串或取消值。
 pub async fn hook_settings_select_dir(
     app: AppHandle,
     title: Option<String>,
@@ -623,12 +635,14 @@ pub async fn hook_settings_select_dir(
         .transpose()
 }
 
+// 裁剪显式数据库路径，将空白输入视为未指定。
 fn explicit_ccswitch_db_path(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
 }
 
+// 按数据库路径运行环境检查文件，WSL 检查失败视为不存在。
 fn cc_switch_db_exists(path: &Path) -> bool {
     if crate::wsl::parse_wsl_unc_path(&path_to_string(path)).is_some() {
         crate::ccswitch_db::wsl_file_exists(path).unwrap_or(false)
@@ -637,6 +651,7 @@ fn cc_switch_db_exists(path: &Path) -> bool {
     }
 }
 
+// 校验显式数据库路径；未指定时尝试对应 WSL 默认库再回退本地主目录。
 fn resolve_ccswitch_db_path(db_path: Option<String>, config_dir: &Path) -> Result<PathBuf, String> {
     let explicit = explicit_ccswitch_db_path(db_path);
     if let Some(path) = explicit {
@@ -678,6 +693,7 @@ fn resolve_ccswitch_db_path(db_path: Option<String>, config_dir: &Path) -> Resul
     }
 }
 
+// 以十五秒忙等待超时建立 SQLite 连接并转换打开错误。
 async fn open_ccswitch_connection(path: &Path) -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -687,6 +703,7 @@ async fn open_ccswitch_connection(path: &Path) -> Result<SqliteConnection, Strin
         .map_err(|error| format!("db_open_failed: {error}"))
 }
 
+// 查询 SQLite 元数据，判断公共配置 settings 表是否存在。
 async fn settings_table_exists(connection: &mut SqliteConnection) -> Result<bool, String> {
     sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'settings'")
         .fetch_optional(&mut *connection)
@@ -695,6 +712,7 @@ async fn settings_table_exists(connection: &mut SqliteConnection) -> Result<bool
         .map_err(|error| format!("db_query_failed: {error}"))
 }
 
+// 按键读取可空配置值，将缺行或 SQL NULL 统一为 None。
 async fn read_common_config_value(
     connection: &mut SqliteConnection,
     key: &str,
@@ -712,6 +730,7 @@ async fn read_common_config_value(
     .map(|value| value.flatten())
 }
 
+// 返回 Claude 或 Codex 对应的 cc-switch 公共配置键。
 fn common_config_key(tool: CommonConfigTool) -> &'static str {
     match tool {
         CommonConfigTool::Claude => CCSWITCH_COMMON_CONFIG_CLAUDE_KEY,
@@ -719,6 +738,7 @@ fn common_config_key(tool: CommonConfigTool) -> &'static str {
     }
 }
 
+// 按工具要求检查事件及特性完整性，供公共配置同步模式选择。
 fn tool_status_is_fully_installed(status: &ToolHookSettingsStatus, tool: CommonConfigTool) -> bool {
     match tool {
         CommonConfigTool::Claude => {
@@ -740,6 +760,7 @@ fn tool_status_is_fully_installed(status: &ToolHookSettingsStatus, tool: CommonC
     }
 }
 
+// 需要保留剩余模块或工具完整时合并，否则清理公共配置托管项。
 async fn sync_ccswitch_for_tool_status(
     db_path: Option<String>,
     config_dir: &Path,
@@ -755,6 +776,7 @@ async fn sync_ccswitch_for_tool_status(
     sync_ccswitch_tool_common_config(db_path, config_dir, tool, mode).await;
 }
 
+// 解析数据库并按本地或 WSL 路径同步，解析或同步失败不向调用者传播。
 async fn sync_ccswitch_tool_common_config(
     db_path: Option<String>,
     config_dir: &Path,
@@ -772,6 +794,7 @@ async fn sync_ccswitch_tool_common_config(
     let _ = result;
 }
 
+// 在立即事务中合并或清理公共配置，成功提交、失败尽力回滚。
 async fn sync_ccswitch_local_common_config(
     path: &Path,
     config_dir: &Path,
@@ -839,6 +862,7 @@ async fn sync_ccswitch_local_common_config(
     }
 }
 
+// 读取 WSL 数据库快照并生成新值，通过带旧值校验的远端写入更新。
 async fn sync_ccswitch_wsl_common_config(
     path: &Path,
     config_dir: &Path,
@@ -869,6 +893,7 @@ async fn sync_ccswitch_wsl_common_config(
     Ok(())
 }
 
+// 将本地托管 Claude 命令或 Codex 信任块合并到对应公共配置格式。
 fn merge_ccswitch_common_config(
     existing: Option<&str>,
     local: &Value,
@@ -926,6 +951,7 @@ fn merge_ccswitch_common_config(
     }
 }
 
+// 按工具格式移除公共配置托管内容，空结果返回 None。
 fn strip_ccswitch_common_config(
     existing: Option<&str>,
     tool: CommonConfigTool,
@@ -951,6 +977,7 @@ fn strip_ccswitch_common_config(
     }
 }
 
+// 移除带标记的 Codex 信任块和 hooks 启用行，并清理空白边界。
 fn strip_codex_common_config_toml(raw: &str) -> Option<String> {
     let mut lines = raw.lines().map(ToString::to_string).collect::<Vec<_>>();
     remove_marker_owned_codex_hook_state_blocks(&mut lines);
@@ -965,6 +992,7 @@ fn strip_codex_common_config_toml(raw: &str) -> Option<String> {
     (!lines.is_empty()).then(|| format!("{}\n", lines.join("\n")))
 }
 
+// 从当前 hooks.json 的托管命令计算信任哈希并生成 TOML 表块。
 fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<String>>, String> {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let settings = read_json_if_exists(&hooks_path)?;
@@ -1025,6 +1053,7 @@ const ALL_PI_HOOK_MODULES: [PiHookModule; 3] = [
     PiHookModule::Stop,
 ];
 
+// 解析可选 Claude 模块名称，拒绝未知或不支持的特性模块。
 fn parse_claude_hook_module(module: Option<String>) -> Result<Option<ClaudeHookModule>, String> {
     module
         .map(|value| match value.as_str() {
@@ -1040,6 +1069,7 @@ fn parse_claude_hook_module(module: Option<String>) -> Result<Option<ClaudeHookM
         .transpose()
 }
 
+// 解析可选 Codex 模块名称，拒绝 failure 和其他未知名称。
 fn parse_codex_hook_module(module: Option<String>) -> Result<Option<CodexHookModule>, String> {
     module
         .map(|value| match value.as_str() {
@@ -1055,6 +1085,7 @@ fn parse_codex_hook_module(module: Option<String>) -> Result<Option<CodexHookMod
         .transpose()
 }
 
+// 解析 Pi 支持的三类可选生命周期模块。
 fn parse_pi_hook_module(module: Option<String>) -> Result<Option<PiHookModule>, String> {
     module
         .map(|value| match value.as_str() {
@@ -1066,6 +1097,7 @@ fn parse_pi_hook_module(module: Option<String>) -> Result<Option<PiHookModule>, 
         .transpose()
 }
 
+// 解析 Kimi 模块名称并拒绝独立 hooksFeature 选项。
 fn parse_kimi_hook_module(value: &str) -> Result<KimiHookModule, String> {
     match value {
         "sessionStart" => Ok(KimiHookModule::SessionStart),
@@ -1079,12 +1111,14 @@ fn parse_kimi_hook_module(value: &str) -> Result<KimiHookModule, String> {
     }
 }
 
+// 显式模块解析为单项列表，未指定时选择全部 Kimi 模块。
 fn selected_kimi_modules(module: Option<String>) -> Result<Vec<KimiHookModule>, String> {
     module
         .map(|value| parse_kimi_hook_module(&value).map(|module| vec![module]))
         .unwrap_or_else(|| Ok(ALL_KIMI_HOOK_MODULES.to_vec()))
 }
 
+// 写入所选 Claude 生命周期命令及相应提问、工具和子 Agent 映射。
 fn apply_claude_hook_module(settings: &mut Value, exe: &str, module: ClaudeHookModule) {
     match module {
         ClaudeHookModule::SessionStart => add_hook_command(
@@ -1157,6 +1191,7 @@ fn apply_claude_hook_module(settings: &mut Value, exe: &str, module: ClaudeHookM
     }
 }
 
+// 按模块清理 Claude 托管命令；子 Agent 模块覆盖整个前后工具事件。
 fn remove_claude_hook_module(settings: &mut Value, module: ClaudeHookModule) {
     match module {
         ClaudeHookModule::SessionStart => {
@@ -1181,6 +1216,7 @@ fn remove_claude_hook_module(settings: &mut Value, module: ClaudeHookModule) {
     }
 }
 
+// 写入 Codex 命令模块及提问、内部工具进度映射，特性开关另行处理。
 fn apply_codex_hook_module(settings: &mut Value, exe: &str, module: CodexHookModule) {
     match module {
         CodexHookModule::SessionStart => add_hook_command(
@@ -1236,6 +1272,7 @@ fn apply_codex_hook_module(settings: &mut Value, exe: &str, module: CodexHookMod
     }
 }
 
+// 清理所选 Codex 命令模块，子 Agent 卸载定向移除工具进度命令。
 fn remove_codex_hook_module(settings: &mut Value, module: CodexHookModule) {
     match module {
         CodexHookModule::SessionStart => {
@@ -1262,6 +1299,7 @@ fn remove_codex_hook_module(settings: &mut Value, module: CodexHookModule) {
     }
 }
 
+// 移除旧托管注册后重建全部 Claude 模块，清理旧脚本并写回配置。
 fn install_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     let exe = hook_exe_for_dir(claude_dir)?;
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
@@ -1291,6 +1329,7 @@ fn install_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     write_json(&settings_path, &settings)
 }
 
+// 合并单个 Claude 模块，清理旧脚本后写回 JSON。
 fn install_claude_hook_module(claude_dir: &Path, module: ClaudeHookModule) -> Result<(), String> {
     let exe = hook_exe_for_dir(claude_dir)?;
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
@@ -1301,6 +1340,7 @@ fn install_claude_hook_module(claude_dir: &Path, module: ClaudeHookModule) -> Re
     write_json(&settings_path, &settings)
 }
 
+// 清理旧脚本和各受管事件内的托管命令，保留其他配置。
 fn uninstall_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     cleanup_legacy_scripts(&claude_dir.join("hooks"), &CLAUDE_LEGACY_SCRIPTS);
 
@@ -1325,6 +1365,7 @@ fn uninstall_claude_hooks(claude_dir: &Path) -> Result<(), String> {
     write_json(&settings_path, &settings)
 }
 
+// 清理旧脚本并移除所选 Claude 模块后写回配置。
 fn uninstall_claude_hook_module(claude_dir: &Path, module: ClaudeHookModule) -> Result<(), String> {
     cleanup_legacy_scripts(&claude_dir.join("hooks"), &CLAUDE_LEGACY_SCRIPTS);
     let settings_path = claude_dir.join(CLAUDE_SETTINGS_FILE_NAME);
@@ -1334,6 +1375,7 @@ fn uninstall_claude_hook_module(claude_dir: &Path, module: ClaudeHookModule) -> 
     write_json(&settings_path, &settings)
 }
 
+// 选择显式或默认 Claude 目录，按要求将缺失报告为空或错误，不创建目录。
 fn resolve_claude_dir(
     selected_dir: Option<String>,
     require_existing: bool,
@@ -1363,6 +1405,7 @@ fn resolve_claude_dir(
     }
 }
 
+// 选择显式或默认 Codex 目录，仅在允许时创建缺失目录。
 fn resolve_codex_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -1393,6 +1436,7 @@ fn resolve_codex_dir(
     }
 }
 
+// 裁剪所选目录文本，非空时构造路径而不执行规范化解析。
 fn normalize_selected_dir(value: &str) -> Option<PathBuf> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1402,6 +1446,7 @@ fn normalize_selected_dir(value: &str) -> Option<PathBuf> {
     }
 }
 
+// 按平台优先级读取非空 USERPROFILE 或 HOME，返回主目录路径。
 fn home_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -1419,6 +1464,7 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+// 检查当前可执行路径对应的 Claude 命令及提问 matcher，汇总模块状态。
 fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
     let Some(claude_dir) = claude_dir else {
         return missing_status();
@@ -1496,6 +1542,7 @@ fn build_claude_status(claude_dir: Option<PathBuf>) -> Result<ToolHookSettingsSt
     ))
 }
 
+// 检查 Codex 事件、提问 matcher、hooks 开关和信任哈希并汇总状态。
 fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
     let Some(codex_dir) = codex_dir else {
         return missing_status();
@@ -1559,6 +1606,7 @@ fn build_codex_status(codex_dir: Option<PathBuf>) -> Result<ToolHookSettingsStat
     ))
 }
 
+// 先去重当前托管信任表，仅在事件与特性完整时修复信任并重新检查。
 fn build_codex_status_with_trust_repair(
     codex_dir: Option<PathBuf>,
 ) -> Result<ToolHookSettingsStatus, String> {
@@ -1584,6 +1632,7 @@ fn build_codex_status_with_trust_repair(
     build_codex_status(Some(codex_dir))
 }
 
+// 依据当前 hooks.json 的托管键去重配置中的信任表，存在变化时写回。
 fn repair_duplicate_codex_hook_state_blocks(codex_dir: &Path) -> Result<(), String> {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
@@ -1602,6 +1651,7 @@ fn repair_duplicate_codex_hook_state_blocks(codex_dir: &Path) -> Result<(), Stri
     write_text(&config_path, &next)
 }
 
+// 重新计算当前托管命令信任块，并合并到已有 Codex 配置。
 fn repair_codex_hook_trust(codex_dir: &Path) -> Result<(), String> {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
@@ -1663,6 +1713,7 @@ struct ToolChecks {
     hooks_trusted: bool,
 }
 
+// 构造目录缺失且所有安装检查为 false 的工具状态。
 fn missing_status() -> Result<ToolHookSettingsStatus, String> {
     Ok(ToolHookSettingsStatus {
         config_dir: None,
@@ -1682,6 +1733,7 @@ fn missing_status() -> Result<ToolHookSettingsStatus, String> {
     })
 }
 
+// 只汇总该工具必需的检查项，生成已安装、部分安装或未安装状态。
 fn status_from_checks(
     config_dir: Option<PathBuf>,
     hooks_dir: Option<PathBuf>,
@@ -1731,10 +1783,12 @@ fn status_from_checks(
     }
 }
 
+// 使用共享 WSL 配置目录规则识别路径运行环境。
 fn is_wsl_path(path: &Path) -> bool {
     crate::wsl::is_wsl_config_dir(&path_to_string(path))
 }
 
+// 对 WSL 路径委托运行环境文件检查，本地路径直接检查普通文件。
 fn live_is_file(path: &Path) -> bool {
     if is_wsl_path(path) {
         crate::provider::global::live_is_file(&path_to_string(path))
@@ -1743,6 +1797,7 @@ fn live_is_file(path: &Path) -> bool {
     }
 }
 
+// 对 WSL 路径委托运行环境目录检查，本地路径直接检查目录。
 fn live_is_dir(path: &Path) -> bool {
     if is_wsl_path(path) {
         crate::provider::global::live_is_dir(&path_to_string(path))
@@ -1751,6 +1806,7 @@ fn live_is_dir(path: &Path) -> bool {
     }
 }
 
+// 按本地或 WSL 运行环境创建目录树，并附加调用方错误前缀。
 fn create_live_dir_all(path: &Path, error_prefix: &str) -> Result<(), String> {
     if is_wsl_path(path) {
         return crate::provider::global::create_live_dir_all(&path_to_string(path))
@@ -1759,6 +1815,7 @@ fn create_live_dir_all(path: &Path, error_prefix: &str) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| format!("{error_prefix}: {error}"))
 }
 
+// 按路径运行环境读取 UTF-8 文本，文件缺失返回 None，其他失败保留错误。
 fn read_text_if_exists(path: &Path) -> Result<Option<String>, String> {
     if is_wsl_path(path) {
         let bytes = crate::provider::global::read_live(&path_to_string(path))
@@ -1778,6 +1835,7 @@ fn read_text_if_exists(path: &Path) -> Result<Option<String>, String> {
     }
 }
 
+// 按路径运行环境写入文本，并附加目标路径错误信息。
 fn write_text(path: &Path, content: &str) -> Result<(), String> {
     if is_wsl_path(path) {
         return crate::provider::global::write_live(&path_to_string(path), content.as_bytes())
@@ -1786,6 +1844,7 @@ fn write_text(path: &Path, content: &str) -> Result<(), String> {
     fs::write(path, content).map_err(|error| format!("写入 {} 失败: {error}", path_to_string(path)))
 }
 
+// 按路径运行环境删除目标文件，并附加目标路径错误信息。
 fn remove_live_file(path: &Path) -> Result<(), String> {
     if is_wsl_path(path) {
         return crate::provider::global::remove_live(&path_to_string(path))
@@ -1794,6 +1853,7 @@ fn remove_live_file(path: &Path) -> Result<(), String> {
     fs::remove_file(path).map_err(|error| format!("删除 {} 失败: {error}", path_to_string(path)))
 }
 
+// 读取配置 JSON，缺失或空白文件返回空对象，解析错误向上传播。
 fn read_json(path: &Path) -> Result<Value, String> {
     match read_text_if_exists(path)? {
         Some(content) => {
@@ -1808,6 +1868,7 @@ fn read_json(path: &Path) -> Result<Value, String> {
     }
 }
 
+// 读取可选 JSON 文件，缺失或空白内容返回空对象。
 fn read_json_if_exists(path: &Path) -> Result<Value, String> {
     match read_text_if_exists(path)? {
         Some(content) => {
@@ -1822,6 +1883,7 @@ fn read_json_if_exists(path: &Path) -> Result<Value, String> {
     }
 }
 
+// 要求 JSON 根节点为对象，否则返回包含文件名称的错误。
 fn ensure_root_object(settings: &Value, file_name: &str) -> Result<(), String> {
     if settings.is_object() {
         Ok(())
@@ -1830,12 +1892,14 @@ fn ensure_root_object(settings: &Value, file_name: &str) -> Result<(), String> {
     }
 }
 
+// 将 JSON 美化序列化并补末尾换行，再通过运行环境写入。
 fn write_json(path: &Path, settings: &Value) -> Result<(), String> {
     let content = serde_json::to_string_pretty(settings)
         .map_err(|e| format!("序列化 {} 失败: {e}", path_to_string(path)))?;
     write_text(path, &format!("{content}\n"))
 }
 
+// 按可执行路径选择 PowerShell 或 POSIX 引号规则生成隐藏 Hook 命令。
 fn build_command(exe: &str, source: &str, event: &str) -> String {
     if is_windows_native_exe_path(exe) {
         let exe = escape_powershell_single_quoted(exe);
@@ -1848,6 +1912,7 @@ fn build_command(exe: &str, source: &str, event: &str) -> String {
     format!("{exe} {HOOK_COMMAND_MARKER} --source {source} --event {event}")
 }
 
+// 按盘符绝对路径或双反斜杠前缀识别 Windows 原生可执行路径。
 fn is_windows_native_exe_path(exe: &str) -> bool {
     let bytes = exe.as_bytes();
     (bytes.len() >= 3
@@ -1857,14 +1922,17 @@ fn is_windows_native_exe_path(exe: &str) -> bool {
         || exe.starts_with(r"\\")
 }
 
+// 将单引号加倍以嵌入 PowerShell 单引号字符串。
 fn escape_powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
+// 将文本包装为 POSIX 单引号参数，并转义其中单引号。
 fn escape_posix_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+// 读取当前进程可执行文件路径并转换为字符串。
 fn cli_manager_exe() -> Result<String, String> {
     env::current_exe()
         .map(|path| path_to_string(&path))
@@ -1873,6 +1941,7 @@ fn cli_manager_exe() -> Result<String, String> {
 
 /// 返回写入 hook 命令时应使用的 exe 路径：目标配置目录在 WSL（`\\wsl.localhost\...`）时
 /// 转成 `/mnt/<盘>/...` 形式，使 Linux shell 能执行；否则用原生 Windows 路径。
+// 根据目标配置运行环境，返回原生可执行路径或转换后的 WSL 路径。
 fn hook_exe_for_dir(config_dir: &Path) -> Result<String, String> {
     let exe = cli_manager_exe()?;
     if crate::wsl::is_wsl_config_dir(&path_to_string(config_dir)) {
@@ -1884,12 +1953,14 @@ fn hook_exe_for_dir(config_dir: &Path) -> Result<String, String> {
 }
 
 /// 删除历史遗留的 PowerShell hook 脚本（若存在）；新方案不再写脚本文件。
+// 逐个尽力删除指定旧脚本，删除失败不阻断安装或卸载。
 fn cleanup_legacy_scripts(hooks_dir: &Path, scripts: &[&str]) {
     for name in scripts {
         let _ = remove_live_file(&hooks_dir.join(name));
     }
 }
 
+// 以有损 UTF-8 方式将路径转换为拥有所有权的字符串。
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }

@@ -18,6 +18,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+// 按显式配置、环境变量及用户目录优先级解析 Kimi 根目录。
 pub(super) fn resolve_kimi_history_root(roots: &HistoryRoots) -> PathBuf {
     roots.kimi_config_dir.clone().unwrap_or_else(|| {
         std::env::var_os("KIMI_CODE_HOME")
@@ -28,6 +29,7 @@ pub(super) fn resolve_kimi_history_root(roots: &HistoryRoots) -> PathBuf {
     })
 }
 
+// 识别 agents/main/wire.jsonl 结尾的主代理日志路径。
 pub(super) fn looks_like_kimi_main_wire(path: &Path) -> bool {
     path.file_name()
         .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("wire.jsonl"))
@@ -43,6 +45,7 @@ pub(super) fn looks_like_kimi_main_wire(path: &Path) -> bool {
         })
 }
 
+// 限制 Kimi 会话标识长度及字符集，拒绝路径分隔和父目录片段。
 pub(super) fn is_valid_kimi_session_id(session_id: &str) -> bool {
     let session_id = session_id.trim();
     if session_id.is_empty() || session_id.len() > 128 {
@@ -56,6 +59,7 @@ pub(super) fn is_valid_kimi_session_id(session_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
+// 从主代理日志路径回溯到所属会话目录。
 pub(super) fn kimi_session_dir_from_wire(path: &Path) -> Option<PathBuf> {
     if !looks_like_kimi_main_wire(path) {
         return None;
@@ -63,6 +67,7 @@ pub(super) fn kimi_session_dir_from_wire(path: &Path) -> Option<PathBuf> {
     path.parent()?.parent()?.parent().map(Path::to_path_buf)
 }
 
+// 枚举本地或 WSL 主代理日志，并排除索引墓碑会话。
 pub(super) fn collect_kimi_session_files(home: &Path) -> Vec<SessionFileRef> {
     let home_str = home.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&home_str) {
@@ -109,6 +114,7 @@ pub(super) fn collect_kimi_session_files(home: &Path) -> Vec<SessionFileRef> {
     files
 }
 
+// 在 WSL 枚举主代理日志，过滤墓碑并缓存文件指纹。
 fn collect_wsl_kimi_session_files(linux_home: &str, distro: &str) -> Vec<SessionFileRef> {
     let linux_sessions = format!("{}/sessions", linux_home.trim_end_matches('/'));
     let tombstoned = read_wsl_kimi_session_index(linux_home, distro)
@@ -136,6 +142,7 @@ fn collect_wsl_kimi_session_files(linux_home: &str, distro: &str) -> Vec<Session
     .collect()
 }
 
+// 为主代理日志构造带项目键的 Kimi 文件引用。
 fn kimi_file_ref(path: &Path) -> SessionFileRef {
     SessionFileRef {
         source: "kimi".to_string(),
@@ -144,6 +151,7 @@ fn kimi_file_ref(path: &Path) -> SessionFileRef {
     }
 }
 
+// 按有效会话标识精确查找 Kimi 会话，并校验范围与项目匹配。
 pub(super) fn find_exact_kimi_session_in_root(
     home: &Path,
     session_id: &str,
@@ -222,6 +230,7 @@ pub(super) fn find_exact_kimi_session_in_root(
     None
 }
 
+// 结合 WSL 索引和精确查找定位非墓碑 Kimi 会话。
 fn find_exact_wsl_kimi_session(
     linux_home: &str,
     distro: &str,
@@ -256,6 +265,7 @@ fn find_exact_wsl_kimi_session(
     None
 }
 
+// 确认目录标识、项目及解析标识一致后返回会话摘要。
 fn summary_if_exact_kimi_session(
     file_ref: &SessionFileRef,
     session_id: &str,
@@ -285,6 +295,7 @@ fn summary_if_exact_kimi_session(
     Some(summary_from_computation(file_ref, &computed))
 }
 
+// 从最新活动索引定位本地日志，校验绝对路径与会话目录范围。
 fn wire_path_from_session_index(home: &Path, session_id: &str) -> Option<PathBuf> {
     let index = home.join("session_index.jsonl");
     let raw = fs::read_to_string(index).ok()?;
@@ -314,6 +325,7 @@ fn wire_path_from_session_index(home: &Path, session_id: &str) -> Option<PathBuf
     (looks_like_kimi_main_wire(&wire) && wire.is_file()).then_some(wire)
 }
 
+// 按日志顺序选取最新有效活动记录，并遵守删除墓碑。
 fn latest_kimi_index_record(raw: &str, session_id: &str) -> Option<Value> {
     let mut latest = None;
     for line in raw.lines() {
@@ -332,6 +344,7 @@ fn latest_kimi_index_record(raw: &str, session_id: &str) -> Option<Value> {
     latest
 }
 
+// 检查活动索引记录具备字符串会话目录与工作目录。
 fn is_valid_kimi_active_index_record(value: &Value) -> bool {
     value
         .get("sessionDir")
@@ -344,6 +357,7 @@ fn is_valid_kimi_active_index_record(value: &Value) -> bool {
             .is_some_and(Value::is_string)
 }
 
+// 重放会话索引，计算最终处于删除状态的会话标识。
 fn kimi_tombstoned_session_ids(raw: &str) -> HashSet<String> {
     let mut tombstoned = HashSet::new();
     for line in raw.lines() {
@@ -364,6 +378,7 @@ fn kimi_tombstoned_session_ids(raw: &str) -> HashSet<String> {
     tombstoned
 }
 
+// 从兼容字段提取非空的索引会话标识。
 fn kimi_index_record_session_id(value: &Value) -> Option<&str> {
     value
         .get("sessionId")
@@ -373,6 +388,7 @@ fn kimi_index_record_session_id(value: &Value) -> Option<&str> {
         .filter(|value| !value.is_empty())
 }
 
+// 检查 Linux 路径符合 sessions 下的主代理日志层级。
 fn looks_like_kimi_linux_main_wire(linux_path: &str) -> bool {
     let normalized = linux_path.replace('\\', "/");
     let parts: Vec<&str> = normalized
@@ -387,6 +403,7 @@ fn looks_like_kimi_linux_main_wire(linux_path: &str) -> bool {
         && parts[n - 6].eq_ignore_ascii_case("sessions")
 }
 
+// 从 Linux 日志路径倒数第四段提取会话标识。
 fn kimi_session_id_from_linux_wire(linux_path: &str) -> Option<String> {
     linux_path
         .replace('\\', "/")
@@ -397,6 +414,7 @@ fn kimi_session_id_from_linux_wire(linux_path: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// 统一路径分隔并折叠空段、当前目录及父目录片段。
 fn normalize_linux_path(path: &str) -> String {
     let normalized = path.replace('\\', "/");
     let mut out = Vec::new();
@@ -413,12 +431,14 @@ fn normalize_linux_path(path: &str) -> String {
     format!("/{}", out.join("/"))
 }
 
+// 规范化 Linux 路径后判断是否位于给定根目录内。
 fn linux_path_within_home(path: &str, home: &str) -> bool {
     let path = normalize_linux_path(path);
     let home = normalize_linux_path(home);
     path == home || path.starts_with(&format!("{home}/"))
 }
 
+// 保留绝对会话目录，或将相对目录拼接到 Kimi 根目录。
 fn resolve_linux_session_dir(linux_home: &str, session_dir: &str) -> String {
     if session_dir.replace('\\', "/").starts_with('/') {
         session_dir.trim_end_matches('/').to_string()
@@ -431,10 +451,12 @@ fn resolve_linux_session_dir(linux_home: &str, session_dir: &str) -> String {
     }
 }
 
+// 查找可用 WSL 程序并转换为字符串路径。
 fn wsl_exe_string() -> Option<String> {
     crate::wsl::find_wsl_exe().map(|path| path.to_string_lossy().into_owned())
 }
 
+// 通过 WSL cat 读取 Kimi 会话索引，失败时返回空值。
 fn read_wsl_kimi_session_index(linux_home: &str, distro: &str) -> Option<String> {
     let wsl_exe = wsl_exe_string()?;
     let index = format!("{}/session_index.jsonl", linux_home.trim_end_matches('/'));
@@ -443,6 +465,7 @@ fn read_wsl_kimi_session_index(linux_home: &str, distro: &str) -> Option<String>
         .map(|(stdout, _)| stdout)
 }
 
+// 校验 WSL 索引中的绝对会话目录并生成主日志 UNC 路径。
 fn wire_path_from_wsl_session_index(
     linux_home: &str,
     distro: &str,
@@ -480,6 +503,7 @@ fn wire_path_from_wsl_session_index(
     )))
 }
 
+// 通过 WSL find 定位指定会话的首个主代理日志。
 fn wsl_find_exact_kimi_wire(linux_home: &str, distro: &str, session_id: &str) -> Option<PathBuf> {
     let wsl_exe = wsl_exe_string()?;
     let linux_sessions = format!("{}/sessions", linux_home.trim_end_matches('/'));
@@ -503,6 +527,7 @@ fn wsl_find_exact_kimi_wire(linux_home: &str, distro: &str, session_id: &str) ->
         .map(|linux_path| PathBuf::from(crate::wsl::linux_to_unc_wsl_path(linux_path, distro)))
 }
 
+// 优先读取会话状态中的工作目录，否则回退会话索引。
 pub(super) fn kimi_workspace_from_path(path: &Path) -> Option<String> {
     kimi_state_value(path)
         .as_ref()
@@ -510,6 +535,7 @@ pub(super) fn kimi_workspace_from_path(path: &Path) -> Option<String> {
         .or_else(|| kimi_index_workdir(path))
 }
 
+// 优先用规范化工作目录作为项目键，否则回退会话标识。
 fn kimi_project_key_from_path(path: &Path) -> String {
     kimi_workspace_from_path(path)
         .map(|cwd| normalize_history_path(&cwd))
@@ -518,6 +544,7 @@ fn kimi_project_key_from_path(path: &Path) -> String {
         .unwrap_or_else(|| "kimi".to_string())
 }
 
+// 从 Linux 主日志层级提取工作目录键，缺失时使用默认值。
 fn kimi_project_key_from_linux_path(linux_path: &str) -> String {
     // .../sessions/<workDirKey>/<sessionId>/agents/main/wire.jsonl
     let normalized = linux_path.replace('\\', "/");
@@ -530,6 +557,7 @@ fn kimi_project_key_from_linux_path(linux_path: &str) -> String {
         .unwrap_or_else(|| "kimi".to_string())
 }
 
+// 优先读取状态中的有效会话标识，否则使用会话目录名。
 fn kimi_session_id_from_path(path: &Path) -> Option<String> {
     kimi_state_value(path)
         .as_ref()
@@ -545,10 +573,12 @@ fn kimi_session_id_from_path(path: &Path) -> Option<String> {
         })
 }
 
+// 从状态兼容字段提取并校验会话标识。
 fn kimi_session_id_from_state(state: &Value) -> Option<String> {
     kimi_string(state, &["id", "sessionId", "session_id"]).filter(|id| is_valid_kimi_session_id(id))
 }
 
+// 读取主日志所属会话的 state.json 对象。
 fn kimi_state_value(path: &Path) -> Option<Value> {
     let state_path = kimi_session_dir_from_wire(path)?.join("state.json");
     fs::read_to_string(state_path)
@@ -556,6 +586,7 @@ fn kimi_state_value(path: &Path) -> Option<Value> {
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
 }
 
+// 从所属根目录的最新活动索引读取会话工作目录。
 fn kimi_index_workdir(path: &Path) -> Option<String> {
     let session_id = kimi_session_dir_from_wire(path)?
         .file_name()
@@ -571,6 +602,7 @@ fn kimi_index_workdir(path: &Path) -> Option<String> {
     kimi_string(&value, &["workDir", "workdir", "cwd"])
 }
 
+// 使用状态文件补充会话标识、标题、父会话及时间信息。
 pub(super) fn apply_kimi_state_metadata(path: &Path, computed: &mut CachedSessionComputation) {
     let Some(state) = kimi_state_value(path) else {
         if computed.session_id.is_empty() || computed.session_id == "unknown-session" {
@@ -624,6 +656,7 @@ pub(super) fn apply_kimi_state_metadata(path: &Path, computed: &mut CachedSessio
     }
 }
 
+// 将标题限制为八十个字符，截断时添加省略号。
 fn excerpt_title(text: &str) -> String {
     let mut chars = text.chars();
     let excerpt: String = chars.by_ref().take(80).collect();
@@ -634,6 +667,7 @@ fn excerpt_title(text: &str) -> String {
     }
 }
 
+// 将 Kimi 工作目录元数据转换为项目扫描结果。
 pub(super) fn scan_kimi_project(path: &Path) -> SessionProjectScan {
     SessionProjectScan {
         cwd: kimi_workspace_from_path(path),
@@ -656,6 +690,7 @@ struct KimiUsagePoint {
     usage: UsageTokenScan,
 }
 
+// 取出待处理消息，规范化非空内容并保留原始行索引。
 fn flush_kimi_message(
     messages: &mut Vec<HistoryMessage>,
     pending: &mut Option<PendingKimiMessage>,
@@ -672,6 +707,7 @@ fn flush_kimi_message(
     messages.push(message);
 }
 
+// 构造单条待处理消息并立即输出到结果集合。
 fn push_kimi_message(
     messages: &mut Vec<HistoryMessage>,
     role: String,
@@ -691,6 +727,7 @@ fn push_kimi_message(
     flush_kimi_message(messages, &mut pending);
 }
 
+// 解析 Kimi 主日志消息与工具统计，协调重复用量记录后生成摘要。
 pub(super) fn scan_kimi_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -994,6 +1031,7 @@ pub(super) fn scan_kimi_jsonl_session(
     (summary_scan, stats, output_messages)
 }
 
+// 扫描 Kimi 工具调用及结果，按调用标识关联状态、摘要和耗时。
 pub(super) fn scan_kimi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let Ok(file) = File::open(path) else {
         return Vec::new();
@@ -1098,6 +1136,7 @@ pub(super) fn scan_kimi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     events
 }
 
+// 使用默认备份目录执行 Kimi 会话树删除。
 pub(super) fn delete_kimi_session_tree(
     file_ref: &SessionFileRef,
     home: &Path,
@@ -1106,6 +1145,7 @@ pub(super) fn delete_kimi_session_tree(
     delete_kimi_session_tree_with_backup_root(file_ref, home, &backups_dir)
 }
 
+// 备份主日志、状态和索引后追加墓碑并删除会话目录，失败时补写恢复索引。
 pub(super) fn delete_kimi_session_tree_with_backup_root(
     file_ref: &SessionFileRef,
     home: &Path,
@@ -1177,6 +1217,7 @@ pub(super) fn delete_kimi_session_tree_with_backup_root(
     }
 }
 
+// 追加单条 Kimi 索引记录，并在旧尾部缺少换行时补齐分隔。
 fn append_session_index_record(index: &Path, record: &Value) -> Result<(), String> {
     let mut line = serde_json::to_vec(record).map_err(|err| err.to_string())?;
     line.push(b'\n');
@@ -1195,6 +1236,7 @@ fn append_session_index_record(index: &Path, record: &Value) -> Result<(), Strin
     file.write_all(&line).map_err(|err| err.to_string())
 }
 
+// 从兼容字段中取首个非空记录类型。
 fn kimi_record_type(value: &Value) -> String {
     ["type", "kind", "event", "name"]
         .into_iter()
@@ -1205,6 +1247,7 @@ fn kimi_record_type(value: &Value) -> String {
         .to_string()
 }
 
+// 按类型名识别工具调用或开始事件，排除用量记录。
 fn kimi_is_tool_record(record_type: &str) -> bool {
     let lower = record_type.to_ascii_lowercase();
     lower.contains("tool")
@@ -1215,6 +1258,7 @@ fn kimi_is_tool_record(record_type: &str) -> bool {
             || lower == "tool")
 }
 
+// 从兼容输入字段提取并规范化非空用户文本。
 fn kimi_user_text(value: &Value) -> Option<String> {
     kimi_text_from_value(value.get("input"))
         .or_else(|| kimi_text_from_value(value.get("userInput")))
@@ -1232,6 +1276,7 @@ fn kimi_user_text(value: &Value) -> Option<String> {
         .filter(|text| !text.is_empty())
 }
 
+// 解析追加消息的角色与内容，缺失角色时使用助手。
 fn kimi_appended_message(value: &Value) -> Option<(String, String)> {
     let message = value.get("message").unwrap_or(value);
     let role = message
@@ -1256,6 +1301,7 @@ fn kimi_appended_message(value: &Value) -> Option<(String, String)> {
     Some((normalized.to_string(), text))
 }
 
+// 从字符串、片段数组或通用 JSON 内容提取文本。
 fn kimi_text_from_value(value: Option<&Value>) -> Option<String> {
     let value = value?;
     if let Some(text) = value
@@ -1288,6 +1334,7 @@ fn kimi_text_from_value(value: Option<&Value>) -> Option<String> {
     extract_text_from_value(value)
 }
 
+// 从记录、配置或配置档字段中提取模型标识。
 fn kimi_model_from_record(value: &Value) -> Option<String> {
     kimi_string(
         value,
@@ -1313,6 +1360,7 @@ fn kimi_model_from_record(value: &Value) -> Option<String> {
     })
 }
 
+// 从直接字段及嵌套工具或函数对象提取工具名称。
 fn kimi_tool_name(value: &Value) -> Option<String> {
     kimi_string(value, &["name", "toolName", "tool_name", "tool"])
         .or_else(|| {
@@ -1327,6 +1375,7 @@ fn kimi_tool_name(value: &Value) -> Option<String> {
         })
 }
 
+// 从兼容字段提取工具调用标识。
 fn kimi_tool_call_id(value: &Value) -> Option<String> {
     kimi_string(
         value,
@@ -1334,6 +1383,7 @@ fn kimi_tool_call_id(value: &Value) -> Option<String> {
     )
 }
 
+// 组合工具名称与输入文本或 JSON 摘要。
 fn kimi_tool_message_text(value: &Value, name: &str) -> String {
     kimi_text_from_value(value.get("input"))
         .or_else(|| kimi_text_from_value(value.get("arguments")))
@@ -1350,6 +1400,7 @@ fn kimi_tool_message_text(value: &Value, name: &str) -> String {
         .unwrap_or_else(|| name.to_string())
 }
 
+// 优先提取工具输出文本，否则生成结果 JSON 摘要。
 fn kimi_tool_result_text(value: &Value) -> Option<String> {
     let result = value.get("result").unwrap_or(value);
     result
@@ -1359,6 +1410,7 @@ fn kimi_tool_result_text(value: &Value) -> Option<String> {
         .or_else(|| summarize_json_value(result))
 }
 
+// 读取通用用量并用 Kimi 专有输入和缓存字段覆盖。
 fn kimi_usage_tokens(value: &Value) -> UsageTokenScan {
     let mut usage = extract_usage_tokens(value);
     let payload = value.get("usage").unwrap_or(value);
@@ -1378,6 +1430,7 @@ fn kimi_usage_tokens(value: &Value) -> UsageTokenScan {
     usage
 }
 
+// 比较两条用量的输入、输出及两类缓存计数。
 fn same_kimi_usage(left: UsageTokenScan, right: UsageTokenScan) -> bool {
     left.input_tokens == right.input_tokens
         && left.output_tokens == right.output_tokens
@@ -1385,6 +1438,7 @@ fn same_kimi_usage(left: UsageTokenScan, right: UsageTokenScan) -> bool {
         && left.cache_creation_tokens == right.cache_creation_tokens
 }
 
+// 将相同用量记录匹配到最近未配对步骤，补充模型并保留独立用量。
 fn reconcile_kimi_usage_points(
     mut step_points: Vec<KimiUsagePoint>,
     record_points: Vec<KimiUsagePoint>,
@@ -1410,6 +1464,7 @@ fn reconcile_kimi_usage_points(
     step_points
 }
 
+// 按候选字段读取无符号数值或可解析的数字字符串。
 fn kimi_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     let map = value.as_object()?;
     keys.iter().find_map(|key| match map.get(*key) {
@@ -1419,10 +1474,12 @@ fn kimi_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     })
 }
 
+// 将记录时间转换为 RFC3339 字符串。
 fn kimi_record_timestamp(value: &Value) -> Option<String> {
     extract_timestamp_millis(value).and_then(timestamp_millis_to_rfc3339)
 }
 
+// 按候选字段返回首个去空白后的非空字符串。
 fn kimi_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .filter_map(|key| value.get(*key))
@@ -1439,6 +1496,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证 Linux 主日志路径识别拒绝子代理及嵌套代理层级。
     fn linux_main_wire_accepts_session_layout_and_rejects_nested_agent() {
         assert!(looks_like_kimi_linux_main_wire(
             "/home/u/.kimi-code/sessions/wd/01ABC/agents/main/wire.jsonl"
@@ -1452,6 +1510,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux 目录范围检查拒绝父目录逃逸。
     fn linux_path_within_home_rejects_parent_escape() {
         assert!(!linux_path_within_home(
             "/home/u/.kimi-code/../outside",
@@ -1464,6 +1523,7 @@ mod tests {
     }
 
     #[test]
+    // 验证最新有效活动索引覆盖旧记录，墓碑清除活动结果。
     fn session_index_uses_latest_record_and_honors_tombstones() {
         let session_id = "01KIMILATEST000000000001";
         let active_after_tombstone = format!(
@@ -1484,6 +1544,7 @@ mod tests {
     }
 
     #[test]
+    // 验证状态中的会话标识拒绝 shell 元字符。
     fn state_session_id_rejects_shell_metacharacters() {
         assert_eq!(
             kimi_session_id_from_state(&json!({"id": "01KIMI_SAFE-id"})).as_deref(),
@@ -1493,6 +1554,7 @@ mod tests {
     }
 
     #[test]
+    // 验证索引追加会先分隔没有换行的旧尾部。
     fn index_append_separates_a_partial_tail() {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let index = temp_dir.path().join("session_index.jsonl");

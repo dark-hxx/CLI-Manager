@@ -19,6 +19,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 从 session_meta 的兼容父线程字段或子代理来源中提取首个非空父会话 ID。
 pub(super) fn extract_session_meta_parent_id(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("session_meta") {
         return None;
@@ -52,6 +53,7 @@ pub(super) fn extract_session_meta_parent_id(value: &Value) -> Option<String> {
 /// 单遍扫描会话文件，产出 summary 与 stats；`collect_messages` 为 true 时同时收集完整消息列表
 /// （供 detail 复用同一次 IO/解析，避免二次读取）。消息的 model 回填与重复 usage 行清空语义
 /// 与 `iter_session_messages` 保持一致。
+// 按来源扫描摘要与用量，普通 JSONL 去重流式用量并按累计高水位还原 Codex 增量。
 pub(super) fn scan_session_inner(
     path: &Path,
     collect_messages: bool,

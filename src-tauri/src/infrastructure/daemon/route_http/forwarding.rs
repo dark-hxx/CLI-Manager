@@ -22,6 +22,9 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+// 校验路由、请求头和 JSON 大小，加载供应商快照并按共享预算尝试密钥、纠偏和故障转移。
+// 非流式响应读取完成后更新熔断、用量及可选热切换；流式响应交给限时流处理器提交结果。
+// 返回上游响应或稳定错误码；请求体有大小限制，不表示所有上游响应体都受同样限制。
 pub(super) async fn forward_request(
     request: Request<Incoming>,
     state: Arc<RouteState>,

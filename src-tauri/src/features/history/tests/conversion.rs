@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证 Codex 转 Claude 后可重新扫描、校验路径并读取消息。
 fn convert_codex_history_to_claude_jsonl_readable_by_history_parser() {
     let temp_dir = TempDir::new().unwrap();
     let roots = HistoryRoots {
@@ -61,6 +62,7 @@ fn convert_codex_history_to_claude_jsonl_readable_by_history_parser() {
 }
 
 #[test]
+// 验证 Claude 转 Codex 保留消息并生成元数据、恢复索引及配置路径。
 fn convert_claude_history_to_codex_jsonl_readable_by_history_parser() {
     let temp_dir = TempDir::new().unwrap();
     let roots = HistoryRoots {
@@ -175,6 +177,7 @@ fn convert_claude_history_to_codex_jsonl_readable_by_history_parser() {
 }
 
 #[test]
+// 验证八线程并发追加的四百条 JSONL 记录保持完整。
 fn append_jsonl_line_keeps_concurrent_records_intact() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("index.jsonl");
@@ -206,6 +209,7 @@ fn append_jsonl_line_keeps_concurrent_records_intact() {
 }
 
 #[test]
+// 验证 Claude 第二代适配器输出会话引用与消息原始行指针。
 fn v2_adapter_outputs_claude_session_ref_and_raw_pointers() {
     let temp_dir = TempDir::new().unwrap();
     let roots = HistoryRoots {
@@ -248,6 +252,7 @@ fn v2_adapter_outputs_claude_session_ref_and_raw_pointers() {
 }
 
 #[test]
+// 验证 Codex 第二代适配器保留混合存储各索引与状态数据库指针。
 fn v2_adapter_outputs_codex_mixed_artifact_raw_pointers() {
     let temp_dir = TempDir::new().unwrap();
     let roots = HistoryRoots {
@@ -301,6 +306,7 @@ fn v2_adapter_outputs_codex_mixed_artifact_raw_pointers() {
 }
 
 #[tokio::test]
+// 验证转换矩阵区分已支持、计划中与同来源禁用状态。
 async fn conversion_matrix_supports_current_writers_and_plans_other_pairs() {
     let matrix = history_get_conversion_matrix().await.unwrap();
     let claude_to_codex = matrix

@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+// 合并单个及多个项目路径，规范化后排序去重并排除空路径。
 pub(super) fn normalize_history_stats_project_paths(
     project_path: Option<String>,
     project_paths: Option<Vec<String>>,
@@ -36,6 +37,7 @@ pub(super) fn normalize_history_stats_project_paths(
     normalized
 }
 
+// 序列化项目路径集合为缓存键，空集合使用全部项目标记。
 pub(super) fn history_stats_project_paths_cache_key(project_paths: &[String]) -> String {
     if project_paths.is_empty() {
         return "__all__".to_string();
@@ -43,6 +45,7 @@ pub(super) fn history_stats_project_paths_cache_key(project_paths: &[String]) ->
     serde_json::to_string(project_paths).unwrap_or_else(|_| project_paths.join("\u{1f}"))
 }
 
+// 将空来源、空字符串或 all 视为全来源，否则与目标来源忽略大小写比较。
 pub(super) fn source_includes(source: &Option<String>, target: &str) -> bool {
     source
         .as_deref()
@@ -55,6 +58,7 @@ pub(super) fn source_includes(source: &Option<String>, target: &str) -> bool {
         .unwrap_or(true)
 }
 
+// 按项目、会话范围和查询过滤 OpenCode 用户消息，到达上限即返回。
 pub(super) async fn opencode_list_prompts(
     scope: Option<String>,
     project_key: Option<String>,
@@ -130,6 +134,7 @@ pub(super) async fn opencode_list_prompts(
     Ok(prompts)
 }
 
+// 从 OpenCode 解析会话提取范围内用量事件，匹配项目并按本地价格重计价。
 pub(super) async fn opencode_stats_facts(
     source_filter: Option<&str>,
     target_project: Option<&str>,
@@ -171,6 +176,7 @@ pub(super) async fn opencode_stats_facts(
     Ok(facts)
 }
 
+// 组合 OpenCode 数据库及 WAL 的文件元数据作为统计缓存代次。
 pub(super) fn opencode_stats_generation() -> String {
     let database_path = resolve_opencode_database_path();
     let wal_path = PathBuf::from(format!("{}-wal", database_path.to_string_lossy()));
@@ -187,6 +193,7 @@ pub(super) fn opencode_stats_generation() -> String {
     )
 }
 
+// 从已解析 OpenCode 会话映射摘要，直接复用 cwd 与计算结果。
 pub(super) fn opencode_summary_from_parsed(
     parsed: &OpenCodeParsedSession,
 ) -> HistorySessionSummary {
@@ -205,6 +212,7 @@ pub(super) fn opencode_summary_from_parsed(
     }
 }
 
+// 规范化 OpenCode cwd，匹配目标及其 Windows/WSL 等价路径或子目录。
 pub(super) fn opencode_cwd_matches_project_path(cwd: &str, target_project_path: &str) -> bool {
     let cwd = normalize_history_path(cwd);
     cwd_matches_target(&cwd, target_project_path)
@@ -216,6 +224,7 @@ pub(super) fn opencode_cwd_matches_project_path(cwd: &str, target_project_path: 
             .unwrap_or(false)
 }
 
+// 过滤索引条目的来源和项目，将重计价后的用量事实按事件日期分桶。
 pub(super) fn build_history_stats_daily_index(
     entries: Vec<HistoryIndexEntry>,
     source_filter: Option<&str>,
@@ -269,6 +278,7 @@ pub(super) fn build_history_stats_daily_index(
     }
 }
 
+// 在时间范围内累计用量并按会话身份去重计数，生成项目、模型、来源和时间维度。
 pub(super) fn build_history_stats_response(
     daily_index: &BTreeMap<i64, Vec<HistoryStatsSessionFact>>,
     bounds: StatsTimeBounds,
@@ -653,6 +663,7 @@ pub(super) fn build_history_stats_response(
     }
 }
 
+// 校验显式时间范围或构造默认最近天数范围，约束最多 366 天。
 pub(super) fn resolve_stats_time_bounds(
     range_days: Option<usize>,
     start_at: Option<i64>,
@@ -691,6 +702,7 @@ pub(super) fn resolve_stats_time_bounds(
     })
 }
 
+// 显式范围返回起始时间的日内偏移，默认范围使用 UTC 零偏移。
 pub(super) fn stats_day_start_offset(bounds: StatsTimeBounds) -> i64 {
     if bounds.explicit {
         ((bounds.start_day % DAY_MS) + DAY_MS) % DAY_MS
@@ -699,6 +711,7 @@ pub(super) fn stats_day_start_offset(bounds: StatsTimeBounds) -> i64 {
     }
 }
 
+// 按日内偏移计算时间戳所属日期起点，非正时间返回偏移值。
 pub(super) fn stats_day_start_with_offset(ts: i64, day_offset: i64) -> i64 {
     if ts <= 0 {
         return day_offset;
@@ -706,6 +719,7 @@ pub(super) fn stats_day_start_with_offset(ts: i64, day_offset: i64) -> i64 {
     ts - (((ts - day_offset) % DAY_MS) + DAY_MS) % DAY_MS
 }
 
+// 优先复用逐事件用量，无事件但有 token 时以会话更新时间构造总量回退事件。
 pub(super) fn stats_usage_events_or_fallback(
     summary: &HistorySessionSummary,
     stats: &SessionStatsScan,
@@ -735,6 +749,7 @@ pub(super) fn stats_usage_events_or_fallback(
     }]
 }
 
+// 保留四类 token，使用当前本地模型价格重新计算成本与未计价用量。
 pub(super) fn reprice_usage_stats(model: Option<&str>, usage: UsageStatsScan) -> UsageStatsScan {
     calculate_usage_cost(
         model,
@@ -748,6 +763,7 @@ pub(super) fn reprice_usage_stats(model: Option<&str>, usage: UsageStatsScan) ->
     )
 }
 
+// 组合来源、项目、会话 ID 与文件路径为统计去重身份。
 pub(super) fn history_stats_session_key(summary: &HistorySessionSummary) -> String {
     format!(
         "{}|{}|{}|{}",
@@ -755,6 +771,7 @@ pub(super) fn history_stats_session_key(summary: &HistorySessionSummary) -> Stri
     )
 }
 
+// 组合根目录、过滤范围、日偏移和索引代次作为每日事实缓存键。
 pub(super) fn make_history_stats_daily_index_cache_key(
     roots: &HistoryRoots,
     source_filter: Option<&str>,
@@ -776,6 +793,7 @@ pub(super) fn make_history_stats_daily_index_cache_key(
     )
 }
 
+// 组合范围、时间与本地、OpenCode 和路由代次作为聚合缓存键。
 pub(super) fn make_history_stats_aggregation_cache_key(
     roots: &HistoryRoots,
     source_filter: Option<&str>,
@@ -802,16 +820,19 @@ pub(super) fn make_history_stats_aggregation_cache_key(
     )
 }
 
+// 惰性初始化并返回统计响应缓存互斥锁。
 pub(super) fn get_stats_aggregation_cache() -> &'static Mutex<HistoryStatsAggregationCache> {
     HISTORY_STATS_AGGREGATION_CACHE
         .get_or_init(|| Mutex::new(HistoryStatsAggregationCache::default()))
 }
 
+// 克隆指定键的聚合响应，锁失败或未命中时返回空值。
 pub(super) fn stats_aggregation_cache_get(key: &str) -> Option<HistoryStatsResponse> {
     let cache = get_stats_aggregation_cache().lock().ok()?;
     cache.entries.get(key).map(|entry| entry.response.clone())
 }
 
+// 写入聚合响应并记录时间，新键超容量时淘汰最早写入项。
 pub(super) fn stats_aggregation_cache_set(key: String, response: HistoryStatsResponse) {
     if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
         if !cache.entries.contains_key(&key)
@@ -836,16 +857,19 @@ pub(super) fn stats_aggregation_cache_set(key: String, response: HistoryStatsRes
     }
 }
 
+// 惰性初始化并返回每日事实缓存互斥锁。
 pub(super) fn get_stats_daily_index_cache() -> &'static Mutex<HistoryStatsDailyIndexCache> {
     HISTORY_STATS_DAILY_INDEX_CACHE
         .get_or_init(|| Mutex::new(HistoryStatsDailyIndexCache::default()))
 }
 
+// 克隆指定键的每日事实索引，锁失败或未命中时返回空值。
 pub(super) fn stats_daily_index_cache_get(key: &str) -> Option<CachedHistoryStatsDailyIndex> {
     let cache = get_stats_daily_index_cache().lock().ok()?;
     cache.entries.get(key).cloned()
 }
 
+// 写入每日事实索引，新键超容量时按缓存时间淘汰最旧项。
 pub(super) fn stats_daily_index_cache_set(key: String, daily_index: CachedHistoryStatsDailyIndex) {
     if let Ok(mut cache) = get_stats_daily_index_cache().lock() {
         if !cache.entries.contains_key(&key)

@@ -72,6 +72,7 @@ struct ClientHandle {
     attaching: HashMap<String, Vec<DaemonFrame>>,
 }
 
+// 清除客户端对指定会话的订阅、ACK、流控及 attach 缓冲状态。
 fn clear_client_session_state(client: &mut ClientHandle, session_id: &str) {
     client.attached.remove(session_id);
     client.unacknowledged_chars.remove(session_id);
@@ -119,6 +120,7 @@ pub struct DaemonHost {
 
 impl DaemonHost {
     #[cfg(test)]
+    // 为测试生成独立临时 spool 路径并创建宿主状态，不启动 PTY。
     fn new() -> Self {
         Self::with_spool_dir(std::env::temp_dir().join(format!(
             "cli-manager-daemon-spool-test-{}",
@@ -126,6 +128,7 @@ impl DaemonHost {
         )))
     }
 
+    // 用指定 spool 目录初始化 PTY、会话、客户端、Hook 和路由状态。
     fn with_spool_dir(spool_dir: PathBuf) -> Self {
         Self {
             pty: PtyManager::new(),
@@ -141,10 +144,12 @@ impl DaemonHost {
         }
     }
 
+    // 根据会话 ID 拼接其二进制 spool 路径，调用方负责 ID 校验。
     fn session_spool_path(&self, session_id: &str) -> PathBuf {
         self.spool_dir.join(format!("{session_id}.bin"))
     }
 
+    // 克隆会话共享引用，表锁不可用或会话缺失时返回 None。
     fn get_session(&self, session_id: &str) -> Option<SharedSession> {
         self.sessions
             .lock()
@@ -152,17 +157,20 @@ impl DaemonHost {
             .and_then(|sessions| sessions.get(session_id).cloned())
     }
 
+    // 在锁可用时替换宿主 Hook 事件处理出口。
     fn set_hook_sink(&self, sink: HookPayloadSink) {
         if let Ok(mut current) = self.hook_sink.lock() {
             *current = Some(sink);
         }
     }
 
+    // 根据 SSH 启动计划确保会话引用的 Agent bridge 存在。
     fn ensure_ssh_agent_bridge(self: &Arc<Self>, session_id: &str, plan: &SshLaunchPlan) {
         self.ssh_agent_bridges
             .ensure(Arc::downgrade(self), session_id, plan);
     }
 
+    // 从会话元数据读取主机 ID，并释放该会话的 SSH bridge 引用。
     fn release_ssh_agent_bridge(&self, session_id: &str) {
         let host_id = self.get_session(session_id).and_then(|session| {
             session
@@ -175,6 +183,7 @@ impl DaemonHost {
         }
     }
 
+    // 汇总路由监听和熔断状态，锁不可用时返回 unknown 快照。
     fn routing_status(&self) -> RoutingStatus {
         self.routing
             .lock()
@@ -208,6 +217,7 @@ impl DaemonHost {
             })
     }
 
+    // 启动路由运行时，释放锁后返回最新状态。
     fn routing_start(
         &self,
         listen_addresses: &[String],
@@ -223,6 +233,7 @@ impl DaemonHost {
         Ok(self.routing_status())
     }
 
+    // 校验监听地址，仅在运行中重新绑定；停止状态不会因此启动。
     fn routing_reload(
         &self,
         listen_addresses: &[String],
@@ -247,6 +258,7 @@ impl DaemonHost {
         Ok(self.routing_status())
     }
 
+    // 停止路由运行时并返回更新后的状态。
     fn routing_stop(&self) -> Result<RoutingStatus, String> {
         let mut runtime = self
             .routing
@@ -257,6 +269,7 @@ impl DaemonHost {
         Ok(self.routing_status())
     }
 
+    // 规范化应用类型，重置指定供应商熔断后返回路由状态。
     fn routing_reset_circuit(
         &self,
         app_type: &str,
@@ -272,6 +285,7 @@ impl DaemonHost {
         Ok(self.routing_status())
     }
 
+    // 查询路由是否运行，锁不可用时返回 false。
     fn routing_is_running(&self) -> bool {
         self.routing
             .lock()
@@ -279,6 +293,7 @@ impl DaemonHost {
             .unwrap_or(false)
     }
 
+    // 仅接受与存活 SSH 会话完整绑定一致的远程 Hook，附加可信项目名后交给事件出口。
     pub(crate) fn accept_remote_hook_event(&self, value: serde_json::Value) {
         let Some(tab_id) = value.get("tabId").and_then(serde_json::Value::as_str) else {
             return;
@@ -324,6 +339,7 @@ impl DaemonHost {
     }
 
     #[cfg(test)]
+    // 为测试预留不带 SSH 计划的会话记录。
     fn reserve_session(
         &self,
         session_id: &str,
@@ -333,6 +349,7 @@ impl DaemonHost {
         self.reserve_session_with_launch(session_id, cwd, shell, None)
     }
 
+    // 在同一表锁内检查重复及数量上限，预留会话、回放缓冲和可用的 SSH Hook 绑定。
     fn reserve_session_with_launch(
         &self,
         session_id: &str,
@@ -396,6 +413,7 @@ impl DaemonHost {
     }
 
     /// hook 上报广播给全部客户端；无客户端时进缓存（有界）。
+    // 向现有客户端尽力广播 Hook；没有客户端时将事件存入有界缓存。
     fn broadcast_hook(&self, payload: serde_json::Value) {
         let frame = DaemonFrame::HookReport {
             payload: payload.clone(),
@@ -418,6 +436,7 @@ impl DaemonHost {
         }
     }
 
+    // 广播远程 Hook 丢失计数，无客户端时按条数上限缓存。
     pub(crate) fn broadcast_remote_hook_gap(&self, host_id: String, dropped: u64) {
         let frame = DaemonFrame::SshAgentHookGap {
             host_id: host_id.clone(),
@@ -441,6 +460,7 @@ impl DaemonHost {
         }
     }
 
+    // 按 Hook 事件映射更新会话的任务状态和本机接收时间。
     fn update_task_status_from_hook(&self, payload: &serde_json::Value) {
         let Some(session_id) = payload
             .get("tabId")
@@ -471,6 +491,7 @@ impl DaemonHost {
     }
 
     /// 新客户端连上后补发缓存的 hook 上报。
+    // 取出并清空 Hook 及缺口缓存，尽力发送给指定客户端，不因发送失败重新入队。
     fn flush_hook_cache_to(&self, writer: &Arc<ClientWriter>) {
         let cached: Vec<serde_json::Value> = match self.hook_cache.lock() {
             Ok(mut cache) => cache.drain(..).collect(),
@@ -488,6 +509,7 @@ impl DaemonHost {
         }
     }
 
+    // 统计元数据仍标记存活的会话，无法读取的记录不计入。
     fn alive_session_count(&self) -> usize {
         let sessions = self
             .sessions
@@ -505,11 +527,13 @@ impl DaemonHost {
             .count()
     }
 
+    // 返回注册客户端数量，锁不可用时视为零。
     fn client_count(&self) -> usize {
         self.clients.lock().map(|c| c.len()).unwrap_or(0)
     }
 
     /// 总 buffer 超限时从最旧的 exited 会话开始整会话丢弃（契约资源上限）。
+    // 总回放内存超限时按创建时间移除已退出会话，保留存活会话。
     fn enforce_total_buffer_cap(&self) {
         let Ok(mut sessions) = self.sessions.lock() else {
             return;
@@ -546,6 +570,7 @@ impl DaemonHost {
     }
 
     /// 向所有 attach 了该会话的客户端推送一帧；写失败的客户端跳过（由其读线程负责回收）。
+    // 向已订阅客户端推送非输出帧；attach 期间暂存，发送失败则关闭对应 writer。
     fn push_to_attached(&self, session_id: &str, frame: &DaemonFrame) {
         let Ok(mut clients) = self.clients.lock() else {
             return;
@@ -564,6 +589,7 @@ impl DaemonHost {
         }
     }
 
+    // 向订阅方推送输出并累计未确认字符；高水位暂停发送，attach 缓冲超限时关闭客户端。
     fn push_output_to_attached(
         &self,
         session_id: &str,
@@ -641,6 +667,7 @@ impl DaemonHost {
         }
     }
 
+    // Attached 应答发送成功后冲刷期间暂存的帧，失败时关闭客户端并清理会话状态。
     fn complete_attach(&self, client_id: u64, session_id: &str) {
         let Ok(mut clients) = self.clients.lock() else {
             return;
@@ -660,6 +687,7 @@ impl DaemonHost {
         }
     }
 
+    // 只接受递增且不超出已发送序号的 ACK，降到低水位后读取回放并尝试补发。
     fn acknowledge_output(
         &self,
         client_id: u64,
@@ -723,6 +751,7 @@ impl DaemonHost {
         Self::flush_buffered_output_locked(session_id, client_id, &retained_frames, &mut clients);
     }
 
+    // 在持有客户端表锁时补发保留输出；发现回放序号缺口则关闭连接以触发重置恢复。
     fn flush_buffered_output_locked(
         session_id: &str,
         client_id: u64,
@@ -813,6 +842,7 @@ impl DaemonHost {
         }
     }
 
+    // 从所有客户端移除指定会话的全部订阅与流控状态。
     fn detach_session_from_clients(&self, session_id: &str) {
         if let Ok(mut clients) = self.clients.lock() {
             for client in clients.values_mut() {
@@ -821,6 +851,7 @@ impl DaemonHost {
         }
     }
 
+    // 清空所有客户端的会话订阅、ACK、流控和 attach 缓冲。
     fn detach_all_sessions_from_clients(&self) {
         if let Ok(mut clients) = self.clients.lock() {
             for client in clients.values_mut() {
@@ -848,6 +879,7 @@ pub struct DaemonServerConfig {
     pub version: String,
 }
 
+// 返回 Unix 毫秒时间戳，早于纪元时回退为零。
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -856,6 +888,7 @@ fn now_ms() -> u64 {
 }
 
 /// sessionId 白名单校验：uuid/字母数字与连字符，防注入与异常键（不可信输入契约）。
+// 限制会话 ID 为非空、至多 64 字节的 ASCII 字母数字或连字符。
 fn is_valid_session_id(session_id: &str) -> bool {
     !session_id.is_empty()
         && session_id.len() <= 64
@@ -864,6 +897,7 @@ fn is_valid_session_id(session_id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
 }
 
+// 将支持的 Hook 事件映射为 running、attention、done 或 failed。
 fn map_hook_event_to_task_status(event: &str) -> Option<&'static str> {
     match event {
         "UserPromptSubmit" => Some("running"),
@@ -874,12 +908,14 @@ fn map_hook_event_to_task_status(event: &str) -> Option<&'static str> {
     }
 }
 
+// 构造带指定状态和正文的 WebSocket 握手错误响应。
 fn websocket_error(status: StatusCode, message: &str) -> ErrorResponse {
     let mut response = ErrorResponse::new(Some(message.to_string()));
     *response.status_mut() = status;
     response
 }
 
+// 按固定 Tauri origin 或本机 HTTP(S) 前缀检查 WebView 来源。
 fn is_allowed_webview_origin(origin: &str) -> bool {
     matches!(
         origin,
@@ -890,6 +926,7 @@ fn is_allowed_webview_origin(origin: &str) -> bool {
         || origin.starts_with("https://127.0.0.1:")
 }
 
+// 只允许 /pty 路径及支持的 Origin 进入 WebSocket 握手。
 fn validate_websocket_request(
     request: &Request,
     response: Response,
@@ -913,6 +950,7 @@ enum WebSocketClientMessage {
     Binary(Vec<u8>),
 }
 
+// 读取大小合规的文本或二进制消息，忽略控制消息；关闭、读取失败或超限时结束。
 fn read_websocket_client_message(
     socket: &mut WebSocket<TcpStream>,
 ) -> Option<WebSocketClientMessage> {
@@ -935,6 +973,7 @@ fn read_websocket_client_message(
 impl DaemonServer {
     /// 绑定 127.0.0.1 随机端口、独占写入发现文件并进入 accept 循环（阻塞）。
     /// 返回 Err 仅发生在启动阶段（端口/发现文件失败，例如已有实例存活）。
+    // 绑定本机控制、WebSocket 和 Hook 端口，独占发布发现信息并重建 spool 后运行监听服务。
     pub fn run(config: DaemonServerConfig) -> Result<(), String> {
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .map_err(|err| format!("daemon bind failed: {err}"))?;
@@ -1046,6 +1085,7 @@ impl DaemonServer {
         Ok(())
     }
 
+    // 后台检查客户端、存活会话和路由活动，持续空闲超时后移除发现文件并退出进程。
     fn spawn_idle_watchdog(self: &Arc<Self>) {
         let server = Arc::clone(self);
         std::thread::spawn(move || loop {
@@ -1068,6 +1108,7 @@ impl DaemonServer {
         });
     }
 
+    // 要求 NDJSON 首帧令牌鉴权，注册客户端后分发请求，断连时移除并关闭 writer。
     fn handle_connection(self: Arc<Self>, stream: TcpStream) {
         let peer = stream
             .peer_addr()
@@ -1151,6 +1192,7 @@ impl DaemonServer {
         log::debug!("daemon client disconnected ({peer}, id={client_id})");
     }
 
+    // 校验 WebSocket 握手与首帧鉴权，处理文本/二进制请求并拒绝路由控制帧。
     fn handle_websocket_connection(self: Arc<Self>, stream: TcpStream) {
         let peer = stream
             .peer_addr()
@@ -1256,6 +1298,7 @@ impl DaemonServer {
         log::debug!("daemon websocket client disconnected ({peer}, id={client_id})");
     }
 
+    // 仅处理已 attach 会话的二进制输入或检查点，校验失败时要求关闭连接。
     fn handle_binary_frame(&self, client_id: u64, data: &[u8], writer: &Arc<ClientWriter>) -> bool {
         let frame = match decode_binary_terminal_frame(data) {
             Ok(frame) => frame,
@@ -1329,6 +1372,7 @@ impl DaemonServer {
     }
 
     /// 返回 false 表示应结束该连接。
+    // 分发客户端请求；List 先补发 Hook，SSH 请求后台处理，Attached 应答之后才冲刷实时缓冲。
     fn dispatch(
         self: &Arc<Self>,
         client_id: u64,
@@ -1363,6 +1407,7 @@ impl DaemonServer {
         sent
     }
 
+    // 处理已鉴权的控制帧并构造应答；会话协调只报告诊断，不按 UI 列表回收 daemon 会话。
     fn handle_frame(&self, client_id: u64, frame: ClientFrame) -> DaemonFrame {
         match frame {
             ClientFrame::Auth { .. } => DaemonFrame::Err {
@@ -1748,6 +1793,7 @@ impl DaemonServer {
         }
     }
 
+    // 校验并原子预留会话、登记订阅后创建 PTY，失败时移除预留和客户端状态。
     fn handle_create(
         &self,
         client_id: u64,
@@ -1842,6 +1888,7 @@ impl DaemonServer {
     }
 }
 
+// 构造带请求 ID 的 daemon 错误帧。
 fn err_frame(id: u64, message: &str) -> DaemonFrame {
     DaemonFrame::Err {
         id,
@@ -1850,6 +1897,7 @@ fn err_frame(id: u64, message: &str) -> DaemonFrame {
 }
 
 /// 读一行并施加单帧字节上限；连接关闭/超限/非 UTF-8/IO 错误返回 None（调用方断连）。
+// 在字节预算内读取完整换行的 UTF-8 控制帧，异常或未终结帧返回 None。
 fn read_line_bounded(reader: &mut BufReader<TcpStream>) -> Option<String> {
     let mut buf = Vec::new();
     let mut limited = reader.by_ref().take((MAX_FRAME_BYTES + 1) as u64);
@@ -1882,6 +1930,7 @@ fn read_line_bounded(reader: &mut BufReader<TcpStream>) -> Option<String> {
     }
 }
 
+// 仅对需要用户响应的 Hook 尝试启动同目录应用，并传入后台会话恢复参数。
 fn maybe_activate_app_for_hook(payload: &crate::claude_hook::ClaudeHookPayload) {
     if !payload.requires_user_response() {
         return;

@@ -30,6 +30,7 @@ enum ManagedProcessRole {
 }
 
 impl ManagedProcessRole {
+    // 将进程分类映射为诊断 JSON 中的稳定角色标签。
     fn label(self) -> &'static str {
         match self {
             Self::AppMain => "app-main",
@@ -83,6 +84,7 @@ struct ResourceDiagnosticLogRecord<'a, T: Serialize + ?Sized> {
     payload: &'a T,
 }
 
+// 更新采样开关并最多尝试启动一次后台线程；线程创建失败仅告警，STARTED 不回退。
 pub fn start(initially_enabled: bool) {
     set_enabled(initially_enabled);
     if STARTED.set(()).is_err() {
@@ -96,10 +98,12 @@ pub fn start(initially_enabled: bool) {
     }
 }
 
+// 原子更新周期采样开关，不终止线程，也不禁止前端主动写入阈值事件。
 pub fn set_enabled(enabled: bool) {
     ENABLED.store(enabled, Ordering::Release);
 }
 
+// 验证前端事件路由后写独立诊断日志；不检查 ENABLED，也不校验或脱敏 payload 内部字段。
 pub(crate) fn write_frontend_entry(
     level: &str,
     source: &str,
@@ -110,6 +114,7 @@ pub(crate) fn write_frontend_entry(
     record_resource_diagnostic(level, source, event, payload)
 }
 
+// 只接受列出的级别/来源/事件三元组，防止该入口被当作任意事件日志接口。
 fn validate_frontend_route(level: &str, source: &str, event: &str) -> Result<(), String> {
     let valid = matches!(
         (level, source, event),
@@ -126,6 +131,7 @@ fn validate_frontend_route(level: &str, source: &str, event: &str) -> Result<(),
     }
 }
 
+// 按 debug_assertions 选择独立资源日志名，不与普通日志或崩溃轨迹混写。
 fn resource_log_file_name() -> &'static str {
     if cfg!(debug_assertions) {
         "resource-diagnostics-dev.log"
@@ -134,6 +140,7 @@ fn resource_log_file_name() -> &'static str {
     }
 }
 
+// 惰性创建当前数据根下的滚动写入器，初始化成功或失败都缓存，后续不重试初始化。
 fn diagnostics_writer() -> Result<&'static Mutex<crate::log_rotation::DailyRollingLogWriter>, String>
 {
     match RESOURCE_LOG_WRITER.get_or_init(|| {
@@ -147,6 +154,7 @@ fn diagnostics_writer() -> Result<&'static Mutex<crate::log_rotation::DailyRolli
     }
 }
 
+// 序列化包含时间与路由的完整单行 JSON，连同末尾换行超过 64 KiB 时整体拒绝，不做局部截断。
 fn serialize_log_record_at<T: Serialize + ?Sized>(
     timestamp: &str,
     level: &str,
@@ -170,6 +178,7 @@ fn serialize_log_record_at<T: Serialize + ?Sized>(
     Ok(line)
 }
 
+// 添加本地毫秒时间戳，先验证序列化大小，再持锁完整写入；不在每条记录后强制刷盘。
 fn write_resource_diagnostic<T: Serialize + ?Sized>(
     level: &str,
     source: &str,
@@ -187,6 +196,7 @@ fn write_resource_diagnostic<T: Serialize + ?Sized>(
         .map_err(|err| format!("resource_diagnostics_write_failed: {err}"))
 }
 
+// 写入失败时仅首次告警以抑制刷屏，成功后重新允许告警；原错误仍返回调用方。
 fn record_resource_diagnostic<T: Serialize + ?Sized>(
     level: &str,
     source: &str,
@@ -205,6 +215,8 @@ fn record_resource_diagnostic<T: Serialize + ?Sized>(
     result
 }
 
+// 常驻线程每秒检查开关，启用后约每 30 秒刷新进程 CPU/内存；每轮启用的首样本标为未就绪。
+// 不采集命令行、环境或任务线程明细，关闭采样仅暂停刷新，不退出循环。
 fn run_sampler() {
     let mut system = System::new();
     let mut sampling_active = false;
@@ -235,6 +247,8 @@ fn run_sampler() {
     }
 }
 
+// 从已有系统快照筛选本应用/daemon 进程树，汇总各角色并记录 CPU 优先、内存次序的前八进程。
+// 汇总在截取排行前计算，内存累加饱和；不写命令行、路径或终端内容。
 fn log_snapshot(system: &System, cpu_sample_ready: bool) {
     let app_pid = std::process::id();
     let daemon_pid = current_daemon_pid(system);
@@ -321,6 +335,8 @@ fn log_snapshot(system: &System, cpu_sample_ready: bool) {
     let _ = record_resource_diagnostic("info", "process", "runtimeSnapshot", &snapshot);
 }
 
+// 从当前构建的发现文件取 PID，并要求快照中进程名包含 daemon 标识；缺失/读取失败时省略。
+// 不连接 daemon，也不按启动时间或可执行文件签名校验身份。
 fn current_daemon_pid(system: &System) -> Option<u32> {
     let data_dir = crate::app_paths::cli_manager_data_dir().ok()?;
     let path = crate::daemon::discovery::daemon_info_path(&data_dir, cfg!(debug_assertions));
@@ -337,6 +353,7 @@ fn current_daemon_pid(system: &System) -> Option<u32> {
         .then_some(pid)
 }
 
+// 优先归类 daemon 及其后代，再判断主应用和其 WebView/普通后代；其他进程不纳入统计。
 fn classify_process(
     pid: u32,
     name: &str,
@@ -363,6 +380,7 @@ fn classify_process(
     }
 }
 
+// 沿父进程映射寻找祖先，缺失父节点或重复访问时停止，避免损坏映射导致无限循环。
 fn is_descendant_of(pid: u32, ancestor: u32, parents: &HashMap<u32, u32>) -> bool {
     let mut current = pid;
     let mut visited = HashSet::new();
@@ -378,6 +396,7 @@ fn is_descendant_of(pid: u32, ancestor: u32, parents: &HashMap<u32, u32>) -> boo
     false
 }
 
+// 用忽略 ASCII 大小写的名称子串启发式识别 WebView；调用方先限定进程所属应用树。
 fn is_webview_process_name(name: &str) -> bool {
     let normalized = name.to_ascii_lowercase();
     normalized.contains("msedgewebview2")
@@ -386,6 +405,7 @@ fn is_webview_process_name(name: &str) -> bool {
         || normalized.contains("webview")
 }
 
+// 将负数和非有限 CPU 值归零，保留多核可能超过 100 的正常采样值。
 fn finite_cpu(value: f32) -> f32 {
     if value.is_finite() {
         value.max(0.0)
@@ -394,6 +414,7 @@ fn finite_cpu(value: f32) -> f32 {
     }
 }
 
+// 返回 epoch 毫秒数并限制到 u64 范围，系统时间早于 epoch 时返回 0。
 fn epoch_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -405,11 +426,13 @@ fn epoch_millis() -> u64 {
 mod tests {
     use super::*;
 
+    // 将测试用子 PID/父 PID 对转换为映射，不读取真实进程。
     fn parent_map(entries: &[(u32, u32)]) -> HashMap<u32, u32> {
         entries.iter().copied().collect()
     }
 
     #[test]
+    // 验证 daemon 树即使嵌在应用树中仍优先分类，其他 WebView 子进程保持独立角色。
     fn daemon_tree_takes_priority_over_app_tree() {
         let parents = parent_map(&[(20, 10), (21, 20), (30, 10)]);
         assert_eq!(
@@ -427,18 +450,21 @@ mod tests {
     }
 
     #[test]
+    // 验证不属于应用树的进程不会出现在诊断分类中。
     fn process_outside_managed_trees_is_ignored() {
         let parents = parent_map(&[(11, 10), (50, 40)]);
         assert_eq!(classify_process(50, "other.exe", 10, None, &parents), None);
     }
 
     #[test]
+    // 验证含环父映射在找不到祖先时结束并返回 false。
     fn parent_cycles_do_not_loop_forever() {
         let parents = parent_map(&[(20, 21), (21, 20)]);
         assert!(!is_descendant_of(20, 10, &parents));
     }
 
     #[test]
+    // 验证 payload 内换行被 JSON 转义，整条记录只有结尾换行且保留路由与数值。
     fn diagnostic_records_are_single_line_json() {
         let payload = serde_json::json!({ "queuedBytes": 42, "text": "line\nbreak" });
         let line = serialize_log_record_at(
@@ -458,6 +484,7 @@ mod tests {
     }
 
     #[test]
+    // 验证加上记录包装后超出大小限制的 payload 被整体拒绝。
     fn oversized_diagnostic_records_are_rejected() {
         let payload = "x".repeat(MAX_LOG_ENTRY_BYTES);
         assert_eq!(
@@ -468,6 +495,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已知快照/阈值路由被接受，未知事件名和来源被拒绝。
     fn frontend_diagnostic_routes_are_allowlisted() {
         assert!(validate_frontend_route("info", "webview", "runtimeSnapshot").is_ok());
         assert!(validate_frontend_route(

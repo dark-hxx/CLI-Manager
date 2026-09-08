@@ -178,26 +178,32 @@ pub struct DesktopPetWindowBounds {
     pub height: u32,
 }
 
+// 通过应用路径服务获取受管理桌宠根目录。
 fn pets_root() -> Result<PathBuf, String> {
     app_paths::pets_dir()
 }
 
+// 通过应用路径服务获取外部 Codex 桌宠目录。
 fn codex_pets_root() -> Result<PathBuf, String> {
     app_paths::codex_pets_dir()
 }
 
+// 返回桌宠根下的已安装目录。
 fn installed_root(root: &Path) -> PathBuf {
     root.join("installed")
 }
 
+// 返回桌宠根下的安装暂存目录。
 fn temp_root(root: &Path) -> PathBuf {
     root.join("temp")
 }
 
+// 返回桌宠目录缓存文件路径。
 fn cache_path(root: &Path) -> PathBuf {
     root.join("catalog-cache.json")
 }
 
+// 创建桌宠根、安装目录和暂存目录。
 fn ensure_pet_dirs(root: &Path) -> Result<(), String> {
     for path in [root.to_path_buf(), installed_root(root), temp_root(root)] {
         fs::create_dir_all(&path).map_err(|err| format!("pet_dir_create_failed: {err}"))?;
@@ -205,6 +211,7 @@ fn ensure_pet_dirs(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 校验修剪后的桌宠 ID 非空且只含规定的小写 ASCII 字符。
 fn valid_pet_id(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty()
@@ -214,6 +221,7 @@ fn valid_pet_id(value: &str) -> bool {
         })
 }
 
+// 校验 Codex 桌宠 ID 的长度和连字符位置，拒绝连续连字符。
 fn valid_codex_pet_id(value: &str) -> bool {
     let value = value.trim();
     if value.is_empty() || value.len() > 72 || value.starts_with('-') || value.ends_with('-') {
@@ -235,16 +243,19 @@ fn valid_codex_pet_id(value: &str) -> bool {
     true
 }
 
+// 为外部 Codex 桌宠 ID 添加内部 codex. 命名空间。
 fn internal_codex_pet_id(value: &str) -> String {
     format!("{CODEX_PET_ID_PREFIX}{value}")
 }
 
+// 去除 codex. 前缀并验证原始 Codex 桌宠 ID。
 fn raw_codex_pet_id(value: &str) -> Option<&str> {
     value
         .strip_prefix(CODEX_PET_ID_PREFIX)
         .filter(|raw| valid_codex_pet_id(raw))
 }
 
+// 限制相对资产路径的长度和组件，拒绝绝对路径与反斜杠。
 fn safe_relative_file(value: &str) -> Option<PathBuf> {
     if value.is_empty() || value.len() > 180 || value.contains('\\') {
         return None;
@@ -263,6 +274,7 @@ fn safe_relative_file(value: &str) -> Option<PathBuf> {
     has_normal.then(|| path.to_path_buf())
 }
 
+// 判断资产扩展名是否为 PNG、WebP 或 SVG。
 fn allowed_asset_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -270,6 +282,7 @@ fn allowed_asset_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// 按文本黑名单拒绝常见脚本与远程引用片段，并要求包含 SVG 标签。
 fn validate_svg(text: &str) -> Result<(), String> {
     let lowered = text.to_ascii_lowercase();
     let forbidden = [
@@ -298,10 +311,12 @@ fn validate_svg(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 从至少三个字节读取无符号小端 24 位整数。
 fn read_u24_le(bytes: &[u8]) -> u32 {
     bytes[0] as u32 | ((bytes[1] as u32) << 8) | ((bytes[2] as u32) << 16)
 }
 
+// 扫描 RIFF WebP 块，从支持的 VP8X、VP8L 或 VP8 头解析尺寸。
 fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     if bytes.len() < 20 || &bytes[0..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
         return None;
@@ -341,6 +356,7 @@ fn webp_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     None
 }
 
+// 验证 PNG 签名和 IHDR 标记，并读取大端宽高。
 fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
     if bytes.len() < 24 || &bytes[0..8] != PNG_SIGNATURE || &bytes[12..16] != b"IHDR" {
@@ -352,6 +368,7 @@ fn png_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     ))
 }
 
+// 校验图片文件大小，SVG 检查文本片段，位图检查头部尺寸上限。
 fn validate_image_asset(path: &Path, extension: &str) -> Result<(), String> {
     let metadata =
         fs::metadata(path).map_err(|err| format!("pet_manifest_asset_read_failed: {err}"))?;
@@ -385,6 +402,7 @@ fn validate_image_asset(path: &Path, extension: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 按 Codex 精灵表版本返回固定列数和行数对应的完整图片尺寸。
 fn codex_sprite_dimensions(sprite_version_number: u32) -> Option<(u32, u32)> {
     let rows = match sprite_version_number {
         1 => CODEX_V1_ROWS,
@@ -397,6 +415,7 @@ fn codex_sprite_dimensions(sprite_version_number: u32) -> Option<(u32, u32)> {
     ))
 }
 
+// 为六种桌宠状态配置同一精灵表的固定行号与帧数。
 fn codex_state_assets(file: &str) -> BTreeMap<String, PetStateAsset> {
     [
         ("idle", 0, 6),
@@ -420,6 +439,7 @@ fn codex_state_assets(file: &str) -> BTreeMap<String, PetStateAsset> {
     .collect()
 }
 
+// 读取并校验 Codex 清单和精灵表尺寸，转换为内部已安装桌宠结构。
 fn read_codex_pet(
     pet_dir: &Path,
     expected_raw_id: Option<&str>,
@@ -527,6 +547,7 @@ fn read_codex_pet(
     })
 }
 
+// 校验原生桌宠清单、双语元数据、画布、状态和全部引用资产。
 fn validate_manifest(manifest: &PetManifest, base_dir: &Path) -> Result<(), String> {
     if manifest.schema_version != PET_SCHEMA_VERSION {
         return Err("pet_manifest_schema_unsupported".to_string());
@@ -573,6 +594,7 @@ fn validate_manifest(manifest: &PetManifest, base_dir: &Path) -> Result<(), Stri
     Ok(())
 }
 
+// 校验目录版本、条目数量及各项元数据、摘要和下载地址前缀。
 fn validate_catalog(catalog: &PetCatalog) -> Result<(), String> {
     if catalog.schema_version != PET_SCHEMA_VERSION || catalog.items.len() > MAX_CATALOG_ITEMS {
         return Err("pet_catalog_schema_invalid".to_string());
@@ -602,6 +624,7 @@ fn validate_catalog(catalog: &PetCatalog) -> Result<(), String> {
     Ok(())
 }
 
+// 解析目录 JSON 后执行目录结构与条目校验。
 fn parse_catalog(text: &str) -> Result<PetCatalog, String> {
     let catalog: PetCatalog =
         serde_json::from_str(text).map_err(|err| format!("pet_catalog_parse_failed: {err}"))?;
@@ -609,6 +632,7 @@ fn parse_catalog(text: &str) -> Result<PetCatalog, String> {
     Ok(catalog)
 }
 
+// 将已知内置桌宠的 SVG 预览编码为 Base64 数据 URL。
 fn preview_data_url(id: &str) -> Option<String> {
     let svg = match id {
         "official.terminal-robot" => TERMINAL_ROBOT_PREVIEW,
@@ -622,6 +646,7 @@ fn preview_data_url(id: &str) -> Option<String> {
     ))
 }
 
+// 为目录中的已知内置桌宠补充本地预览数据 URL。
 fn enrich_catalog(mut catalog: PetCatalog) -> PetCatalog {
     for item in &mut catalog.items {
         item.preview_data_url = preview_data_url(&item.id);
@@ -629,6 +654,7 @@ fn enrich_catalog(mut catalog: PetCatalog) -> PetCatalog {
     catalog
 }
 
+// 读取并校验目录缓存，按请求拒绝超过六小时的缓存。
 fn read_cached_catalog(root: &Path, require_fresh: bool) -> Result<Option<PetCatalog>, String> {
     let path = cache_path(root);
     if !path.is_file() {
@@ -650,6 +676,7 @@ fn read_cached_catalog(root: &Path, require_fresh: bool) -> Result<Option<PetCat
     parse_catalog(&text).map(Some)
 }
 
+// 先写临时缓存并备份旧文件，再通过重命名替换且在失败时尝试恢复。
 fn write_catalog_cache(root: &Path, text: &str) -> Result<(), String> {
     let target = cache_path(root);
     let temp = root.join(format!("catalog-cache.{}.tmp", Uuid::new_v4()));
@@ -681,6 +708,7 @@ fn write_catalog_cache(root: &Path, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 以十秒请求超时下载固定远程目录，并解析校验响应文本。
 async fn fetch_remote_catalog() -> Result<(PetCatalog, String), String> {
     let client = network_client::configure_builder(reqwest::Client::builder())?
         .timeout(Duration::from_secs(10))
@@ -701,6 +729,7 @@ async fn fetch_remote_catalog() -> Result<(PetCatalog, String), String> {
     Ok((catalog, text))
 }
 
+// 优先复用新缓存，否则请求远程目录；远程失败时回退旧缓存或内置目录。
 async fn load_catalog(refresh: bool) -> Result<PetCatalogResponse, String> {
     let root = pets_root()?;
     ensure_pet_dirs(&root)?;
@@ -743,6 +772,7 @@ async fn load_catalog(refresh: bool) -> Result<PetCatalogResponse, String> {
     }
 }
 
+// 按已知桌宠 ID 与版本返回内置安装包字节。
 fn embedded_package(id: &str, version: &str) -> Option<&'static [u8]> {
     match (id, version) {
         ("official.terminal-robot", "1.0.0") => Some(TERMINAL_ROBOT_PACK),
@@ -752,6 +782,7 @@ fn embedded_package(id: &str, version: &str) -> Option<&'static [u8]> {
     }
 }
 
+// 计算字节内容的 SHA-256 小写十六进制摘要。
 fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -759,6 +790,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+// 以三十秒请求超时下载包，并检查声明长度与接收后大小上限。
 async fn download_package(entry: &PetCatalogEntry) -> Result<Vec<u8>, String> {
     let client = network_client::configure_builder(reqwest::Client::builder())?
         .timeout(Duration::from_secs(30))
@@ -788,10 +820,12 @@ async fn download_package(entry: &PetCatalogEntry) -> Result<Vec<u8>, String> {
     Ok(bytes.to_vec())
 }
 
+// 将平台路径转换为允许有损替换的字符串。
 fn path_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+// 要求安装目录恰有一种清单格式，并读取校验原生或 Codex 桌宠。
 fn read_installed_pet(version_dir: &Path) -> Result<InstalledPet, String> {
     let manifest_path = version_dir.join("manifest.json");
     let codex_manifest_path = version_dir.join("pet.json");
@@ -815,6 +849,7 @@ fn read_installed_pet(version_dir: &Path) -> Result<InstalledPet, String> {
     })
 }
 
+// 限量解压并校验包到暂存目录，核对身份版本后备份替换安装目录。
 fn install_package_bytes_to_root(
     root: &Path,
     bytes: &[u8],
@@ -928,6 +963,7 @@ fn install_package_bytes_to_root(
     read_installed_pet(&target_dir)
 }
 
+// 扫描指定桌宠的有效安装版本，按语义版本倒序返回最新项。
 fn newest_installed_pet(root: &Path, pet_id: &str) -> Result<Option<InstalledPet>, String> {
     if !valid_pet_id(pet_id) {
         return Err("pet_id_invalid".to_string());
@@ -962,6 +998,7 @@ fn newest_installed_pet(root: &Path, pet_id: &str) -> Result<Option<InstalledPet
     Ok(candidates.into_iter().next().map(|(_, pet)| pet))
 }
 
+// 枚举合法受管理桌宠目录，并为每个 ID 选取最新有效版本。
 fn list_managed_pets(root: &Path) -> Result<Vec<InstalledPet>, String> {
     let mut pets = Vec::new();
     for id_entry in
@@ -979,6 +1016,7 @@ fn list_managed_pets(root: &Path) -> Result<Vec<InstalledPet>, String> {
     Ok(pets)
 }
 
+// 扫描外部 Codex 桌宠目录，跳过无效条目并标记为不可卸载。
 fn list_codex_pets_at(root: &Path) -> Vec<InstalledPet> {
     if !root.is_dir() {
         return Vec::new();
@@ -1017,6 +1055,7 @@ fn list_codex_pets_at(root: &Path) -> Vec<InstalledPet> {
     pets
 }
 
+// 解析内部 Codex ID 并读取对应外部桌宠，缺失时返回空值。
 fn external_codex_pet(root: &Path, pet_id: &str) -> Result<Option<InstalledPet>, String> {
     let Some(raw_id) = raw_codex_pet_id(pet_id) else {
         return Ok(None);
@@ -1028,6 +1067,7 @@ fn external_codex_pet(root: &Path, pet_id: &str) -> Result<Option<InstalledPet>,
     read_codex_pet(&pet_dir, Some(raw_id), "codex", false).map(Some)
 }
 
+// 按 ID 合并外部与受管理桌宠，同名项由受管理安装覆盖。
 fn merge_installed_pets(
     external: Vec<InstalledPet>,
     managed: Vec<InstalledPet>,
@@ -1043,11 +1083,13 @@ fn merge_installed_pets(
 }
 
 #[tauri::command]
+// 按可选刷新标记读取桌宠目录及来源信息。
 pub async fn desktop_pet_catalog(refresh: Option<bool>) -> Result<PetCatalogResponse, String> {
     load_catalog(refresh.unwrap_or(false)).await
 }
 
 #[tauri::command]
+// 合并外部 Codex 桌宠与受管理安装，返回可用桌宠列表。
 pub fn desktop_pet_list_installed() -> Result<Vec<InstalledPet>, String> {
     let root = pets_root()?;
     ensure_pet_dirs(&root)?;
@@ -1058,6 +1100,7 @@ pub fn desktop_pet_list_installed() -> Result<Vec<InstalledPet>, String> {
 }
 
 #[tauri::command]
+// 优先读取受管理的最新桌宠，缺失时查询外部 Codex 安装。
 pub fn desktop_pet_get_installed(pet_id: String) -> Result<Option<InstalledPet>, String> {
     let root = pets_root()?;
     ensure_pet_dirs(&root)?;
@@ -1069,6 +1112,7 @@ pub fn desktop_pet_get_installed(pet_id: String) -> Result<Option<InstalledPet>,
 }
 
 #[tauri::command]
+// 校验目录条目及最低应用版本，下载并校验摘要后安装，必要时使用匹配内置包。
 pub async fn desktop_pet_install(app: AppHandle, pet_id: String) -> Result<InstalledPet, String> {
     let catalog = load_catalog(false).await?;
     let entry = catalog
@@ -1106,6 +1150,7 @@ pub async fn desktop_pet_install(app: AppHandle, pet_id: String) -> Result<Insta
 }
 
 #[tauri::command]
+// 读取大小受限的本地压缩包，并导入受管理桌宠目录。
 pub fn desktop_pet_import(path: String) -> Result<InstalledPet, String> {
     let source = PathBuf::from(path);
     let metadata = fs::metadata(&source).map_err(|err| format!("pet_import_open_failed: {err}"))?;
@@ -1117,6 +1162,7 @@ pub fn desktop_pet_import(path: String) -> Result<InstalledPet, String> {
 }
 
 #[tauri::command]
+// 按校验后的 ID 拼接安装根并删除目录，未额外规范化校验目标；仅存在于外部的 Codex 桌宠拒绝卸载。
 pub fn desktop_pet_uninstall(pet_id: String) -> Result<(), String> {
     let pet_id = pet_id.trim();
     if !valid_pet_id(pet_id) {
@@ -1138,6 +1184,7 @@ pub fn desktop_pet_uninstall(pet_id: String) -> Result<(), String> {
     Ok(())
 }
 
+// 将用户缩放夹在支持区间内并计算桌宠逻辑尺寸。
 fn window_size(scale: f64) -> (f64, f64) {
     let scale = scale.clamp(PET_WINDOW_MIN_SCALE, PET_WINDOW_MAX_SCALE);
     (
@@ -1146,6 +1193,7 @@ fn window_size(scale: f64) -> (f64, f64) {
     )
 }
 
+// 按有效显示器 DPI 将逻辑尺寸换算为至少一个像素的物理尺寸。
 fn physical_window_size(scale: f64, scale_factor: f64) -> (u32, u32) {
     let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
         scale_factor
@@ -1159,6 +1207,7 @@ fn physical_window_size(scale: f64, scale_factor: f64) -> (u32, u32) {
     )
 }
 
+// 优先按保存位置选择显示器 DPI，再计算目标尺寸与默认右下角位置。
 fn desired_window_geometry<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     config: &DesktopPetWindowConfig,
@@ -1206,6 +1255,7 @@ fn desired_window_geometry<R: Runtime>(
     (size, position)
 }
 
+// 先设置可选物理位置，再设置桌宠窗口物理尺寸。
 fn apply_window_geometry<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     size: (u32, u32),
@@ -1221,6 +1271,7 @@ fn apply_window_geometry<R: Runtime>(
         .map_err(|err| format!("pet_window_resize_failed: {err}"))
 }
 
+// 读取实际几何信息，超过一像素误差或查询失败时重新应用目标值。
 fn ensure_window_geometry<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     size: (u32, u32),
@@ -1242,6 +1293,7 @@ fn ensure_window_geometry<R: Runtime>(
     Ok(())
 }
 
+// 尽力将桌宠放到主显示器右下角并留出边距。
 fn place_default<R: Runtime>(window: &tauri::WebviewWindow<R>) {
     let Ok(Some(monitor)) = window.primary_monitor() else {
         return;
@@ -1262,6 +1314,7 @@ fn place_default<R: Runtime>(window: &tauri::WebviewWindow<R>) {
 }
 
 #[tauri::command]
+// 按配置隐藏或显示桌宠，同步尺寸、位置、置顶及 Windows 缩放与任务栏设置。
 pub fn desktop_pet_window_sync(
     app: AppHandle,
     config: DesktopPetWindowConfig,
@@ -1307,6 +1360,7 @@ pub fn desktop_pet_window_sync(
     Ok(())
 }
 
+// 要求窗口宽高为正且可表示为 i32。
 fn validated_window_size(bounds: DesktopPetWindowBounds) -> Result<(i32, i32), String> {
     let width = i32::try_from(bounds.width).map_err(|_| "pet_window_bounds_invalid".to_string())?;
     let height =
@@ -1318,6 +1372,7 @@ fn validated_window_size(bounds: DesktopPetWindowBounds) -> Result<(i32, i32), S
 }
 
 #[cfg(target_os = "windows")]
+// 校验边界后通过 Windows SetWindowPos 同步位置尺寸，不激活窗口或改变层级。
 fn apply_window_bounds<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     bounds: DesktopPetWindowBounds,
@@ -1350,6 +1405,7 @@ fn apply_window_bounds<R: Runtime>(
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台校验边界，再分别设置窗口尺寸和位置。
 fn apply_window_bounds<R: Runtime>(
     window: &tauri::WebviewWindow<R>,
     bounds: DesktopPetWindowBounds,
@@ -1364,6 +1420,7 @@ fn apply_window_bounds<R: Runtime>(
 }
 
 #[tauri::command]
+// 获取桌宠窗口并按平台应用指定物理边界。
 pub fn desktop_pet_window_set_bounds(
     app: AppHandle,
     bounds: DesktopPetWindowBounds,
@@ -1375,6 +1432,7 @@ pub fn desktop_pet_window_set_bounds(
 }
 
 #[tauri::command]
+// 获取桌宠窗口后尽力恢复主显示器右下角默认位置。
 pub fn desktop_pet_window_reset_position(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
         return Err("pet_window_missing".to_string());
@@ -1384,6 +1442,7 @@ pub fn desktop_pet_window_reset_position(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 隐藏已存在的桌宠窗口，窗口缺失视为无需处理。
 pub fn desktop_pet_window_hide(app: AppHandle) -> Result<(), String> {
     let Some(window) = app.get_webview_window(PET_WINDOW_LABEL) else {
         return Ok(());
@@ -1399,6 +1458,7 @@ mod tests {
     use std::io::Write as _;
 
     #[test]
+    // 验证窗口尺寸必须为正数且不超过 i32 范围。
     fn desktop_pet_window_bounds_require_positive_i32_dimensions() {
         assert_eq!(
             validated_window_size(DesktopPetWindowBounds {
@@ -1425,6 +1485,7 @@ mod tests {
         .is_err());
     }
 
+    // 构造仅含指定尺寸 VP8X 头的 WebP 测试字节。
     fn fake_vp8x_webp(width: u32, height: u32) -> Vec<u8> {
         let mut payload = [0u8; 10];
         let width = width - 1;
@@ -1441,6 +1502,7 @@ mod tests {
     }
 
     #[test]
+    // 验证桌宠逻辑尺寸在完整用户缩放区间内缩放并夹住越界值。
     fn desktop_pet_window_size_supports_the_full_user_scale_range() {
         assert_eq!(window_size(0.1), (76.0, 84.0));
         assert_eq!(window_size(0.4), (76.0, 84.0));
@@ -1450,6 +1512,7 @@ mod tests {
     }
 
     #[test]
+    // 验证桌宠物理尺寸随用户缩放与显示器 DPI 共同变化。
     fn desktop_pet_physical_window_size_tracks_monitor_dpi() {
         assert_eq!(physical_window_size(1.0, 1.0), (190, 210));
         assert_eq!(physical_window_size(1.25, 1.0), (238, 263));
@@ -1459,11 +1522,13 @@ mod tests {
     }
 
     #[test]
+    // 验证无效或非数 DPI 回退为一倍缩放。
     fn desktop_pet_physical_window_size_rejects_invalid_dpi() {
         assert_eq!(physical_window_size(1.0, 0.0), (190, 210));
         assert_eq!(physical_window_size(1.0, f64::NAN), (190, 210));
     }
 
+    // 构造仅含 PNG 签名和指定 IHDR 尺寸的测试字节。
     fn fake_png(width: u32, height: u32) -> Vec<u8> {
         let mut bytes = vec![0u8; 24];
         bytes[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
@@ -1472,6 +1537,7 @@ mod tests {
         bytes[20..24].copy_from_slice(&height.to_be_bytes());
         bytes
     }
+    // 生成指定 ID 与精灵表版本的 Codex 桌宠测试清单。
     fn codex_manifest(id: &str, sprite_version_number: u32) -> Vec<u8> {
         serde_json::to_vec_pretty(&serde_json::json!({
             "id": id,
@@ -1484,6 +1550,7 @@ mod tests {
         .unwrap()
     }
 
+    // 在临时根目录写入 Codex 桌宠清单及模拟精灵表。
     fn write_codex_pet(root: &Path, id: &str, sprite_version_number: u32) -> PathBuf {
         let pet_dir = root.join(id);
         fs::create_dir_all(&pet_dir).unwrap();
@@ -1501,6 +1568,7 @@ mod tests {
         pet_dir
     }
 
+    // 在内存中打包 Codex 测试清单和模拟 WebP 精灵表。
     fn codex_package(id: &str, sprite_version_number: u32) -> Vec<u8> {
         let dimensions = codex_sprite_dimensions(sprite_version_number).unwrap();
         let mut cursor = Cursor::new(Vec::new());
@@ -1522,6 +1590,7 @@ mod tests {
     }
 
     #[test]
+    // 验证桌宠 ID 和相对资产路径拒绝典型非法输入。
     fn pet_ids_and_paths_reject_unsafe_values() {
         assert!(valid_pet_id("official.pixel-fox"));
         assert!(!valid_pet_id("../pixel-fox"));
@@ -1536,6 +1605,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WebP 头解析支持 Codex 两种精灵表尺寸。
     fn codex_webp_dimensions_support_v1_and_v2() {
         for dimensions in [(1536, 1872), (1536, 2288)] {
             assert_eq!(
@@ -1546,12 +1616,14 @@ mod tests {
     }
 
     #[test]
+    // 验证 PNG 头解析读取尺寸并拒绝非 PNG 数据。
     fn png_dimensions_reads_ihdr_dimensions() {
         assert_eq!(png_dimensions(&fake_png(320, 240)), Some((320, 240)));
         assert_eq!(png_dimensions(b"not a png"), None);
     }
 
     #[test]
+    // 验证位图资产检查接受边界尺寸并拒绝超限或无效头部。
     fn image_asset_validation_bounds_raster_decode_size() {
         let root = tempfile::tempdir().unwrap();
         let image = root.path().join("pet.png");
@@ -1585,6 +1657,7 @@ mod tests {
         );
     }
     #[test]
+    // 验证外部 Codex 扫描添加命名空间、状态映射并标记只读。
     fn codex_directory_scan_namespaces_and_marks_external_pets_read_only() {
         let root = tempfile::tempdir().unwrap();
         write_codex_pet(root.path(), "banana-cat", 2);
@@ -1602,6 +1675,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺少精灵表版本字段的 Codex 清单默认兼容 v1。
     fn codex_v1_manifest_without_version_marker_is_supported() {
         let root = tempfile::tempdir().unwrap();
         let pet_dir = root.path().join("tiny-dino");
@@ -1625,6 +1699,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 压缩包导入受管理目录，并覆盖列表中的外部同名项。
     fn codex_zip_import_uses_cli_manager_storage_and_overrides_external_duplicate() {
         let external_root = tempfile::tempdir().unwrap();
         write_codex_pet(external_root.path(), "banana-cat", 2);
@@ -1650,6 +1725,7 @@ mod tests {
     }
 
     #[test]
+    // 验证内置目录的所有安装包摘要与实际字节匹配。
     fn embedded_catalog_and_package_hashes_match() {
         let catalog = parse_catalog(EMBEDDED_CATALOG).unwrap();
         for item in catalog.items {
@@ -1659,6 +1735,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缓存重复写入替换旧内容且不遗留临时或备份文件。
     fn catalog_cache_replaces_existing_file_on_windows() {
         let root = tempfile::tempdir().unwrap();
         ensure_pet_dirs(root.path()).unwrap();
@@ -1675,6 +1752,7 @@ mod tests {
     }
 
     #[test]
+    // 验证全部内置包可在临时目录解压并通过清单和资产校验。
     fn embedded_packages_extract_and_validate() {
         let root = tempfile::tempdir().unwrap();
         for (id, version, bytes) in [
@@ -1690,6 +1768,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SVG 文本检查拒绝脚本标签及直接远程图片引用。
     fn svg_validation_rejects_script_and_remote_references() {
         assert!(validate_svg("<svg><path d='M0 0'/></svg>").is_ok());
         assert!(validate_svg("<svg><script>alert(1)</script></svg>").is_err());

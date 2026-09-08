@@ -4,6 +4,7 @@ use crate::ssh_launch::SshLaunchPlan;
 use cli_manager_history_core::RemoteHistorySyncResult;
 use serde_json::{json, Value};
 
+// 校验远程历史来源与 SSH 启动计划的必要身份字段。
 pub(super) fn validate_remote_history_plan(
     plan: &SshLaunchPlan,
     source: &str,
@@ -21,6 +22,7 @@ pub(super) fn validate_remote_history_plan(
     Ok(())
 }
 
+// 构造远程历史范围载荷，并将分页上限约束到允许区间。
 pub(super) fn remote_scope_payload(
     source: &str,
     configured_config_root: &str,
@@ -37,6 +39,7 @@ pub(super) fn remote_scope_payload(
     })
 }
 
+// 在范围载荷中加入精确会话标识与可选远程 transcript 引用。
 pub(super) fn remote_history_get_payload(
     source: &str,
     configured_config_root: &str,
@@ -51,6 +54,7 @@ pub(super) fn remote_history_get_payload(
     payload
 }
 
+// 取错误文本首个非空代码片段，空文本使用远程不可用代码。
 pub(super) fn remote_error_code(error: &str) -> &str {
     error
         .split([':', ' '])
@@ -58,6 +62,7 @@ pub(super) fn remote_error_code(error: &str) -> &str {
         .unwrap_or("history_remote_unavailable")
 }
 
+// 按固定次数与间隔等待 daemon 客户端，超限返回空值。
 pub(super) async fn wait_for_history_daemon(
     daemon_bridge: &DaemonBridge,
 ) -> Option<std::sync::Arc<crate::daemon::client::DaemonClient>> {
@@ -72,6 +77,7 @@ pub(super) async fn wait_for_history_daemon(
     None
 }
 
+// 核对同步结果与请求计划的来源、安装和远程身份及各会话引用。
 pub(super) fn validate_remote_history_sync_result(
     plan: &SshLaunchPlan,
     source: &str,

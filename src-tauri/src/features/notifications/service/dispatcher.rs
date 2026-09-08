@@ -25,6 +25,7 @@ pub struct DispatcherHandle {
 }
 
 impl DispatcherHandle {
+    // 创建容量 64 的队列和后台线程，以单线程异步运行时顺序处理任务；初始化失败后接收端关闭。
     pub fn start(label: &'static str) -> Self {
         let (sender, receiver) = sync_channel::<HookNotificationJob>(QUEUE_CAPACITY);
         thread::spawn(move || {
@@ -45,6 +46,7 @@ impl DispatcherHandle {
         Self { sender }
     }
 
+    // 非阻塞尝试入队，队列满或已断开时记录警告并丢弃任务，不重试。
     pub fn try_enqueue(&self, job: HookNotificationJob) {
         match self.sender.try_send(job) {
             Ok(()) => {}
@@ -58,12 +60,14 @@ impl DispatcherHandle {
     }
 }
 
+// 创建客户端并向指定目标实际发送示例通知，不检查全局开关或目标 enabled/events 筛选。
 pub async fn test_send(target: ThirdPartyTarget) -> Result<TestSendResult, String> {
     let client = build_client().map_err(|err| err.message)?;
     let message = sample_message();
     Ok(send_one(client, target, message).await)
 }
 
+// 构造消息并读取当前设置，筛选已启用事件目标，以最多四路并发发送；仅记录失败，不重试。
 async fn process_job(label: &'static str, job: HookNotificationJob) {
     let Some(message) = message_from_job(job) else {
         return;
@@ -123,6 +127,7 @@ async fn process_job(label: &'static str, job: HookNotificationJob) {
     }
 }
 
+// 构建供应商请求并实际发送，再由适配器判定接受状态；网络失败与供应商拒绝都包装为结果。
 async fn send_one(
     client: Client,
     target: ThirdPartyTarget,
@@ -179,6 +184,7 @@ async fn send_one(
     }
 }
 
+// 构造未接受结果并截取错误消息前 160 字符；截断不等于脱敏。
 fn failed(
     provider: String,
     target_id: String,
@@ -204,6 +210,7 @@ struct DispatcherSettings {
     targets: Vec<ThirdPartyTarget>,
 }
 
+// 每任务同步读取设置，读取/解析失败按禁用处理；先取前 20 个可解析目标，再由分发阶段过滤。
 fn read_settings() -> DispatcherSettings {
     let path = match app_paths::data_paths() {
         Ok(paths) => paths.settings_store_path,
@@ -252,6 +259,7 @@ fn read_settings() -> DispatcherSettings {
     DispatcherSettings { enabled, targets }
 }
 
+// 忽略未知事件，优先使用显式项目名否则取 cwd 末段，生成 UUID 和本地时间的中文通知；不脱敏显式名称。
 fn message_from_job(job: HookNotificationJob) -> Option<HookNotificationMessage> {
     if !super::model::is_supported_event(&job.event) {
         return None;
@@ -290,6 +298,7 @@ fn message_from_job(job: HookNotificationJob) -> Option<HookNotificationMessage>
     })
 }
 
+// 生成带随机 ID 和当前本地时间的固定中文示例消息；内容中的成功文案不表示已经发送成功。
 fn sample_message() -> HookNotificationMessage {
     let id = Uuid::new_v4().to_string();
     let time = Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -306,12 +315,14 @@ fn sample_message() -> HookNotificationMessage {
     }
 }
 
+// 尝试解析 RFC3339 时间并转换为 UTC，失败返回空值。
 fn parse_time(value: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(value)
         .ok()
         .map(|time| time.with_timezone(&Utc))
 }
 
+// 将可解析时间转成本地 24 小时格式，缺失或无效时使用当前本地时间。
 fn local_time_text(value: Option<&str>) -> String {
     value
         .and_then(parse_time)
@@ -321,6 +332,7 @@ fn local_time_text(value: Option<&str>) -> String {
         .to_string()
 }
 
+// 映射已知 CLI 来源显示名，其他非空来源裁剪后保留，空值回退 CLI。
 fn normalize_source(value: &str) -> String {
     match value {
         "codex" => "Codex".to_string(),
@@ -332,6 +344,7 @@ fn normalize_source(value: &str) -> String {
     }
 }
 
+// 返回固定中文事件标签及图标，未知事件使用通用 Hook 标签。
 fn event_label(event: &str) -> &'static str {
     match event {
         "SessionStart" => "🚀 会话开始",
@@ -344,6 +357,7 @@ fn event_label(event: &str) -> &'static str {
     }
 }
 
+// 按事件选择中文动作，将来源和项目名拼成摘要，不进行转义或长度限制。
 fn event_summary(event: &str, source: &str, project: &str) -> String {
     let action = match event {
         "SessionStart" => "会话已启动",
@@ -363,6 +377,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 在 Windows 验证通知只采用 cwd 末段及本地时间，并包含预期完成摘要。
     fn message_uses_cwd_basename_only() {
         let message = message_from_job(HookNotificationJob {
             source: "codex".to_string(),
@@ -382,6 +397,7 @@ mod tests {
     }
 
     #[test]
+    // 验证失败事件显示错误标签，并在缺少项目信息时使用默认项目名。
     fn stop_failure_uses_actionable_event_label() {
         let message = message_from_job(HookNotificationJob {
             source: "claude".to_string(),
@@ -403,6 +419,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 在 Windows 验证审批请求标签和项目摘要明确提示需要审批。
     fn permission_request_mentions_approval_action() {
         let message = message_from_job(HookNotificationJob {
             source: "claude".to_string(),
@@ -422,6 +439,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 cwd 缺失时采用提供的项目标签；此测试不证明任意标签经过脱敏。
     fn message_prefers_safe_project_label_when_cwd_is_redacted() {
         let message = message_from_job(HookNotificationJob {
             source: "codex".to_string(),
@@ -436,6 +454,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未支持的 ToolStart 事件不生成通知消息。
     fn unsupported_event_is_ignored() {
         assert!(message_from_job(HookNotificationJob {
             source: "claude".to_string(),

@@ -2,6 +2,7 @@ use super::super::*;
 use super::{HISTORY_INDEX_MODEL_VERSION, HISTORY_INDEX_SCHEMA_VERSION};
 use sqlx::{Connection, Row, SqliteConnection};
 
+// 创建或升级历史目录结构，并检查紧凑全文索引是否需要重建。
 pub(super) async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), String> {
     let current_version: i64 = sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&mut *conn)
@@ -93,6 +94,7 @@ pub(super) async fn ensure_schema(conn: &mut SqliteConnection) -> Result<(), Str
     Ok(())
 }
 
+// 确认两代全文索引均使用 detail='none' 的紧凑存储。
 pub(super) async fn compact_fts_schema_ready(conn: &mut SqliteConnection) -> Result<bool, String> {
     for table in ["history_catalog_messages_fts", "history_messages_fts"] {
         let sql: Option<String> =
@@ -111,6 +113,7 @@ pub(super) async fn compact_fts_schema_ready(conn: &mut SqliteConnection) -> Res
     Ok(true)
 }
 
+// 建立第二代历史表与兼容列，调整活动来源索引并记录版本。
 pub(super) async fn ensure_v2_schema(
     conn: &mut SqliteConnection,
     current_version: i64,
@@ -511,6 +514,7 @@ pub(super) async fn ensure_v2_schema(
     Ok(())
 }
 
+// 事务重建两代紧凑全文索引及触发器，提交后优化并压缩数据库。
 pub(super) async fn rebuild_compact_fts(conn: &mut SqliteConnection) -> Result<(), String> {
     let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
     for (fts_table, source_table, source_column) in [
@@ -597,6 +601,7 @@ pub(super) async fn rebuild_compact_fts(conn: &mut SqliteConnection) -> Result<(
     Ok(())
 }
 
+// 读取表结构，仅在目标列缺失时执行追加列语句。
 pub(super) async fn ensure_column(
     conn: &mut SqliteConnection,
     table: &str,

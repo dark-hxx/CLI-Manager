@@ -97,6 +97,7 @@ pub struct GitTagInfo {
     pub message: String,
 }
 
+// 解析标签的名称、对象 ID、对象类型和主题，忽略不完整记录。
 fn parse_tags(bytes: &[u8]) -> Vec<GitTagInfo> {
     String::from_utf8_lossy(bytes)
         .lines()
@@ -115,6 +116,7 @@ fn parse_tags(bytes: &[u8]) -> Vec<GitTagInfo> {
         .collect()
 }
 
+// 通过 Git 按创建时间倒序读取标签并解析结构化输出。
 fn list_tags(project_path: &str) -> Result<Vec<GitTagInfo>, String> {
     let format = format!(
         "%(refname:short){TAG_FIELD_SEPARATOR}%(objectname){TAG_FIELD_SEPARATOR}%(objecttype){TAG_FIELD_SEPARATOR}%(subject)"
@@ -130,6 +132,7 @@ fn list_tags(project_path: &str) -> Result<Vec<GitTagInfo>, String> {
 }
 
 #[tauri::command]
+// 在线程池中读取项目标签列表。
 pub async fn git_list_tags(project_path: String) -> Result<Vec<GitTagInfo>, String> {
     tokio::task::spawn_blocking(move || list_tags(&project_path))
         .await
@@ -137,6 +140,7 @@ pub async fn git_list_tags(project_path: String) -> Result<Vec<GitTagInfo>, Stri
 }
 
 #[tauri::command]
+// 校验提交引用并导出单条含二进制差异的补丁，拒绝超过 4 MiB 的输出。
 pub async fn git_get_commit_patch(
     project_path: String,
     commit_id: String,
@@ -159,6 +163,7 @@ pub async fn git_get_commit_patch(
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 校验十六进制提交标识，并在应用补丁目录生成带秒级时间戳的路径。
 fn patch_output_path(commit_id: &str) -> Result<PathBuf, String> {
     validate_operation_ref(commit_id)?;
     if !commit_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -175,6 +180,7 @@ fn patch_output_path(commit_id: &str) -> Result<PathBuf, String> {
 }
 
 #[tauri::command]
+// 校验补丁非空且不超过 4 MiB，再写入应用补丁目录。
 pub async fn git_save_generated_patch(
     commit_id: String,
     content: String,
@@ -192,6 +198,7 @@ pub async fn git_save_generated_patch(
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 按长度、首字符和控制字符约束校验普通 Git 参数值。
 fn validate_plain_value(value: &str, code: &str, max: usize) -> Result<(), String> {
     if value.is_empty()
         || value.len() > max
@@ -203,6 +210,7 @@ fn validate_plain_value(value: &str, code: &str, max: usize) -> Result<(), Strin
     Ok(())
 }
 
+// 执行 Git 并解码标准输出，失败时截取最多 500 字符错误内容。
 fn output_text(project_path: &str, args: &[&str]) -> Result<String, String> {
     let output = git_command_output(project_path, args)?;
     if !output.status.success() {
@@ -217,6 +225,7 @@ fn output_text(project_path: &str, args: &[&str]) -> Result<String, String> {
 }
 
 #[tauri::command]
+// 在线程池读取最多 500 条 stash，解析选择器、描述及毫秒时间。
 pub async fn git_list_stashes(project_path: String) -> Result<Vec<GitStashInfo>, String> {
     tokio::task::spawn_blocking(move || {
         let output = output_text(
@@ -261,6 +270,7 @@ pub async fn git_list_stashes(project_path: String) -> Result<Vec<GitStashInfo>,
 }
 
 #[tauri::command]
+// 校验说明后创建 stash，并按请求包含未跟踪文件。
 pub async fn git_stash_create(
     project_path: String,
     message: String,
@@ -285,6 +295,7 @@ pub async fn git_stash_create(
 }
 
 #[tauri::command]
+// 校验 stash 选择器并执行白名单中的 apply、pop 或 drop。
 pub async fn git_stash_action(
     project_path: String,
     action: String,
@@ -305,6 +316,7 @@ pub async fn git_stash_action(
 }
 
 #[tauri::command]
+// 枚举最多 64 个远程名称，并分别读取 fetch 和 push 地址。
 pub async fn git_list_remotes(project_path: String) -> Result<Vec<GitRemoteInfo>, String> {
     tokio::task::spawn_blocking(move || {
         let output = output_text(&project_path, &["remote"])?;
@@ -334,6 +346,7 @@ pub async fn git_list_remotes(project_path: String) -> Result<Vec<GitRemoteInfo>
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 校验远程地址的长度和字符，额外拒绝所有空白字符。
 fn validate_remote_url(url: &str) -> Result<(), String> {
     validate_plain_value(url, "git_remote_url_invalid", 2048)?;
     if url.chars().any(char::is_whitespace) {
@@ -343,6 +356,7 @@ fn validate_remote_url(url: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 校验远程参数并执行增删改名、改地址或 fetch 操作。
 pub async fn git_remote_action(
     project_path: String,
     action: String,
@@ -375,6 +389,7 @@ pub async fn git_remote_action(
 }
 
 #[tauri::command]
+// 校验远程与标签引用后推送指定标签。
 pub async fn git_push_tag(
     project_path: String,
     remote: String,
@@ -388,6 +403,7 @@ pub async fn git_push_tag(
 }
 
 #[tauri::command]
+// 校验远程与分支引用后请求删除远程分支。
 pub async fn git_delete_remote_branch(
     project_path: String,
     remote: String,
@@ -403,6 +419,7 @@ pub async fn git_delete_remote_branch(
 }
 
 #[tauri::command]
+// 校验远程与分支引用后使用 force-with-lease 推送。
 pub async fn git_force_push_with_lease(
     project_path: String,
     remote: String,
@@ -421,6 +438,7 @@ pub async fn git_force_push_with_lease(
 }
 
 #[tauri::command]
+// 读取最近 200 条 reflog，解析操作、说明和毫秒时间。
 pub async fn git_list_reflog(project_path: String) -> Result<Vec<GitReflogEntry>, String> {
     tokio::task::spawn_blocking(move || {
         let output = output_text(
@@ -461,6 +479,7 @@ pub async fn git_list_reflog(project_path: String) -> Result<Vec<GitReflogEntry>
 }
 
 #[tauri::command]
+// 验证分支名及 reflog 提交引用，并从恢复点创建分支。
 pub async fn git_restore_reflog(
     project_path: String,
     selector: String,
@@ -478,6 +497,7 @@ pub async fn git_restore_reflog(
 }
 
 #[tauri::command]
+// 校验仓库相对路径并读取跟随重命名的最近 200 条文件历史。
 pub async fn git_file_history(
     project_path: String,
     path: String,
@@ -515,6 +535,7 @@ pub async fn git_file_history(
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 解析逐行 porcelain blame，关联提交、作者、时间和文件行内容。
 fn parse_blame(output: &str) -> Vec<GitBlameLine> {
     let mut result = Vec::new();
     let mut commit_id = String::new();
@@ -550,6 +571,7 @@ fn parse_blame(output: &str) -> Vec<GitBlameLine> {
 }
 
 #[tauri::command]
+// 读取 HEAD 文件 blame，拒绝超过 4 MiB 的文本后解析行归属。
 pub async fn git_blame_file(
     project_path: String,
     path: String,
@@ -570,6 +592,7 @@ pub async fn git_blame_file(
 }
 
 #[tauri::command]
+// 尝试读取 bisect 日志，以命令是否成功表示二分定位是否活动。
 pub async fn git_bisect_status(project_path: String) -> Result<GitBisectStatus, String> {
     tokio::task::spawn_blocking(move || {
         let output = git_command_output(&project_path, &["bisect", "log"])?;
@@ -590,6 +613,7 @@ pub async fn git_bisect_status(project_path: String) -> Result<GitBisectStatus, 
 }
 
 #[tauri::command]
+// 校验可选提交引用，并执行白名单中的 bisect 生命周期操作。
 pub async fn git_bisect_action(
     project_path: String,
     action: String,
@@ -618,6 +642,7 @@ pub async fn git_bisect_action(
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 读取 .gitmodules 的路径配置，并为每个已配置子模块查询地址。
 fn submodule_urls(project_path: &str) -> Result<HashMap<String, (String, String)>, String> {
     let output = git_command_output(
         project_path,
@@ -657,6 +682,7 @@ fn submodule_urls(project_path: &str) -> Result<HashMap<String, (String, String)
 }
 
 #[tauri::command]
+// 合并已配置子模块信息与递归状态输出，返回子模块列表。
 pub async fn git_list_submodules(project_path: String) -> Result<Vec<GitSubmoduleInfo>, String> {
     tokio::task::spawn_blocking(move || {
         let configured = submodule_urls(&project_path)?;
@@ -693,6 +719,7 @@ pub async fn git_list_submodules(project_path: String) -> Result<Vec<GitSubmodul
 }
 
 #[tauri::command]
+// 校验可选路径属于已登记子模块，再执行初始化、更新或同步。
 pub async fn git_submodule_action(
     project_path: String,
     action: String,
@@ -722,6 +749,7 @@ pub async fn git_submodule_action(
     .map_err(|error| format!("task_failed:{error}"))?
 }
 
+// 校验线性重写序列并创建恢复引用，再逐步重放提交并在步骤失败时尝试回滚。
 fn rewrite_commits(
     project_path: &str,
     upstream: &str,
@@ -847,6 +875,7 @@ fn rewrite_commits(
 }
 
 #[tauri::command]
+// 在线程池中执行结构化提交重写并返回备份引用。
 pub async fn git_rewrite_commits(
     project_path: String,
     upstream: String,
@@ -863,6 +892,7 @@ mod tests {
     use std::path::Path;
     use std::process::Command;
 
+    // 在测试目录执行真实 Git 命令，断言成功并返回修剪后的输出。
     fn git(path: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .current_dir(path)
@@ -878,6 +908,7 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).trim().to_string()
     }
 
+    // 在测试仓库写入并暂存文件，通过真实 Git 创建提交并返回 HEAD。
     fn commit(path: &Path, file: &str, content: &str, message: &str) -> String {
         std::fs::write(path.join(file), content).unwrap();
         git(path, &["add", "--", file]);
@@ -886,6 +917,7 @@ mod tests {
     }
 
     #[test]
+    // 验证解析器区分轻量标签与附注标签。
     fn parses_lightweight_and_annotated_tags() {
         let input = format!(
             "v2{0}2222{0}tag{0}release two\nv1{0}1111{0}commit{0}release one\n",
@@ -898,6 +930,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 porcelain blame 解析目标行号、作者与毫秒时间。
     fn parses_porcelain_blame_lines() {
         let oid = "0123456789012345678901234567890123456789";
         let input = format!("{oid} 1 7 1\nauthor Alice\nauthor-time 100\n\tlet answer = 42;\n");
@@ -909,6 +942,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时仓库用真实 Git 验证重写、备份唯一性和脏工作区保护。
     fn structured_rewrite_rewords_and_keeps_backup_ref() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path();

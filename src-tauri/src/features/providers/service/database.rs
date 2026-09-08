@@ -223,16 +223,19 @@ const ROUTING_SETTINGS: &[(&str, &str)] = &[
     ),
 ];
 
+// 解析当前应用数据目录的供应商数据库路径，并执行建库、迁移和默认数据补齐。
 pub(crate) async fn initialize() -> Result<(), String> {
     let path = app_paths::providers_db_path()?;
     initialize_at(path).await
 }
 
+// 解析当前供应商数据库路径，初始化完成后返回配置好的新连接；不是只读打开。
 pub(crate) async fn open_connection() -> Result<SqliteConnection, String> {
     let path = app_paths::providers_db_path()?;
     open_connection_at(path).await
 }
 
+// 先对指定路径执行完整初始化，再另开启用连接配置的连接；每次调用都会重跑初始化检查与补齐。
 pub(crate) async fn open_connection_at(path: PathBuf) -> Result<SqliteConnection, String> {
     initialize_at(path.clone()).await?;
     let mut connection = SqliteConnection::connect_with(&connection_options(&path))
@@ -242,6 +245,7 @@ pub(crate) async fn open_connection_at(path: PathBuf) -> Result<SqliteConnection
     Ok(connection)
 }
 
+// 创建目录并连接数据库，拒绝未来版本；旧库升级前备份，分别迁移基础与路由结构，再补齐内置项并校验，整个流程不是单一事务。
 async fn initialize_at(path: PathBuf) -> Result<(), String> {
     let parent = path
         .parent()
@@ -322,6 +326,7 @@ async fn initialize_at(path: PathBuf) -> Result<(), String> {
 /// query would reseed the row with the default name, URL, order and meta —
 /// which is exactly how deleting the built-in provider looked like a no-op
 /// that also reset every customization (issue #242).
+// 过滤已登记删除的内置身份，在事务中按类型前置排序插入缺失项；OR IGNORE 保留已有记录及用户修改。
 async fn ensure_builtin_fluxion_providers(connection: &mut SqliteConnection) -> Result<(), String> {
     let dismissed = load_builtin_dismissals(connection).await?;
     let pending: Vec<(&str, &str)> = BUILTIN_FLUXION_IDENTITIES
@@ -379,6 +384,7 @@ async fn ensure_builtin_fluxion_providers(connection: &mut SqliteConnection) -> 
 }
 
 /// Seed `settings_config` for one built-in provider type.
+// 生成 Claude/Codex 内置端点配置，其他类型返回空 JSON；不生成或读取 API Key。
 fn builtin_fluxion_settings_config(app_type: &str) -> String {
     match app_type {
         "claude" => serde_json::json!({
@@ -406,6 +412,7 @@ base_url = "{FLUXION_OPENAI_BASE_URL}"
 }
 
 /// True when the identity belongs to a provider the initializer seeds.
+// 按类型与 ID 的精确组合匹配固定内置身份，不根据元数据或 ID 前缀推断。
 pub(crate) fn is_builtin_provider(app_type: &str, provider_id: &str) -> bool {
     BUILTIN_FLUXION_IDENTITIES
         .iter()
@@ -415,6 +422,7 @@ pub(crate) fn is_builtin_provider(app_type: &str, provider_id: &str) -> bool {
 /// Record that the user deleted a built-in provider. Callers must run this in
 /// the same transaction as the `DELETE`, so a failed dismissal rolls the
 /// deletion back instead of leaving a row the seed will resurrect.
+// 在调用方事务内合并、去重并排序删除标记后写回；调用方负责内置身份校验及与删除操作共同提交。
 pub(crate) async fn dismiss_builtin_provider(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     app_type: &str,
@@ -443,10 +451,12 @@ pub(crate) async fn dismiss_builtin_provider(
         .map_err(|err| format!("provider_db_builtin_dismissal_write_failed: {err}"))
 }
 
+// 用冒号拼接类型与供应商 ID，生成删除标记的内部标识。
 fn builtin_dismissal_token(app_type: &str, provider_id: &str) -> String {
     format!("{app_type}:{provider_id}")
 }
 
+// 查询内置项删除设置并解析集合；查询错误向上传播，内容损坏由解析器按空集合处理。
 async fn load_builtin_dismissals(
     connection: &mut SqliteConnection,
 ) -> Result<HashSet<String>, String> {
@@ -460,6 +470,7 @@ async fn load_builtin_dismissals(
 
 /// An unreadable dismissal row is treated as "nothing dismissed": one corrupt
 /// setting must not permanently block the built-in provider seed.
+// 从 JSON 的 items 数组收集字符串并去重；缺失或无效内容返回空集合，不校验 schemaVersion 或身份。
 fn parse_builtin_dismissals(raw: Option<&str>) -> HashSet<String> {
     raw.and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
         .and_then(|value| {
@@ -477,6 +488,7 @@ fn parse_builtin_dismissals(raw: Option<&str>) -> HashSet<String> {
         .unwrap_or_default()
 }
 
+// 为指定 SQLite 文件启用缺失时创建、WAL、五秒锁等待及外键约束。
 fn connection_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path.to_path_buf())
@@ -486,6 +498,7 @@ fn connection_options(path: &Path) -> SqliteConnectOptions {
         .foreign_keys(true)
 }
 
+// 依次启用外键并设置 NORMAL 同步级别，失败返回对应连接配置错误。
 async fn configure_connection(connection: &mut SqliteConnection) -> Result<(), String> {
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&mut *connection)
@@ -498,6 +511,7 @@ async fn configure_connection(connection: &mut SqliteConnection) -> Result<(), S
     Ok(())
 }
 
+// 请求 TRUNCATE WAL 检查点；只处理查询执行错误，不检查返回行中的 busy 或检查点进度。
 async fn checkpoint_before_backup(connection: &mut SqliteConnection) -> Result<(), String> {
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .fetch_one(&mut *connection)
@@ -506,6 +520,7 @@ async fn checkpoint_before_backup(connection: &mut SqliteConnection) -> Result<(
         .map_err(|err| format!("provider_db_checkpoint_failed: {err}"))
 }
 
+// 读取 SQLite user_version 作为供应商结构版本，读取失败保留错误上下文。
 async fn read_user_version(connection: &mut SqliteConnection) -> Result<i64, String> {
     sqlx::query_scalar("PRAGMA user_version")
         .fetch_one(&mut *connection)
@@ -513,6 +528,7 @@ async fn read_user_version(connection: &mut SqliteConnection) -> Result<i64, Str
         .map_err(|err| format!("provider_db_version_read_failed: {err}"))
 }
 
+// 在当前连接写入整数 user_version；是否与迁移原子提交由调用方事务决定。
 async fn set_user_version(connection: &mut SqliteConnection, version: i64) -> Result<(), String> {
     sqlx::query(&format!("PRAGMA user_version = {version}"))
         .execute(&mut *connection)
@@ -521,6 +537,7 @@ async fn set_user_version(connection: &mut SqliteConnection, version: i64) -> Re
         .map_err(|err| format!("provider_db_version_write_failed: {err}"))
 }
 
+// 在单个事务内执行结构 SQL、补齐设置、按版本校验路由结构并写迁移记录和版本，全部成功后提交。
 async fn apply_schema_migration(
     connection: &mut SqliteConnection,
     version: i64,
@@ -549,6 +566,7 @@ async fn apply_schema_migration(
         .map_err(|err| format!("provider_db_migration_commit_failed: {err}"))
 }
 
+// 以结构 SQL 的 SHA-384 摘要、版本、描述及毫秒时间写入或替换迁移记录，不验证历史校验和。
 async fn record_schema_migration(
     connection: &mut SqliteConnection,
     version: i64,
@@ -571,6 +589,7 @@ async fn record_schema_migration(
     .map_err(|err| format!("provider_db_migration_record_failed: {err}"))
 }
 
+// 补齐三种 CLI 的公共配置默认设置，不覆盖已有值。
 async fn ensure_common_config_settings(connection: &mut SqliteConnection) -> Result<(), String> {
     ensure_settings(
         connection,
@@ -580,6 +599,7 @@ async fn ensure_common_config_settings(connection: &mut SqliteConnection) -> Res
     .await
 }
 
+// 补齐路由服务、接管、应用策略及代理等默认设置，不覆盖已有值。
 async fn ensure_routing_settings(connection: &mut SqliteConnection) -> Result<(), String> {
     ensure_settings(
         connection,
@@ -589,6 +609,7 @@ async fn ensure_routing_settings(connection: &mut SqliteConnection) -> Result<()
     .await
 }
 
+// 依次以 INSERT OR IGNORE 补齐默认键值；遇错停止，整体回滚仅在调用方提供事务时成立。
 async fn ensure_settings(
     connection: &mut SqliteConnection,
     settings: &[(&str, &str)],
@@ -605,6 +626,7 @@ async fn ensure_settings(
     Ok(())
 }
 
+// 检查八张业务表存在，再校验路由日志结构；不全面核对其他表的列与约束。
 async fn verify_required_tables(connection: &mut SqliteConnection) -> Result<(), String> {
     for table in [
         "providers",
@@ -631,6 +653,7 @@ async fn verify_required_tables(connection: &mut SqliteConnection) -> Result<(),
     Ok(())
 }
 
+// 检查路由日志必需列名及两个索引的归属和列顺序；不检查列类型、默认值或全部约束。
 async fn verify_routing_schema(connection: &mut SqliteConnection) -> Result<(), String> {
     let columns = sqlx::query("PRAGMA table_info(routing_request_logs)")
         .fetch_all(&mut *connection)
@@ -708,6 +731,7 @@ async fn verify_routing_schema(connection: &mut SqliteConnection) -> Result<(), 
     Ok(())
 }
 
+// 将主数据库文件复制到同级 backups/providers 的时间戳与进程号命名文件；检查点由调用方先执行，不复制 WAL 边车。
 fn backup_existing_database(path: &Path) -> Result<PathBuf, String> {
     let data_dir = path
         .parent()
@@ -726,6 +750,7 @@ fn backup_existing_database(path: &Path) -> Result<PathBuf, String> {
     Ok(backup_path)
 }
 
+// 返回截断至 i64 上限的 Unix 毫秒时间；系统时间早于纪元时回退为零。
 fn unix_timestamp_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -739,12 +764,14 @@ mod tests {
     use sqlx::Row;
     use tempfile::tempdir;
 
+    // 使用指定测试路径和生产连接选项打开 SQLite，跳过初始化流程，失败使测试中止。
     async fn open_test_connection(path: &Path) -> SqliteConnection {
         SqliteConnection::connect_with(&connection_options(path))
             .await
             .unwrap()
     }
 
+    // 在指定测试路径建立基础版本数据库并记录默认设置、迁移记录与版本，保留连接供升级测试准备数据。
     async fn create_v1_database(path: &Path) -> SqliteConnection {
         let mut connection = open_test_connection(path).await;
         configure_connection(&mut connection).await.unwrap();
@@ -769,6 +796,7 @@ mod tests {
         connection
     }
 
+    // 在测试连接插入指定复合身份和当前状态的最小供应商记录，失败立即中止测试。
     async fn insert_provider(
         connection: &mut SqliteConnection,
         id: &str,
@@ -790,6 +818,7 @@ mod tests {
     }
 
     #[test]
+    // 验证基础结构 SQL 的固定摘要及全部路由默认设置，防止迁移文本和默认策略意外漂移。
     fn schema_and_routing_defaults_match_the_contract() {
         assert_eq!(
             format!("{:x}", Sha384::digest(PROVIDER_SCHEMA_SQL.as_bytes())),
@@ -885,6 +914,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在临时目录验证新库的外键、WAL、版本、迁移记录、默认设置及无密钥内置项，确认不生成升级备份。
     async fn initializes_fresh_database_with_pragmas_and_domain_tables() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1018,6 +1048,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证重复初始化保留内置供应商的自定义名称、排序、当前状态和已有测试密钥，不重复插入记录。
     async fn builtin_fluxion_seed_is_idempotent_and_preserves_existing_data() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1070,6 +1101,7 @@ mod tests {
     }
 
     #[test]
+    // 验证只有三个固定类型与 ID 组合属于内置项，跨类型和自建 ID 均不匹配。
     fn builtin_identity_matches_only_seeded_pairs() {
         assert!(is_builtin_provider("codex", "builtin-fluxion-codex"));
         assert!(is_builtin_provider("claude", "builtin-fluxion-claude"));
@@ -1083,6 +1115,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺失或损坏的删除设置按空集合处理，合法数组中仅收集字符串。
     fn corrupt_dismissal_setting_is_treated_as_no_dismissal() {
         assert!(parse_builtin_dismissals(None).is_empty());
         assert!(parse_builtin_dismissals(Some("not-json")).is_empty());
@@ -1096,6 +1129,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在临时数据库事务中删除并登记内置项，验证连续初始化不会重建该项且标记保留。
     async fn deleted_builtin_fluxion_provider_is_not_reseeded() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1134,6 +1168,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证累计删除两个类型的内置项后只保留未登记类型，自建供应商删除不会新增内置项。
     async fn dismissing_one_builtin_keeps_the_other_types_seeded() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1174,6 +1209,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证复合主键、单一活动密钥、外键归属及级联删除，并确认跨类型同 ID 数据互不影响。
     async fn composite_identity_and_active_key_index_are_enforced() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1241,6 +1277,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证旧库初始化前生成可打开的备份，其中保留原始标记表数据。
     async fn existing_database_is_backed_up_before_schema_initialization() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1278,6 +1315,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证 V1 升级保留供应商、密钥和已有路由设置，记录新迁移，并留下仍为 V1 的备份。
     async fn upgrades_v1_database_additively_and_preserves_provider_data() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1357,6 +1395,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证未来版本被拒绝，原标记数据与版本保持不变且不生成备份；不证明连接 PRAGMA 没有执行。
     async fn rejects_future_provider_schema_without_backup_or_mutation() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1398,6 +1437,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 用临时目录中的同名文件阻断备份目录创建，验证失败后 V1 版本与供应商保留且未创建路由表。
     async fn preserves_v1_database_when_upgrade_backup_fails() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1434,6 +1474,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 用不兼容路由表触发迁移失败，验证版本及迁移记录回滚、供应商保留，移除冲突表后可重试成功。
     async fn rolls_back_failed_routing_migration_and_can_retry() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
@@ -1479,6 +1520,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证新库连续初始化不创建备份，且供应商密钥表只有一份。
     async fn initialization_is_idempotent_after_schema_version_is_set() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");

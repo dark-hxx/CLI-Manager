@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 扫描 Copilot 事件，提取会话消息并按调用 ID 去重统计工具次数。
 pub(super) fn scan_copilot_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -88,6 +89,7 @@ pub(super) fn scan_copilot_jsonl_session(
     (summary, stats, output_messages)
 }
 
+// 对有名称且调用 ID 未重复的 Copilot 工具增加总数与名称计数。
 pub(super) fn count_copilot_tool_call(
     value: &Value,
     seen_call_ids: &mut HashSet<String>,
@@ -104,6 +106,7 @@ pub(super) fn count_copilot_tool_call(
     *builtin_calls.entry(name.to_string()).or_insert(0) += 1;
 }
 
+// 把支持的用户、助手及工具完成事件转换为带原始行号的历史消息。
 pub(super) fn copilot_message_from_event(
     value: &Value,
     line_index: usize,
@@ -129,6 +132,7 @@ pub(super) fn copilot_message_from_event(
     Some(message)
 }
 
+// 合并助手正文与工具请求名称和参数摘要，空结果返回空值。
 pub(super) fn copilot_assistant_content(data: &Value) -> Option<String> {
     let mut parts = data
         .get("content")
@@ -154,6 +158,7 @@ pub(super) fn copilot_assistant_content(data: &Value) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("\n"))
 }
 
+// 优先读取工具结果详细正文，回退到正文或 JSON 摘要。
 pub(super) fn copilot_tool_result_text(data: &Value) -> Option<String> {
     let result = data.get("result")?;
     result
@@ -163,6 +168,7 @@ pub(super) fn copilot_tool_result_text(data: &Value) -> Option<String> {
         .or_else(|| summarize_json_value(result))
 }
 
+// 按兼容字段读取并修剪 Copilot 工具调用 ID，忽略空值。
 pub(super) fn copilot_tool_id(value: &Value) -> Option<&str> {
     value
         .get("toolCallId")
@@ -172,6 +178,7 @@ pub(super) fn copilot_tool_id(value: &Value) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
+// 按兼容字段读取并修剪 Copilot 工具名称，忽略空值。
 pub(super) fn copilot_tool_name(value: &Value) -> Option<&str> {
     value
         .get("toolName")

@@ -80,22 +80,27 @@ struct V2LegacySessionRow {
     session_id: String,
 }
 
+// 取得进程内串行化目录刷新的异步锁。
 fn catalog_refresh_lock() -> &'static AsyncMutex<()> {
     CATALOG_REFRESH_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
+// 取得串行化数据库结构检查与升级的异步锁。
 fn catalog_schema_lock() -> &'static AsyncMutex<()> {
     CATALOG_SCHEMA_LOCK.get_or_init(|| AsyncMutex::new(()))
 }
 
+// 标记历史目录需要刷新。
 pub(super) fn mark_dirty() {
     CATALOG_DIRTY.store(true, Ordering::Release);
 }
 
+// 读取历史目录的待刷新标记。
 pub(super) fn is_dirty() -> bool {
     CATALOG_DIRTY.load(Ordering::Acquire)
 }
 
+// 创建缓存目录并返回历史目录数据库路径。
 fn catalog_db_path() -> Result<PathBuf, String> {
     let dir = HISTORY_INDEX_CACHE_DIR
         .get()
@@ -106,10 +111,12 @@ fn catalog_db_path() -> Result<PathBuf, String> {
     Ok(dir.join(CATALOG_DB_FILE))
 }
 
+// 将路径宽容转换为拥有所有权的字符串。
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+// 配置可创建数据库的 WAL 连接、外键及忙等待时间。
 fn catalog_connect_options(path: &Path) -> SqliteConnectOptions {
     SqliteConnectOptions::new()
         .filename(path)
@@ -120,6 +127,7 @@ fn catalog_connect_options(path: &Path) -> SqliteConnectOptions {
         .busy_timeout(Duration::from_secs(5))
 }
 
+// 将 SQLite 锁冲突文本映射为统一目录忙错误。
 fn map_remote_catalog_error(error: String) -> String {
     let normalized = error.to_ascii_lowercase();
     if normalized.contains("database is locked")
@@ -133,10 +141,12 @@ fn map_remote_catalog_error(error: String) -> String {
     }
 }
 
+// 将 SQL 错误转换为远程目录错误字符串。
 fn map_remote_catalog_sql_error(error: sqlx::Error) -> String {
     map_remote_catalog_error(error.to_string())
 }
 
+// 连接目录数据库并在结构锁下确保表结构就绪。
 async fn open_catalog_once(path: &Path) -> Result<SqliteConnection, String> {
     let mut conn = SqliteConnection::connect_with(&catalog_connect_options(path))
         .await
@@ -146,6 +156,7 @@ async fn open_catalog_once(path: &Path) -> Result<SqliteConnection, String> {
     Ok(conn)
 }
 
+// 打开目录，识别损坏错误时移除缓存数据库及侧文件后重建。
 async fn open_catalog() -> Result<SqliteConnection, String> {
     let path = catalog_db_path()?;
     match open_catalog_once(&path).await {
@@ -168,6 +179,7 @@ async fn open_catalog() -> Result<SqliteConnection, String> {
     }
 }
 
+// 为指定历史根目录构造未完成的空闲索引状态。
 fn idle_status(roots: &HistoryRoots) -> HistoryIndexStatus {
     HistoryIndexStatus {
         roots_key: roots.cache_key(),
@@ -181,11 +193,13 @@ fn idle_status(roots: &HistoryRoots) -> HistoryIndexStatus {
     }
 }
 
+// 打开目录连接并读取指定根目录的刷新状态。
 pub(super) async fn get_status(roots: &HistoryRoots) -> Result<HistoryIndexStatus, String> {
     let mut conn = open_catalog().await?;
     get_status_with_conn(&mut conn, roots).await
 }
 
+// 读取第二代数据库版本及各核心表的行数状态。
 pub(super) async fn get_v2_status() -> Result<HistoryIndexV2Status, String> {
     let path = catalog_db_path()?;
     let mut conn = open_catalog_once(&path).await?;
@@ -219,6 +233,7 @@ pub(super) async fn get_v2_status() -> Result<HistoryIndexV2Status, String> {
     })
 }
 
+// 按键读取可选历史元数据值。
 async fn history_meta_value(
     conn: &mut SqliteConnection,
     key: &str,
@@ -230,6 +245,7 @@ async fn history_meta_value(
         .map_err(|err| err.to_string())
 }
 
+// 依次统计第二代历史核心表的行数。
 async fn v2_table_counts(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<HistoryIndexV2TableStatus>, String> {
@@ -263,6 +279,7 @@ async fn v2_table_counts(
     Ok(tables)
 }
 
+// 校验并激活配置来源实例，事务停用同来源的其他桌面实例。
 pub(super) async fn upsert_v2_source_instance(
     input: HistoryIndexV2SourceInstanceInput,
 ) -> Result<HistoryIndexV2Status, String> {
@@ -332,6 +349,7 @@ pub(super) async fn upsert_v2_source_instance(
     get_v2_status().await
 }
 
+// 停用指定配置实例或该来源的活动桌面实例，并返回索引状态。
 pub(super) async fn deactivate_v2_source_instance(
     source_id: String,
     instance_id: Option<String>,
@@ -374,6 +392,7 @@ pub(super) async fn deactivate_v2_source_instance(
     get_v2_status().await
 }
 
+// 校验来源实例必填字段、存储类型及位置 JSON。
 fn validate_source_instance_input(input: &HistoryIndexV2SourceInstanceInput) -> Result<(), String> {
     if input.source_id.trim().is_empty() {
         return Err("history_source_id_required".to_string());
@@ -399,6 +418,7 @@ fn validate_source_instance_input(input: &HistoryIndexV2SourceInstanceInput) -> 
     Ok(())
 }
 
+// 读取根目录状态行，无记录时返回空闲状态。
 async fn get_status_with_conn(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -441,6 +461,7 @@ async fn get_status_with_conn(
     })
 }
 
+// 新增或更新根目录的索引进度与错误状态。
 async fn persist_status(
     conn: &mut SqliteConnection,
     status: &HistoryIndexStatus,
@@ -473,10 +494,12 @@ async fn persist_status(
     Ok(())
 }
 
+// 向前端发送历史索引状态事件，忽略发送失败。
 fn emit_status(app: &AppHandle, status: &HistoryIndexStatus) {
     let _ = app.emit("history-index-status", status.clone());
 }
 
+// 按来源校验目录记录范围，必要时通过规范路径复核。
 fn catalog_path_within_roots(source: &str, file_path: &str, roots: &HistoryRoots) -> bool {
     if source == "opencode" {
         return opencode_locator_in_default_scope(file_path);
@@ -504,6 +527,7 @@ fn catalog_path_within_roots(source: &str, file_path: &str, roots: &HistoryRoots
     path_within_history_scope(&requested, &base)
 }
 
+// 按根目录、路径、来源和项目查询旧目录摘要，并复核路径范围。
 pub(super) async fn get_session_by_file_path(
     roots: &HistoryRoots,
     file_path: &str,
@@ -555,6 +579,7 @@ pub(super) async fn get_session_by_file_path(
     }
 }
 
+// 目录为空时从持久化旧索引导入范围内的会话摘要。
 async fn seed_from_legacy_if_empty(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -617,6 +642,7 @@ async fn seed_from_legacy_if_empty(
     Ok(())
 }
 
+// 通过来源项目匹配或工作目录判断摘要是否属于目标项目。
 fn stats_summary_matches_project_path(
     summary: &HistorySessionSummary,
     target_project_path: &str,
@@ -633,6 +659,7 @@ fn stats_summary_matches_project_path(
             .is_some_and(|cwd| opencode_cwd_matches_project_path(cwd, target_project_path))
 }
 
+// 打开目录并读取符合统计范围的第二代用量事实。
 pub(super) async fn stats_session_facts(
     roots: &HistoryRoots,
     source_filter: Option<&str>,
@@ -652,6 +679,7 @@ pub(super) async fn stats_session_facts(
     .await
 }
 
+// 筛选活动来源的用量事件，缺失事件时回退会话总量并重新计价。
 async fn stats_session_facts_from_v2(
     conn: &mut SqliteConnection,
     _roots: &HistoryRoots,
@@ -825,6 +853,7 @@ async fn stats_session_facts_from_v2(
     Ok(facts)
 }
 
+// 从本地或 WSL 根目录收集 Codex rollout 会话文件。
 fn collect_codex_catalog_files(root: &Path) -> Vec<SessionFileRef> {
     let root_str = root.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&root_str) {
@@ -852,6 +881,7 @@ fn collect_codex_catalog_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 收集各文件型历史来源，并附带文件指纹及共享 Codex 标题索引。
 fn collect_catalog_files_with_context(roots: &HistoryRoots) -> CatalogScan {
     let codex_thread_name_index = Arc::new(super::codex_thread_name_index(roots));
     let codex_thread_name_fingerprint = codex_thread_name_index.fingerprint.clone();
@@ -894,10 +924,12 @@ fn collect_catalog_files_with_context(roots: &HistoryRoots) -> CatalogScan {
 }
 
 #[cfg(test)]
+// 为测试返回带指纹的目录扫描文件集合。
 fn collect_catalog_files(roots: &HistoryRoots) -> Vec<CatalogFile> {
     collect_catalog_files_with_context(roots).files
 }
 
+// 解析单个会话的摘要与消息，并补充线程标题及工作目录项目键。
 fn parse_catalog_file(file: CatalogFile) -> CatalogDocument {
     let (mut computed, messages) = scan_session_computation_with_messages(
         &file.file_ref.path,
@@ -923,6 +955,7 @@ fn parse_catalog_file(file: CatalogFile) -> CatalogDocument {
     }
 }
 
+// 使用作用域线程并行解析一个有限批次的目录文件。
 fn parse_catalog_batch(batch: Vec<CatalogFile>) -> Vec<CatalogDocument> {
     let results = Mutex::new(Vec::with_capacity(batch.len()));
     std::thread::scope(|scope| {
@@ -939,6 +972,7 @@ fn parse_catalog_batch(batch: Vec<CatalogFile>) -> Vec<CatalogDocument> {
     results.into_inner().unwrap_or_default()
 }
 
+// 将已解析的 OpenCode 会话转换为目录文档。
 fn opencode_catalog_document(parsed: OpenCodeParsedSession) -> CatalogDocument {
     CatalogDocument {
         file_ref: parsed.file_ref,
@@ -949,6 +983,7 @@ fn opencode_catalog_document(parsed: OpenCodeParsedSession) -> CatalogDocument {
     }
 }
 
+// 事务替换旧目录中单个文件的摘要及消息索引。
 async fn replace_document(
     conn: &mut SqliteConnection,
     roots_key: &str,
@@ -1016,6 +1051,7 @@ async fn replace_document(
     Ok(())
 }
 
+// 事务删除旧目录中指定文件的消息与会话记录。
 async fn delete_document(
     conn: &mut SqliteConnection,
     roots_key: &str,
@@ -1038,6 +1074,7 @@ async fn delete_document(
     Ok(())
 }
 
+// 扫描并增量更新历史目录，清理缺失文件、构建第二代索引并发布进度。
 async fn refresh_catalog(
     app: &AppHandle,
     roots: &HistoryRoots,
@@ -1229,6 +1266,7 @@ async fn refresh_catalog(
     Ok(status)
 }
 
+// 尽力保存刷新错误并向前端发布错误状态。
 async fn mark_refresh_error(app: &AppHandle, roots: &HistoryRoots, error: String) {
     let Ok(mut conn) = open_catalog().await else {
         return;
@@ -1243,6 +1281,7 @@ async fn mark_refresh_error(app: &AppHandle, roots: &HistoryRoots, error: String
     emit_status(app, &status);
 }
 
+// 结合有效期、脏标记及标题指纹决定刷新，并支持等待或后台执行。
 pub(super) async fn ensure_refresh(
     app: AppHandle,
     roots: HistoryRoots,

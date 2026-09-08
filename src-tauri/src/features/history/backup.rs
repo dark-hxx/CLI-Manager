@@ -101,15 +101,18 @@ struct FileBackupHit {
     state: String,
 }
 
+// 解析当前应用的历史备份根目录。
 pub fn default_backup_root() -> Result<PathBuf, String> {
     app_paths::history_backups_dir()
 }
 
+// 按规范化来源名称生成恢复锁文件路径。
 fn mutation_lock_path(root: &Path, source: &str) -> PathBuf {
     root.join(".locks")
         .join(format!("{}.lock", source.trim().to_lowercase()))
 }
 
+// 写入人工恢复锁，阻止该来源继续执行历史变更。
 pub fn lock_source_mutations(source: &str) -> Result<PathBuf, String> {
     let root = default_backup_root()?;
     let lock = mutation_lock_path(&root, source);
@@ -127,6 +130,7 @@ pub fn lock_source_mutations(source: &str) -> Result<PathBuf, String> {
     Ok(lock)
 }
 
+// 检查来源恢复锁，不存在时允许继续变更。
 pub fn ensure_source_mutation_unlocked(source: &str) -> Result<(), String> {
     let root = default_backup_root()?;
     let lock = mutation_lock_path(&root, source);
@@ -136,6 +140,7 @@ pub fn ensure_source_mutation_unlocked(source: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 返回当前 Unix 毫秒时间，时钟早于纪元时回退为零。
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -143,12 +148,14 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+// 将系统时间转换为 Unix 毫秒，无法转换时返回零。
 fn system_time_to_millis(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
 }
 
+// 按编译目标返回当前操作系统类别。
 fn current_environment_kind() -> String {
     if cfg!(target_os = "windows") {
         "windows".to_string()
@@ -159,6 +166,7 @@ fn current_environment_kind() -> String {
     }
 }
 
+// 优先使用 WSL 发行版标识，否则使用操作系统类别。
 fn current_environment_key() -> String {
     if let Ok(distro) = std::env::var("WSL_DISTRO_NAME") {
         let distro = distro.trim();
@@ -169,6 +177,7 @@ fn current_environment_key() -> String {
     current_environment_kind()
 }
 
+// 根据原文件路径摘要与文件名生成兼容旧版备份路径。
 pub fn backup_file_path(session_path: &Path, backups_dir: &Path) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(session_path.to_string_lossy().as_bytes());
@@ -180,6 +189,7 @@ pub fn backup_file_path(session_path: &Path, backups_dir: &Path) -> PathBuf {
     backups_dir.join(format!("{}__{}.jsonl.bak", &digest[..16], stem))
 }
 
+// 按来源、实例和变更标识组合备份目录。
 fn mutation_backup_dir(
     backups_dir: &Path,
     source: &str,
@@ -189,6 +199,7 @@ fn mutation_backup_dir(
     backups_dir.join(source).join(source_instance_id).join(id)
 }
 
+// 使用原路径摘要及扩展名生成快照文件名。
 fn safe_backup_file_name(original_path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(original_path.to_string_lossy().as_bytes());
@@ -201,6 +212,7 @@ fn safe_backup_file_name(original_path: &Path) -> String {
     format!("{}.{}", &digest[..32], extension)
 }
 
+// 写入并同步临时文件，再重命名替换目标清单。
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -218,6 +230,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     })
 }
 
+// 组合文件修改时间与大小生成恢复冲突指纹。
 fn artifact_fingerprint(path: &Path) -> String {
     let metadata = fs::metadata(path).ok();
     let updated_at = metadata
@@ -232,6 +245,7 @@ fn artifact_fingerprint(path: &Path) -> String {
     format!("mtime_ms={updated_at};size={size}")
 }
 
+// 递归累计备份文件或目录的字节数，忽略无法读取的项。
 fn backup_entry_size(path: &Path) -> u64 {
     let Ok(metadata) = fs::metadata(path) else {
         return 0;
@@ -250,6 +264,7 @@ fn backup_entry_size(path: &Path) -> u64 {
         .sum()
 }
 
+// 检查清单中的运行状态；无可读清单的目录默认受保护。
 fn backup_entry_is_protected(path: &Path) -> bool {
     let manifest = if path.is_dir() {
         path.join("manifest.json")
@@ -262,6 +277,7 @@ fn backup_entry_is_protected(path: &Path) -> bool {
     RUNNING_STATES.iter().any(|state| text.contains(state))
 }
 
+// 枚举根目录直属备份项并收集时间、大小及保护状态。
 fn collect_backup_entries(root: &Path) -> Vec<BackupEntry> {
     fs::read_dir(root)
         .ok()
@@ -280,6 +296,7 @@ fn collect_backup_entries(root: &Path) -> Vec<BackupEntry> {
         .collect()
 }
 
+// 按文件类型删除一个备份文件或整个备份目录。
 fn remove_backup_entry(path: &Path) -> Result<(), String> {
     if path.is_dir() {
         fs::remove_dir_all(path).map_err(|err| err.to_string())
@@ -288,6 +305,7 @@ fn remove_backup_entry(path: &Path) -> Result<(), String> {
     }
 }
 
+// 先删除过期非保护备份，再按最旧优先回收超出容量的条目。
 pub fn cleanup_backup_root(root: &Path) -> Result<(), String> {
     if !root.exists() {
         return Ok(());
@@ -320,6 +338,7 @@ pub fn cleanup_backup_root(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 累计根目录所有直属备份项的递归大小。
 pub fn backup_root_size(root: &Path) -> u64 {
     collect_backup_entries(root)
         .iter()
@@ -327,12 +346,15 @@ pub fn backup_root_size(root: &Path) -> u64 {
         .sum()
 }
 
+// 读取并反序列化备份清单，失败时返回空值。
 fn parse_manifest(path: &Path) -> Option<HistoryBackupManifest> {
     let text = fs::read_to_string(path).ok()?;
     serde_json::from_str(&text).ok()
 }
 
+// 递归收集备份根目录内的新旧格式清单路径。
 fn collect_manifest_paths(root: &Path) -> Vec<PathBuf> {
+    // 递归遍历目录，仅记录符合备份清单命名的文件。
     fn visit(path: &Path, output: &mut Vec<PathBuf>) {
         let Ok(metadata) = fs::metadata(path) else {
             return;
@@ -366,6 +388,7 @@ fn collect_manifest_paths(root: &Path) -> Vec<PathBuf> {
     output
 }
 
+// 合并旧版与清单备份记录，返回原文件最早的可用备份。
 fn find_file_backup_hit(session_path: &Path, backups_dir: &Path) -> Option<FileBackupHit> {
     let original = session_path.to_string_lossy().to_string();
     let legacy_backup = backup_file_path(session_path, backups_dir);
@@ -409,6 +432,7 @@ fn find_file_backup_hit(session_path: &Path, backups_dir: &Path) -> Option<FileB
         .min_by(|left, right| left.created_at.cmp(&right.created_at))
 }
 
+// 为每个原始文件选择最早可用快照，再按备份时间倒序列出。
 fn list_file_restore_candidates(backups_dir: &Path) -> Vec<HistoryBackupRestoreCandidate> {
     let mut candidates_by_original = HashMap::<String, HistoryBackupRestoreCandidate>::new();
     for manifest_path in collect_manifest_paths(backups_dir) {
@@ -451,6 +475,7 @@ fn list_file_restore_candidates(backups_dir: &Path) -> Vec<HistoryBackupRestoreC
     candidates
 }
 
+// 校验单文件大小并创建变更快照与清单，在复制前后清理备份根目录。
 fn create_file_backup_snapshot_with_limit(
     session_path: &Path,
     backups_dir: &Path,
@@ -485,6 +510,7 @@ fn create_file_backup_snapshot_with_limit(
     Ok(backup)
 }
 
+// 使用默认容量限制创建原始文件的独立变更快照。
 pub fn create_file_backup_snapshot(
     session_path: &Path,
     backups_dir: &Path,
@@ -502,6 +528,7 @@ pub fn create_file_backup_snapshot(
     )
 }
 
+// 复用原文件已有最早备份，否则创建未知来源的消息变更快照。
 pub fn ensure_file_backup(session_path: &Path, backups_dir: &Path) -> Result<PathBuf, String> {
     if let Some(hit) = find_file_backup_hit(session_path, backups_dir) {
         return Ok(hit.backup_path);
@@ -519,6 +546,7 @@ pub fn ensure_file_backup(session_path: &Path, backups_dir: &Path) -> Result<Pat
     )
 }
 
+// 读取原文件最早可用备份的路径及修改时间。
 pub fn backup_status_for_file(session_path: &Path, backups_dir: &Path) -> HistoryBackupStatus {
     let Some(hit) = find_file_backup_hit(session_path, backups_dir) else {
         return HistoryBackupStatus {
@@ -538,6 +566,7 @@ pub fn backup_status_for_file(session_path: &Path, backups_dir: &Path) -> Histor
     }
 }
 
+// 按来源对应进程名或命令行片段判断目标工具是否运行。
 pub fn is_target_tool_running(source: &str) -> bool {
     let names: &[&str] = match source.trim().to_lowercase().as_str() {
         "claude" => &["claude", "claude-code"],
@@ -565,6 +594,7 @@ pub fn is_target_tool_running(source: &str) -> bool {
     })
 }
 
+// 检查备份、原文件、运行进程及指纹冲突，生成恢复可行性计划。
 pub fn build_file_restore_plan(
     session_path: &Path,
     backups_dir: &Path,
@@ -627,6 +657,7 @@ pub fn build_file_restore_plan(
     }
 }
 
+// 为文件快照写入包含原路径及指纹的就绪清单。
 pub fn write_file_manifest(
     backup_path: &Path,
     original_path: &Path,
@@ -670,6 +701,7 @@ pub fn write_file_manifest(
     Ok(manifest_path)
 }
 
+// 通过恢复预检后，以临时文件替换原文件内容。
 pub fn restore_file_backup(
     original_path: &Path,
     backups_dir: &Path,
@@ -693,6 +725,7 @@ pub fn restore_file_backup(
 }
 
 #[tauri::command]
+// 创建并清理备份根目录，返回环境及容量状态。
 pub async fn history_backup_get_root_status() -> Result<HistoryBackupRootStatus, String> {
     let root = default_backup_root()?;
     fs::create_dir_all(&root).map_err(|err| err.to_string())?;
@@ -711,6 +744,7 @@ pub async fn history_backup_get_root_status() -> Result<HistoryBackupRootStatus,
 }
 
 #[tauri::command]
+// 执行备份保留清理并返回更新后的根目录状态。
 pub async fn history_backup_cleanup() -> Result<HistoryBackupRootStatus, String> {
     let root = default_backup_root()?;
     cleanup_backup_root(&root)?;
@@ -718,6 +752,7 @@ pub async fn history_backup_cleanup() -> Result<HistoryBackupRootStatus, String>
 }
 
 #[tauri::command]
+// 枚举已支持来源的文件恢复候选项。
 pub async fn history_backup_list_restore_candidates(
 ) -> Result<Vec<HistoryBackupRestoreCandidate>, String> {
     let root = default_backup_root()?;
@@ -745,6 +780,7 @@ pub async fn history_backup_list_restore_candidates(
 }
 
 #[tauri::command]
+// 为指定原文件构造备份恢复计划。
 pub async fn history_backup_build_restore_plan(
     original_path: String,
     source: Option<String>,
@@ -758,6 +794,7 @@ pub async fn history_backup_build_restore_plan(
 }
 
 #[tauri::command]
+// 恢复指定原文件并重新生成恢复计划。
 pub async fn history_backup_execute_restore(
     original_path: String,
     source: Option<String>,
@@ -769,6 +806,7 @@ pub async fn history_backup_execute_restore(
 }
 
 #[tauri::command]
+// 校验原文件大小限制并返回不检查工具进程的恢复计划。
 pub async fn history_backup_preflight_file(
     original_path: String,
     temporary_max_bytes: Option<u64>,
@@ -786,6 +824,7 @@ pub async fn history_backup_preflight_file(
 }
 
 #[tauri::command]
+// 返回旧版备份旁的清单路径，不存在时报告错误。
 pub async fn history_backup_export_manifest(backup_path: String) -> Result<String, String> {
     let backup = PathBuf::from(backup_path);
     let manifest = backup.with_extension("manifest.json");
@@ -799,6 +838,7 @@ pub async fn history_backup_export_manifest(backup_path: String) -> Result<Strin
 mod tests {
     use super::*;
 
+    // 创建测试文件所需父目录并写入指定文本。
     fn write_text(path: &Path, text: &str) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -807,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    // 验证默认备份可生成文件清单并被状态查询发现。
     fn file_backup_uses_default_limit_and_manifest() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -823,6 +864,7 @@ mod tests {
     }
 
     #[test]
+    // 验证清理保留要求人工恢复的清单目录。
     fn cleanup_skips_protected_manifest_dirs() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("backups");
@@ -839,6 +881,7 @@ mod tests {
     }
 
     #[test]
+    // 验证新快照位于变更目录且清单位于 files 上级。
     fn file_backup_uses_mutation_directory_manifest() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -862,6 +905,7 @@ mod tests {
     }
 
     #[test]
+    // 验证恢复候选项携带原会话路径及来源标识。
     fn restore_candidates_expose_original_session_without_manual_path_entry() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -880,6 +924,7 @@ mod tests {
     }
 
     #[test]
+    // 验证单次快照大小上限可分别拒绝和允许同一文件。
     fn temporary_limit_applies_only_to_single_snapshot() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("large.jsonl");
@@ -910,6 +955,7 @@ mod tests {
     }
 
     #[test]
+    // 验证人工恢复状态下原文件变化会阻止覆盖恢复。
     fn manual_recovery_restore_plan_detects_fingerprint_conflict() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -942,6 +988,7 @@ mod tests {
     }
 
     #[test]
+    // 验证备份恢复将修改后的文件还原为原始内容。
     fn restore_file_backup_restores_original_content() {
         let temp = tempfile::tempdir().unwrap();
         let session = temp.path().join("session.jsonl");

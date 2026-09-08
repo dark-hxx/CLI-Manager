@@ -140,6 +140,7 @@ mod tests {
     use sqlx::{Connection, Executor, Row, SqliteConnection};
 
     #[test]
+    // 验证已发布 V25 迁移 SQL 的固定 SHA-384 摘要，防止破坏历史数据库校验。
     fn legacy_provider_migration_keeps_the_shipped_v25_checksum() {
         let checksum = Sha384::digest(MIGRATION_LEGACY_PROVIDERS_SQL.as_bytes());
         assert_eq!(
@@ -149,6 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在内存数据库验证历史原型表限制单一活动密钥，删除供应商时级联清除密钥。
     async fn native_provider_schema_enforces_active_key_and_cascade_contracts() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         conn.execute("PRAGMA foreign_keys = ON").await.unwrap();
@@ -199,6 +201,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 在内存数据库依次执行 V25 与历史原型迁移，验证旧表与原型表均存在。
     async fn native_provider_schema_applies_after_legacy_v25_schema() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         conn.execute("PRAGMA foreign_keys = ON").await.unwrap();
@@ -230,6 +233,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证历史原型表拒绝 Codex 使用 JSON 配置格式，不涉及当前独立供应商数据库。
     async fn native_provider_schema_rejects_cross_type_config_formats() {
         let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::raw_sql(MIGRATION_CREATE_NATIVE_PROVIDERS_SQL)

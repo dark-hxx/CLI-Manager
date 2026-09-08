@@ -8,6 +8,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
+// 读取本机 Claude/Codex Provider 名称和当前项，失败返回空目录。
 pub(super) async fn load_provider_catalog() -> ProviderCatalog {
     let Ok(mut connection) = crate::provider::open_connection().await else {
         return ProviderCatalog::default();
@@ -55,6 +56,7 @@ pub(super) async fn load_provider_catalog() -> ProviderCatalog {
     catalog
 }
 
+// 优先采用项目 Provider 覆盖，否则使用目录中的全局当前项。
 pub(super) fn project_provider(
     agent: CcConnectAgent,
     provider_overrides: &str,
@@ -98,6 +100,7 @@ pub(super) fn project_provider(
     }
 }
 
+// 按非 ASCII 名称优先、再按小写名称顺序比较。
 pub(super) fn compare_display_names(left: &str, right: &str) -> std::cmp::Ordering {
     let left_ascii = left.chars().all(|character| character.is_ascii());
     let right_ascii = right.chars().all(|character| character.is_ascii());
@@ -106,6 +109,7 @@ pub(super) fn compare_display_names(left: &str, right: &str) -> std::cmp::Orderi
         .then_with(|| left.to_lowercase().cmp(&right.to_lowercase()))
 }
 
+// 依次按分组排序值、显示名和标识比较。
 pub(super) fn compare_registered_groups(
     left: &RegisteredGroup,
     right: &RegisteredGroup,
@@ -116,6 +120,7 @@ pub(super) fn compare_registered_groups(
         .then_with(|| left.id.cmp(&right.id))
 }
 
+// 依次按项目排序值、显示名和标识比较。
 pub(super) fn compare_registered_project_rows(
     left: &RegisteredProjectRow,
     right: &RegisteredProjectRow,
@@ -126,6 +131,7 @@ pub(super) fn compare_registered_project_rows(
         .then_with(|| left.id.cmp(&right.id))
 }
 
+// 组合分组及 Provider 信息，SSH 项目清除本机 Provider 并回退主机根。
 pub(super) fn registered_project_from_row(
     row: &RegisteredProjectRow,
     group_path: &[RegisteredGroupSegment],
@@ -169,6 +175,7 @@ pub(super) fn registered_project_from_row(
 }
 
 #[allow(clippy::too_many_arguments)]
+// 去重递归遍历分组，先子组后本组项目并维护分组路径。
 pub(super) fn append_registered_group(
     group_id: &str,
     groups_by_id: &HashMap<String, RegisteredGroup>,
@@ -221,6 +228,7 @@ pub(super) fn append_registered_group(
     group_path.pop();
 }
 
+// 整理分组与项目顺序，补收孤立、循环分组及未分组项目。
 pub(super) fn order_registered_projects(
     groups: Vec<RegisteredGroup>,
     project_rows: Vec<RegisteredProjectRow>,
@@ -338,6 +346,7 @@ pub(super) fn order_registered_projects(
     output
 }
 
+// 只读加载注册项目和分组，再合并本机 Provider 目录并排序。
 pub(super) fn load_registered_projects(
     _profile: Option<&CcConnectProfile>,
 ) -> Result<Vec<RegisteredProject>, String> {

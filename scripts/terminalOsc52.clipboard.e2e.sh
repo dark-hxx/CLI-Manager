@@ -17,18 +17,22 @@ if ! xdpyinfo -display "$DISPLAY_NAME" >/dev/null 2>&1; then
   exit 0
 fi
 
+# 调用真实前端解码辅助脚本解析指定 OSC 52 字节流。
 decode_osc52() {
   node "$ROOT/scripts/decodeOsc52Stream.mjs" "$1"
 }
 
+# 将文本写入当前 X11 显示的真实系统剪贴板。
 write_clip() {
   printf '%s' "$1" | xclip -selection clipboard -in
 }
 
+# 读取当前 X11 显示的真实系统剪贴板内容。
 read_clip() {
   xclip -selection clipboard -o
 }
 
+# 输出断言失败信息并以非零状态结束冒烟测试。
 fail() {
   echo "FAIL: $1" >&2
   exit 1

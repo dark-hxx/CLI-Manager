@@ -63,14 +63,17 @@ struct NormalizedHomeInput {
 static HOME_CACHE: OnceLock<RwLock<HashMap<String, ProviderHomeState>>> = OnceLock::new();
 static ACTIVE_HOME_IDENTITY: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 
+// 惰性初始化全局 Home 状态映射及读写锁，不主动加载数据库。
 fn cache() -> &'static RwLock<HashMap<String, ProviderHomeState>> {
     HOME_CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
+// 惰性初始化活动 Home 身份的独立读写锁，初始为空。
 fn active_home_identity() -> &'static RwLock<Option<String>> {
     ACTIVE_HOME_IDENTITY.get_or_init(|| RwLock::new(None))
 }
 
+// 返回饱和到 i64 上限的 Unix 毫秒时间，早于纪元时回退零。
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -78,6 +81,7 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+// 从探测输出前两行提取发行版与 Linux Home，拒绝空发行版或不合法路径，忽略后续行。
 fn parse_default_wsl_context(stdout: &[u8]) -> Result<(String, String), String> {
     let stdout = String::from_utf8_lossy(stdout);
     let mut lines = stdout.lines();
@@ -89,6 +93,7 @@ fn parse_default_wsl_context(stdout: &[u8]) -> Result<(String, String), String> 
     Ok((distro.to_string(), home.to_string()))
 }
 
+// 在默认 WSL 发行版登录 shell 探测发行版名与 HOME，使用三十秒超时并解析结果。
 fn default_wsl_context() -> Result<(String, String), String> {
     let exe = wsl::find_wsl_exe().ok_or_else(|| "provider_wsl_unavailable".to_string())?;
     let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -106,6 +111,7 @@ fn default_wsl_context() -> Result<(String, String), String> {
     parse_default_wsl_context(&output.stdout)
 }
 
+// 依据 BOM 或双字节高位全零启发式解码 UTF-16LE，否则容错解码 UTF-8；UTF-16 分支忽略尾部不完整字节。
 fn decode_wsl_output(stdout: &[u8]) -> String {
     let is_utf16le = stdout.starts_with(&[0xff, 0xfe])
         || (stdout.len() >= 4 && stdout.chunks_exact(2).all(|chunk| chunk[1] == 0));
@@ -120,6 +126,7 @@ fn decode_wsl_output(stdout: &[u8]) -> String {
     String::from_utf16_lossy(&units.collect::<Vec<_>>())
 }
 
+// 解码列表后去空白、BOM 和默认项标记，跳过固定英文表头，保留重复发行版名。
 fn parse_wsl_distros(stdout: &[u8]) -> Vec<String> {
     decode_wsl_output(stdout)
         .lines()
@@ -140,6 +147,7 @@ fn parse_wsl_distros(stdout: &[u8]) -> Vec<String> {
         .collect()
 }
 
+// 以五秒超时执行 wsl -l -q 并解析列表，不附加 Home 探测。
 pub(crate) fn list_wsl_distros() -> Result<Vec<String>, String> {
     let exe = wsl::find_wsl_exe().ok_or_else(|| "provider_wsl_unavailable".to_string())?;
     let mut command = shell_resolver::silent_command(exe.to_string_lossy().as_ref());
@@ -152,6 +160,7 @@ pub(crate) fn list_wsl_distros() -> Result<Vec<String>, String> {
     Ok(parse_wsl_distros(&output.stdout))
 }
 
+// 优先非 host 的显式发行版，其次手动 UNC 中的发行版，否则探测默认 WSL 上下文。
 fn resolve_wsl_environment_id(input: &HomeSelectInput) -> Result<String, String> {
     let requested = input.environment_id.as_deref().unwrap_or_default().trim();
     if !requested.is_empty() && !requested.eq_ignore_ascii_case(LOCAL_ENVIRONMENT_ID) {
@@ -163,6 +172,7 @@ fn resolve_wsl_environment_id(input: &HomeSelectInput) -> Result<String, String>
     default_wsl_context().map(|(distro, _)| distro)
 }
 
+// 规范化环境与模式，本机固定 host；WSL 身份解析可能触发探测，手动模式要求非空路径但不在此验证目录。
 fn normalize_input(input: HomeSelectInput) -> Result<NormalizedHomeInput, String> {
     let environment_kind = input.environment_kind.trim().to_ascii_lowercase();
     if environment_kind != "local" && environment_kind != "wsl" {
@@ -195,6 +205,7 @@ fn normalize_input(input: HomeSelectInput) -> Result<NormalizedHomeInput, String
     })
 }
 
+// 按环境种类与 ID 构建身份字段及冒号拼接的缓存键。
 fn identity(kind: &str, id: &str) -> HomeIdentity {
     HomeIdentity {
         environment_kind: kind.to_string(),
@@ -203,6 +214,7 @@ fn identity(kind: &str, id: &str) -> HomeIdentity {
     }
 }
 
+// 拒绝末级名称为 .claude/.codex/.grok 的路径，要求选择其父 Home。
 fn reject_cli_subdirectory(path: &Path) -> Result<(), String> {
     let name = path
         .file_name()
@@ -215,6 +227,7 @@ fn reject_cli_subdirectory(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 拒绝 WSL UNC、相对路径、CLI 子目录和非目录，再创建并删除独占探测文件验证可写性；删除失败也返回不可写。
 fn validate_local_home(raw: &str) -> Result<PathBuf, String> {
     if wsl::parse_wsl_unc_path(raw).is_some() {
         return Err("provider_home_environment_mismatch".to_string());
@@ -237,6 +250,7 @@ fn validate_local_home(raw: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// 构造指定发行版的直接程序调用，逐项传递参数，不立即执行。
 fn wsl_command(
     distro: &str,
     program: &str,
@@ -253,18 +267,21 @@ fn wsl_command(
     Ok(command)
 }
 
+// 以五秒超时执行 WSL 校验命令，执行错误映射为探测失败，退出状态由调用方检查。
 fn run_wsl(distro: &str, program: &str, args: &[&str]) -> Result<std::process::Output, String> {
     let command = wsl_command(distro, program, args)?;
     shell_resolver::output_with_timeout(command, WSL_HOME_VALIDATION_TIMEOUT)
         .map_err(|_| "provider_wsl_probe_failed".to_string())
 }
 
+// 在指定发行版登录 shell 读取 HOME，使用较长的三十秒检测超时。
 fn probe_wsl_home(distro: &str) -> Result<std::process::Output, String> {
     let command = wsl_command(distro, "sh", &["-lc", "printf '%s' \"$HOME\""])?;
     shell_resolver::output_with_timeout(command, WSL_HOME_DETECT_TIMEOUT)
         .map_err(|_| "provider_wsl_probe_failed".to_string())
 }
 
+// 仅做 Linux 路径文本校验，要求非根绝对路径且无 NUL/换行及点路径段，不访问文件系统。
 fn is_valid_linux_home_path(path: &str) -> bool {
     let path = path.trim();
     if path.is_empty() || path == "/" || !path.starts_with('/') {
@@ -279,6 +296,7 @@ fn is_valid_linux_home_path(path: &str) -> bool {
         .any(|component| matches!(component, "." | ".."))
 }
 
+// 验证 UNC 与发行版一致及 Linux 路径合法，再在 WSL 检查目录、可读和可写状态，返回规范化 UNC。
 fn validate_wsl_home(raw: &str, distro: &str) -> Result<String, String> {
     if raw.contains('\0') || raw.contains('\r') || raw.contains('\n') {
         return Err("provider_home_invalid".to_string());
@@ -321,10 +339,12 @@ fn validate_wsl_home(raw: &str, distro: &str) -> Result<String, String> {
     Ok(wsl::normalize_wsl_unc_path(raw))
 }
 
+// 委托共享应用路径服务读取本机环境中的 Home 路径。
 fn auto_local_home() -> Result<PathBuf, String> {
     app_paths::home_dir_from_env()
 }
 
+// 探测指定发行版 HOME，要求非空绝对形式后转 UNC；更完整路径与权限验证由后续流程执行。
 fn auto_wsl_home(distro: &str) -> Result<String, String> {
     let output = probe_wsl_home(distro)?;
     if !output.status.success() {
@@ -337,6 +357,7 @@ fn auto_wsl_home(distro: &str) -> Result<String, String> {
     Ok(wsl::linux_to_unc_wsl_path(&linux_home, distro))
 }
 
+// 从同一 Home 拼接三种 CLI 配置与历史目录，不创建或校验这些目录。
 fn build_targets(home_path: &str) -> DerivedCliTargets {
     let home = PathBuf::from(home_path);
     let claude = home.join(".claude");
@@ -353,6 +374,7 @@ fn build_targets(home_path: &str) -> DerivedCliTargets {
     }
 }
 
+// 按环境及自动/手动模式确定路径后执行平台验证，返回已验证路径与模式。
 fn resolve_home(input: &NormalizedHomeInput) -> Result<(String, String), String> {
     if input.environment_kind == "local" {
         let path = match input.mode.as_str() {
@@ -373,6 +395,7 @@ fn resolve_home(input: &NormalizedHomeInput) -> Result<(String, String), String>
     ))
 }
 
+// 解析并验证 Home，再构造身份、来源与派生 CLI 路径；可能执行探测，不写偏好。
 fn state_from_input(input: &NormalizedHomeInput) -> Result<ProviderHomeState, String> {
     let (home_path, mode) = resolve_home(input)?;
     Ok(ProviderHomeState {
@@ -388,6 +411,7 @@ fn state_from_input(input: &NormalizedHomeInput) -> Result<ProviderHomeState, St
     })
 }
 
+// 从供应商数据库读取环境偏好，缺失返回 None；列转换失败分别回退自动模式和空路径。
 async fn load_preference(
     environment_kind: &str,
     environment_id: &str,
@@ -412,6 +436,7 @@ async fn load_preference(
     }))
 }
 
+// 在同一数据库事务中更新环境偏好及活动身份，自动模式不持久化路径；不同时更新内存缓存。
 async fn persist_preference(input: &NormalizedHomeInput) -> Result<(), String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let mut transaction = connection
@@ -457,6 +482,7 @@ async fn persist_preference(input: &NormalizedHomeInput) -> Result<(), String> {
     Ok(())
 }
 
+// 读取持久化活动身份文本，缺失返回 None，不校验身份格式。
 async fn load_active_identity() -> Result<Option<String>, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     sqlx::query_scalar("SELECT value FROM settings WHERE key = ?1")
@@ -466,6 +492,7 @@ async fn load_active_identity() -> Result<Option<String>, String> {
         .map_err(|_| "provider_home_preference_read_failed".to_string())
 }
 
+// 按首个冒号解析 local/wsl 身份，本机只允许精确 host，WSL 要求非空 ID。
 fn parse_identity(value: &str) -> Option<(String, String)> {
     let (kind, id) = value.split_once(':')?;
     let kind = kind.trim().to_ascii_lowercase();
@@ -479,6 +506,7 @@ fn parse_identity(value: &str) -> Option<(String, String)> {
     Some((kind, id))
 }
 
+// 先写 Home 映射再更新独立活动身份锁；两步不是原子操作，后一步失败不撤销前一步。
 fn set_active_state(state: &ProviderHomeState) -> Result<(), String> {
     cache()
         .write()
@@ -491,6 +519,7 @@ fn set_active_state(state: &ProviderHomeState) -> Result<(), String> {
     Ok(())
 }
 
+// 优先使用已保存的模式与路径，否则按自动模式解析并验证指定环境的 Home。
 async fn state_for(
     environment_kind: String,
     environment_id: String,
@@ -511,6 +540,7 @@ async fn state_for(
     })
 }
 
+// 先解析本机 Home，再尝试恢复持久化活动环境；活动环境解析失败回退本机，写缓存但不重写持久化身份。
 pub(crate) async fn initialize_cache() -> Result<(), String> {
     let local = state_for("local".to_string(), LOCAL_ENVIRONMENT_ID.to_string()).await?;
     let active = match load_active_identity()
@@ -530,6 +560,7 @@ pub(crate) async fn initialize_cache() -> Result<(), String> {
     set_active_state(&active)
 }
 
+// 规范化输入后优先返回缓存，未命中时按已保存偏好解析并缓存；不以输入中的草稿路径覆盖保存选择，也不切换活动身份。
 pub(crate) async fn get(input: HomeSelectInput) -> Result<ProviderHomeState, String> {
     let normalized = normalize_input(input)?;
     if let Some(state) = cached_state(&normalized.environment_kind, &normalized.environment_id) {
@@ -547,11 +578,13 @@ pub(crate) async fn get(input: HomeSelectInput) -> Result<ProviderHomeState, Str
     Ok(state)
 }
 
+// 规范化并验证候选 Home，返回状态但不保存偏好或更新缓存；路径验证仍可能创建探测文件或执行 WSL。
 pub(crate) async fn preview(input: HomeSelectInput) -> Result<ProviderHomeState, String> {
     let normalized = normalize_input(input)?;
     state_from_input(&normalized)
 }
 
+// 先验证 Home，再事务保存偏好及活动身份，最后更新内存缓存；缓存失败不会回滚已提交偏好。
 pub(crate) async fn select(input: HomeSelectInput) -> Result<ProviderHomeState, String> {
     let normalized = normalize_input(input)?;
     let state = state_from_input(&normalized)?;
@@ -560,6 +593,7 @@ pub(crate) async fn select(input: HomeSelectInput) -> Result<ProviderHomeState, 
     Ok(state)
 }
 
+// 以自动模式和无显式路径委托选择流程，重新解析并保存指定环境 Home。
 pub(crate) async fn reset(
     environment_kind: String,
     environment_id: Option<String>,
@@ -573,6 +607,7 @@ pub(crate) async fn reset(
     .await
 }
 
+// 按精确 kind:id 从缓存克隆状态，锁失败或未命中返回 None，不重新验证路径。
 pub(crate) fn cached_state(kind: &str, id: &str) -> Option<ProviderHomeState> {
     cache()
         .read()
@@ -580,6 +615,7 @@ pub(crate) fn cached_state(kind: &str, id: &str) -> Option<ProviderHomeState> {
         .and_then(|values| values.get(&format!("{kind}:{id}")).cloned())
 }
 
+// 规范化缓存查询身份并拒绝非法种类及本机非 host 身份；不探测 WSL，缺失 ID 默认 host。
 pub(crate) fn cached(
     environment_kind: String,
     environment_id: Option<String>,
@@ -598,10 +634,12 @@ pub(crate) fn cached(
     cached_state(&kind, &id)
 }
 
+// 返回可取得的活动缓存状态，否则返回活动 Home 不可用错误。
 pub(crate) fn active() -> Result<ProviderHomeState, String> {
     active_state().ok_or_else(|| "provider_home_active_unavailable".to_string())
 }
 
+// 从本机默认 Home 直接构建自动状态，不执行目录或可写性验证。
 fn fallback_local_state() -> Option<ProviderHomeState> {
     let home = auto_local_home().ok()?.to_string_lossy().into_owned();
     Some(ProviderHomeState {
@@ -613,6 +651,7 @@ fn fallback_local_state() -> Option<ProviderHomeState> {
     })
 }
 
+// 依次使用活动缓存、本机缓存和本机环境回退，返回所选 CLI 配置目录；不启动 WSL 探测。
 pub(crate) fn default_config_root(app_type: &str) -> Option<PathBuf> {
     let state = active_state()
         .or_else(|| cached_state("local", LOCAL_ENVIRONMENT_ID).or_else(fallback_local_state))?;
@@ -624,6 +663,7 @@ pub(crate) fn default_config_root(app_type: &str) -> Option<PathBuf> {
     }
 }
 
+// 依次使用活动缓存、本机缓存和本机环境回退，返回所选 CLI 历史目录，不创建目录。
 pub(crate) fn default_history_root(app_type: &str) -> Option<PathBuf> {
     let state = active_state()
         .or_else(|| cached_state("local", LOCAL_ENVIRONMENT_ID).or_else(fallback_local_state))?;
@@ -635,6 +675,7 @@ pub(crate) fn default_history_root(app_type: &str) -> Option<PathBuf> {
     }
 }
 
+// 读取活动身份、解析后查询对应缓存，锁失败、身份无效或未命中均返回 None。
 fn active_state() -> Option<ProviderHomeState> {
     let identity = active_home_identity().read().ok()?.clone()?;
     let (kind, id) = parse_identity(&identity)?;
@@ -647,6 +688,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // Windows 纯路径测试：验证单一本机 Home 派生 Claude、Codex 和 Grok 目录。
     fn derives_cli_targets_from_one_home() {
         let targets = build_targets(r"C:\Users\tester");
         assert_eq!(targets.claude_config_dir, r"C:\Users\tester\.claude");
@@ -660,6 +702,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // Windows 纯路径测试：验证 WSL UNC Home 派生配置与历史目录，不访问发行版。
     fn derives_cli_targets_from_wsl_unc_home() {
         let targets = build_targets(r"\\wsl.localhost\Ubuntu\home\tester");
         assert_eq!(
@@ -678,6 +721,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 验证 Windows 路径中的 .claude 子目录不能直接作为 Home。
     fn rejects_cli_subdirectories() {
         assert_eq!(
             reject_cli_subdirectory(Path::new(r"C:\Users\tester\.claude")),
@@ -686,6 +730,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本机自动输入补齐 host 身份并保留自动模式。
     fn normalizes_local_auto_input() {
         let value = normalize_input(HomeSelectInput {
             environment_kind: "local".to_string(),
@@ -699,6 +744,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本机环境忽略传入的发行版名，固定使用 host。
     fn local_environment_always_uses_host_identity() {
         let value = normalize_input(HomeSelectInput {
             environment_kind: "local".to_string(),
@@ -711,6 +757,7 @@ mod tests {
     }
 
     #[test]
+    // 验证默认 WSL 输出解析发行版和 Home，并拒绝根目录作为 Home。
     fn parses_default_wsl_context_from_probe_output() {
         let (distro, home) = parse_default_wsl_context(b"Ubuntu-22.04\n/home/tester").unwrap();
         assert_eq!(distro, "Ubuntu-22.04");
@@ -722,6 +769,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 UTF-8 发行版列表解析保留顺序与重复项。
     fn parses_wsl_distro_list_output() {
         assert_eq!(
             parse_wsl_distros(b"Ubuntu\r\nDebian\r\nUbuntu\r\n"),
@@ -730,6 +778,7 @@ mod tests {
     }
 
     #[test]
+    // 验证带 BOM 的 UTF-16LE 发行版列表正确解码。
     fn parses_utf16_wsl_distro_list_output() {
         let mut output = vec![0xff, 0xfe];
         output.extend(
@@ -741,12 +790,14 @@ mod tests {
     }
 
     #[test]
+    // 验证检测超时至少十五秒且长于快速校验超时，不执行真实超时流程。
     fn keeps_cold_start_detection_separate_from_fast_validation() {
         assert!(WSL_HOME_DETECT_TIMEOUT >= Duration::from_secs(15));
         assert!(WSL_HOME_VALIDATION_TIMEOUT < WSL_HOME_DETECT_TIMEOUT);
     }
 
     #[test]
+    // 验证 WSL 输入身份为 host 时从手动 UNC 提取发行版，避免默认发行版探测。
     fn infers_wsl_environment_from_manual_unc_home() {
         let value = normalize_input(HomeSelectInput {
             environment_kind: "wsl".to_string(),
@@ -759,6 +810,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相对本机路径和不匹配发行版的 UNC 在实际探测前被拒绝。
     fn rejects_invalid_manual_home_inputs() {
         assert_eq!(
             normalize_input(HomeSelectInput {
@@ -783,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    // 在独立临时目录创建普通文件，验证其不能作为本机 Home。
     fn rejects_file_as_local_home() {
         let directory = tempfile::tempdir().unwrap();
         let file = directory.path().join("not-a-directory");
@@ -794,6 +847,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本机 Home 校验拒绝 WSL UNC，不访问目标路径。
     fn rejects_wsl_unc_path_as_local_home() {
         assert_eq!(
             validate_local_home(r"\\wsl.localhost\Ubuntu\home\tester"),
@@ -802,6 +856,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux Home 文本规则接受正常绝对路径，拒绝相对、点段及嵌入换行。
     fn validates_linux_home_paths_without_host_path_rules() {
         assert!(is_valid_linux_home_path("/home/tester"));
         assert!(!is_valid_linux_home_path("relative/home"));
@@ -811,6 +866,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 local:host 与非空 WSL 身份可解析，其他本机身份、未知环境及空 ID 被拒绝。
     fn parses_only_supported_home_identities() {
         assert_eq!(
             parse_identity("local:host"),

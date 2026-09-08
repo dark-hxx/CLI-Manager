@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::env;
 use std::path::{Path, PathBuf};
 
+// 选择显式路径或 Grok 默认配置根，按调用选项创建缺失目录。
 pub(super) fn resolve_grok_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -44,14 +45,17 @@ pub(super) fn resolve_grok_dir(
     }
 }
 
+// 拼接 Grok 专用 hooks/cli-manager.json 路径。
 pub(super) fn grok_hooks_path(grok_dir: &Path) -> PathBuf {
     grok_dir.join("hooks").join(GROK_HOOKS_FILE_NAME)
 }
 
+// 拼接 Grok 主 TOML 配置文件路径。
 pub(super) fn grok_config_path(grok_dir: &Path) -> PathBuf {
     grok_dir.join(GROK_CONFIG_FILE_NAME)
 }
 
+// 重建托管 Grok 事件，校验写入并关闭、复核跨工具 Hook 兼容。
 pub(super) fn install_grok_hooks(grok_dir: &Path) -> Result<(), String> {
     let exe = hook_exe_for_dir(grok_dir)?;
     let hooks_path = grok_hooks_path(grok_dir);
@@ -71,6 +75,7 @@ pub(super) fn install_grok_hooks(grok_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 安装所选 Grok 模块，升级旧 attention 注册并强制关闭跨工具兼容。
 pub(super) fn install_grok_hook_module(
     grok_dir: &Path,
     module: ClaudeHookModule,
@@ -92,6 +97,7 @@ pub(super) fn install_grok_hook_module(
     Ok(())
 }
 
+// 重新读取文件，验证 SessionStart 精确命令及非空 hooks 对象。
 pub(super) fn verify_grok_hooks_file(hooks_path: &Path, exe: &str) -> Result<(), String> {
     if !live_is_file(hooks_path) {
         return Err(format!(
@@ -120,6 +126,7 @@ pub(super) fn verify_grok_hooks_file(hooks_path: &Path, exe: &str) -> Result<(),
     Ok(())
 }
 
+// 要求 Grok 的 Claude 和 Cursor Hook 兼容开关均为关闭。
 pub(super) fn verify_grok_cross_vendor_isolation(grok_dir: &Path) -> Result<(), String> {
     let config_path = grok_config_path(grok_dir);
     if !grok_cross_vendor_hooks_disabled(&config_path)? {
@@ -131,6 +138,7 @@ pub(super) fn verify_grok_cross_vendor_isolation(grok_dir: &Path) -> Result<(), 
     Ok(())
 }
 
+// 移除托管 Grok 命令；hooks 消失时尽力删除文件，否则保留其余配置。
 pub(super) fn uninstall_grok_hooks(grok_dir: &Path) -> Result<(), String> {
     let hooks_path = grok_hooks_path(grok_dir);
     if !live_is_file(&hooks_path) {
@@ -146,6 +154,7 @@ pub(super) fn uninstall_grok_hooks(grok_dir: &Path) -> Result<(), String> {
     write_json(&hooks_path, &settings)
 }
 
+// 移除所选 Grok 模块，保留其余命令并在 hooks 消失时尝试删除文件。
 pub(super) fn uninstall_grok_hook_module(
     grok_dir: &Path,
     module: ClaudeHookModule,
@@ -164,6 +173,7 @@ pub(super) fn uninstall_grok_hook_module(
     write_json(&hooks_path, &settings)
 }
 
+// 逐行设置 Grok 的 Claude、Cursor Hook 兼容开关为 false 并写回。
 pub(super) fn disable_grok_cross_vendor_hooks(grok_dir: &Path) -> Result<(), String> {
     let config_path = grok_config_path(grok_dir);
     let content = read_text_if_exists(&config_path)?.unwrap_or_default();
@@ -177,6 +187,7 @@ pub(super) fn disable_grok_cross_vendor_hooks(grok_dir: &Path) -> Result<(), Str
 
 /// Set `key = bool` under a dotted table header like `compat.claude`.
 /// Creates the table if missing. Preserves unrelated lines.
+// 按精确表头文本修改首个匹配布尔赋值，缺项或缺表时插入。
 pub(super) fn set_toml_table_bool(content: &str, table: &str, key: &str, value: bool) -> String {
     let header = format!("[{table}]");
     let value_text = if value { "true" } else { "false" };
@@ -218,6 +229,7 @@ pub(super) fn set_toml_table_bool(content: &str, table: &str, key: &str, value: 
     format_toml_lines(&lines)
 }
 
+// 以 LF 合并各行并确保结果以换行结束。
 pub(super) fn format_toml_lines(lines: &[String]) -> String {
     let mut out = lines.join("\n");
     if !out.ends_with('\n') {
@@ -226,6 +238,7 @@ pub(super) fn format_toml_lines(lines: &[String]) -> String {
     out
 }
 
+// 读取配置并检查两类兼容 Hook 开关是否都明确为 false。
 pub(super) fn grok_cross_vendor_hooks_disabled(config_path: &Path) -> Result<bool, String> {
     let Some(content) = read_text_if_exists(config_path)? else {
         return Ok(false);
@@ -236,6 +249,7 @@ pub(super) fn grok_cross_vendor_hooks_disabled(config_path: &Path) -> Result<boo
     )
 }
 
+// 在精确表头范围内读取首个指定键的布尔值，忽略值后的注释。
 pub(super) fn toml_table_bool(content: &str, table: &str, key: &str) -> Option<bool> {
     let header = format!("[{table}]");
     let mut in_table = false;
@@ -262,6 +276,7 @@ pub(super) fn toml_table_bool(content: &str, table: &str, key: &str) -> Option<b
     None
 }
 
+// 为指定来源添加模块事件，包含审批及子 Agent 的原生事件映射。
 pub(super) fn apply_named_hook_module(
     settings: &mut Value,
     exe: &str,
@@ -330,6 +345,7 @@ pub(super) fn apply_named_hook_module(
     }
 }
 
+// 按模块移除对应来源的桥接命令，attention 同时清理旧 Notification 注册。
 pub(super) fn remove_named_hook_module(
     settings: &mut Value,
     source: &str,
@@ -366,6 +382,7 @@ pub(super) fn remove_named_hook_module(
     }
 }
 
+// 检查 Grok 精确命令和兼容隔离开关，汇总各模块安装状态。
 pub(super) fn build_grok_status(
     grok_dir: Option<PathBuf>,
 ) -> Result<ToolHookSettingsStatus, String> {

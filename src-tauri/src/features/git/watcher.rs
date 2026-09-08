@@ -37,6 +37,7 @@ pub struct GitWatcherBridge {
 }
 
 impl GitWatcherBridge {
+    // 创建尚未绑定项目监听器的 Git watcher 桥接状态。
     pub fn new() -> Self {
         Self {
             state: Mutex::new(None),
@@ -45,6 +46,7 @@ impl GitWatcherBridge {
 
     /// 开始监听指定项目目录。替换上一个 watcher（单 watcher）。
     /// 路径不可信：为空/不存在返回稳定错误；watcher 初始化失败返回错误供前端降级。
+    // 拒绝缺失或 WSL 路径，替换旧监听器并去抖推送相关 Git 变化。
     pub fn start(&self, app_handle: AppHandle, project_path: String) -> Result<(), String> {
         let root = Path::new(&project_path);
         if project_path.is_empty() {
@@ -104,6 +106,7 @@ impl GitWatcherBridge {
     }
 
     /// 停止监听并释放 watcher。
+    // 清空桥接状态并释放当前项目的文件监听器。
     pub fn stop(&self) -> Result<(), String> {
         let mut guard = self.state.lock().map_err(|_| "lock_poisoned".to_string())?;
         if let Some(s) = guard.take() {
@@ -117,6 +120,7 @@ impl GitWatcherBridge {
 /// - 工作区文件变化：相关（排除 `*.lock` 临时锁文件）。
 /// - 任意层级的 `.git/index`、`.git/HEAD`：相关（根仓库或嵌套子仓库的暂存/提交/切分支）。
 /// - `.git/` 下其它（objects/logs/refs 锁等）：忽略，避免子仓库对象写入触发刷新风暴。
+// 按路径文本过滤锁文件及 .git 噪声，仅保留 Git index、HEAD 与普通工作文件。
 fn is_relevant(root: &str, path: &Path) -> bool {
     let path_str = path.to_string_lossy().replace('\\', "/");
     let root_norm = root.replace('\\', "/");
@@ -151,18 +155,21 @@ mod tests {
     const ROOT: &str = "F:/proj";
 
     #[test]
+    // 验证两种分隔符表示的工作区文件都会触发刷新。
     fn worktree_file_is_relevant() {
         assert!(is_relevant(ROOT, Path::new("F:/proj/src/main.rs")));
         assert!(is_relevant(ROOT, Path::new("F:\\proj\\src\\main.rs")));
     }
 
     #[test]
+    // 验证根仓库 index 与 HEAD 变化需要刷新。
     fn git_index_and_head_relevant() {
         assert!(is_relevant(ROOT, Path::new("F:/proj/.git/index")));
         assert!(is_relevant(ROOT, Path::new("F:/proj/.git/HEAD")));
     }
 
     #[test]
+    // 验证根仓库锁文件、对象、日志及 .git 本身被忽略。
     fn git_noise_ignored() {
         assert!(!is_relevant(ROOT, Path::new("F:/proj/.git/index.lock")));
         assert!(!is_relevant(ROOT, Path::new("F:/proj/.git/objects/ab/cd")));
@@ -171,6 +178,7 @@ mod tests {
     }
 
     #[test]
+    // 验证多级嵌套仓库的 index 与 HEAD 仍会触发刷新。
     fn nested_git_index_and_head_relevant() {
         assert!(is_relevant(ROOT, Path::new("F:/proj/sub/.git/index")));
         assert!(is_relevant(ROOT, Path::new("F:/proj/sub/.git/HEAD")));
@@ -181,6 +189,7 @@ mod tests {
     }
 
     #[test]
+    // 验证嵌套仓库对象、锁、日志和 .git 本身被过滤。
     fn nested_git_noise_ignored() {
         assert!(!is_relevant(ROOT, Path::new("F:/proj/sub/.git/objects/ab")));
         assert!(!is_relevant(ROOT, Path::new("F:/proj/sub/.git/index.lock")));
@@ -189,6 +198,7 @@ mod tests {
     }
 
     #[test]
+    // 验证工作区内 .lock 文件不会触发 Git 刷新。
     fn worktree_lock_ignored() {
         assert!(!is_relevant(ROOT, Path::new("F:/proj/build/cache.lock")));
     }

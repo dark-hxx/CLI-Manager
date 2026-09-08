@@ -2,8 +2,10 @@ import path from "node:path";
 
 // Mask Rust comments and literals before collecting crate paths. Raw embedded scripts and
 // nested block comments must not invent dependencies. Lifetimes are not string literals.
+// 屏蔽 Rust 注释和字面量以免误报依赖，保留换行及生命周期语法。
 export function maskRustNonCode(source) {
   let result = "", cursor = 0;
+  // 用空格替换非换行字符，使被屏蔽片段的位置与行号保持稳定。
   const blank = text => text.replace(/[^\r\n]/g, " ");
   while (cursor < source.length) {
     const start = cursor;
@@ -41,9 +43,11 @@ export function maskRustNonCode(source) {
   return result;
 }
 
+// 在屏蔽后的代码中提取 crate 路径，展开分组 use 并去重。
 export function rustReferences(source) {
   const tokens = maskRustNonCode(source).match(/[A-Za-z_]\w*|::|[{},;]/g) ?? [];
   const result = new Set();
+  // 递归读取路径及花括号分组，保留已有前缀并跳过 self 路径段。
   function readPath(position, prefix) {
     const parts = [...prefix];
     let cursor = position;
@@ -74,6 +78,7 @@ export function rustReferences(source) {
   return [...result];
 }
 
+// 从 path 模块声明建立兼容命名空间到物理文件的映射，并补应用入口。
 export function rustFacadeRoutes(registry, source) {
   const prefix = registry.endsWith("commands/mod.rs") ? "crate::commands" : "crate";
   const routes = [];
@@ -84,9 +89,12 @@ export function rustFacadeRoutes(registry, source) {
   if (prefix === "crate" && /\bmod app;/.test(maskRustNonCode(source))) {
     routes.push({ prefix: "crate::app", target: "src-tauri/src/app/mod.rs" });
   }
+  // 按前缀长度降序排列，避免较短注册入口抢先匹配。
   return routes.sort((a,b) => b.prefix.length - a.prefix.length);
 }
 
+// 返回首个完全匹配或命名空间前缀匹配的 Rust 注册路由。
 export function resolveRustFacade(specifier, routes) {
+  // 匹配完整路径段边界，而非任意字符串前缀。
   return routes.find(route => specifier === route.prefix || specifier.startsWith(`${route.prefix}::`));
 }

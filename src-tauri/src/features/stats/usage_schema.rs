@@ -2,6 +2,7 @@ use sha2::{Digest, Sha384};
 use sqlx::{Connection, Row, SqliteConnection};
 use std::time::Duration;
 
+// 查询 SQLite 中指定类型和名称的结构对象是否存在。
 async fn sqlite_object_exists(
     connection: &mut SqliteConnection,
     object_type: &str,
@@ -19,6 +20,7 @@ async fn sqlite_object_exists(
     .map_err(|err| format!("usage_schema_object_inspect_failed:{object_type}:{name}:{err}"))
 }
 
+// 检查 usage_records 是否已包含错误详情列。
 async fn usage_error_detail_column_exists(
     connection: &mut SqliteConnection,
 ) -> Result<bool, String> {
@@ -31,6 +33,7 @@ async fn usage_error_detail_column_exists(
     Ok(column_count != 0)
 }
 
+// 核对错误详情迁移标记的成功状态、描述和 SQL 摘要。
 async fn usage_error_detail_marker_matches(
     connection: &mut SqliteConnection,
 ) -> Result<bool, String> {
@@ -63,6 +66,7 @@ async fn usage_error_detail_marker_matches(
     )
 }
 
+// 检查统一用量视图是否同时暴露项目路径和错误详情。
 async fn usage_view_has_required_columns(
     connection: &mut SqliteConnection,
 ) -> Result<bool, String> {
@@ -77,6 +81,7 @@ async fn usage_view_has_required_columns(
     Ok(column_count == 2)
 }
 
+// 逐项验证用量表、视图、索引及错误详情迁移标记是否齐备。
 async fn usage_schema_is_ready(connection: &mut SqliteConnection) -> Result<bool, String> {
     const REQUIRED_OBJECTS: &[(&str, &str)] = &[
         ("table", "request_logs"),
@@ -106,6 +111,7 @@ async fn usage_schema_is_ready(connection: &mut SqliteConnection) -> Result<bool
         && usage_error_detail_marker_matches(connection).await?)
 }
 
+// 依次执行按分号拆分的内置用量结构 SQL。
 async fn apply_usage_schema_sql(
     connection: &mut SqliteConnection,
     name: &str,
@@ -124,6 +130,7 @@ async fn apply_usage_schema_sql(
     Ok(())
 }
 
+// 仅在缺失时为用量记录添加可空错误详情列。
 async fn ensure_usage_error_detail_column(connection: &mut SqliteConnection) -> Result<(), String> {
     if !usage_error_detail_column_exists(connection).await? {
         sqlx::query("ALTER TABLE usage_records ADD COLUMN error_detail TEXT")
@@ -134,6 +141,7 @@ async fn ensure_usage_error_detail_column(connection: &mut SqliteConnection) -> 
     Ok(())
 }
 
+// 确保迁移记录表存在，并写入与正式迁移一致的错误详情标记。
 async fn mark_usage_error_detail_migration(
     connection: &mut SqliteConnection,
 ) -> Result<(), String> {
@@ -171,6 +179,7 @@ async fn mark_usage_error_detail_migration(
     Ok(())
 }
 
+// 在立即事务中补齐错误详情列、视图和迁移标记，失败时回滚。
 async fn ensure_usage_error_detail_schema(connection: &mut SqliteConnection) -> Result<(), String> {
     if usage_error_detail_column_exists(connection).await?
         && usage_view_has_required_columns(connection).await?
@@ -212,6 +221,7 @@ async fn ensure_usage_error_detail_schema(connection: &mut SqliteConnection) -> 
     }
 }
 
+// 快速检查就绪状态，必要时依次引导用量结构并补齐错误详情迁移。
 pub(crate) async fn ensure_usage_schema(connection: &mut SqliteConnection) -> Result<(), String> {
     if usage_schema_is_ready(connection).await? {
         return Ok(());
@@ -247,6 +257,7 @@ pub(crate) async fn ensure_usage_schema(connection: &mut SqliteConnection) -> Re
     ensure_usage_error_detail_schema(connection).await
 }
 
+// 打开可创建的应用用量数据库，并确保所需结构已经就绪。
 pub(crate) async fn open_usage_database() -> Result<SqliteConnection, String> {
     let path = crate::app_paths::db_path()?;
     let options = sqlx::sqlite::SqliteConnectOptions::new()
@@ -270,6 +281,7 @@ mod tests {
     use std::borrow::Cow;
     use tauri_plugin_sql::{Migration, MigrationKind};
 
+    // 将 Tauri SQL 迁移列表转换为测试用 SQLx 迁移器。
     fn sqlx_migrator(migrations: Vec<Migration>) -> Migrator {
         let migrations = migrations
             .into_iter()
@@ -296,6 +308,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证旧用量结构重复引导只添加一次错误详情列及正确迁移标记。
     async fn bootstrap_adds_route_error_detail_once_for_legacy_usage_schema() {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::raw_sql(crate::MIGRATION_CREATE_REQUEST_LOGS_SQL)
@@ -348,6 +361,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证引导标记允许 SQLx 跳过同一 v33 迁移。
     async fn bootstrap_marker_allows_sqlx_to_skip_the_same_v33_migration() {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::raw_sql(crate::MIGRATION_CREATE_REQUEST_LOGS_SQL)
@@ -370,6 +384,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证引导后的数据库兼容完整插件迁移列表。
     async fn bootstrap_marker_is_compatible_with_the_full_plugin_migration_list() {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::raw_sql(crate::MIGRATION_CREATE_REQUEST_LOGS_SQL)
@@ -389,6 +404,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证结构齐备时只读连接也能通过引导检查。
     async fn ready_schema_bootstrap_succeeds_on_read_only_connection() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("usage.db");
@@ -408,6 +424,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证引导恢复缺失索引后可在只读查询模式下重复调用。
     async fn bootstrap_restores_missing_required_indexes() {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         ensure_usage_schema(&mut connection).await.unwrap();
@@ -441,6 +458,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证引导修复错误详情迁移中陈旧的描述与摘要。
     async fn bootstrap_repairs_stale_usage_error_detail_marker() {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         ensure_usage_schema(&mut connection).await.unwrap();

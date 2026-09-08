@@ -65,6 +65,7 @@ struct CancelledRequests {
 }
 
 impl CancelledRequests {
+    // 记录新的取消 ID 并按插入顺序淘汰超过 1024 项的旧记录；重复 ID 返回 false 且不刷新顺序。
     fn insert(&mut self, request_id: &str) -> bool {
         if !self.ids.insert(request_id.to_string()) {
             return false;
@@ -78,6 +79,7 @@ impl CancelledRequests {
         true
     }
 
+    // 消费一次取消标记，并同步清除顺序队列中的同 ID 项，避免重新插入后被旧条目淘汰。
     fn take(&mut self, request_id: &str) -> bool {
         if !self.ids.remove(request_id) {
             return false;
@@ -89,21 +91,25 @@ impl CancelledRequests {
 
 #[cfg(unix)]
 impl Drop for HookBridgeBinding {
+    // 释放 Unix Hook 绑定时尽力删除 socket 和 PID 文件，清理错误不传播。
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket_path);
         let _ = fs::remove_file(&self.pid_path);
     }
 }
 
+// 要求绑定值非空、最多 256 字节，且不含控制字符或路径分隔符；不要求 UUID。
 fn valid_binding_value(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.contains(['\0', '\r', '\n', '/', '\\'])
 }
 
+// 要求请求 ID 非空、最多 256 字节且无 NUL/回车/换行；不校验 UUID 或全局唯一性。
 fn valid_request_id(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.contains(['\0', '\r', '\n'])
 }
 
 #[cfg(unix)]
+// 读取 PID 后仅通过 /proc 项是否存在判断存活；无 /proc、读取失败或无效 PID 均返回 false。
 fn process_alive(pid_path: &Path) -> bool {
     let Some(pid) = fs::read_to_string(pid_path)
         .ok()
@@ -114,6 +120,8 @@ fn process_alive(pid_path: &Path) -> bool {
     Path::new("/proc").is_dir() && Path::new("/proc").join(pid.to_string()).exists()
 }
 
+// 校验主机、客户端和安装 UUID，并要求与本地安装记录一致，生成隔离的 Hook namespace。
+// Unix 另建受限权限 socket/PID 文件；完成构造前发生错误时，没有统一清理已创建路径的守卫。
 fn bind_hook_bridge(payload: &Value) -> Result<HookBridgeBinding, String> {
     let client_instance_id = payload
         .get("clientInstanceId")
@@ -181,6 +189,7 @@ fn bind_hook_bridge(payload: &Value) -> Result<HookBridgeBinding, String> {
     })
 }
 
+// Unix 上循环消费通知数据报直到无数据或出错，不解析序号；非 Unix 不执行操作。
 fn drain_hook_notifications(binding: &HookBridgeBinding) {
     #[cfg(unix)]
     loop {
@@ -195,6 +204,8 @@ fn drain_hook_notifications(binding: &HookBridgeBinding) {
     let _ = binding;
 }
 
+// Unix 尝试临时切到带超时的阻塞接收，随后恢复非阻塞并排空通知；配置及接收错误均忽略。
+// 非 Unix 直接休眠指定时长；实际 Hook 事件仍由后续 spool 读取获取。
 fn wait_for_hook_notification(binding: &HookBridgeBinding, wait: std::time::Duration) {
     #[cfg(unix)]
     {
@@ -213,11 +224,14 @@ fn wait_for_hook_notification(binding: &HookBridgeBinding, wait: std::time::Dura
     }
 }
 
+// 输出协议主版本和调用方 nonce 的单行前导并刷新；此函数不校验 nonce 文本。
 pub fn write_preamble(writer: &mut impl Write, nonce: &str) -> io::Result<()> {
     writeln!(writer, "CLI_MANAGER_SSH_AGENT/{PROTOCOL_MAJOR} {nonce}")?;
     writer.flush()
 }
 
+// 先读四字节大端长度并限制为非零且不超过 1 MiB，再精确读取 JSON 客户端帧。
+// 未开始新帧时的 EOF 返回 None；截断长度或载荷返回错误，身份字段留给运行循环校验。
 pub fn read_frame(reader: &mut impl Read) -> Result<Option<ClientFrame>, String> {
     let mut length = [0u8; 4];
     match reader.read(&mut length[..1]) {
@@ -242,6 +256,7 @@ pub fn read_frame(reader: &mut impl Read) -> Result<Option<ClientFrame>, String>
         .map_err(|error| format!("frame_json_invalid:{error}"))
 }
 
+// 序列化服务端帧，检查 1 MiB 上限后写大端长度、JSON 并刷新；写入失败不回滚已发字节。
 pub fn write_frame(writer: &mut impl Write, frame: &ServerFrame) -> Result<(), String> {
     let payload =
         serde_json::to_vec(frame).map_err(|error| format!("frame_json_encode_failed:{error}"))?;
@@ -255,6 +270,7 @@ pub fn write_frame(writer: &mut impl Write, frame: &ServerFrame) -> Result<(), S
         .map_err(|error| format!("frame_write_failed:{error}"))
 }
 
+// 组装请求 ID、响应类型和 JSON 载荷，不执行额外身份或大小校验。
 fn response(request_id: String, kind: &str, payload: Value) -> ServerFrame {
     ServerFrame {
         request_id,
@@ -263,6 +279,7 @@ fn response(request_id: String, kind: &str, payload: Value) -> ServerFrame {
     }
 }
 
+// 返回编译时固定的 bridge 能力列表，不实时探测远端工具或当前请求权限。
 fn capabilities() -> Value {
     json!([
         "bridgeProtocol",
@@ -300,6 +317,7 @@ fn capabilities() -> Value {
     ])
 }
 
+// 按最多 256 KiB 并沿 UTF-8 字符边界切分已序列化文本，返回借用切片；空输入无分片。
 fn history_detail_chunks(serialized: &str) -> Vec<&str> {
     let mut chunks = Vec::new();
     let mut start = 0;
@@ -316,6 +334,7 @@ fn history_detail_chunks(serialized: &str) -> Vec<&str> {
     chunks
 }
 
+// 按顺序发送带 index/total 的历史详情文本分片，每帧单独校验和刷新；失败时可能已发送前缀。
 fn write_history_detail_chunks(
     writer: &mut impl Write,
     request_id: &str,
@@ -336,6 +355,7 @@ fn write_history_detail_chunks(
     Ok(())
 }
 
+// 把已整体读取的文件按 512 KiB 编码为 Base64 帧并附元数据；空文件也发送一个空分片。
 fn write_file_get_chunks(
     writer: &mut impl Write,
     request_id: &str,
@@ -367,6 +387,7 @@ fn write_file_get_chunks(
     Ok(())
 }
 
+// 处理无状态 hello、ping 和 shutdown，其他类型返回不支持；此辅助入口本身不建立 Hook 绑定。
 pub fn handle_frame(frame: ClientFrame) -> (ServerFrame, bool) {
     let ClientFrame {
         request_id,
@@ -402,6 +423,9 @@ pub fn handle_frame(frame: ClientFrame) -> (ServerFrame, bool) {
     }
 }
 
+// 写前导后串行读取并分派历史、能力、文件、Git 和 Hook 请求，保留本连接的取消标记与上传状态。
+// 取消只拦截后续同 ID 非 cancel 请求，不中断正在执行的操作；仅 Hook drain/ack 显式要求先 hello 绑定。
+// 请求业务错误通常写入响应继续处理，帧读写或部分布局错误结束循环；shutdown 响应写出后退出。
 pub fn run_bridge(
     reader: &mut impl Read,
     writer: &mut impl Write,
@@ -999,6 +1023,7 @@ mod tests {
     use serde_json::json;
     use std::io::Cursor;
 
+    // 为测试客户端帧编码 JSON 与四字节大端长度，不应用生产长度限制。
     fn encoded_client_frame(frame: &ClientFrame) -> Vec<u8> {
         let payload = serde_json::to_vec(frame).unwrap();
         let mut bytes = Vec::with_capacity(payload.len() + 4);
@@ -1007,6 +1032,7 @@ mod tests {
         bytes
     }
 
+    // 跳过测试输出的单行前导，依长度顺序解码所有服务端帧；畸形输出令测试失败。
     fn decoded_server_frames(output: &[u8]) -> Vec<ServerFrame> {
         let preamble_end = output.iter().position(|byte| *byte == b'\n').unwrap() + 1;
         let mut reader = Cursor::new(&output[preamble_end..]);
@@ -1022,6 +1048,7 @@ mod tests {
     }
 
     impl serde::Serialize for ClientFrame {
+        // 仅在测试中按 requestId、kind、payload 字段序列化客户端帧，保持生产接收格式。
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
         where
             S: serde::Serializer,
@@ -1036,6 +1063,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无状态 ping 返回 pong 并保留载荷，不触发关闭。
     fn ping_round_trips_payload() {
         let (frame, shutdown) = handle_frame(ClientFrame {
             request_id: "request-1".into(),
@@ -1048,6 +1076,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 hello 能力列表包含约定名称；只检查能力声明，不证明每项运行时保证。
     fn generic_capabilities_advertise_runtime_guards() {
         let (frame, shutdown) = handle_frame(ClientFrame {
             request_id: "hello".into(),
@@ -1095,6 +1124,7 @@ mod tests {
     }
 
     #[test]
+    // 用内存帧验证 bridge 输出精确前导，并在 shutdown 时返回 accepted 响应。
     fn bridge_writes_preamble_and_shutdown_response() {
         let input = encoded_client_frame(&ClientFrame {
             request_id: "request-2".into(),
@@ -1120,6 +1150,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺少必需字段的恢复预检请求返回结构错误，并可继续处理 shutdown。
     fn resume_preflight_rejects_unstructured_requests() {
         let mut input = encoded_client_frame(&ClientFrame {
             request_id: "resume-1".into(),
@@ -1139,6 +1170,7 @@ mod tests {
     }
 
     #[test]
+    // 在内存输入中先取消再提交目标 ping，验证目标被拒绝且后续 shutdown 正常响应。
     fn cancel_is_bounded_and_rejects_the_target_request() {
         let mut input = encoded_client_frame(&ClientFrame {
             request_id: "cancel-1".into(),
@@ -1167,6 +1199,7 @@ mod tests {
     }
 
     #[test]
+    // 验证取消标记被消费后重新加入，不会因旧队列条目在容量边界被提前淘汰。
     fn consumed_cancel_id_can_be_reinserted_without_stale_eviction() {
         let mut cancelled = CancelledRequests::default();
         assert!(cancelled.insert("target"));
@@ -1179,12 +1212,14 @@ mod tests {
     }
 
     #[test]
+    // 仅提供超限长度前缀，验证读取器在分配载荷前拒绝该帧。
     fn oversized_frame_is_rejected() {
         let mut input = Cursor::new(((super::MAX_FRAME_BYTES as u32) + 1).to_be_bytes().to_vec());
         assert_eq!(read_frame(&mut input).unwrap_err(), "frame_size_invalid");
     }
 
     #[test]
+    // 验证 512 KiB 附件块经 Base64 和 JSON 包装后仍不超过单帧上限。
     fn maximum_attachment_chunk_fits_the_bridge_frame() {
         let frame = ClientFrame {
             request_id: "attachment-1".into(),
@@ -1199,6 +1234,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空输入正常结束，而不足四字节的长度前缀产生读取错误。
     fn clean_eof_and_truncated_length_are_distinct() {
         assert!(read_frame(&mut Cursor::new(Vec::<u8>::new()))
             .unwrap()
@@ -1208,6 +1244,7 @@ mod tests {
     }
 
     #[test]
+    // 验证服务端帧的大端长度前缀等于实际 JSON 载荷字节数。
     fn server_frame_uses_length_prefix() {
         let mut output = Vec::new();
         write_frame(
@@ -1224,6 +1261,7 @@ mod tests {
     }
 
     #[test]
+    // 用含引号、反斜杠和中文的大文本验证分片帧大小、索引、总数及无损重组。
     fn history_detail_chunks_round_trip_above_the_frame_limit() {
         let serialized = serde_json::to_string(&json!({
             "messages": [{ "content": "\\\"中".repeat(MAX_FRAME_BYTES) }]

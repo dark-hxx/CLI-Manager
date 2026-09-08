@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
+// 生成项目清单与受控切换的 PowerShell 命令配置及说明。
 pub(super) fn build_remote_project_commands(
     profile: &CcConnectProfile,
     project_list_path: &Path,
@@ -59,26 +60,32 @@ pub(super) fn build_remote_project_commands(
     ))
 }
 
+// 将字符串编码为 PowerShell 单引号字面量。
 pub(super) fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+// 使用项目标识 SHA-256 的前 32 位作为切换令牌。
 pub(super) fn project_switch_token(project_id: &str) -> String {
     format!("{:x}", Sha256::digest(project_id.as_bytes()))[..32].to_string()
 }
 
+// 返回托管项目清单文本路径。
 pub(super) fn project_list_path() -> Result<PathBuf, String> {
     Ok(remote_manager_dir()?.join(PROJECT_LIST_FILE_NAME))
 }
 
+// 返回托管项目切换脚本路径。
 pub(super) fn project_switch_script_path() -> Result<PathBuf, String> {
     Ok(remote_manager_dir()?.join(PROJECT_SWITCH_SCRIPT_FILE_NAME))
 }
 
+// 检查切换标识为 32 位十六进制字符串。
 pub(super) fn is_switch_identifier(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
+// 验证请求标识后构造隔离的切换结果文件路径。
 pub(super) fn switch_result_path(request_id: &str) -> Result<PathBuf, String> {
     if !is_switch_identifier(request_id) {
         return Err("invalid CLI-Manager project switch request ID".to_string());
@@ -92,6 +99,7 @@ pub(super) struct RemoteSwitchRequest {
     pub(super) request_id: String,
 }
 
+// 提取首个切换启动参数，旧格式复用令牌为请求标识。
 pub(super) fn remote_switch_request_from_args(args: &[String]) -> Option<RemoteSwitchRequest> {
     args.iter().find_map(|arg| {
         let payload = arg.strip_prefix(REMOTE_SWITCH_ARG_PREFIX)?;
@@ -103,10 +111,12 @@ pub(super) fn remote_switch_request_from_args(args: &[String]) -> Option<RemoteS
     })
 }
 
+// 将 UTF-8 字符串编码为标准 Base64。
 pub(super) fn base64_utf8(value: &str) -> String {
     BASE64_STANDARD.encode(value.as_bytes())
 }
 
+// 生成校验项目序号、启动应用并等候结果的 PowerShell 脚本。
 pub(super) fn render_project_switch_script(
     profile: &CcConnectProfile,
     registered_projects: &[RegisteredProject],
@@ -134,6 +144,7 @@ pub(super) fn render_project_switch_script(
     let invalid_message = base64_utf8(invalid_message);
     let range_message = base64_utf8(range_message);
     let timeout_message = base64_utf8(timeout_message);
+    // 内嵌 Decode-Base64Utf8：将 Base64 字节解码为 UTF-8 文本，不执行解码内容；非法 Base64 抛错，参数调用处捕获并提示。
     Ok(format!(
         r#"$ErrorActionPreference = 'Stop'
 $OutputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
@@ -202,6 +213,7 @@ if (Test-Path -LiteralPath $result) {{
     ))
 }
 
+// 按分组渲染注册项目清单及当前项目、本地路径可用性提示。
 pub(super) fn render_project_list(
     profile: &CcConnectProfile,
     registered_projects: &[RegisteredProject],
@@ -293,6 +305,7 @@ pub(super) fn render_project_list(
     output
 }
 
+// 返回 Agent 的用户可读名称。
 pub(super) fn agent_display_name(agent: CcConnectAgent) -> &'static str {
     match agent {
         CcConnectAgent::Claude => "Claude Code",
@@ -302,6 +315,7 @@ pub(super) fn agent_display_name(agent: CcConnectAgent) -> &'static str {
     }
 }
 
+// 根据语言、Agent 及作用域生成 Provider 展示说明。
 pub(super) fn provider_display_value(
     language: CcConnectLanguage,
     project: &RegisteredProject,
@@ -334,6 +348,7 @@ pub(super) fn provider_display_value(
     }
 }
 
+// 组合项目名称、Agent 及 Provider 的单行摘要。
 pub(super) fn project_summary(language: CcConnectLanguage, project: &RegisteredProject) -> String {
     format!(
         "{} · {} · {}",
@@ -343,6 +358,7 @@ pub(super) fn project_summary(language: CcConnectLanguage, project: &RegisteredP
     )
 }
 
+// 替换换行并去除首尾空白以生成单行显示文本。
 pub(super) fn single_line(value: &str) -> String {
     value.replace(['\r', '\n'], " ").trim().to_string()
 }

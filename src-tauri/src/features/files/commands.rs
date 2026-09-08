@@ -65,14 +65,12 @@ pub struct FileEntry {
     pub size_bytes: u64,
     pub modified_ms: Option<u64>,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TextFilePayload {
     pub content: String,
     pub size_bytes: u64,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTextFilePayload {
@@ -82,7 +80,6 @@ pub struct ProjectTextFilePayload {
     pub has_bom: bool,
     pub guessed: bool,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ImageFilePayload {
@@ -90,7 +87,6 @@ pub struct ImageFilePayload {
     pub mime_type: String,
     pub size_bytes: u64,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ContentSearchMatch {
@@ -101,7 +97,6 @@ pub struct ContentSearchMatch {
     pub before: Vec<String>,
     pub after: Vec<String>,
 }
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardImageAttachments {
@@ -110,26 +105,26 @@ pub struct ClipboardImageAttachments {
     pub rejected_count: usize,
     pub rejection_code: Option<String>,
 }
-
 /// 读取系统剪贴板中的 `CF_HDROP` 文件路径列表（Windows 资源管理器复制文件时写入的格式）。
 /// WebView2 的 ClipboardEvent 拿不到该格式，需走原生 Win32 API。非 Windows 平台返回空列表。
 #[tauri::command]
+// 在线程池读取系统剪贴板中的文件路径列表。
 pub async fn clipboard_read_file_paths() -> Result<Vec<String>, String> {
     tokio::task::spawn_blocking(read_clipboard_file_paths)
         .await
         .map_err(|err| err.to_string())?
 }
-
 /// Convert image files currently present in the Windows clipboard to PNG attachments.
 /// The command intentionally accepts no paths from the WebView: it reads CF_HDROP itself
 /// so a compromised renderer cannot turn this into an arbitrary file reader.
 #[tauri::command]
+// 从原生剪贴板取得图片文件并转换为应用 PNG 附件，不接受前端文件路径。
 pub async fn clipboard_attach_image_files() -> Result<ClipboardImageAttachments, String> {
     tokio::task::spawn_blocking(attach_clipboard_image_files)
         .await
         .map_err(|err| err.to_string())?
 }
-
+// 处理剪贴板中的前八个文件，收集生成附件及首个拒绝原因。
 fn attach_clipboard_image_files() -> Result<ClipboardImageAttachments, String> {
     let file_paths = read_clipboard_file_paths()?;
     if file_paths.is_empty() {
@@ -162,7 +157,7 @@ fn attach_clipboard_image_files() -> Result<ClipboardImageAttachments, String> {
         rejection_code,
     })
 }
-
+// 拒绝链接和超限图片，应用方向信息并按需缩小后写入 PNG 附件。
 fn convert_clipboard_image_file(source: &Path, attachments_dir: &Path) -> Result<PathBuf, String> {
     let metadata = fs::symlink_metadata(source).map_err(|_| "clipboard_image_unavailable")?;
     if is_symlink_or_reparse(&metadata) || !metadata.is_file() {
@@ -219,7 +214,7 @@ fn convert_clipboard_image_file(source: &Path, attachments_dir: &Path) -> Result
     fs::write(&target, encoded).map_err(|_| "write_file_failed")?;
     Ok(target)
 }
-
+// 按扩展名判断是否属于可转换的常见剪贴板图片格式。
 fn is_clipboard_image_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -242,8 +237,8 @@ fn is_clipboard_image_extension(path: &Path) -> bool {
         })
         .unwrap_or(false)
 }
-
 #[cfg(target_os = "windows")]
+// 读取 Windows CF_HDROP 文件列表，剪贴板暂不可用时返回空列表。
 fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::System::DataExchange::{
@@ -261,6 +256,7 @@ fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
 
     struct ClipboardGuard;
     impl Drop for ClipboardGuard {
+        // 退出作用域时关闭已打开的 Windows 剪贴板。
         fn drop(&mut self) {
             unsafe {
                 CloseClipboard();
@@ -304,26 +300,26 @@ fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     }
     Ok(paths)
 }
-
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台返回空剪贴板文件列表。
 fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
     Ok(Vec::new())
 }
-
 #[tauri::command]
+// 在线程池按输入顺序批量检查本地或 WSL 路径是否存在。
 pub async fn check_paths_exist(paths: Vec<String>) -> Result<Vec<bool>, String> {
     tokio::task::spawn_blocking(move || paths.iter().map(|p| path_exists(p)).collect())
         .await
         .map_err(|e| e.to_string())
 }
-
 #[tauri::command]
+// 在线程池查询路径属于文件、目录还是缺失。
 pub async fn file_get_path_kind(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || path_kind(&path))
         .await
         .map_err(|e| e.to_string())
 }
-
+// 按本地元数据或 WSL 检查结果返回路径类型。
 fn path_kind(path: &str) -> String {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
         return wsl_path_kind(&distro, &linux_path);
@@ -335,14 +331,14 @@ fn path_kind(path: &str) -> String {
     }
     .into()
 }
-
+// 按本地或 WSL 路径路由存在性检查。
 fn path_exists(path: &str) -> bool {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(path) {
         return wsl_path_exists(&distro, &linux_path);
     }
     Path::new(path).exists()
 }
-
+// 启动 WSL shell 检查节点或符号链接是否存在，失败视为不存在。
 fn wsl_path_exists(distro: &str, linux_path: &str) -> bool {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let args = wsl_path_exists_args(distro, linux_path);
@@ -352,7 +348,7 @@ fn wsl_path_exists(distro: &str, linux_path: &str) -> bool {
         .map(|status| status.success())
         .unwrap_or(false)
 }
-
+// 将 WSL 路径作为位置参数传入节点存在性检查脚本。
 fn wsl_path_exists_args(distro: &str, linux_path: &str) -> Vec<String> {
     vec![
         "-d".into(),
@@ -365,7 +361,7 @@ fn wsl_path_exists_args(distro: &str, linux_path: &str) -> Vec<String> {
         linux_path.into(),
     ]
 }
-
+// 启动 WSL shell 查询路径类型，失败或异常输出归为缺失。
 fn wsl_path_kind(distro: &str, linux_path: &str) -> String {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let output = silent_command(&wsl_exe.to_string_lossy())
@@ -384,7 +380,7 @@ fn wsl_path_kind(distro: &str, linux_path: &str) -> String {
     }
     .into()
 }
-
+// 构造通过位置参数读取路径类型的 WSL shell 参数。
 fn wsl_path_kind_args(distro: &str, linux_path: &str) -> Vec<String> {
     vec![
         "-d".into(),
@@ -397,8 +393,8 @@ fn wsl_path_kind_args(distro: &str, linux_path: &str) -> Vec<String> {
         linux_path.into(),
     ]
 }
-
 #[tauri::command]
+// 为指定项目启动文件变化监听。
 pub async fn file_watch_start(
     app_handle: AppHandle,
     bridge: State<'_, FileWatcherBridge>,
@@ -406,16 +402,16 @@ pub async fn file_watch_start(
 ) -> Result<(), String> {
     bridge.start(app_handle, project_path)
 }
-
 #[tauri::command]
+// 停止指定项目的文件变化监听。
 pub async fn file_watch_stop(
     bridge: State<'_, FileWatcherBridge>,
     project_path: String,
 ) -> Result<(), String> {
     bridge.stop(project_path)
 }
-
 #[tauri::command]
+// 在线程池读取项目相对目录的条目列表。
 pub async fn file_list_dir(
     root_path: String,
     relative_path: String,
@@ -424,7 +420,7 @@ pub async fn file_list_dir(
         .await
         .map_err(|err| err.to_string())?
 }
-
+// 按本地或 WSL 路径列目录，原生路径需规范化并限制在根内。
 fn list_dir_entries(root_path: &str, relative_path: &str) -> Result<Vec<FileEntry>, String> {
     if let Some((distro, linux_root)) = crate::wsl::parse_wsl_unc_path(root_path) {
         return list_wsl_dir_entries(&distro, &linux_root, relative_path);
@@ -470,7 +466,7 @@ fn list_dir_entries(root_path: &str, relative_path: &str) -> Result<Vec<FileEntr
     sort_file_entries(&mut entries);
     Ok(entries)
 }
-
+// 校验相对路径后调用 WSL find，解析目录条目或返回命令错误。
 fn list_wsl_dir_entries(
     distro: &str,
     linux_root: &str,
@@ -492,7 +488,7 @@ fn list_wsl_dir_entries(
 
     parse_wsl_find_dir_entries(&output.stdout, relative_path)
 }
-
+// 构造只读取一层目录且跟随命令行根链接的 find 参数。
 fn wsl_find_dir_args(linux_dir: &str) -> [&str; 9] {
     [
         "find",
@@ -506,7 +502,7 @@ fn wsl_find_dir_args(linux_dir: &str) -> [&str; 9] {
         "%f\\0%y\\0%Y\\0%s\\0%T@\\0",
     ]
 }
-
+// 去除根路径末尾斜杠，再拼接相对 Linux 路径。
 fn join_linux_path(root: &str, relative_path: &str) -> String {
     let root = root.trim_end_matches('/');
     if relative_path.is_empty() {
@@ -515,7 +511,7 @@ fn join_linux_path(root: &str, relative_path: &str) -> String {
         format!("{root}/{}", relative_path.trim_start_matches('/'))
     }
 }
-
+// 解析 NUL 分隔的 find 元数据，区分链接目标类型并排序。
 fn parse_wsl_find_dir_entries(
     stdout: &[u8],
     relative_path: &str,
@@ -573,7 +569,7 @@ fn parse_wsl_find_dir_entries(
     sort_file_entries(&mut entries);
     Ok(entries)
 }
-
+// 将 find 的有限非负秒数转换为毫秒时间戳。
 fn parse_find_modified_ms(raw: &[u8]) -> Option<u64> {
     let value = String::from_utf8_lossy(raw).parse::<f64>().ok()?;
     if value.is_finite() && value >= 0.0 {
@@ -582,7 +578,7 @@ fn parse_find_modified_ms(raw: &[u8]) -> Option<u64> {
         None
     }
 }
-
+// 按目录优先、名称忽略大小写的顺序排序文件条目。
 fn sort_file_entries(entries: &mut [FileEntry]) {
     entries.sort_by_cached_key(|entry| {
         (
@@ -591,8 +587,8 @@ fn sort_file_entries(entries: &mut [FileEntry]) {
         )
     });
 }
-
 #[tauri::command]
+// 规范化项目根后递归匹配文件名或相对路径，并按路径排序结果。
 pub async fn file_search(root_path: String, query: String) -> Result<Vec<FileEntry>, String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
@@ -608,8 +604,8 @@ pub async fn file_search(root_path: String, query: String) -> Result<Vec<FileEnt
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 规范化项目根后递归搜索文本内容，并按路径和行号排序。
 pub async fn file_search_content(
     root_path: String,
     query: String,
@@ -628,8 +624,8 @@ pub async fn file_search_content(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 读取受大小限制的文本字节，要求内容为有效 UTF-8。
 pub async fn file_read_text(
     root_path: String,
     relative_path: String,
@@ -645,8 +641,8 @@ pub async fn file_read_text(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 读取项目文本并检测编码，返回内容、BOM 和编码推断信息。
 pub async fn file_read_project_text(
     root_path: String,
     relative_path: String,
@@ -665,8 +661,8 @@ pub async fn file_read_project_text(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 校验根内图片文件的大小与尺寸后返回 Base64 和媒体类型。
 pub async fn file_read_image(
     root_path: String,
     relative_path: String,
@@ -693,8 +689,8 @@ pub async fn file_read_image(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 在线程池将 UTF-8 文本写入经路径安全校验的目标。
 pub async fn file_write_text(
     root_path: String,
     relative_path: String,
@@ -706,8 +702,8 @@ pub async fn file_write_text(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 按指定编码和 BOM 编码内容，成功后写入经校验的项目文件。
 pub async fn file_write_project_text(
     root_path: String,
     relative_path: String,
@@ -722,7 +718,7 @@ pub async fn file_write_project_text(
     .await
     .map_err(|err| err.to_string())?
 }
-
+// 校验根内普通文件、视频扩展名和 1 MiB 限制，再读取字节。
 fn read_text_file_bytes(root_path: &str, relative_path: &str) -> Result<(Vec<u8>, u64), String> {
     let root = canonical_root(root_path)?;
     let path = resolve_existing_path(&root, relative_path)?;
@@ -739,7 +735,7 @@ fn read_text_file_bytes(root_path: &str, relative_path: &str) -> Result<(Vec<u8>
     let bytes = fs::read(&path).map_err(|err| format!("read_file_failed: {err}"))?;
     Ok((bytes, metadata.len()))
 }
-
+// 解析目标并校验父目录和已有目标，随后写入文本字节。
 fn write_text_file_bytes(
     root_path: &str,
     relative_path: &str,
@@ -753,8 +749,8 @@ fn write_text_file_bytes(
     ensure_target_safe_for_write(&root, &path)?;
     fs::write(&path, bytes).map_err(|err| format!("write_file_failed: {err}"))
 }
-
 #[tauri::command]
+// 解析合法子文件目标，按覆盖策略清理后创建空文件。
 pub async fn file_create_file(
     root_path: String,
     parent_path: String,
@@ -770,8 +766,8 @@ pub async fn file_create_file(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 解析合法子目录目标，按覆盖策略清理后创建目录。
 pub async fn file_create_dir(
     root_path: String,
     parent_path: String,
@@ -787,8 +783,8 @@ pub async fn file_create_dir(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 解析根内源路径和新名称，再按覆盖策略移动到同一父目录。
 pub async fn file_rename(
     root_path: String,
     relative_path: String,
@@ -807,8 +803,8 @@ pub async fn file_rename(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 解析根内目标并拒绝删除根目录，随后删除文件或目录。
 pub async fn file_delete(root_path: String, relative_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
@@ -821,8 +817,8 @@ pub async fn file_delete(root_path: String, relative_path: String) -> Result<(),
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 校验源和目标，拒绝复制目录到自身内部，再按覆盖策略复制。
 pub async fn file_copy(
     root_path: String,
     source_path: String,
@@ -843,8 +839,8 @@ pub async fn file_copy(
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 解码并校验非空且不超过 5 MiB 的附件，清理名称后写入应用目录。
 pub async fn file_attach_data(file_name: String, data_base64: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let data = general_purpose::STANDARD
@@ -867,8 +863,8 @@ pub async fn file_attach_data(file_name: String, data_base64: String) -> Result<
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 在线程池删除应用附件目录中超过两天保留期的普通文件。
 pub async fn file_cleanup_expired_attachments() -> Result<u64, String> {
     tokio::task::spawn_blocking(move || {
         let data_dir = cli_manager_data_dir()?;
@@ -877,8 +873,8 @@ pub async fn file_cleanup_expired_attachments() -> Result<u64, String> {
     .await
     .map_err(|err| err.to_string())?
 }
-
 #[tauri::command]
+// 解析根内源和命名目标，并按覆盖策略移动。
 pub async fn file_move(
     root_path: String,
     source_path: String,
@@ -895,7 +891,7 @@ pub async fn file_move(
     .await
     .map_err(|err| err.to_string())?
 }
-
+// 允许空根路径，否则按路径组件拒绝绝对路径、父级和反斜杠。
 pub(crate) fn validate_relative_path(path: &str) -> Result<(), &'static str> {
     if path.is_empty() {
         return Ok(());
@@ -915,6 +911,7 @@ pub(crate) fn validate_relative_path(path: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+// 拒绝空名称、点目录和路径分隔符。
 pub(crate) fn validate_child_name(name: &str) -> Result<(), &'static str> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -929,6 +926,7 @@ pub(crate) fn validate_child_name(name: &str) -> Result<(), &'static str> {
     Ok(())
 }
 
+// 要求根路径绝对存在且为目录，并返回规范化路径。
 fn canonical_root(root_path: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(root_path);
     if !root.is_absolute() {
@@ -943,6 +941,7 @@ fn canonical_root(root_path: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 校验相对路径并规范化现有目标，要求解析结果仍位于根内。
 fn resolve_existing_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     validate_relative_path(relative_path).map_err(|err| err.to_string())?;
     let joined = root.join(relative_path);
@@ -953,6 +952,7 @@ fn resolve_existing_path(root: &Path, relative_path: &str) -> Result<PathBuf, St
     Ok(canonical)
 }
 
+// 校验非空目标相对路径，并要求其现有父目录位于根内。
 fn resolve_target_path(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     validate_relative_path(relative_path).map_err(|err| err.to_string())?;
     if relative_path.is_empty() {
@@ -966,6 +966,7 @@ fn resolve_target_path(root: &Path, relative_path: &str) -> Result<PathBuf, Stri
     Ok(target)
 }
 
+// 解析根内父目录并验证其为目录，再解析合法子名称。
 fn resolve_named_target(root: &Path, parent_path: &str, name: &str) -> Result<PathBuf, String> {
     let parent = resolve_existing_path(root, parent_path)?;
     if !parent.is_dir() {
@@ -974,12 +975,14 @@ fn resolve_named_target(root: &Path, parent_path: &str, name: &str) -> Result<Pa
     resolve_child_target(root, &parent, name)
 }
 
+// 校验子名称与父目录归属，返回拼接后的目标路径。
 fn resolve_child_target(root: &Path, parent: &Path, name: &str) -> Result<PathBuf, String> {
     validate_child_name(name).map_err(|err| err.to_string())?;
     ensure_existing_child_within_root(root, parent)?;
     Ok(parent.join(name.trim()))
 }
 
+// 规范化现有路径并验证其位于规范化根目录下。
 fn ensure_existing_child_within_root(root: &Path, path: &Path) -> Result<(), String> {
     let canonical = path
         .canonicalize()
@@ -991,6 +994,7 @@ fn ensure_existing_child_within_root(root: &Path, path: &Path) -> Result<(), Str
     }
 }
 
+// 规范化路径并校验根归属，返回正斜杠形式的相对路径。
 fn relative_from_root(root: &Path, path: &Path) -> Result<String, String> {
     let canonical = path
         .canonicalize()
@@ -1004,6 +1008,7 @@ fn relative_from_root(root: &Path, path: &Path) -> Result<String, String> {
         .map(|rel| rel.to_string_lossy().replace('\\', "/"))
 }
 
+// 检测目标是否已存在，未授权覆盖则拒绝，授权后先删除旧目标。
 fn prepare_target(target: &Path, overwrite: bool) -> Result<(), String> {
     match fs::symlink_metadata(target) {
         Ok(metadata) => {
@@ -1017,6 +1022,7 @@ fn prepare_target(target: &Path, overwrite: bool) -> Result<(), String> {
     }
 }
 
+// 检查符号链接标记，并在 Windows 下额外识别重解析点。
 fn is_symlink_or_reparse(metadata: &fs::Metadata) -> bool {
     if metadata.file_type().is_symlink() {
         return true;
@@ -1033,6 +1039,7 @@ fn is_symlink_or_reparse(metadata: &fs::Metadata) -> bool {
     }
 }
 
+// 允许缺失写入目标，已有目标则拒绝链接并校验根归属。
 fn ensure_target_safe_for_write(root: &Path, target: &Path) -> Result<(), String> {
     let metadata = match fs::symlink_metadata(target) {
         Ok(metadata) => metadata,
@@ -1045,6 +1052,7 @@ fn ensure_target_safe_for_write(root: &Path, target: &Path) -> Result<(), String
     ensure_existing_child_within_root(root, target)
 }
 
+// 递归删除普通目录，其余类型按文件删除以避免递归跟随链接。
 fn remove_path_with_metadata(path: &Path, metadata: fs::Metadata) -> Result<(), String> {
     if metadata.is_dir() && !is_symlink_or_reparse(&metadata) {
         fs::remove_dir_all(path).map_err(|err| format!("remove_dir_failed: {err}"))
@@ -1053,11 +1061,13 @@ fn remove_path_with_metadata(path: &Path, metadata: fs::Metadata) -> Result<(), 
     }
 }
 
+// 读取不跟随链接的元数据后选择文件或目录删除方式。
 fn remove_path(path: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(path).map_err(|err| format!("metadata_failed: {err}"))?;
     remove_path_with_metadata(path, metadata)
 }
 
+// 要求路径为非链接目录，缺失时创建单层目录。
 fn ensure_plain_dir(path: &Path) -> Result<(), String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) => {
@@ -1077,6 +1087,7 @@ fn ensure_plain_dir(path: &Path) -> Result<(), String> {
     }
 }
 
+// 确保应用数据和附件目录为普通目录，并验证附件目录归属。
 fn ensure_attachment_dir(data_dir: &Path) -> Result<PathBuf, String> {
     ensure_plain_dir(data_dir)?;
     let canonical_data_dir = data_dir
@@ -1088,6 +1099,7 @@ fn ensure_attachment_dir(data_dir: &Path) -> Result<PathBuf, String> {
     Ok(attachments_dir)
 }
 
+// 只读取已有附件目录并校验链接和根归属，不存在则返回空值。
 fn get_existing_attachment_dir(data_dir: &Path) -> Result<Option<PathBuf>, String> {
     let attachments_dir = data_dir.join("attachments");
     match fs::symlink_metadata(&attachments_dir) {
@@ -1109,6 +1121,7 @@ fn get_existing_attachment_dir(data_dir: &Path) -> Result<Option<PathBuf>, Strin
     }
 }
 
+// 按修改时间删除过期普通附件文件，跳过链接、目录和无法读取时间的条目。
 fn cleanup_expired_attachments(data_dir: &Path, max_age: Duration) -> Result<u64, String> {
     let Some(attachments_dir) = get_existing_attachment_dir(data_dir)? else {
         return Ok(0);
@@ -1138,6 +1151,7 @@ fn cleanup_expired_attachments(data_dir: &Path, max_age: Duration) -> Result<u64
     Ok(deleted)
 }
 
+// 将附件名称中的空白、控制符和路径危险字符替换为下划线。
 fn sanitize_attachment_file_name(name: &str) -> String {
     let sanitized = name
         .trim()
@@ -1164,6 +1178,7 @@ fn sanitize_attachment_file_name(name: &str) -> String {
     }
 }
 
+// 逐次追加数字后缀寻找未占用的附件路径，最多尝试一万个名称。
 fn unique_attachment_target(dir: &Path, file_name: &str) -> Result<PathBuf, String> {
     let path = Path::new(file_name);
     let stem = path
@@ -1192,6 +1207,7 @@ fn unique_attachment_target(dir: &Path, file_name: &str) -> Result<PathBuf, Stri
     Err("attachment_name_exhausted".into())
 }
 
+// 拒绝复制符号链接或重解析点，并确认源规范化后仍在根内。
 fn ensure_copy_source_safe(root: &Path, source: &Path) -> Result<fs::Metadata, String> {
     let metadata = fs::symlink_metadata(source).map_err(|err| format!("metadata_failed: {err}"))?;
     if is_symlink_or_reparse(&metadata) {
@@ -1206,6 +1222,7 @@ fn ensure_copy_source_safe(root: &Path, source: &Path) -> Result<fs::Metadata, S
     Ok(metadata)
 }
 
+// 校验复制源后按类型复制单文件或递归目录。
 fn copy_path(root: &Path, source: &Path, target: &Path) -> Result<(), String> {
     let metadata = ensure_copy_source_safe(root, source)?;
     if metadata.is_dir() {
@@ -1217,6 +1234,7 @@ fn copy_path(root: &Path, source: &Path, target: &Path) -> Result<(), String> {
     }
 }
 
+// 创建目标目录并逐项调用安全复制流程复制子条目。
 fn copy_dir_recursive(root: &Path, source: &Path, target: &Path) -> Result<(), String> {
     fs::create_dir(target).map_err(|err| format!("copy_dir_create_failed: {err}"))?;
     for item in fs::read_dir(source).map_err(|err| format!("copy_dir_read_failed: {err}"))? {
@@ -1228,6 +1246,7 @@ fn copy_dir_recursive(root: &Path, source: &Path, target: &Path) -> Result<(), S
     Ok(())
 }
 
+// 拒绝移动根目录或移动目录到自身内部，按覆盖策略清理目标后重命名。
 fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Result<(), String> {
     if source == root {
         return Err("cannot_move_root".into());
@@ -1239,6 +1258,7 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
     fs::rename(source, target).map_err(|err| format!("move_failed: {err}"))
 }
 
+// 按图片扩展名返回支持的媒体类型。
 fn image_mime_type(path: &Path) -> Option<&'static str> {
     match path
         .extension()
@@ -1256,6 +1276,7 @@ fn image_mime_type(path: &Path) -> Option<&'static str> {
     }
 }
 
+// 按扩展名识别不支持文本预览的视频文件。
 fn is_video_path(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -1282,6 +1303,7 @@ fn is_video_path(path: &Path) -> bool {
     )
 }
 
+// SVG 跳过像素尺寸检查，其余图片读取尺寸后校验像素总数。
 fn validate_image_dimensions(path: &Path) -> Result<(), String> {
     if path
         .extension()
@@ -1295,6 +1317,7 @@ fn validate_image_dimensions(path: &Path) -> Result<(), String> {
     validate_image_pixel_count(width, height)
 }
 
+// 拒绝像素总数超过一千二百万的图片尺寸。
 fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
     if u64::from(width) * u64::from(height) > IMAGE_MAX_PIXELS {
         return Err("image_dimensions_too_large".into());
@@ -1302,18 +1325,21 @@ fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
     Ok(())
 }
 
+// 从扫描路径直接剥离根前缀并统一为正斜杠相对路径。
 fn search_relative_from_root(root: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(root)
         .map_err(|err| format!("strip_prefix_failed: {err}"))
         .map(|rel| rel.to_string_lossy().replace('\\', "/"))
 }
 
+// 忽略大小写判断目录是否属于搜索排除名单。
 fn should_skip_search_dir(name: &str) -> bool {
     SEARCH_SKIPPED_DIRECTORY_NAMES
         .iter()
         .any(|skipped| skipped.eq_ignore_ascii_case(name))
 }
 
+// 按扩展名判断文件是否应跳过内容搜索。
 fn should_skip_content_file(path: &Path) -> bool {
     let Some(ext) = path.extension().and_then(|ext| ext.to_str()) else {
         return false;
@@ -1323,6 +1349,7 @@ fn should_skip_content_file(path: &Path) -> bool {
         .any(|skipped| skipped.eq_ignore_ascii_case(ext))
 }
 
+// 匹配已归一化搜索词，ASCII 使用字节匹配，其他文本转小写比较。
 fn text_matches(value: &str, needle: &str) -> bool {
     if needle.is_empty() {
         return true;
@@ -1334,6 +1361,7 @@ fn text_matches(value: &str, needle: &str) -> bool {
     value.to_lowercase().contains(needle)
 }
 
+// 用滑动字节窗口进行 ASCII 忽略大小写子串匹配。
 fn contains_ascii_case_insensitive(haystack: &[u8], needle_lowercase: &[u8]) -> bool {
     if needle_lowercase.len() > haystack.len() {
         return false;
@@ -1343,6 +1371,7 @@ fn contains_ascii_case_insensitive(haystack: &[u8], needle_lowercase: &[u8]) -> 
         .any(|window| window.eq_ignore_ascii_case(needle_lowercase))
 }
 
+// 将搜索结果行截为最多 300 字符，超长时追加省略号。
 fn truncate_search_line(line: &str) -> String {
     let mut chars = line.chars();
     let truncated: String = chars.by_ref().take(CONTENT_SEARCH_MAX_LINE_CHARS).collect();
@@ -1353,6 +1382,7 @@ fn truncate_search_line(line: &str) -> String {
     }
 }
 
+// 递归匹配名称或路径并跳过重目录，最多收集一千条文件条目。
 fn collect_search_matches(
     root: &Path,
     dir: &Path,
@@ -1405,6 +1435,7 @@ fn collect_search_matches(
     Ok(())
 }
 
+// 递归扫描非排除文本文件，跳过超限或解码失败文件并限制结果数。
 fn collect_content_matches(
     root: &Path,
     dir: &Path,
@@ -1454,6 +1485,7 @@ fn collect_content_matches(
     Ok(())
 }
 
+// 提取单文件首个匹配行和前后各一行上下文，并限制行显示长度。
 fn collect_content_matches_in_file(
     root: &Path,
     path: &Path,
@@ -1497,6 +1529,7 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
+    // 验证附件目录直接创建在应用数据目录下而不重复嵌套。
     fn attachment_directory_is_directly_under_cli_manager_data_dir() {
         let tmp = TempDir::new().unwrap();
         let data_dir = tmp.path().join(".cli-manager");
@@ -1509,6 +1542,7 @@ mod tests {
     }
 
     #[test]
+    // 验证视频不可文本预览且图片像素限制按边界生效。
     fn preview_limits_reject_video_and_oversized_image_dimensions() {
         assert!(validate_image_pixel_count(4_000, 3_000).is_ok());
         assert_eq!(
@@ -1529,6 +1563,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相对路径校验接受空根和普通嵌套路径。
     fn validate_relative_path_accepts_root_and_nested_paths() {
         assert!(validate_relative_path("").is_ok());
         assert!(validate_relative_path("src/main.ts").is_ok());
@@ -1536,6 +1571,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相对路径校验拒绝父级、反斜杠及绝对路径。
     fn validate_relative_path_rejects_escape_and_absolute_paths() {
         assert_eq!(
             validate_relative_path("../secret").unwrap_err(),
@@ -1552,6 +1588,7 @@ mod tests {
     }
 
     #[test]
+    // 验证子名称校验拒绝空值、分隔符和父目录名称。
     fn validate_child_name_rejects_separators_and_empty_names() {
         assert!(validate_child_name("main.ts").is_ok());
         assert_eq!(validate_child_name("").unwrap_err(), "empty_name");
@@ -1567,6 +1604,7 @@ mod tests {
     }
 
     #[test]
+    // 验证剪贴板图片扩展名白名单及未支持格式。
     fn clipboard_image_extensions_cover_common_desktop_formats() {
         for extension in [
             "png", "apng", "jpg", "jpeg", "jfif", "gif", "webp", "bmp", "dib", "tif", "tiff", "ico",
@@ -1583,6 +1621,7 @@ mod tests {
     }
 
     #[test]
+    // 验证临时 BMP 文件被转换为保持尺寸的 PNG 附件。
     fn clipboard_image_file_is_normalized_to_png_attachment() {
         let tmp = TempDir::new().unwrap();
         let source = tmp.path().join("source.bmp");
@@ -1602,6 +1641,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL find 输出解析链接类型、时间和目录优先排序。
     fn parse_wsl_find_dir_entries_returns_sorted_relative_entries() {
         let output = [
             b"z.txt\0".as_slice(),
@@ -1643,6 +1683,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux 项目路径与相对路径正确拼接。
     fn join_linux_path_preserves_root_and_nested_paths() {
         assert_eq!(join_linux_path("/home/me/project", ""), "/home/me/project");
         assert_eq!(
@@ -1652,6 +1693,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL find 使用 -H 跟随命令行指定的根链接。
     fn wsl_find_dir_args_follows_command_line_symlink_roots() {
         let args = wsl_find_dir_args("/data/acGo");
         assert_eq!(args[0], "find");
@@ -1660,6 +1702,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本地临时文件的存在与缺失检查。
     fn path_exists_checks_native_paths() {
         let tmp = TempDir::new().unwrap();
         let file = tmp.path().join("exists.txt");
@@ -1672,6 +1715,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本地临时文件、目录和缺失路径的类型区分。
     fn path_kind_distinguishes_native_files_and_directories() {
         let tmp = TempDir::new().unwrap();
         let file = tmp.path().join("exists.txt");
@@ -1688,11 +1732,13 @@ mod tests {
     }
 
     #[test]
+    // 验证不完整 WSL UNC 路径不会作为可解析 WSL 项目路径处理。
     fn path_exists_rejects_invalid_wsl_unc_without_launching_wsl() {
         assert!(!path_exists(r"\\wsl.localhost\Ubuntu"));
     }
 
     #[test]
+    // 验证 WSL 存在性脚本同时识别节点和符号链接。
     fn wsl_path_exists_args_accepts_symlink_nodes() {
         let args = wsl_path_exists_args("Ubuntu-22.04", "/data/acGo");
         assert_eq!(
@@ -1711,6 +1757,7 @@ mod tests {
     }
 
     #[test]
+    // 验证含空格的 WSL 路径通过位置参数传递而不插入脚本。
     fn wsl_path_kind_args_pass_path_as_positional_argument() {
         assert_eq!(
             wsl_path_kind_args("Ubuntu-22.04", "/data/project name"),
@@ -1728,6 +1775,7 @@ mod tests {
     }
 
     #[test]
+    // 验证现有路径解析拒绝通过父级片段越出项目根。
     fn resolve_existing_path_rejects_paths_outside_root() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1743,6 +1791,7 @@ mod tests {
     }
 
     #[test]
+    // 验证复制与移动文件在临时根目录内保留内容。
     fn copy_and_move_stay_inside_root() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1762,6 +1811,7 @@ mod tests {
     }
 
     #[test]
+    // 验证写入目标检查拒绝指向已有文件的符号链接。
     fn file_write_rejects_symlink_targets() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1786,6 +1836,7 @@ mod tests {
     }
 
     #[test]
+    // 验证递归复制拒绝源目录中的符号链接。
     fn copy_rejects_nested_symlink_sources() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1808,6 +1859,7 @@ mod tests {
     }
 
     #[test]
+    // 验证文件名搜索跳过 .git 等重目录。
     fn file_search_skips_heavy_directories() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1825,6 +1877,7 @@ mod tests {
     }
 
     #[test]
+    // 验证内容搜索返回匹配上下文并跳过依赖目录。
     fn content_search_returns_context_and_skips_heavy_directories() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1850,6 +1903,7 @@ mod tests {
     }
 
     #[test]
+    // 验证内容搜索对每个文件只返回首个匹配行。
     fn content_search_returns_one_match_per_file() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1871,6 +1925,7 @@ mod tests {
     }
 
     #[test]
+    // 验证内容搜索能够解码并匹配 GBK 项目文本。
     fn content_search_decodes_gbk_project_files() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");
@@ -1890,6 +1945,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证项目文本读写保持 GBK，无法编码的内容不会覆盖原文件。
     async fn project_text_commands_preserve_gbk_and_reject_unmappable_content() {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("root");

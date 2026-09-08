@@ -19,6 +19,8 @@ const WINDOWS_CONPTY_COMPATIBILITY_FIX_SETTING: &str = "windowsConptyCompatibili
 #[cfg(target_os = "windows")]
 const WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT: bool = true;
 
+// Windows 启动阶段按设置启用随包 ConPTY，调整 PATH 并发布 DLL 路径；失败只记录日志。
+// 必须在创建 PTY 前调用；其他平台不操作环境，不加载 DLL。
 pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
     #[cfg(target_os = "windows")]
     {
@@ -49,6 +51,8 @@ pub fn initialize<R: Runtime>(app: &AppHandle<R>) {
 }
 
 #[cfg(target_os = "windows")]
+// 从当前数据根读取兼容开关；缺失或无有效布尔值时返回默认值并尝试写回 settings.json。
+// 读取/解析失败按空配置处理，写入失败仅告警；此函数不是纯读取操作。
 fn windows_conpty_compatibility_fix_enabled() -> bool {
     let default = WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT;
     let settings_path = match app_paths::cli_manager_data_dir() {
@@ -93,6 +97,7 @@ fn windows_conpty_compatibility_fix_enabled() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+// 解析当前架构的打包资源目录并确认 DLL/宿主程序同时存在；不支持的架构返回 None。
 fn bundled_conpty_dir<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PathBuf>, String> {
     let Some(arch_dir) = current_arch_resource_dir() else {
         return Ok(None);
@@ -112,6 +117,7 @@ fn bundled_conpty_dir<R: Runtime>(app: &AppHandle<R>) -> Result<Option<PathBuf>,
 }
 
 #[cfg(target_os = "windows")]
+// 将编译目标架构映射为资源子目录，未知架构不尝试其他架构的二进制。
 fn current_arch_resource_dir() -> Option<&'static str> {
     if cfg!(target_arch = "x86_64") {
         Some("x64")
@@ -125,11 +131,14 @@ fn current_arch_resource_dir() -> Option<&'static str> {
 }
 
 #[cfg(target_os = "windows")]
+// 仅检查 conpty.dll 和 OpenConsole.exe 是否为文件，不验证版本、签名或加载能力。
 fn has_conpty_runtime_files(dir: &Path) -> bool {
     dir.join(CONPTY_DLL).is_file() && dir.join(OPENCONSOLE_EXE).is_file()
 }
 
 #[cfg(target_os = "windows")]
+// 尚未出现在 PATH 中时将资源目录放到最前；已有匹配项不重排，空目录选项保持无操作。
+// 修改当前进程环境，路径列表无法重新编码时返回错误。
 fn prepend_conpty_dir_to_path(dir: Option<PathBuf>) -> Result<Option<PathBuf>, String> {
     let Some(dir) = dir else {
         return Ok(None);
@@ -149,6 +158,7 @@ fn prepend_conpty_dir_to_path(dir: Option<PathBuf>) -> Result<Option<PathBuf>, S
 }
 
 #[cfg(target_os = "windows")]
+// 忽略尾部分隔符和 ASCII 大小写比较路径文本，不 canonicalize 或解析符号链接。
 fn same_path(left: &Path, right: &Path) -> bool {
     left.to_string_lossy()
         .trim_end_matches(['\\', '/'])
@@ -161,6 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证当前 Windows 编译目标落在打包的三个架构目录之一。
     fn current_arch_resource_dir_matches_supported_windows_targets() {
         assert!(matches!(
             current_arch_resource_dir(),
@@ -169,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    // 验证只有 DLL 不算完整运行时，两个必需文件都存在才通过。
     fn conpty_runtime_files_require_dll_and_openconsole() {
         let temp = tempfile::tempdir().unwrap();
         assert!(!has_conpty_runtime_files(temp.path()));
@@ -181,6 +193,7 @@ mod tests {
     }
 
     #[test]
+    // 锁定 Windows 路径比较对大小写及尾反斜杠差异的容忍行为。
     fn same_path_is_case_insensitive_and_ignores_trailing_separator() {
         assert!(same_path(
             Path::new(r"C:\App\resources\conpty\x64\"),
@@ -189,6 +202,7 @@ mod tests {
     }
 
     #[test]
+    // 锁定没有有效设置时默认开启兼容修复的产品选择。
     fn compatibility_fix_defaults_to_enabled() {
         assert!(WINDOWS_CONPTY_COMPATIBILITY_FIX_DEFAULT);
     }

@@ -98,6 +98,7 @@ pub struct CommandSuggestionModelTestResult {
 }
 
 #[tauri::command]
+// 校验配置后发送四秒超时的最小模型探测，按 HTTP 状态和耗时分级，不验证成功响应的命令内容。
 pub async fn command_suggestion_test_model(
     base_url: String,
     api_key: String,
@@ -140,6 +141,7 @@ pub async fn command_suggestion_test_model(
 }
 
 #[tauri::command]
+// 校验输入并请求模型，将成功响应解析为单行候选及用量；不执行命令，前缀及危险后缀过滤留给前端。
 pub async fn command_suggestion_generate(
     request: CommandSuggestionGenerateRequest,
 ) -> Result<CommandSuggestionResponse, String> {
@@ -237,6 +239,7 @@ pub async fn command_suggestion_generate(
 }
 
 #[tauri::command]
+// 校验目录和前缀文本后，在阻塞线程中列举路径候选，不写入文件系统。
 pub async fn command_suggestion_list_path_entries(
     request: CommandSuggestionPathRequest,
 ) -> Result<Vec<CommandSuggestionPathEntry>, String> {
@@ -248,6 +251,7 @@ pub async fn command_suggestion_list_path_entries(
 }
 
 #[tauri::command]
+// 校验路径文本后在阻塞线程确认目录，返回可选解析结果，不切换真实 shell 目录。
 pub async fn command_suggestion_resolve_directory(path: String) -> Result<Option<String>, String> {
     validate_path_field(&path, "missing_path")?;
     tokio::task::spawn_blocking(move || resolve_directory_path(&path))
@@ -255,6 +259,7 @@ pub async fn command_suggestion_resolve_directory(path: String) -> Result<Option
         .map_err(|err| err.to_string())?
 }
 
+// 只拒绝空 URL、密钥和模型字段，不校验端点协议、可达性或凭据有效性。
 fn validate_config(base_url: &str, api_key: &str, model: &str) -> Result<(), String> {
     if base_url.trim().is_empty() {
         return Err("missing_base_url".to_string());
@@ -268,6 +273,7 @@ fn validate_config(base_url: &str, api_key: &str, model: &str) -> Result<(), Str
     Ok(())
 }
 
+// 拒绝空输入并限制 prompt、input、cwd 和上一命令字符数；历史及模板另在构造提示时裁剪。
 fn validate_generation_input(request: &CommandSuggestionGenerateRequest) -> Result<(), String> {
     if request.input.trim().is_empty() {
         return Err("missing_input".to_string());
@@ -285,6 +291,7 @@ fn validate_generation_input(request: &CommandSuggestionGenerateRequest) -> Resu
     Ok(())
 }
 
+// 拒绝空路径、NUL 和超长文本；不验证路径是否绝对、存在或获准访问。
 fn validate_path_field(value: &str, empty_error: &str) -> Result<(), String> {
     if value.trim().is_empty() {
         return Err(empty_error.to_string());
@@ -295,6 +302,7 @@ fn validate_path_field(value: &str, empty_error: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 允许空前缀，但拒绝 NUL 和超长文本。
 fn validate_optional_path_field(value: &str) -> Result<(), String> {
     if value.contains('\0') || value.chars().count() > MAX_TEXT_FIELD_CHARS {
         return Err("path_input_too_large".to_string());
@@ -302,12 +310,14 @@ fn validate_optional_path_field(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 将可选结果上限限制到 1 至 64，缺省为 24。
 fn path_suggestion_limit(limit: Option<usize>) -> usize {
     limit
         .unwrap_or(PATH_SUGGESTION_DEFAULT_LIMIT)
         .clamp(1, PATH_SUGGESTION_MAX_LIMIT)
 }
 
+// 识别 WSL UNC 后交给发行版内枚举，否则使用本机目录读取，并传递统一条数上限。
 fn list_path_entries(
     request: CommandSuggestionPathRequest,
 ) -> Result<Vec<CommandSuggestionPathEntry>, String> {
@@ -329,6 +339,7 @@ fn list_path_entries(
     )
 }
 
+// 规范化绝对目录，筛选前缀后收集目录与普通文件并排序；目录符号链接可保留，文件符号链接被排除。
 fn list_native_path_entries(
     directory: &str,
     prefix: &str,
@@ -381,6 +392,7 @@ fn list_native_path_entries(
     sort_and_limit_path_entries(entries, limit)
 }
 
+// 通过 wsl.exe 直接运行单层 find，解析 NUL 分隔结果；同步 output 未设置本地超时或输出容量上限。
 fn list_wsl_path_entries(
     distro: &str,
     linux_dir: &str,
@@ -413,6 +425,7 @@ fn list_wsl_path_entries(
     parse_wsl_path_entries(&output.stdout, prefix, directories_only, limit)
 }
 
+// 按非空字段三元组解析 find 输出，识别目录链接并筛选前缀；其他类型均标为文件。
 fn parse_wsl_path_entries(
     stdout: &[u8],
     prefix: &str,
@@ -451,6 +464,7 @@ fn parse_wsl_path_entries(
     sort_and_limit_path_entries(entries, limit)
 }
 
+// 按目录优先及小写名称排序，再截取指定数量，不在此约束 limit 的范围。
 fn sort_and_limit_path_entries(
     mut entries: Vec<CommandSuggestionPathEntry>,
     limit: usize,
@@ -465,10 +479,12 @@ fn sort_and_limit_path_entries(
     Ok(entries)
 }
 
+// 用小写转换进行名称前缀比较，空前缀匹配全部。
 fn entry_matches_prefix(name: &str, prefix: &str) -> bool {
     prefix.is_empty() || name.to_lowercase().starts_with(&prefix.to_lowercase())
 }
 
+// 本机绝对路径规范化为目录后统一分隔符；WSL 路径探测成功则保留裁剪后的原 UNC 文本。
 fn resolve_directory_path(path: &str) -> Result<Option<String>, String> {
     if let Some((distro, linux_dir)) = crate::wsl::parse_wsl_unc_path(path) {
         return Ok(wsl_directory_exists(&distro, &linux_dir)?.then(|| path.trim().to_string()));
@@ -486,6 +502,7 @@ fn resolve_directory_path(path: &str) -> Result<Option<String>, String> {
     Ok(Some(canonical.to_string_lossy().replace('\\', "/")))
 }
 
+// 在目标 WSL 发行版执行 test -d，以退出成功判断目录存在；同步等待不设本地超时。
 fn wsl_directory_exists(distro: &str, linux_dir: &str) -> Result<bool, String> {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let output = silent_command(&wsl_exe.to_string_lossy())
@@ -495,6 +512,7 @@ fn wsl_directory_exists(distro: &str, linux_dir: &str) -> Result<bool, String> {
     Ok(output.status.success())
 }
 
+// 按当前网络配置新建带专用 User-Agent 和四秒默认超时的 HTTP 客户端；并非返回缓存实例。
 fn shared_client() -> Result<reqwest::Client, String> {
     network_client::configure_builder(reqwest::Client::builder())?
         .user_agent("CLI-Manager command suggestion")
@@ -503,10 +521,12 @@ fn shared_client() -> Result<reqwest::Client, String> {
         .map_err(|err| format!("http_client_create_failed: {err}"))
 }
 
+// 委派共享辅助文本模块拼接版本化端点路径，保持统一的后缀处理规则。
 fn endpoint_url(base_url: &str, versioned_path: &str) -> String {
     auxiliary_text::endpoint_url(base_url, versioned_path)
 }
 
+// 仅按裁剪后的 URL 是否以 /v1/responses 结尾选择 Responses，其他情况使用 Chat。
 fn detect_api_type(base_url: &str) -> CommandSuggestionApiType {
     let normalized = base_url.trim().trim_end_matches('/').to_ascii_lowercase();
     if normalized.ends_with("/v1/responses") {
@@ -516,10 +536,12 @@ fn detect_api_type(base_url: &str) -> CommandSuggestionApiType {
     }
 }
 
+// 依据全局日志级别判断是否允许输出命令建议调试日志。
 fn command_suggestion_debug_enabled() -> bool {
     matches!(log::max_level(), LevelFilter::Debug | LevelFilter::Trace)
 }
 
+// 将内部协议枚举转换为固定诊断标签。
 fn api_type_label(api_type: CommandSuggestionApiType) -> &'static str {
     match api_type {
         CommandSuggestionApiType::ChatCompletions => "chat_completions",
@@ -527,6 +549,7 @@ fn api_type_label(api_type: CommandSuggestionApiType) -> &'static str {
     }
 }
 
+// 返回对应协议的版本化请求路径。
 fn api_type_path(api_type: CommandSuggestionApiType) -> &'static str {
     match api_type {
         CommandSuggestionApiType::ChatCompletions => "v1/chat/completions",
@@ -534,11 +557,13 @@ fn api_type_path(api_type: CommandSuggestionApiType) -> &'static str {
     }
 }
 
+// 对基础 URL 清理敏感 URL 字段后拼接端点，再清理一次供日志使用。
 fn endpoint_log_label(base_url: &str, api_type: CommandSuggestionApiType) -> String {
     let base = sanitize_url_for_log(base_url);
     sanitize_url_for_log(&endpoint_url(&base, api_type_path(api_type)))
 }
 
+// 可解析 URL 时移除用户信息、查询及片段；解析失败只裁掉查询/片段，不保证清除其他敏感文本。
 fn sanitize_url_for_log(value: &str) -> String {
     let trimmed = value.trim();
     if let Ok(mut url) = reqwest::Url::parse(trimmed) {
@@ -555,6 +580,7 @@ fn sanitize_url_for_log(value: &str) -> String {
         .to_string()
 }
 
+// 映射协议后委派共享文本请求，沿用其响应读取限制，并转换错误为本模块字符串。
 async fn post_model_request(
     client: &reqwest::Client,
     api_type: CommandSuggestionApiType,
@@ -585,6 +611,7 @@ async fn post_model_request(
     .map_err(map_auxiliary_error)
 }
 
+// 将当前输入、目录、上一命令及裁剪后的历史模板序列化为 JSON；不在此执行脱敏。
 fn build_user_prompt(request: &CommandSuggestionGenerateRequest) -> String {
     let history = clamp_items(&request.history);
     let templates = clamp_items(&request.templates);
@@ -598,6 +625,7 @@ fn build_user_prompt(request: &CommandSuggestionGenerateRequest) -> String {
     .to_string()
 }
 
+// 过滤空白和超长条目，裁剪两端空白后最多保留 12 条；不去重或识别秘密。
 fn clamp_items(items: &[String]) -> Vec<String> {
     items
         .iter()
@@ -610,6 +638,7 @@ fn clamp_items(items: &[String]) -> Vec<String> {
         .collect()
 }
 
+// 按状态码及 1500 毫秒阈值构造探测等级，成功体不解析，测试时间使用当前 UTC 秒。
 fn build_model_test_result(
     result: Result<(u16, String), String>,
     response_time_ms: u64,
@@ -647,6 +676,7 @@ fn build_model_test_result(
     }
 }
 
+// 读取非空 error 字段中的 message，缺失时用固定错误码；消息原样返回，不脱敏。
 fn response_error_message(value: &Value) -> Option<String> {
     let error = value.get("error")?;
     if error.is_null() {
@@ -659,6 +689,7 @@ fn response_error_message(value: &Value) -> Option<String> {
     Some(message.to_string())
 }
 
+// 按协议提取命令内容，Responses 无结果时再尝试 Chat 兼容格式。
 fn extract_command(value: &Value, api_type: CommandSuggestionApiType) -> Option<String> {
     match api_type {
         CommandSuggestionApiType::ChatCompletions => extract_chat_command(value),
@@ -668,6 +699,7 @@ fn extract_command(value: &Value, api_type: CommandSuggestionApiType) -> Option<
     }
 }
 
+// 从共享 Chat 文本提取器取得非空内容，再解析命令字段或普通文本。
 fn extract_chat_command(value: &Value) -> Option<String> {
     let content =
         auxiliary_text::response_text(value, auxiliary_text::AuxiliaryTextProtocol::Chat)?.trim();
@@ -677,6 +709,7 @@ fn extract_chat_command(value: &Value) -> Option<String> {
     parse_command_content(content)
 }
 
+// 从共享 Responses 文本提取器取得非空内容并解析为候选命令。
 fn extract_responses_command(value: &Value) -> Option<String> {
     let text =
         auxiliary_text::response_text(value, auxiliary_text::AuxiliaryTextProtocol::Responses)?
@@ -686,6 +719,7 @@ fn extract_responses_command(value: &Value) -> Option<String> {
         .flatten()
 }
 
+// 合法 JSON 只读取字符串 command 字段；非 JSON 则裁掉代码围栏作为文本候选。
 fn parse_command_content(content: &str) -> Option<String> {
     if let Ok(value) = serde_json::from_str::<Value>(content) {
         return value
@@ -696,6 +730,7 @@ fn parse_command_content(content: &str) -> Option<String> {
     Some(strip_code_fence(content).trim().to_string())
 }
 
+// 按首尾反引号及开头 ASCII 字母简单去除围栏/语言标签，不是完整 Markdown 解析。
 fn strip_code_fence(value: &str) -> &str {
     let trimmed = value.trim();
     if !trimmed.starts_with("```") {
@@ -708,6 +743,7 @@ fn strip_code_fence(value: &str) -> &str {
     without_start.trim_end_matches('`').trim()
 }
 
+// 仅保留非空、不含换行且不超过 500 字符的候选；不检查危险操作、控制字符或当前输入前缀。
 fn sanitize_command(command: &str) -> Option<String> {
     let command = command.trim();
     if command.is_empty()
@@ -720,11 +756,13 @@ fn sanitize_command(command: &str) -> Option<String> {
     Some(command.to_string())
 }
 
+// 按候选字段顺序返回首个可解析为无符号整数的用量值，不自行计算总量。
 fn usage_u64(value: &Value, keys: &[&str]) -> Option<u64> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_u64))
 }
 
+// 去除控制字符并截取最多 240 字符作为 HTTP 错误摘要；长度限制不等于敏感信息脱敏。
 fn summarize_http_error(status: u16, body: &str) -> String {
     let summary = body
         .chars()
@@ -738,6 +776,7 @@ fn summarize_http_error(status: u16, body: &str) -> String {
     }
 }
 
+// 将超时映射为固定消息，连接及其他错误保留底层描述。
 fn map_request_error(err: reqwest::Error) -> String {
     if err.is_timeout() {
         "Request timeout".to_string()
@@ -748,6 +787,7 @@ fn map_request_error(err: reqwest::Error) -> String {
     }
 }
 
+// 将共享请求、读取、超限及 UTF-8 错误映射为本模块的兼容错误文本。
 fn map_auxiliary_error(error: auxiliary_text::AuxiliaryTextError) -> String {
     match error {
         auxiliary_text::AuxiliaryTextError::Request(error)
@@ -761,6 +801,7 @@ fn map_auxiliary_error(error: auxiliary_text::AuxiliaryTextError) -> String {
     }
 }
 
+// 返回单调计时器经过的毫秒数，超出 u64 时饱和为最大值。
 fn elapsed_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -770,6 +811,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证根 URL、版本路径及完整端点不会重复追加版本和请求后缀。
     fn endpoint_url_avoids_duplicate_v1() {
         assert_eq!(
             endpoint_url("https://example.com/", "v1/chat/completions"),
@@ -797,6 +839,7 @@ mod tests {
     }
 
     #[test]
+    // 验证完整 Responses 地址识别及 Chat/版本地址的默认协议选择。
     fn detects_responses_endpoint_from_base_url() {
         assert!(matches!(
             detect_api_type("https://example.com/v1/responses/"),
@@ -813,6 +856,7 @@ mod tests {
     }
 
     #[test]
+    // 以虚构凭据验证可解析端点日志标签移除用户信息、查询和片段。
     fn endpoint_log_label_removes_url_credentials_query_and_fragment() {
         assert_eq!(
             endpoint_log_label(
@@ -824,6 +868,7 @@ mod tests {
     }
 
     #[test]
+    // 验证最小请求体省略采样参数，空系统提示不生成额外消息或 instructions。
     fn minimal_model_test_bodies_avoid_optional_sampling_params() {
         let chat = auxiliary_text::chat_completion_body("model-a", "", "ping", 16);
         assert!(chat.get("temperature").is_none());
@@ -840,6 +885,7 @@ mod tests {
     }
 
     #[test]
+    // 验证模型 JSON 文本中的 command 字符串被提取为候选。
     fn parses_json_command_content() {
         assert_eq!(
             parse_command_content(r#"{"command":"git status"}"#).as_deref(),
@@ -848,11 +894,13 @@ mod tests {
     }
 
     #[test]
+    // 验证包含换行的候选被拒绝，不执行其中的命令文本。
     fn rejects_multiline_command() {
         assert!(sanitize_command("git status\nrm -rf .").is_none());
     }
 
     #[test]
+    // 验证 Responses 消息文本中的 JSON command 能被提取。
     fn parses_responses_output_text() {
         let value = serde_json::json!({
             "output": [{
@@ -870,6 +918,7 @@ mod tests {
     }
 
     #[test]
+    // 验证历史/模板裁剪跳过超长条目并保留前 12 个有效项及原顺序。
     fn clamp_items_limits_context_and_drops_oversized() {
         let items = (0..20)
             .map(|index| {
@@ -888,11 +937,13 @@ mod tests {
     }
 
     #[test]
+    // 验证超过 500 字符的候选被拒绝。
     fn sanitize_command_rejects_long_command() {
         assert!(sanitize_command(&"x".repeat(501)).is_none());
     }
 
     #[test]
+    // 在隔离临时目录验证前缀过滤及目录优先排序。
     fn native_path_entries_filter_prefix_and_sort_directories_first() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("work-app")).unwrap();
@@ -910,6 +961,7 @@ mod tests {
     }
 
     #[test]
+    // 在隔离临时目录验证仅目录模式不返回匹配前缀的普通文件。
     fn native_path_entries_respect_directories_only() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("src")).unwrap();
@@ -924,6 +976,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时目录验证含上级段的本机目录路径被规范化后返回。
     fn resolve_directory_canonicalizes_native_path() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join("root").join("child")).unwrap();

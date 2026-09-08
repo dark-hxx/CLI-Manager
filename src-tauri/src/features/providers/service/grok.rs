@@ -11,6 +11,7 @@ pub(crate) enum CredentialProjection<'a> {
     Inline(&'a str),
 }
 
+// 将供应商设置解析为 JSON 对象；语法错误或非对象根节点统一返回配置无效。
 fn parse_settings(raw: &str) -> Result<Map<String, Value>, String> {
     let value =
         serde_json::from_str::<Value>(raw).map_err(|_| "provider_config_invalid".to_string())?;
@@ -20,6 +21,7 @@ fn parse_settings(raw: &str) -> Result<Map<String, Value>, String> {
         .ok_or_else(|| "provider_config_invalid".to_string())
 }
 
+// 将缺失或纯空白配置视为空 TOML 文档，否则解析并返回稳定的配置错误。
 fn parse_config(raw: Option<&str>) -> Result<DocumentMut, String> {
     let Some(raw) = raw.filter(|value| !value.trim().is_empty()) else {
         return Ok(DocumentMut::new());
@@ -28,6 +30,7 @@ fn parse_config(raw: Option<&str>) -> Result<DocumentMut, String> {
         .map_err(|_| "provider_config_invalid".to_string())
 }
 
+// 提取 JSON 字符串并裁剪首尾空白；非字符串和空文本返回 None。
 fn non_empty_text(value: Option<&Value>) -> Option<String> {
     value
         .and_then(Value::as_str)
@@ -36,11 +39,13 @@ fn non_empty_text(value: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+// 按候选键顺序返回设置对象中首个非空字符串。
 fn top_level_text(settings: &Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| non_empty_text(settings.get(*key)))
 }
 
+// 从可选 TOML 项的指定子键提取非空字符串，不转换其他值类型。
 fn item_text(item: Option<&Item>, key: &str) -> Option<String> {
     item.and_then(|item| item.get(key))
         .and_then(Item::as_str)
@@ -49,6 +54,7 @@ fn item_text(item: Option<&Item>, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// 读取 TOML 表中的非空字符串字段，忽略非字符串值。
 fn table_text(table: &Table, key: &str) -> Option<String> {
     table
         .get(key)
@@ -58,6 +64,7 @@ fn table_text(table: &Table, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// 依次采用 models.default、设置中的 profile/模型别名、首个 model 表项，最后回退到内置配置名。
 fn profile_from_config(document: &DocumentMut, settings: &Map<String, Value>) -> String {
     item_text(document.get("models"), "default")
         .or_else(|| top_level_text(settings, &["profile", "default_model", "defaultModel"]))
@@ -70,6 +77,7 @@ fn profile_from_config(document: &DocumentMut, settings: &Map<String, Value>) ->
         .unwrap_or_else(|| DEFAULT_PROFILE.to_string())
 }
 
+// 设置默认配置名并创建或取得 model 下的配置表；遇到非普通表结构返回错误，先前的内存修改不回滚。
 fn ensure_profile<'a>(
     document: &'a mut DocumentMut,
     profile: &str,
@@ -93,6 +101,7 @@ fn ensure_profile<'a>(
         .ok_or_else(|| "provider_config_invalid:invalid_grok_model".to_string())
 }
 
+// 按规范化字段名及 token/secret/password/api_key 等后缀识别敏感键；不检测字段值中的秘密。
 fn is_secret_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_lowercase().replace(['-', '.'], "_");
     matches!(
@@ -120,6 +129,7 @@ fn is_secret_key(key: &str) -> bool {
         || normalized.ends_with("apikey")
 }
 
+// 递归清理 TOML 内联表的敏感键及数组内嵌结构，标量内容本身不做脱敏。
 fn remove_secret_value(value: &mut TomlValue) {
     if let Some(table) = value.as_inline_table_mut() {
         let keys = table
@@ -141,6 +151,7 @@ fn remove_secret_value(value: &mut TomlValue) {
     }
 }
 
+// 按 TOML 项类型分派普通表、表数组及值的敏感字段清理，空项不处理。
 fn remove_secret_fields(item: &mut Item) {
     match item {
         Item::Table(table) => remove_secret_fields_from_table(table),
@@ -154,6 +165,7 @@ fn remove_secret_fields(item: &mut Item) {
     }
 }
 
+// 先删除当前表的敏感键，再递归处理保留字段下的嵌套结构。
 fn remove_secret_fields_from_table(table: &mut Table) {
     let keys = table
         .iter()
@@ -168,6 +180,7 @@ fn remove_secret_fields_from_table(table: &mut Table) {
     }
 }
 
+// 移除旧式顶层供应商字段及字符串 model；保留正式 model 表以免丢失配置项。
 fn remove_legacy_root_fields(document: &mut DocumentMut) {
     for key in [
         "base_url",
@@ -191,6 +204,7 @@ fn remove_legacy_root_fields(document: &mut DocumentMut) {
     }
 }
 
+// 用来源文档替换目标的 models/model 两个所有权字段；来源缺失时删除目标对应字段，其他顶层内容不动。
 fn copy_owned_model_config(source: &DocumentMut, target: &mut DocumentMut) {
     for key in ["models", "model"] {
         if let Some(item) = source.get(key) {
@@ -201,6 +215,7 @@ fn copy_owned_model_config(source: &DocumentMut, target: &mut DocumentMut) {
     }
 }
 
+// 遍历普通 model 表下所有配置项并递归清理敏感字段；缺失或非普通表时不处理。
 fn remove_model_profile_secrets(document: &mut DocumentMut) {
     let Some(model) = document.get_mut("model").and_then(Item::as_table_mut) else {
         return;
@@ -210,6 +225,7 @@ fn remove_model_profile_secrets(document: &mut DocumentMut) {
     }
 }
 
+// 只返回 model 下指定名称的普通 TOML 表，缺失或其他结构返回 None。
 fn selected_table<'a>(document: &'a DocumentMut, profile: &str) -> Option<&'a Table> {
     document
         .get("model")
@@ -218,6 +234,7 @@ fn selected_table<'a>(document: &'a DocumentMut, profile: &str) -> Option<&'a Ta
         .and_then(Item::as_table)
 }
 
+// 合并顶层设置与所选配置的模型字段及默认值，按凭据模式保留或替换密钥；可选校验在内存修改后执行。
 fn apply_fields(
     document: &mut DocumentMut,
     settings: &Map<String, Value>,
@@ -277,6 +294,7 @@ fn apply_fields(
     ))
 }
 
+// 将显式类型化字段投影到内嵌 TOML 并保留现有凭据，移除指定顶层旧字段后返回 JSON；不写磁盘。
 pub(crate) fn apply_typed_fields(
     raw: &str,
     base_url: Option<&str>,
@@ -308,6 +326,7 @@ pub(crate) fn apply_typed_fields(
         .map_err(|_| "provider_settings_serialize_failed".to_string())
 }
 
+// 将给定密钥写入所选 TOML 配置并清理该配置的旧敏感字段及顶层 api_key/apiKey，返回含密钥的 JSON。
 pub(crate) fn project_key(raw: &str, secret: &str) -> Result<String, String> {
     let mut settings = parse_settings(raw)?;
     let config = settings
@@ -329,6 +348,7 @@ pub(crate) fn project_key(raw: &str, secret: &str) -> Result<String, String> {
         .map_err(|_| "provider_settings_serialize_failed".to_string())
 }
 
+// 在已有配置上替换供应商拥有的模型配置，按凭据模式清理密钥并校验必需模型字段，返回字节及所有权路径，不执行文件写入。
 pub(crate) fn materialize(
     before: Option<&[u8]>,
     effective_raw: &Value,
@@ -363,6 +383,7 @@ pub(crate) fn materialize(
     Ok((target.to_string().into_bytes(), owned_fields))
 }
 
+// 提取端点、模型和协议摘要，优先顶层字段再读取所选 TOML 配置；无效 TOML 回退顶层值，无效 JSON 返回全空。
 pub(crate) fn summary(raw: &str) -> (Option<String>, Option<String>, Option<String>) {
     let Ok(settings) = serde_json::from_str::<Value>(raw) else {
         return (None, None, None);
@@ -401,6 +422,7 @@ mod tests {
     const CONFIG: &str = "# keep\n[cli]\nauto_update = true\n\n[models]\ndefault = \"proxy\"\nweb_search = \"grok-4.5\"\n\n[model.proxy]\nmodel = \"grok-4.5\"\nbase_url = \"https://old.example/v1\"\nname = \"Old\"\napi_key = \"old-secret\"\napi_backend = \"responses\"\ncontext_window = 128000\n\n[mcp_servers.demo]\ncommand = \"demo\"\n";
 
     #[test]
+    // 验证摘要能从 models.default 选中的 Grok 配置读取端点、模型和协议。
     fn summary_reads_selected_grok_model() {
         let raw = json!({"config": CONFIG}).to_string();
         assert_eq!(
@@ -414,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    // 验证类型化字段更新嵌套模型配置、保留默认配置选择，并去除顶层 base_url。
     fn typed_fields_update_official_nested_shape() {
         let raw = json!({"config": CONFIG}).to_string();
         let updated = apply_typed_fields(
@@ -435,6 +458,7 @@ mod tests {
     }
 
     #[test]
+    // 验证新密钥投影到所选配置，旧密钥消失且输出不含 env_key。
     fn project_key_uses_selected_model_table() {
         let raw = json!({"config": CONFIG}).to_string();
         let projected = project_key(&raw, "new-secret").unwrap();
@@ -451,6 +475,7 @@ mod tests {
     }
 
     #[test]
+    // 验证配置生成保留已有非所有权 mcp 段，写入新密钥并清除旧密钥。
     fn global_materializer_writes_inline_secret_and_preserves_unowned_sections() {
         let effective = json!({"config": CONFIG});
         let (bytes, _) = materialize(
@@ -467,6 +492,7 @@ mod tests {
     }
 
     #[test]
+    // 验证内联凭据模式也清理未选中配置的密钥，输出仅保留新投影密钥。
     fn global_materializer_removes_secrets_from_unselected_profiles() {
         let effective = json!({
             "config": format!(
@@ -482,6 +508,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧式顶层端点、模型和协议被转换为正式默认模型配置，不再输出 api_format 字段。
     fn legacy_top_level_fields_are_normalized() {
         let effective = json!({
             "base_url": "https://legacy.example/v1",

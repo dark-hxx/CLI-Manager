@@ -104,16 +104,19 @@ struct HistoryTitleSettingsSelection {
     custom_prompt: Option<String>,
 }
 
+// 返回当前 UTC Unix 毫秒时间。
 fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
 }
 
+// 配置应用数据库连接及标题写入的忙等待时间。
 fn history_db_options() -> Result<SqliteConnectOptions, String> {
     Ok(SqliteConnectOptions::new()
         .filename(app_paths::db_path()?)
         .busy_timeout(HISTORY_TITLE_DATABASE_BUSY_TIMEOUT))
 }
 
+// 识别 SQLite 锁冲突的符号名、主码和扩展码。
 fn is_sqlite_busy_code(code: &str) -> bool {
     matches!(code, "SQLITE_BUSY" | "SQLITE_LOCKED")
         || code
@@ -121,6 +124,7 @@ fn is_sqlite_busy_code(code: &str) -> bool {
             .is_ok_and(|value| matches!(value & 0xff, 5 | 6))
 }
 
+// 从数据库错误码或兼容错误文本判断锁冲突。
 fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
     error
         .as_database_error()
@@ -135,6 +139,7 @@ fn is_sqlite_busy_error(error: &sqlx::Error) -> bool {
         }
 }
 
+// 统一映射锁冲突，其余数据库错误保留阶段前缀。
 fn map_history_database_error(error_code: &str, error: sqlx::Error) -> String {
     if is_sqlite_busy_error(&error) {
         HISTORY_TITLE_DATABASE_BUSY.to_string()
@@ -143,18 +148,21 @@ fn map_history_database_error(error_code: &str, error: sqlx::Error) -> String {
     }
 }
 
+// 识别标题数据库及结构初始化类错误码。
 fn is_history_database_error_code(error: &str) -> bool {
     error == HISTORY_TITLE_DATABASE_BUSY
         || error.starts_with("history_title_database_")
         || error.starts_with("history_title_schema_failed")
 }
 
+// 使用标题数据库配置打开应用 SQLite 连接。
 async fn open_history_connection() -> Result<SqliteConnection, String> {
     SqliteConnection::connect_with(&history_db_options()?)
         .await
         .map_err(|err| map_history_database_error("history_title_database_open_failed", err))
 }
 
+// 确保生成标题表及来源身份和状态索引存在。
 async fn ensure_table(connection: &mut SqliteConnection) -> Result<(), String> {
     sqlx::query(
         r#"CREATE TABLE IF NOT EXISTS history_generated_titles (
@@ -200,6 +208,7 @@ async fn ensure_table(connection: &mut SqliteConnection) -> Result<(), String> {
     Ok(())
 }
 
+// 将标题数据库行转换为生成状态元数据。
 fn row_meta(row: &SqliteRow) -> Result<HistoryGeneratedTitleMeta, String> {
     Ok(HistoryGeneratedTitleMeta {
         session_key: row
@@ -266,6 +275,7 @@ fn row_meta(row: &SqliteRow) -> Result<HistoryGeneratedTitleMeta, String> {
     })
 }
 
+// 按会话键读取可选的生成标题元数据。
 async fn select_meta(
     connection: &mut SqliteConnection,
     session_key: &str,
@@ -278,6 +288,7 @@ async fn select_meta(
     row.map(|value| row_meta(&value)).transpose()
 }
 
+// 校验去空白文本非空、字节数受限且不含空字符。
 fn validate_text(value: &str, max_bytes: usize, error_code: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() || value.as_bytes().len() > max_bytes || value.contains('\0') {
@@ -286,6 +297,7 @@ fn validate_text(value: &str, max_bytes: usize, error_code: &str) -> Result<Stri
     Ok(value.to_string())
 }
 
+// 规范化可选提示词，忽略空值、超长或含空字符的内容。
 fn normalize_custom_prompt(value: Option<&str>) -> Option<String> {
     let value = value?.trim();
     if value.is_empty() || value.as_bytes().len() > MAX_CUSTOM_PROMPT_BYTES || value.contains('\0')
@@ -295,12 +307,14 @@ fn normalize_custom_prompt(value: Option<&str>) -> Option<String> {
     Some(value.to_string())
 }
 
+// 优先选择自定义提示词，否则使用内置标题指令。
 fn effective_prompt(selection: Option<&HistoryTitleSettingsSelection>) -> &str {
     selection
         .and_then(|selection| selection.custom_prompt.as_deref())
         .unwrap_or(BUILTIN_PROMPT)
 }
 
+// 校验生成请求字段、触发类型及传输类型，并验证候选文本摘要。
 fn validate_generate_request(request: &HistoryTitleGenerateRequest) -> Result<(), String> {
     validate_text(
         &request.session_key,
@@ -365,10 +379,12 @@ fn validate_generate_request(request: &HistoryTitleGenerateRequest) -> Result<()
     Ok(())
 }
 
+// 判断应用类型是否支持标题供应商加载。
 fn valid_app_type(value: &str) -> bool {
     matches!(value, "claude" | "codex" | "grokbuild")
 }
 
+// 按应用类型检查标题生成支持的协议别名。
 fn supported_api_format(app_type: &str, api_format: Option<&str>) -> bool {
     let format = api_format.unwrap_or_default().trim().to_ascii_lowercase();
     match app_type {
@@ -397,6 +413,7 @@ fn supported_api_format(app_type: &str, api_format: Option<&str>) -> bool {
     }
 }
 
+// 将显式协议别名映射为标题请求协议，拒绝不支持的组合。
 fn protocol_for_format(app_type: &str, api_format: &str) -> Result<&'static str, String> {
     let format = api_format.trim().to_ascii_lowercase();
     if app_type == "claude"
@@ -416,6 +433,7 @@ fn protocol_for_format(app_type: &str, api_format: &str) -> Result<&'static str,
     Err("history_title_provider_protocol_unsupported".to_string())
 }
 
+// 从应用设置读取智能标题开关、供应商选择及自定义提示词。
 fn settings_selection() -> Option<HistoryTitleSettingsSelection> {
     let path = app_paths::cli_manager_data_dir()
         .ok()?
@@ -450,6 +468,7 @@ fn settings_selection() -> Option<HistoryTitleSettingsSelection> {
     })
 }
 
+// 存在持久化选择时，确认请求供应商与模型仍与设置一致。
 fn validate_selection(
     selection: Option<&HistoryTitleSettingsSelection>,
     request: &HistoryTitleGenerateRequest,
@@ -466,6 +485,7 @@ fn validate_selection(
     Ok(())
 }
 
+// 仅对自动请求检查持久化智能标题开关。
 fn validate_automatic_enabled(
     selection: Option<&HistoryTitleSettingsSelection>,
     request: &HistoryTitleGenerateRequest,
@@ -483,6 +503,7 @@ fn validate_automatic_enabled(
     }
 }
 
+// 加载供应商有效密钥、配置及协议，组合标题请求所需运行参数。
 async fn load_provider_runtime(
     app_type: &str,
     provider_id: &str,
@@ -589,6 +610,7 @@ async fn load_provider_runtime(
     })
 }
 
+// 从可选 JSON 对象按候选键提取首个非空文本。
 fn find_json_text(object: Option<&Map<String, Value>>, keys: &[&str]) -> Option<String> {
     let object = object?;
     keys.iter().find_map(|key| {
@@ -601,6 +623,7 @@ fn find_json_text(object: Option<&Map<String, Value>>, keys: &[&str]) -> Option<
     })
 }
 
+// 返回协议对应的日志端点路径标识。
 fn request_endpoint_path(protocol: &str) -> &'static str {
     match protocol {
         "anthropic" => "v1/messages",
@@ -610,6 +633,7 @@ fn request_endpoint_path(protocol: &str) -> &'static str {
     }
 }
 
+// 提取长度受限的安全错误码前缀，丢弃分隔后的详情。
 fn safe_error_code(error: &str) -> String {
     let mut code = String::new();
     for character in error.trim().chars() {
@@ -629,6 +653,7 @@ fn safe_error_code(error: &str) -> String {
     }
 }
 
+// 将辅助文本请求错误归类为超时、连接、传输或响应读取问题。
 fn auxiliary_error_category(error: &provider::auxiliary_text::AuxiliaryTextError) -> &'static str {
     match error {
         provider::auxiliary_text::AuxiliaryTextError::Request(error) if error.is_timeout() => {
@@ -646,6 +671,7 @@ fn auxiliary_error_category(error: &provider::auxiliary_text::AuxiliaryTextError
     }
 }
 
+// 仅返回供应商错误结构及分类，不返回错误消息正文。
 fn provider_error_diagnostics(value: &Value) -> (&'static str, &'static str) {
     let Some(error) = value.get("error") else {
         return ("absent", "unknown");
@@ -703,12 +729,14 @@ fn provider_error_diagnostics(value: &Value) -> (&'static str, &'static str) {
     (shape, category)
 }
 
+// 解析响应体中的错误结构，非 JSON 时返回固定分类。
 fn provider_error_diagnostics_from_body(body: &str) -> (&'static str, &'static str) {
     serde_json::from_str::<Value>(body)
         .map(|value| provider_error_diagnostics(&value))
         .unwrap_or(("non_json", "unknown"))
 }
 
+// 记录标题请求失败阶段及脱离正文的协议和响应诊断信息。
 fn log_title_request_failure(
     runtime: &ProviderRuntime,
     protocol: &str,
@@ -740,11 +768,13 @@ fn log_title_request_failure(
     );
 }
 
+// 生成会话键的短 SHA256 日志标识。
 fn session_key_log_hash(session_key: &str) -> String {
     let digest = format!("{:x}", Sha256::digest(session_key.as_bytes()));
     format!("sha256:{}", &digest[..16])
 }
 
+// 调用选定供应商生成标题，校验响应协议并清理输出内容。
 async fn request_title(
     runtime: &ProviderRuntime,
     system_prompt: &str,
@@ -974,6 +1004,7 @@ async fn request_title(
     }
 }
 
+// 将辅助文本请求错误映射为稳定的标题生成错误码。
 fn map_auxiliary_error(error: provider::auxiliary_text::AuxiliaryTextError) -> String {
     match error {
         provider::auxiliary_text::AuxiliaryTextError::Request(error) => {
@@ -995,6 +1026,7 @@ fn map_auxiliary_error(error: provider::auxiliary_text::AuxiliaryTextError) -> S
     }
 }
 
+// 递归检查响应是否包含非空工具调用字段或工具类型。
 fn response_contains_tool_call(value: &Value) -> bool {
     match value {
         Value::Array(items) => items.iter().any(response_contains_tool_call),
@@ -1016,6 +1048,7 @@ fn response_contains_tool_call(value: &Value) -> bool {
     }
 }
 
+// 按协议检查显式结束原因或状态是否异常。
 fn response_has_abnormal_finish(value: &Value, protocol: &str) -> bool {
     let allowed = match protocol {
         "anthropic" => &["end_turn", "stop_sequence"][..],
@@ -1043,6 +1076,7 @@ fn response_has_abnormal_finish(value: &Value, protocol: &str) -> bool {
     finish.is_some_and(|reason| !allowed.contains(&reason))
 }
 
+// 移除终端转义序列、控制字符及不可见方向控制符。
 fn strip_terminal_sequences(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     let mut result = String::with_capacity(value.len());
@@ -1094,6 +1128,7 @@ fn strip_terminal_sequences(value: &str) -> String {
     result
 }
 
+// 在不截断 UTF-8 字符的前提下限制文本字节数。
 fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     let mut result = String::new();
     let mut used = 0;
@@ -1108,6 +1143,7 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
     result
 }
 
+// 清理终端序列及标题装饰，限制单词和字节数并拒绝空结果。
 fn sanitize_title(value: &str) -> Result<String, String> {
     let mut title = strip_terminal_sequences(value)
         .trim()
@@ -1136,6 +1172,7 @@ fn sanitize_title(value: &str) -> Result<String, String> {
     Ok(title)
 }
 
+// 事务预留标题请求版本，检查自动生成抑制、别名及重复请求。
 async fn reserve_request(
     request: &HistoryTitleGenerateRequest,
 ) -> Result<(i64, Option<HistoryGeneratedTitleMeta>), String> {
@@ -1244,6 +1281,7 @@ async fn reserve_request(
     Ok((revision, None))
 }
 
+// 复核版本、内容身份和当前设置后，事务保存标题或失败状态。
 async fn finish_request(
     request: &HistoryTitleGenerateRequest,
     revision: i64,
@@ -1381,10 +1419,12 @@ async fn finish_request(
 }
 
 #[tauri::command]
+// 同步命令桥接标题供应商列表读取。
 pub(crate) fn history_title_list_providers() -> Result<Vec<HistoryTitleProviderOption>, String> {
     tauri::async_runtime::block_on(history_title_list_providers_async())
 }
 
+// 枚举供应商并根据密钥、配置、协议和模型标注可用性。
 async fn history_title_list_providers_async() -> Result<Vec<HistoryTitleProviderOption>, String> {
     let providers = provider::repository::list_providers(None).await?;
     Ok(providers
@@ -1423,6 +1463,7 @@ async fn history_title_list_providers_async() -> Result<Vec<HistoryTitleProvider
         .collect())
 }
 
+// 在阻塞任务中驱动标题生成异步流程并映射任务错误。
 #[tauri::command]
 pub(crate) async fn history_title_generate(
     request: HistoryTitleGenerateRequest,
@@ -1434,6 +1475,7 @@ pub(crate) async fn history_title_generate(
     .map_err(|error| format!("history_title_task_failed: {error}"))?
 }
 
+// 校验并预留请求，加载供应商、生成标题并按版本持久化结果。
 async fn history_title_generate_async(
     request: HistoryTitleGenerateRequest,
 ) -> Result<HistoryGeneratedTitleMeta, String> {
@@ -1529,12 +1571,14 @@ async fn history_title_generate_async(
 }
 
 #[tauri::command]
+// 同步命令桥接生成标题清除流程。
 pub(crate) fn history_title_clear(
     request: HistoryTitleClearRequest,
 ) -> Result<HistoryGeneratedTitleMeta, String> {
     tauri::async_runtime::block_on(history_title_clear_async(request))
 }
 
+// 清空会话生成标题并增加版本，按内容指纹抑制自动生成。
 async fn history_title_clear_async(
     request: HistoryTitleClearRequest,
 ) -> Result<HistoryGeneratedTitleMeta, String> {
@@ -1615,10 +1659,12 @@ async fn history_title_clear_async(
 }
 
 #[tauri::command]
+// 同步命令桥接待处理标题请求的取消操作。
 pub(crate) fn history_title_cancel(session_key: String) -> Result<(), String> {
     tauri::async_runtime::block_on(history_title_cancel_async(session_key))
 }
 
+// 将待处理标题请求标为取消并增加版本，阻止旧结果回写。
 async fn history_title_cancel_async(session_key: String) -> Result<(), String> {
     let session_key = validate_text(&session_key, 512, "history_title_session_key_invalid")?;
     let mut connection = open_history_connection().await?;
@@ -1649,6 +1695,7 @@ mod tests {
     use std::time::Duration;
 
     #[test]
+    // 验证标题清理移除代码围栏及末尾句号。
     fn title_sanitizer_removes_fences_and_caps_words() {
         assert_eq!(
             sanitize_title("``` Fix the login flow. ```").unwrap(),
@@ -1657,11 +1704,13 @@ mod tests {
     }
 
     #[test]
+    // 验证仅空白的标题输出被拒绝。
     fn title_sanitizer_rejects_empty_output() {
         assert!(sanitize_title(" \n ").is_err());
     }
 
     #[test]
+    // 验证终端颜色转义及不可见字符不会进入标题。
     fn title_sanitizer_removes_terminal_and_invisible_controls() {
         assert_eq!(
             sanitize_title("\u{1b}[31m\u{200b}修复登录\u{1b}[0m\n").unwrap(),
@@ -1670,6 +1719,7 @@ mod tests {
     }
 
     #[test]
+    // 验证自定义提示词去空白及 UTF-8 字节上限校验。
     fn custom_prompt_normalization_trims_and_rejects_invalid_values() {
         assert_eq!(
             normalize_custom_prompt(Some("  Use imperative task titles.  ")).as_deref(),
@@ -1689,6 +1739,7 @@ mod tests {
     }
 
     #[test]
+    // 验证有效自定义提示词优先，否则使用内置提示词。
     fn effective_prompt_uses_custom_value_or_builtin_fallback() {
         let selection = HistoryTitleSettingsSelection {
             enabled: true,
@@ -1702,6 +1753,7 @@ mod tests {
     }
 
     #[test]
+    // 验证工具调用响应和长度截断结束原因被识别为异常。
     fn response_validation_rejects_tools_and_abnormal_finish() {
         assert!(response_contains_tool_call(&json!({
             "choices": [{"message": {"tool_calls": [{"id": "call-1"}]}}]
@@ -1713,6 +1765,7 @@ mod tests {
     }
 
     #[test]
+    // 验证供应商错误只暴露结构及分类，不回传消息正文。
     fn provider_error_diagnostics_classify_without_returning_message_content() {
         assert_eq!(
             provider_error_diagnostics(&json!({
@@ -1733,6 +1786,7 @@ mod tests {
     }
 
     #[test]
+    // 验证错误日志码丢弃冒号后的供应商详情。
     fn error_log_code_drops_detail_after_separator() {
         assert_eq!(
             safe_error_code("history_title_request_http_401: provider detail"),
@@ -1741,6 +1795,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SQLite 主码及扩展锁码识别与共享十五秒写入等待设置。
     fn title_persistence_recognizes_sqlite_busy_codes_and_uses_shared_write_timeout() {
         for code in [
             "5",

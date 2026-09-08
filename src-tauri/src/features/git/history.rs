@@ -51,6 +51,7 @@ pub struct GitHistoryFilters {
     pub path: String,
 }
 
+// 校验历史筛选的引用、作者、时间范围和仓库相对路径。
 fn validate_history_filters(filters: &GitHistoryFilters) -> Result<(), String> {
     if filters.references.len() > 64 {
         return Err("git_history_too_many_references".to_string());
@@ -91,6 +92,7 @@ pub struct GitCommitDetail {
     pub files: Vec<GitCommitFile>,
 }
 
+// 要求提交标识为完整的 40 位或 64 位十六进制文本。
 fn validate_oid_text(value: &str) -> Result<(), String> {
     if !matches!(value.len(), 40 | 64) || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return Err("git_history_oid_invalid".to_string());
@@ -98,17 +100,20 @@ fn validate_oid_text(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 先校验完整提交标识，再交由 libgit2 解析对象 ID。
 fn validate_oid(value: &str) -> Result<Oid, String> {
     validate_oid_text(value)?;
     Oid::from_str(value).map_err(|_| "git_history_oid_invalid".to_string())
 }
 
+// 修剪搜索文本并转为小写，将空搜索折叠为无筛选。
 fn normalize_search(search: Option<String>) -> Option<String> {
     search
         .map(|value| value.trim().to_lowercase())
         .filter(|value| !value.is_empty())
 }
 
+// 拒绝空白、控制字符及可被解释为选项的历史引用。
 fn validate_history_reference(reference: &str) -> Result<(), String> {
     let value = reference.trim();
     if value.is_empty()
@@ -124,6 +129,7 @@ fn validate_history_reference(reference: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 按标题、作者、邮箱和完整提交 ID 匹配已归一化的搜索词。
 fn matches_search(commit: &GitCommitSummary, search: Option<&str>) -> bool {
     let Some(search) = search else { return true };
     commit.title.to_lowercase().contains(search)
@@ -135,6 +141,7 @@ fn matches_search(commit: &GitCommitSummary, search: Option<&str>) -> bool {
         || commit.id.to_lowercase().contains(search)
 }
 
+// 将提交与第一父提交比较，判断指定路径是否发生变化。
 fn commit_touches_path(
     repo: &Repository,
     commit: &git2::Commit<'_>,
@@ -164,6 +171,7 @@ fn commit_touches_path(
     Ok(diff.deltas().len() > 0)
 }
 
+// 按作者、毫秒时间范围及路径变更过滤原生提交。
 fn matches_filters(
     repo: &Repository,
     commit: &git2::Commit<'_>,
@@ -195,6 +203,7 @@ fn matches_filters(
     commit_touches_path(repo, commit, filters.path.trim())
 }
 
+// 收集可剥离到提交的引用，并对每个提交的引用名称排序去重。
 fn reference_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
     let mut result: HashMap<Oid, Vec<String>> = HashMap::new();
     let Ok(references) = repo.references() else {
@@ -216,6 +225,7 @@ fn reference_map(repo: &Repository) -> HashMap<Oid, Vec<String>> {
     result
 }
 
+// 提取提交标识、父提交、作者时间和引用，生成历史摘要。
 fn commit_summary(commit: &git2::Commit<'_>, refs: &HashMap<Oid, Vec<String>>) -> GitCommitSummary {
     let id = commit.id().to_string();
     let author = commit.author();
@@ -234,6 +244,7 @@ fn commit_summary(commit: &git2::Commit<'_>, refs: &HashMap<Oid, Vec<String>>) -
     }
 }
 
+// 遍历原生仓库提交并应用游标与筛选，返回最多 50 条记录。
 fn list_native(
     project_path: &str,
     cursor: Option<String>,
@@ -348,6 +359,7 @@ fn list_native(
     })
 }
 
+// 解析字段与记录分隔符编码的 Git 日志，忽略无效提交记录。
 fn parse_shell_commits(bytes: &[u8]) -> Vec<GitCommitSummary> {
     String::from_utf8_lossy(bytes)
         .split(RECORD_SEPARATOR)
@@ -385,6 +397,7 @@ fn parse_shell_commits(bytes: &[u8]) -> Vec<GitCommitSummary> {
         .collect()
 }
 
+// 分批读取 WSL Git 日志，应用游标和搜索后生成历史分页。
 fn list_wsl(
     distro: &str,
     linux_path: &str,
@@ -499,6 +512,7 @@ fn list_wsl(
     })
 }
 
+// 把支持的 libgit2 文件变更类型转换为历史状态字母。
 fn delta_status(status: Delta) -> Option<&'static str> {
     match status {
         Delta::Added => Some("A"),
@@ -510,6 +524,7 @@ fn delta_status(status: Delta) -> Option<&'static str> {
     }
 }
 
+// 生成相对第一父提交的差异；根提交则与空树比较。
 fn commit_diff<'repo>(
     repo: &'repo Repository,
     commit: &git2::Commit<'repo>,
@@ -547,6 +562,7 @@ fn commit_diff<'repo>(
         .map_err(|error| format!("git_history_diff_failed:{error}"))
 }
 
+// 读取原生提交详情，识别重命名、二进制文件并统计增删行。
 fn detail_native(project_path: &str, commit_id: &str) -> Result<GitCommitDetail, String> {
     let repo = open_git_repo(project_path)?;
     let oid = validate_oid(commit_id)?;
@@ -607,6 +623,7 @@ fn detail_native(project_path: &str, commit_id: &str) -> Result<GitCommitDetail,
     })
 }
 
+// 为普通提交与根提交分别构造不使用外部差异工具的 Git 参数。
 fn shell_diff_base_args(commit: &GitCommitSummary) -> Vec<String> {
     if let Some(parent) = commit.parents.first() {
         vec![
@@ -632,6 +649,7 @@ fn shell_diff_base_args(commit: &GitCommitSummary) -> Vec<String> {
     }
 }
 
+// 校验完整提交 ID，并从 WSL Git 读取单条结构化提交摘要。
 fn wsl_commit(distro: &str, linux_path: &str, commit_id: &str) -> Result<GitCommitSummary, String> {
     validate_oid_text(commit_id)?;
     let format_arg = "--format=%x1e%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%D%x1f%s";
@@ -646,6 +664,7 @@ fn wsl_commit(distro: &str, linux_path: &str, commit_id: &str) -> Result<GitComm
         .ok_or_else(|| "git_history_commit_not_found".to_string())
 }
 
+// 解析 NUL 分隔的文件状态，保留重命名和复制的原路径。
 fn parse_name_status(bytes: &[u8]) -> Vec<(String, Option<String>, String)> {
     let parts = bytes
         .split(|byte| *byte == 0)
@@ -677,6 +696,7 @@ fn parse_name_status(bytes: &[u8]) -> Vec<(String, Option<String>, String)> {
     result
 }
 
+// 解析 NUL 分隔的行数统计，兼容二进制标记与重命名目标路径。
 fn parse_numstat(bytes: &[u8]) -> HashMap<String, (usize, usize, bool)> {
     let mut result = HashMap::new();
     let records = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
@@ -710,6 +730,7 @@ fn parse_numstat(bytes: &[u8]) -> HashMap<String, (usize, usize, bool)> {
     result
 }
 
+// 合并 WSL 提交摘要、文件状态和行数统计，生成提交详情。
 fn detail_wsl(distro: &str, linux_path: &str, commit_id: &str) -> Result<GitCommitDetail, String> {
     let commit = wsl_commit(distro, linux_path, commit_id)?;
     let mut base = shell_diff_base_args(&commit);
@@ -746,6 +767,7 @@ fn detail_wsl(distro: &str, linux_path: &str, commit_id: &str) -> Result<GitComm
 }
 
 #[tauri::command]
+// 在线程池中按原生路径或 WSL 路径路由历史提交分页请求。
 pub async fn git_list_commits(
     project_path: String,
     cursor: Option<String>,
@@ -767,6 +789,7 @@ pub async fn git_list_commits(
 }
 
 #[tauri::command]
+// 在线程池中按原生路径或 WSL 路径读取提交详情。
 pub async fn git_get_commit_detail(
     project_path: String,
     commit_id: String,
@@ -785,6 +808,7 @@ pub async fn git_get_commit_detail(
 }
 
 #[tauri::command]
+// 校验路径、提交和差异选项，并按运行环境读取提交文件差异。
 pub async fn git_get_commit_file_diff(
     project_path: String,
     commit_id: String,
@@ -840,6 +864,7 @@ pub async fn git_get_commit_file_diff(
     .map_err(|error| format!("git_history_task_failed:{error}"))?
 }
 
+// 读取原生提交指定的新旧路径差异，并格式化为受限差异载荷。
 fn commit_file_diff_native(
     project_path: &str,
     commit_id: &str,
@@ -871,6 +896,7 @@ mod tests {
     use git2::{IndexAddOption, Repository, Signature};
     use std::path::Path;
 
+    // 在临时仓库写入文件并创建以当前 HEAD 为父提交的测试提交。
     fn commit_file(repo: &Repository, name: &str, content: &str, message: &str) -> git2::Oid {
         std::fs::write(repo.workdir().unwrap().join(name), content).unwrap();
         let mut index = repo.index().unwrap();
@@ -904,6 +930,7 @@ mod tests {
     }
 
     #[test]
+    // 验证拒绝缩写或非十六进制提交 ID，并接受完整长度文本。
     fn rejects_non_full_object_ids() {
         assert!(validate_oid("abc123").is_err());
         assert!(validate_oid("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").is_err());
@@ -915,6 +942,7 @@ mod tests {
     }
 
     #[test]
+    // 验证结构化日志解析及标题、作者和提交 ID 搜索。
     fn parses_structured_shell_history_and_searches_all_fields() {
         let bytes = b"\x1e0123456789012345678901234567890123456789\x1f\x1fAlice\x1falice@example.com\x1f100\x1fHEAD -> main, tag: v1\x1fInitial commit\n";
         let commits = parse_shell_commits(bytes);
@@ -926,6 +954,7 @@ mod tests {
     }
 
     #[test]
+    // 验证不匹配提交字段的搜索词不会通过筛选。
     fn unmatched_search_is_rejected() {
         let commit = GitCommitSummary {
             id: "0123456789012345678901234567890123456789".to_string(),
@@ -941,6 +970,7 @@ mod tests {
     }
 
     #[test]
+    // 验证原生历史列表、搜索和提交文件详情。
     fn native_history_lists_searches_and_loads_details() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -966,6 +996,7 @@ mod tests {
     }
 
     #[test]
+    // 验证原生历史可以同时按作者邮箱和变更路径筛选。
     fn native_history_filters_by_author_and_path() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -989,6 +1020,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空仓库返回空列表，且 52 条提交按游标分页不重复。
     fn native_history_handles_empty_repositories_and_cursor_pagination() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -1026,6 +1058,7 @@ mod tests {
     }
 
     #[test]
+    // 验证合并提交的文件详情只与第一父提交比较。
     fn native_merge_detail_compares_the_first_parent() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -1088,6 +1121,7 @@ mod tests {
     }
 
     #[test]
+    // 验证二进制提交文件被标记且不计文本增删行。
     fn native_history_marks_binary_files() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -1110,6 +1144,7 @@ mod tests {
     }
 
     #[test]
+    // 验证原生重命名详情及文件差异保留原路径信息。
     fn native_history_preserves_rename_metadata_in_file_diff() {
         let temp = tempfile::tempdir().unwrap();
         let repo = Repository::init(temp.path()).unwrap();
@@ -1152,6 +1187,7 @@ mod tests {
     }
 
     #[test]
+    // 验证重命名行数统计归属目标路径。
     fn parses_rename_numstat_target_path() {
         let stats = parse_numstat(b"3\t1\t\0old.txt\0new.txt\0");
         assert_eq!(stats.get("new.txt"), Some(&(3, 1, false)));

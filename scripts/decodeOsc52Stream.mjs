@@ -5,6 +5,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-osc52-e2e-"));
+// 进程退出时清理本次 OSC 52 解码夹具的临时目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 writeFileSync(join(tempDir, "react.mjs"), `export function useRef(value) { return { current: value }; }`);
 writeFileSync(join(tempDir, "terminalOscPath.mjs"), `
@@ -38,6 +39,7 @@ const copied = [];
 const osc = useTerminalOsc({
   sessionId: "session-e2e",
   osPlatformRef: { current: "linux" },
+  // 捕获解码出的剪贴板文本供宿主端到端测试断言，不直接操作系统剪贴板。
   onOsc52Write: (text) => copied.push(text),
 });
 const visible = osc.normalizeTerminalOutput(process.argv[2] ?? "", {

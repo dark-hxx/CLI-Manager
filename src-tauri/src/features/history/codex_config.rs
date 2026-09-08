@@ -1,11 +1,13 @@
 use super::{detect_home_dir, resolve_codex_config_root, HistoryRoots};
 use std::path::{Path, PathBuf};
 
+// 读取 Codex 配置文本并提取首个表之前的指定字符串值。
 pub(super) fn codex_config_string(roots: &HistoryRoots, key: &str) -> Option<String> {
     let raw = fs::read_to_string(resolve_codex_config_root(roots).join("config.toml")).ok()?;
     parse_top_level_toml_string(&raw, key)
 }
 
+// 逐行查找顶层配置键，遇到表头后停止查找。
 pub(super) fn parse_top_level_toml_string(raw: &str, key: &str) -> Option<String> {
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -23,6 +25,7 @@ pub(super) fn parse_top_level_toml_string(raw: &str, key: &str) -> Option<String
     None
 }
 
+// 解析引号字符串及常见转义，或截取未加引号值的注释前内容。
 pub(super) fn parse_toml_string_value(raw: &str) -> Option<String> {
     let raw = raw.trim();
     if raw.is_empty() {
@@ -63,6 +66,7 @@ pub(super) fn parse_toml_string_value(raw: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// 展开用户目录前缀，并将相对配置路径挂到指定根目录。
 pub(super) fn expand_codex_config_path(root: &Path, value: &str) -> PathBuf {
     let trimmed = value.trim();
     let expanded = if let Some(rest) = trimmed.strip_prefix("~/") {

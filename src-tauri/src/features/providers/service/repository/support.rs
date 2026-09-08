@@ -15,6 +15,7 @@ const SECRET_KEY_MARKERS: [&str; 6] = [
     "authorization",
 ];
 
+// 裁剪错误详情后拼接 code:detail，空详情只返回代码；不对详情文本脱敏。
 pub(crate) fn error(code: &str, detail: impl AsRef<str>) -> String {
     let detail = detail.as_ref().trim();
     if detail.is_empty() {
@@ -24,6 +25,7 @@ pub(crate) fn error(code: &str, detail: impl AsRef<str>) -> String {
     }
 }
 
+// 按数据库错误文本中的索引名或唯一标签冲突特征映射业务错误，其他情况返回通用数据库错误及上下文。
 pub(crate) fn map_database_error(context: &str, err: sqlx::Error) -> String {
     let text = err.to_string().to_ascii_lowercase();
     if text.contains("idx_providers_one_current") {
@@ -38,6 +40,7 @@ pub(crate) fn map_database_error(context: &str, err: sqlx::Error) -> String {
     error("provider_database_error", context)
 }
 
+// 裁剪并忽略 ASCII 大小写，统一三种 CLI 类型与 Grok 别名；不支持的类型返回错误。
 pub(crate) fn normalize_app_type(value: &str) -> Result<String, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "claude" => Ok("claude".to_string()),
@@ -47,6 +50,7 @@ pub(crate) fn normalize_app_type(value: &str) -> Result<String, String> {
     }
 }
 
+// 裁剪名称并要求非空且不超过一百二十个 Unicode 字符。
 pub(crate) fn required_name(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty() {
@@ -58,6 +62,7 @@ pub(crate) fn required_name(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+// 裁剪可选字符串，空白内容转换为 None。
 pub(crate) fn optional_text(value: Option<String>) -> Option<String> {
     value.and_then(|value| {
         let value = value.trim().to_string();
@@ -65,10 +70,12 @@ pub(crate) fn optional_text(value: Option<String>) -> Option<String> {
     })
 }
 
+// 将必传字符串包装为可选值，复用空白清理规则。
 pub(crate) fn optional_text_value(value: String) -> Option<String> {
     optional_text(Some(value))
 }
 
+// 缺失值默认空 JSON 对象，要求对象根节点并紧凑序列化，不校验嵌套 CLI 配置语义。
 pub(crate) fn normalize_settings_config(value: Option<String>) -> Result<String, String> {
     let value = value.unwrap_or_else(|| "{}".to_string());
     let trimmed = value.trim();
@@ -80,6 +87,7 @@ pub(crate) fn normalize_settings_config(value: Option<String>) -> Result<String,
     serde_json::to_string(&parsed).map_err(|_| error("provider_settings_serialize_failed", ""))
 }
 
+// 未传值保持字段不变，传入空白则删除字段，非空值裁剪后写入。
 fn set_optional_json_string(object: &mut Map<String, Value>, key: &str, value: Option<&str>) {
     let Some(value) = value.map(str::trim) else {
         return;
@@ -100,6 +108,7 @@ const CLAUDE_API_FORMATS: [&str; 4] = [
 
 const CLAUDE_AUTH_FIELDS: [&str; 2] = ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
 
+// 读取 Claude 环境对象中的非空字符串字段并裁剪首尾空白。
 fn claude_text(env: &Map<String, Value>, key: &str) -> Option<String> {
     env.get(key)
         .and_then(Value::as_str)
@@ -108,6 +117,7 @@ fn claude_text(env: &Map<String, Value>, key: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+// 根据两个认证键的存在及空值选择投影字段；双方存在时优先空的 AUTH_TOKEN，其次空的 API_KEY，否则默认 AUTH_TOKEN。
 fn selected_claude_auth_field(env: &Map<String, Value>) -> &'static str {
     let has_auth_token = env.contains_key("ANTHROPIC_AUTH_TOKEN");
     let has_api_key = env.contains_key("ANTHROPIC_API_KEY");
@@ -121,6 +131,7 @@ fn selected_claude_auth_field(env: &Map<String, Value>) -> &'static str {
     }
 }
 
+// 去掉模型文本末尾不区分大小写的 [1m] 标记及尾部空白，不修改中间标记。
 fn strip_claude_one_m_marker(value: &str) -> String {
     let trimmed = value.trim_end();
     if trimmed
@@ -133,10 +144,12 @@ fn strip_claude_one_m_marker(value: &str) -> String {
     trimmed.to_string()
 }
 
+// 复用可选字符串更新规则写入 Claude 环境字段。
 fn apply_claude_env_field(env: &mut Map<String, Value>, key: &str, value: Option<&str>) {
     set_optional_json_string(env, key, value);
 }
 
+// 有输入时校验 Claude 协议及认证字段，更新模型环境项并迁移已有认证值；无输入时原文返回，不写外部配置。
 pub(crate) fn apply_claude_config_fields(
     raw: &str,
     input: Option<&ClaudeConfigInput>,
@@ -223,12 +236,14 @@ pub(crate) fn apply_claude_config_fields(
     serde_json::to_string(&value).map_err(|_| error("provider_settings_serialize_failed", ""))
 }
 
+// 仅在明确提供 is_full_url 时更新元数据 claudeIsFullUrl，其他属性不动。
 pub(crate) fn apply_claude_meta(meta: &mut Map<String, Value>, input: Option<&ClaudeConfigInput>) {
     if let Some(is_full_url) = input.and_then(|value| value.is_full_url) {
         meta.insert("claudeIsFullUrl".to_string(), Value::Bool(is_full_url));
     }
 }
 
+// 从设置及元数据构建 Claude 编辑字段，按模型族回退并为默认显示名去除 [1m]；无效 JSON 按空对象处理。
 pub(crate) fn claude_config_from_settings(raw: &str, meta: &Map<String, Value>) -> ClaudeConfig {
     let value = serde_json::from_str::<Value>(raw).unwrap_or_else(|_| Value::Object(Map::new()));
     let object = value.as_object();
@@ -275,6 +290,7 @@ pub(crate) fn claude_config_from_settings(raw: &str, meta: &Map<String, Value>) 
     }
 }
 
+// 按 CLI 类型更新可选端点、模型和协议，Grok 委托嵌套配置转换；三项均未提供时直接返回原文。
 pub(crate) fn apply_config_fields(
     app_type: &str,
     raw: &str,
@@ -318,6 +334,7 @@ pub(crate) fn apply_config_fields(
     serde_json::to_string(&value).map_err(|_| error("provider_settings_serialize_failed", ""))
 }
 
+// 返回不超过 i64 上限的 Unix 毫秒时间，早于纪元时返回零。
 pub(crate) fn unix_timestamp_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -325,6 +342,7 @@ pub(crate) fn unix_timestamp_millis() -> i64 {
         .unwrap_or(0)
 }
 
+// 解析 JSON 对象元数据，解析失败或非对象时返回空映射。
 pub(crate) fn parse_meta(raw: &str) -> Map<String, Value> {
     serde_json::from_str::<Value>(raw)
         .ok()
@@ -332,21 +350,25 @@ pub(crate) fn parse_meta(raw: &str) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+// 读取布尔 enabled，缺失或类型不符默认启用。
 pub(crate) fn meta_enabled(meta: &Map<String, Value>) -> bool {
     meta.get("enabled").and_then(Value::as_bool).unwrap_or(true)
 }
 
+// 读取布尔 commonConfigEnabled，缺失或类型不符默认继承公共配置。
 pub(crate) fn meta_common_config_enabled(meta: &Map<String, Value>) -> bool {
     meta.get("commonConfigEnabled")
         .and_then(Value::as_bool)
         .unwrap_or(true)
 }
 
+// 将元数据映射序列化为 JSON 对象文本。
 pub(crate) fn serialize_meta(meta: Map<String, Value>) -> Result<String, String> {
     serde_json::to_string(&Value::Object(meta))
         .map_err(|_| error("provider_meta_serialize_failed", ""))
 }
 
+// 忽略 ASCII 大小写后按 token/key 等子串识别敏感键，可能命中普通配置名称，不分析值内容。
 pub(crate) fn is_secret_key(key: &str) -> bool {
     let normalized = key.to_ascii_lowercase();
     SECRET_KEY_MARKERS
@@ -354,6 +376,7 @@ pub(crate) fn is_secret_key(key: &str) -> bool {
         .any(|marker| normalized.contains(marker))
 }
 
+// 十二字符以内只显示星号；更长值保留首尾各四个字符，用省略号遮住中间部分。
 pub(crate) fn mask_secret(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() <= 12 {
@@ -364,6 +387,7 @@ pub(crate) fn mask_secret(value: &str) -> String {
     format!("{head}…{tail}")
 }
 
+// 按敏感键遮罩对象字段并递归子节点；数组使用 any，首个命中后停止处理剩余元素。
 pub(crate) fn redact_json(value: &mut Value) -> bool {
     match value {
         Value::Object(object) => {
@@ -387,6 +411,7 @@ pub(crate) fn redact_json(value: &mut Value) -> bool {
     }
 }
 
+// 解析 JSON 后按字段名脱敏并格式化；解析失败只按关键词决定是否隐藏全文，有效标记不要求对象根节点。
 pub(crate) fn redact_settings_config(raw: &str) -> (String, bool, bool) {
     let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
         let has_secret = SECRET_KEY_MARKERS
@@ -407,6 +432,7 @@ pub(crate) fn redact_settings_config(raw: &str) -> (String, bool, bool) {
     (redacted, has_secret, true)
 }
 
+// 删除对象敏感键，含关键词的 config 字符串整体清空；数组用 any 短路处理，首个命中后不再清理后续元素。
 pub(crate) fn strip_json_secrets(value: &mut Value) -> bool {
     match value {
         Value::Object(object) => {
@@ -444,6 +470,7 @@ pub(crate) fn strip_json_secrets(value: &mut Value) -> bool {
     }
 }
 
+// 解析后调用敏感字段清理生成复制用配置，无效 JSON 回退空对象；清理范围沿用遍历器的限制。
 pub(crate) fn duplicate_settings_config(raw: &str) -> String {
     let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
         return "{}".to_string();
@@ -452,6 +479,7 @@ pub(crate) fn duplicate_settings_config(raw: &str) -> String {
     serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())
 }
 
+// 先按候选键顺序取当前对象的非空字符串，再递归对象值和数组元素查找首个命中。
 fn first_json_string(value: &Value, keys: &[&str]) -> Option<String> {
     match value {
         Value::Object(object) => {
@@ -476,6 +504,7 @@ fn first_json_string(value: &Value, keys: &[&str]) -> Option<String> {
     }
 }
 
+// 在普通表中按候选键优先并递归查找，内联表仅检查直接键；不遍历普通数组或表数组。
 fn first_toml_edit_string(item: &toml_edit::Item, keys: &[&str]) -> Option<String> {
     match item {
         toml_edit::Item::Table(table) => {
@@ -510,6 +539,7 @@ fn first_toml_edit_string(item: &toml_edit::Item, keys: &[&str]) -> Option<Strin
     }
 }
 
+// Grok 委托专用摘要，其他类型先从 JSON 查端点与模型，再用内嵌 TOML 补缺；协议只从 JSON 提取。
 pub(crate) fn config_summary(
     app_type: &str,
     raw: &str,
@@ -562,6 +592,7 @@ pub(crate) fn config_summary(
     (base_url, model, api_format)
 }
 
+// 转换数据库行为内部供应商记录；必需列读取错误向上传播，可选文本列读取失败折叠为 None。
 pub(crate) fn provider_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ProviderRecord, String> {
     Ok(ProviderRecord {
         id: row
@@ -597,6 +628,7 @@ pub(crate) fn provider_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Provide
     })
 }
 
+// 按供应商 ID 与类型的复合身份查询并转换记录，找不到时返回明确错误。
 pub(crate) async fn load_provider(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -616,6 +648,7 @@ pub(crate) async fn load_provider(
     provider_from_row(&row)
 }
 
+// 统计指定供应商与类型的全部密钥行，包含禁用和非活动项。
 pub(crate) async fn key_count(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -631,6 +664,7 @@ pub(crate) async fn key_count(
     .map_err(|err| map_database_error("provider_key_count_failed", err))
 }
 
+// 读取指定供应商中同时启用且活动的首个密钥标签，不返回密钥原文。
 pub(crate) async fn active_key_label(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -648,6 +682,7 @@ pub(crate) async fn active_key_label(
     .map_err(|err| map_database_error("provider_active_key_failed", err))
 }
 
+// 结合记录、密钥数量与标签构建卡片；settings_valid 仅检查外层 JSON 对象，不验证内嵌 TOML 或必需字段。
 pub(crate) fn card_from_record(
     record: &ProviderRecord,
     key_count: i64,
@@ -681,6 +716,7 @@ pub(crate) fn card_from_record(
     }
 }
 
+// 用给定连接依次查询密钥数量和活动标签，再生成卡片；不自行创建一致性事务。
 pub(crate) async fn card_from_record_with_connection(
     connection: &mut SqliteConnection,
     record: &ProviderRecord,
@@ -690,6 +726,7 @@ pub(crate) async fn card_from_record_with_connection(
     Ok(card_from_record(record, count, active))
 }
 
+// 从 JSON 数组筛出裁剪后的非空字符串，解析失败按空列表处理，保留重复项。
 pub(crate) fn parse_tags(raw: &str) -> Vec<String> {
     serde_json::from_str::<Value>(raw)
         .ok()
@@ -701,6 +738,7 @@ pub(crate) fn parse_tags(raw: &str) -> Vec<String> {
         .collect()
 }
 
+// 裁剪并移除空标签后序列化为 JSON 数组；不去重，缺失输入按空列表处理。
 pub(crate) fn normalize_tags(tags: Option<Vec<String>>) -> Result<String, String> {
     let tags = tags
         .unwrap_or_default()
@@ -711,6 +749,7 @@ pub(crate) fn normalize_tags(tags: Option<Vec<String>>) -> Result<String, String
     serde_json::to_string(&tags).map_err(|_| error("provider_key_tags_invalid", "tags"))
 }
 
+// 读取密钥行并构建带遮罩的摘要，转换标签及整数状态；不在摘要中返回完整密钥。
 pub(crate) fn key_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ProviderKeySummary, String> {
     let api_key: String = row
         .try_get("api_key")
@@ -756,6 +795,7 @@ pub(crate) fn key_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ProviderKeyS
     })
 }
 
+// 按复合身份查询密钥并按排序、创建时间、标签排列，逐行转成摘要。
 pub(crate) async fn list_keys_for_provider(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -776,6 +816,7 @@ pub(crate) async fn list_keys_for_provider(
     rows.iter().map(key_from_row).collect()
 }
 
+// 按类型投影凭据：Claude 清除另一个认证键，Codex 更新 auth 字段或替换非对象 auth，Grok 委托专用转换。
 pub(crate) fn set_json_secret(
     value: &mut Value,
     app_type: &str,
@@ -830,6 +871,7 @@ pub(crate) fn set_json_secret(
     Ok(())
 }
 
+// 解析设置并按 CLI 类型投影给定密钥，返回含凭据的 JSON；Grok 直接委托专用实现，不写数据库。
 pub(crate) fn project_key_into_settings(
     app_type: &str,
     raw: &str,

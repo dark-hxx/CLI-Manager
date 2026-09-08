@@ -44,6 +44,7 @@ struct SystemNotificationActionPayload {
 /// "microsoft" 或 "wsl" 关键字则判定为 WSL。若文件不存在或读取失败
 /// （非 Linux），返回 false。
 #[tauri::command]
+// Windows 原生进程直接返回 false；其他平台通过环境变量和内核版本文本识别 WSL。
 pub fn is_wsl() -> bool {
     if cfg!(windows) {
         return false;
@@ -72,6 +73,7 @@ pub fn is_wsl() -> bool {
 /// - PowerShell 单引号会被转义（`'` → `''`）。
 /// - 使用 `spawn()` 而非 `output()` 以避免阻塞调用者（异步发送）。
 #[tauri::command]
+// 仅在 WSL 中校验并转义通知文本，然后启动宿主 PowerShell 发送 Toast，不等待发送结果。
 pub async fn send_notification_via_windows(title: String, body: String) -> Result<(), String> {
     if !is_wsl() {
         return Err("windows_notification_bridge_requires_wsl".into());
@@ -108,6 +110,7 @@ pub async fn send_notification_via_windows(title: String, body: String) -> Resul
 
 /// 校验 Windows 本地 Hook 系统通知声音文件，不会播放声音。
 #[tauri::command]
+// Windows 下校验声音文件而不播放；其他平台返回不支持错误。
 pub fn validate_system_notification_sound(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -123,6 +126,7 @@ pub fn validate_system_notification_sound(path: String) -> Result<(), String> {
 
 /// 试听 Windows 本地 Hook 系统通知声音。
 #[tauri::command]
+// Windows 下校验 WAV 路径并请求异步播放；其他平台返回不支持错误。
 pub fn play_system_notification_sound(path: String) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -138,6 +142,7 @@ pub fn play_system_notification_sound(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 校验通知内容后显示可交互通知，并在后台将点击响应转为 Tab 事件；自定义声音失败时回退。
 pub async fn send_interactive_system_notification(
     app: AppHandle,
     title: String,
@@ -250,6 +255,7 @@ pub async fn send_interactive_system_notification(
 }
 
 #[cfg(target_os = "windows")]
+// 校验 WAV 扩展名、规范化文件路径、大小与 RIFF/WAVE 头，不执行完整音频解码。
 fn resolve_notification_sound_path(path: &str) -> Result<PathBuf, String> {
     if path.trim().is_empty() {
         return Err("notification_sound_path_empty".into());
@@ -296,6 +302,7 @@ fn resolve_notification_sound_path(path: &str) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "windows")]
+// 组合异步、文件名及禁用默认声音回退的 Windows 播放标志。
 fn custom_sound_play_flags() -> u32 {
     use windows_sys::Win32::Media::Audio::{SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
 
@@ -303,6 +310,7 @@ fn custom_sound_play_flags() -> u32 {
 }
 
 #[cfg(target_os = "windows")]
+// 将路径编码为以 NUL 结尾的 UTF-16 并请求 Windows 异步播放，API 拒绝时返回错误。
 fn play_windows_wav(path: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Media::Audio::PlaySoundW;
@@ -326,6 +334,7 @@ fn play_windows_wav(path: &Path) -> Result<(), String> {
 }
 
 #[tauri::command]
+// Windows 下对主窗口设置任务栏闪烁；其他平台仅校验参数而不执行提醒。
 pub fn set_taskbar_attention(
     app: AppHandle,
     mode: Option<String>,
@@ -363,6 +372,7 @@ pub fn set_taskbar_attention(
     }
 }
 
+// 校验任务栏提醒模式，仅有限次数模式要求次数处于允许范围。
 fn validate_taskbar_attention_request(
     mode: Option<&str>,
     flash_count: Option<u32>,
@@ -381,6 +391,7 @@ fn validate_taskbar_attention_request(
 }
 
 #[cfg(target_os = "windows")]
+// 将已校验的模式映射为 Windows 停止、有限闪烁或持续至聚焦的参数。
 fn taskbar_flash_params(
     mode: Option<&str>,
     flash_count: Option<u32>,
@@ -406,6 +417,7 @@ fn taskbar_flash_params(
 }
 
 #[cfg(windows)]
+// Windows 下隐藏启动非交互 PowerShell，丢弃标准流；成功只表示进程已创建。
 fn spawn_powershell_notification(script: &str) -> Result<(), String> {
     crate::shell_resolver::silent_command("powershell.exe")
         .arg("-NoProfile")
@@ -421,6 +433,7 @@ fn spawn_powershell_notification(script: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
+// 按可执行文件目录是否为 target/debug 或 target/release 决定是否使用注册应用 ID。
 fn should_use_registered_windows_app_id() -> bool {
     use std::path::MAIN_SEPARATOR as SEP;
 
@@ -436,6 +449,7 @@ fn should_use_registered_windows_app_id() -> bool {
 }
 
 #[cfg(not(windows))]
+// 非 Windows 下启动 powershell.exe 桥接通知并丢弃标准流，不等待退出结果。
 fn spawn_powershell_notification(script: &str) -> Result<(), String> {
     std::process::Command::new("powershell.exe")
         .arg("-NoProfile")
@@ -450,6 +464,7 @@ fn spawn_powershell_notification(script: &str) -> Result<(), String> {
         .map_err(|e| format!("Failed to spawn powershell.exe: {}", e))
 }
 
+// 拒绝空白标题，再检查标题的 NUL 和字符数量限制。
 fn validate_notification_title(title: &str) -> Result<(), String> {
     if title.trim().is_empty() {
         return Err("notification_title_empty".into());
@@ -457,10 +472,12 @@ fn validate_notification_title(title: &str) -> Result<(), String> {
     validate_notification_text(title, MAX_NOTIFICATION_TITLE_CHARS, "notification_title")
 }
 
+// 检查通知正文的 NUL 与字符数量限制，允许空正文。
 fn validate_notification_body(body: &str) -> Result<(), String> {
     validate_notification_text(body, MAX_NOTIFICATION_BODY_CHARS, "notification_body")
 }
 
+// 拒绝 NUL 并按 Unicode 标量数量检查文本长度，返回字段相关错误码。
 fn validate_notification_text(value: &str, max_chars: usize, field: &str) -> Result<(), String> {
     if value.contains('\0') {
         return Err(format!("{}_contains_nul", field));
@@ -472,6 +489,7 @@ fn validate_notification_text(value: &str, max_chars: usize, field: &str) -> Res
 }
 
 /// XML 特殊字符转义（用于 Toast XML），并替换 XML 1.0 不允许的控制字符。
+// 转义 XML 五类特殊字符，并将除制表和换行外的控制字符替换为空格。
 fn xml_escape(s: &str) -> String {
     let mut escaped = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -497,6 +515,7 @@ mod tests {
     use windows_sys::Win32::UI::WindowsAndMessaging::{FLASHW_STOP, FLASHW_TIMERNOFG, FLASHW_TRAY};
 
     #[test]
+    // 验证有限任务栏闪烁接受次数上下界并生成托盘闪烁参数。
     fn finite_taskbar_attention_accepts_boundaries() {
         assert_eq!(
             taskbar_flash_params(Some("finite"), Some(1)).unwrap(),
@@ -515,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    // 验证有限闪烁拒绝缺失次数和超出边界的次数。
     fn finite_taskbar_attention_rejects_out_of_range_counts() {
         assert!(taskbar_flash_params(Some("finite"), Some(0)).is_err());
         assert!(taskbar_flash_params(Some("finite"), Some(21)).is_err());
@@ -522,6 +542,7 @@ mod tests {
     }
 
     #[test]
+    // 验证持续至聚焦及停止模式生成各自的 Windows 标志。
     fn until_focused_and_stop_use_expected_flags() {
         assert_eq!(
             taskbar_flash_params(Some("untilFocused"), None).unwrap(),
@@ -540,6 +561,7 @@ mod tests {
     }
 
     #[test]
+    // 验证自定义声音使用异步文件播放且不回退默认声音。
     fn custom_sound_flags_play_async_filename_without_default_fallback() {
         use windows_sys::Win32::Media::Audio::{SND_ASYNC, SND_FILENAME, SND_NODEFAULT};
 
@@ -550,6 +572,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空白声音路径返回空输入错误。
     fn custom_sound_path_rejects_empty_input() {
         assert_eq!(
             resolve_notification_sound_path("   ").unwrap_err(),
@@ -558,6 +581,7 @@ mod tests {
     }
 
     #[test]
+    // 验证大写 WAV 扩展名和最小 RIFF/WAVE 头通过路径校验。
     fn valid_wav_path_accepts_uppercase_extension() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("hook-alert.WAV");
@@ -571,6 +595,7 @@ mod tests {
     }
 
     #[test]
+    // 验证非 WAV 扩展名与缺少有效头部的文件被拒绝。
     fn custom_sound_path_rejects_non_wav_and_malformed_content() {
         let directory = tempfile::tempdir().unwrap();
         let mp3_path = directory.path().join("hook-alert.mp3");
@@ -589,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    // 验证声音路径缺失或指向目录时返回对应错误。
     fn custom_sound_path_rejects_missing_file_and_directory() {
         let directory = tempfile::tempdir().unwrap();
         let missing_path = directory.path().join("missing.wav");
@@ -606,6 +632,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超出大小限制的临时声音文件在读取头部之前被拒绝。
     fn custom_sound_path_rejects_oversized_file_before_header_read() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("oversized.wav");
@@ -619,6 +646,7 @@ mod tests {
     }
 
     #[test]
+    // 验证声音路径包含 NUL 或 UTF-16 长度超限时被拒绝。
     fn custom_sound_path_rejects_nul_and_oversized_input() {
         assert_eq!(
             resolve_notification_sound_path("C:\\sounds\\alert\0.wav").unwrap_err(),

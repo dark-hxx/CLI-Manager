@@ -40,6 +40,7 @@ struct WeixinTokenTransfer {
 }
 
 impl WeixinTokenTransfer {
+    // 合并指定微信用户的上下文令牌并原子写入目标账户文件。
     fn apply(&self) -> Result<(), String> {
         let mut document = match fs::read_to_string(&self.target_path) {
             Ok(raw) => serde_json::from_str(&raw)
@@ -54,6 +55,7 @@ impl WeixinTokenTransfer {
     }
 }
 
+// 规范化接管标识，仅允许有长度上限的字母、数字、连字符和下划线。
 fn validate_handoff_identifier(value: &str, label: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty()
@@ -67,6 +69,7 @@ fn validate_handoff_identifier(value: &str, label: &str) -> Result<String, Strin
     Ok(value.to_string())
 }
 
+// 规范化已存在的本地绝对目录，并在 Windows 拒绝 UNC 路径。
 fn canonical_local_directory(raw: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(raw.trim());
     if !path.is_absolute() || !path.is_dir() {
@@ -82,6 +85,7 @@ fn canonical_local_directory(raw: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 按平台路径大小写规则比较两个路径。
 fn paths_equal(left: &Path, right: &Path) -> bool {
     #[cfg(target_os = "windows")]
     {
@@ -93,6 +97,7 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     }
 }
 
+// 按目录边界判断路径等于或位于指定根目录内。
 fn path_is_within(path: &Path, root: &Path) -> bool {
     if paths_equal(path, root) {
         return true;
@@ -114,6 +119,7 @@ fn path_is_within(path: &Path, root: &Path) -> bool {
     }
 }
 
+// 规范化远端绝对目录，拒绝上级跳转及非法分隔字符。
 fn normalized_remote_directory(raw: &str) -> Result<String, String> {
     let raw = raw.trim();
     if !raw.starts_with('/') || raw.contains(['\0', '\r', '\n', '\\']) {
@@ -134,10 +140,12 @@ fn normalized_remote_directory(raw: &str) -> Result<String, String> {
     })
 }
 
+// 按斜杠边界判断规范化远端路径是否位于项目根内。
 fn remote_path_is_within(path: &str, root: &str) -> bool {
     path == root || root == "/" || path.starts_with(&format!("{}/", root.trim_end_matches('/')))
 }
 
+// 按项目、主机和远端路径的摘要创建本地 SSH 接管工作目录。
 fn ssh_handoff_work_dir(
     project_id: &str,
     ssh_host_id: &str,
@@ -154,6 +162,7 @@ fn ssh_handoff_work_dir(
         .map_err(|err| format!("canonicalize SSH handoff work directory failed: {err}"))
 }
 
+// 通过只读 SQLite 连接查询已注册工作树及 Provider 覆盖配置。
 fn load_registered_worktree(worktree_id: &str) -> Result<Option<RegisteredWorktree>, String> {
     let database_path = crate::app_paths::db_path()?;
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -202,6 +211,7 @@ fn load_registered_worktree(worktree_id: &str) -> Result<Option<RegisteredWorktr
     })
 }
 
+// 在独立同步运行时中加载 Provider 目录。
 fn load_provider_catalog_sync() -> Result<ProviderCatalog, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -210,6 +220,7 @@ fn load_provider_catalog_sync() -> Result<ProviderCatalog, String> {
     Ok(runtime.block_on(load_provider_catalog()))
 }
 
+// 为本地 Claude 的项目 Provider 创建接管启动快照。
 fn prepare_claude_provider_snapshot(
     target: &ResolvedHandoffTarget,
 ) -> Result<Option<crate::provider::scope::ProviderLaunchSnapshot>, String> {
@@ -243,6 +254,7 @@ fn prepare_claude_provider_snapshot(
         .map(Some)
 }
 
+// 在同步运行时中释放指定 Provider 启动快照。
 fn release_provider_snapshot(snapshot_id: &str) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -253,6 +265,7 @@ fn release_provider_snapshot(snapshot_id: &str) -> Result<(), String> {
     ))
 }
 
+// 通过创建后释放快照验证 Claude 项目 Provider 可用性。
 fn validate_claude_provider_snapshot(target: &ResolvedHandoffTarget) -> Result<(), String> {
     let Some(snapshot) = prepare_claude_provider_snapshot(target)? else {
         return Ok(());
@@ -260,6 +273,7 @@ fn validate_claude_provider_snapshot(target: &ResolvedHandoffTarget) -> Result<(
     release_provider_snapshot(&snapshot.snapshot_id)
 }
 
+// 按语言和代理来源生成接管通知中的 Provider 名称。
 fn provider_display_name(language: CcConnectLanguage, project: &RegisteredProject) -> String {
     if project.environment_type == "ssh" {
         return match language {
@@ -297,6 +311,7 @@ fn provider_display_name(language: CcConnectLanguage, project: &RegisteredProjec
     }
 }
 
+// 校验已注册项目、工作树及目录边界，并解析本地或 SSH 接管目标。
 fn resolve_handoff_target(
     base_profile: &CcConnectProfile,
     request: &CcConnectHandoffStartRequest,
@@ -414,6 +429,7 @@ fn resolve_handoff_target(
     })
 }
 
+// 构造使用全局 Codex Provider 的控制项目待机目标。
 fn standby_target(base_profile: &CcConnectProfile) -> Result<ResolvedHandoffTarget, String> {
     let mut profile = base_profile.clone();
     apply_control_profile(&mut profile)?;
@@ -449,6 +465,7 @@ fn standby_target(base_profile: &CcConnectProfile) -> Result<ResolvedHandoffTarg
     })
 }
 
+// 解析配置中的运行项目，失效或不支持时返回无目标。
 fn runtime_target(
     base_profile: &CcConnectProfile,
 ) -> Result<Option<ResolvedHandoffTarget>, String> {
@@ -509,10 +526,12 @@ fn runtime_target(
     Ok(resolve_handoff_target(base_profile, &request).ok())
 }
 
+// 优先采用有效运行项目，否则回退控制项目待机目标。
 fn effective_idle_target(base_profile: &CcConnectProfile) -> Result<ResolvedHandoffTarget, String> {
     runtime_target(base_profile)?.map_or_else(|| standby_target(base_profile), Ok)
 }
 
+// 核对接管来源的项目身份、启用平台和目录是否仍匹配。
 fn source_profile_matches(profile: &CcConnectProfile, record: &PersistedHandoffRecord) -> bool {
     if profile.project_id != record.source_project_id
         || profile.project_name != record.source_project_name
@@ -530,6 +549,7 @@ fn source_profile_matches(profile: &CcConnectProfile, record: &PersistedHandoffR
     }
 }
 
+// 重新解析持久化接管目标并核对身份，再恢复记录中的 Provider 选择。
 fn resolve_record_target(
     base_profile: &CcConnectProfile,
     record: &PersistedHandoffRecord,
@@ -575,6 +595,7 @@ fn resolve_record_target(
     Ok(target)
 }
 
+// 为进程启动选择持久化接管目标或当前空闲目标。
 pub(super) fn effective_target_for_process(
     base_profile: CcConnectProfile,
 ) -> Result<(CcConnectProfile, RegisteredProject), String> {
@@ -590,10 +611,12 @@ pub(super) fn effective_target_for_process(
     }
 }
 
+// 转发当前接管所持有的 Provider 快照标识查询。
 pub(crate) fn active_provider_snapshot_id() -> Result<Option<String>, String> {
     handoff_session::active_provider_snapshot_id()
 }
 
+// 校验当前 Claude 接管记录并解析绑定快照的 settings 文件。
 pub(super) fn active_claude_settings_path() -> Result<Option<PathBuf>, String> {
     let Some(record) = load_handoff_record()? else {
         return Ok(None);
@@ -612,6 +635,7 @@ pub(super) fn active_claude_settings_path() -> Result<Option<PathBuf>, String> {
     crate::provider::scope::resolve_claude_settings_path(snapshot_id, provider_id).map(Some)
 }
 
+// 存在活动接管记录时阻止修改远程连接设置。
 pub(super) fn ensure_handoff_inactive() -> Result<(), String> {
     if load_handoff_record()?.is_some() {
         Err(
@@ -623,10 +647,12 @@ pub(super) fn ensure_handoff_inactive() -> Result<(), String> {
     }
 }
 
+// 返回指定微信项目账户的上下文令牌文件路径。
 fn weixin_context_token_path(project_name: &str, project_id: &str) -> Result<PathBuf, String> {
     Ok(weixin_account_dir(project_name, project_id)?.join("context_tokens.json"))
 }
 
+// 从微信私聊会话键解析用户并读取来源账户的上下文令牌。
 fn load_weixin_context_token(
     base_profile: &CcConnectProfile,
     platform_session_key: &str,
@@ -646,6 +672,7 @@ fn load_weixin_context_token(
     Ok((user_id.to_string(), token))
 }
 
+// 为微信接管捕获目标令牌文件快照并准备令牌迁移。
 fn prepare_weixin_token_transfer(
     platform: CcConnectPlatform,
     base_profile: &CcConnectProfile,
@@ -669,6 +696,7 @@ fn prepare_weixin_token_transfer(
     }))
 }
 
+// 按中英文生成包含会话、目录、项目和 Provider 的接管状态通知。
 fn format_handoff_notification(
     record: &PersistedHandoffRecord,
     active: bool,
@@ -694,6 +722,7 @@ fn format_handoff_notification(
     }
 }
 
+// 按固定次数重试发送接管通知，最终仅返回失败代码。
 pub(super) fn send_handoff_notification(
     binary: &Path,
     project_name: &str,
@@ -715,6 +744,7 @@ pub(super) fn send_handoff_notification(
     ))
 }
 
+// 限时调用 cc-connect send，并区分非零退出、超时和进程错误。
 pub(super) fn send_handoff_notification_once(
     binary: &Path,
     project_name: &str,
@@ -760,6 +790,7 @@ pub(super) fn send_handoff_notification_once(
     }
 }
 
+// 读取进程槽位，排除仍处于启动中的状态。
 fn manager_process_running(manager: &CcConnectManager) -> Result<bool, String> {
     let state = manager
         .process
@@ -768,6 +799,7 @@ fn manager_process_running(manager: &CcConnectManager) -> Result<bool, String> {
     Ok(state.process.is_some() && !state.starting)
 }
 
+// 将记录的会话文件限定为当前数据根内的预期候选路径。
 fn validate_record_session_path(record: &PersistedHandoffRecord) -> Result<PathBuf, String> {
     let root = data_dir()?;
     let recorded = PathBuf::from(&record.session_file_path);
@@ -801,6 +833,7 @@ fn validate_record_session_path(record: &PersistedHandoffRecord) -> Result<PathB
 }
 
 impl CcConnectManager {
+    // 串行检查启用平台的凭据、来源会话和接管条件并返回可用性。
     fn handoff_platform_targets(&self) -> Result<Vec<CcConnectHandoffPlatformTarget>, String> {
         let _operation = self
             .operation
@@ -865,6 +898,7 @@ impl CcConnectManager {
             .collect()
     }
 
+    // 刷新进程状态，结合接管记录生成状态和可选警告。
     fn handoff_status_with_warning(
         &self,
         warning: Option<String>,
@@ -883,6 +917,7 @@ impl CcConnectManager {
         })
     }
 
+    // 在接管前验证身份、平台、目标及代理后端，不接管桌面现有线程。
     fn handoff_preflight(&self, request: CcConnectHandoffStartRequest) -> Result<(), String> {
         let _operation = self
             .operation
@@ -950,6 +985,7 @@ impl CcConnectManager {
         }
     }
 
+    // 停止原进程并写入接管会话与快照，启动或通知失败时恢复原状态。
     fn handoff_start(
         &self,
         request: CcConnectHandoffStartRequest,
@@ -1145,6 +1181,7 @@ impl CcConnectManager {
         self.handoff_status_with_warning(None)
     }
 
+    // 撤销会话所有权并恢复原运行目标，后续重启或通知失败仅附加警告。
     fn handoff_cancel(&self) -> Result<CcConnectHandoffStatus, String> {
         let _operation = self
             .operation
@@ -1249,6 +1286,7 @@ impl CcConnectManager {
 }
 
 #[tauri::command]
+// 在阻塞任务中读取当前接管状态并映射任务错误。
 pub async fn cc_connect_handoff_status(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectHandoffStatus, String> {
@@ -1259,6 +1297,7 @@ pub async fn cc_connect_handoff_status(
 }
 
 #[tauri::command]
+// 在阻塞任务中检查各远程平台的接管可用性。
 pub async fn cc_connect_handoff_platforms(
     manager: State<'_, CcConnectManager>,
 ) -> Result<Vec<CcConnectHandoffPlatformTarget>, String> {
@@ -1269,6 +1308,7 @@ pub async fn cc_connect_handoff_platforms(
 }
 
 #[tauri::command]
+// 在阻塞任务中执行会话接管事务。
 pub async fn cc_connect_handoff_start(
     manager: State<'_, CcConnectManager>,
     request: CcConnectHandoffStartRequest,
@@ -1280,6 +1320,7 @@ pub async fn cc_connect_handoff_start(
 }
 
 #[tauri::command]
+// 在阻塞任务中执行接管前置检查。
 pub async fn cc_connect_handoff_preflight(
     manager: State<'_, CcConnectManager>,
     request: CcConnectHandoffStartRequest,
@@ -1291,6 +1332,7 @@ pub async fn cc_connect_handoff_preflight(
 }
 
 #[tauri::command]
+// 在阻塞任务中执行接管取消及原运行目标恢复。
 pub async fn cc_connect_handoff_cancel(
     manager: State<'_, CcConnectManager>,
 ) -> Result<CcConnectHandoffStatus, String> {
@@ -1305,6 +1347,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证接管标识接受安全字符并拒绝路径与空格。
     fn validates_handoff_identifiers() {
         assert_eq!(
             validate_handoff_identifier("abc-123_def", "session").unwrap(),
@@ -1315,6 +1358,7 @@ mod tests {
     }
 
     #[test]
+    // 验证中英文接管通知包含会话身份及取消状态。
     fn notification_contains_the_handoff_identity() {
         let record = PersistedHandoffRecord {
             schema_version: HANDOFF_SCHEMA_VERSION,

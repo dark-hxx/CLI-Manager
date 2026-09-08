@@ -100,6 +100,7 @@ pub(super) struct PersistedHandoffRecord {
 }
 
 impl From<&PersistedHandoffRecord> for CcConnectHandoffInfo {
+    // 将持久化接管记录投影为对外会话信息。
     fn from(record: &PersistedHandoffRecord) -> Self {
         Self {
             agent: record.agent,
@@ -121,10 +122,12 @@ impl From<&PersistedHandoffRecord> for CcConnectHandoffInfo {
     }
 }
 
+// 返回活动接管记录文件路径。
 pub(super) fn handoff_path() -> Result<PathBuf, String> {
     Ok(remote_manager_dir()?.join("handoff.json"))
 }
 
+// 读取接管记录，缺失返回空而其他错误保留。
 pub(super) fn load_handoff_record() -> Result<Option<PersistedHandoffRecord>, String> {
     let path = handoff_path()?;
     let raw = match fs::read_to_string(&path) {
@@ -135,6 +138,7 @@ pub(super) fn load_handoff_record() -> Result<Option<PersistedHandoffRecord>, St
     parse_handoff_record(&raw).map(Some)
 }
 
+// 校验记录版本并在内存将旧版缺省 Agent 迁移为 Codex。
 fn parse_handoff_record(raw: &str) -> Result<PersistedHandoffRecord, String> {
     let mut value: Value = serde_json::from_str(raw)
         .map_err(|err| format!("parse cc-connect handoff record failed: {err}"))?;
@@ -170,22 +174,26 @@ fn parse_handoff_record(raw: &str) -> Result<PersistedHandoffRecord, String> {
     })
 }
 
+// 序列化接管记录并替换托管记录文件。
 pub(super) fn persist_handoff_record(record: &PersistedHandoffRecord) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(record)
         .map_err(|err| format!("serialize cc-connect handoff record failed: {err}"))?;
     write_file_atomically(&handoff_path()?, &payload, "cc-connect handoff record")
 }
 
+// 删除活动接管记录文件，缺失视为成功。
 pub(super) fn remove_handoff_record() -> Result<(), String> {
     remove_file_if_exists(&handoff_path()?)
 }
 
+// 返回活动接管持有的非空 Provider 快照标识。
 pub(crate) fn active_provider_snapshot_id() -> Result<Option<String>, String> {
     Ok(load_handoff_record()?
         .and_then(|record| record.provider_snapshot_id)
         .filter(|snapshot_id| !snapshot_id.trim().is_empty()))
 }
 
+// 校验项目名和绝对工作目录后构造三种兼容会话文件位置。
 pub(super) fn cc_session_store_candidates(
     root: &Path,
     project_name: &str,
@@ -217,6 +225,7 @@ pub(super) fn cc_session_store_candidates(
     ])
 }
 
+// 优先选择已存在的兼容会话文件，否则使用 sessions 子目录。
 pub(super) fn cc_session_store_path(
     root: &Path,
     project_name: &str,
@@ -230,6 +239,7 @@ pub(super) fn cc_session_store_path(
         .unwrap_or_else(|| candidates[2].clone()))
 }
 
+// 读取对象型会话文档，文件缺失时构造默认空会话结构。
 pub(super) fn read_session_document(path: &Path) -> Result<Value, String> {
     match fs::read_to_string(path) {
         Ok(raw) => {
@@ -253,6 +263,7 @@ pub(super) fn read_session_document(path: &Path) -> Result<Value, String> {
     }
 }
 
+// 只读现有对象型会话文档，缺失时返回空。
 pub(super) fn read_existing_session_document(path: &Path) -> Result<Option<Value>, String> {
     match fs::read_to_string(path) {
         Ok(raw) => {
@@ -268,12 +279,14 @@ pub(super) fn read_existing_session_document(path: &Path) -> Result<Option<Value
     }
 }
 
+// 序列化并替换指定 cc-connect 会话文件。
 pub(super) fn write_session_document(path: &Path, document: &Value) -> Result<(), String> {
     let payload = serde_json::to_vec_pretty(document)
         .map_err(|err| format!("serialize cc-connect session file failed: {err}"))?;
     write_file_atomically(path, &payload, "cc-connect handoff session")
 }
 
+// 获取对象字段，缺失时创建空对象而类型不符时报错。
 fn object_field_mut<'a>(
     root: &'a mut Map<String, Value>,
     key: &str,
@@ -284,6 +297,7 @@ fn object_field_mut<'a>(
         .ok_or_else(|| format!("cc-connect session field {key} must be an object"))
 }
 
+// 分配未占用会话编号并绑定 Agent、用户和活动会话，返回旧活动标识。
 pub(super) fn inject_handoff_session(
     document: &mut Value,
     platform_session_key: &str,
@@ -351,6 +365,7 @@ pub(super) fn inject_handoff_session(
     Ok((cc_session_id, previous_active_session_id))
 }
 
+// 校验原始或后继 CLI 身份后移除托管会话并恢复仍存在的旧活动项。
 pub(super) fn cleanup_handoff_session(
     document: &mut Value,
     platform_session_key: &str,
@@ -423,6 +438,7 @@ pub(super) fn cleanup_handoff_session(
     Ok(changed)
 }
 
+// 按消息平台判断会话键前缀是否匹配。
 fn platform_key_prefix_matches(platform: CcConnectPlatform, key: &str) -> bool {
     match platform {
         CcConnectPlatform::Telegram => key.starts_with("telegram:"),
@@ -432,6 +448,7 @@ fn platform_key_prefix_matches(platform: CcConnectPlatform, key: &str) -> bool {
     }
 }
 
+// 验证平台前缀及会话键中用户是否在允许清单。
 fn key_matches_allowed_user(
     platform: CcConnectPlatform,
     key: &str,
@@ -451,6 +468,7 @@ fn key_matches_allowed_user(
     }
 }
 
+// 解析指定会话更新时间，缺失或格式错误返回零。
 fn session_updated_at(root: &Map<String, Value>, session_id: &str) -> i64 {
     root.get("sessions")
         .and_then(Value::as_object)
@@ -462,6 +480,7 @@ fn session_updated_at(root: &Map<String, Value>, session_id: &str) -> i64 {
         .unwrap_or(0)
 }
 
+// 按最近更新选择授权用户会话，无候选时为支持平台构造直接会话键。
 pub(super) fn resolve_platform_session_key(
     document: &Value,
     platform: CcConnectPlatform,
@@ -511,6 +530,7 @@ pub(super) fn resolve_platform_session_key(
     }
 }
 
+// 向对象型微信上下文文档写入指定用户令牌。
 pub(super) fn merge_context_token(
     document: &mut Value,
     user_id: &str,
@@ -526,6 +546,7 @@ pub(super) fn merge_context_token(
     Ok(())
 }
 
+// 读取指定用户非空的微信上下文令牌。
 pub(super) fn context_token(document: &Value, user_id: &str) -> Option<String> {
     document
         .as_object()
@@ -535,6 +556,7 @@ pub(super) fn context_token(document: &Value, user_id: &str) -> Option<String> {
         .filter(|token| !token.trim().is_empty())
 }
 
+// 构造空 JSON 对象供缺省会话或上下文使用。
 pub(super) fn empty_json_object() -> Value {
     Value::Object(Map::new())
 }
@@ -544,6 +566,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证注入及清理接管保留原会话和无关字段。
     fn inject_and_cleanup_handoff_session_preserves_existing_state() {
         let mut document = json!({
             "sessions": {
@@ -589,6 +612,7 @@ mod tests {
     }
 
     #[test]
+    // 验证注入会话使用各 Agent 对应的类型标识。
     fn injected_handoff_session_uses_the_selected_agent_type() {
         for (agent, expected) in [
             (CcConnectAgent::Claude, "claudecode"),
@@ -613,6 +637,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧版记录迁移为 Codex 且不产生快照标识。
     fn legacy_handoff_record_defaults_to_codex_without_a_snapshot() {
         let record = parse_handoff_record(
             &json!({
@@ -645,6 +670,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前版本记录必须显式包含 Agent。
     fn current_handoff_record_requires_an_explicit_agent() {
         let error = parse_handoff_record(
             &json!({
@@ -676,6 +702,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前版本记录拒绝未知 Agent。
     fn current_handoff_record_rejects_an_unknown_agent() {
         let error = parse_handoff_record(
             &json!({
@@ -708,6 +735,7 @@ mod tests {
     }
 
     #[test]
+    // 验证被其他 CLI 线程复用的会话编号不会被清理。
     fn cleanup_refuses_to_remove_a_reused_session_id() {
         let mut document = json!({
             "sessions": {"s1": {"agent_session_id": "other-thread"}},
@@ -727,6 +755,7 @@ mod tests {
     }
 
     #[test]
+    // 验证能清理由原接管线程派生的后继会话。
     fn cleanup_accepts_a_fallback_thread_descended_from_the_handoff() {
         let mut document = json!({
             "sessions": {
@@ -752,6 +781,7 @@ mod tests {
     }
 
     #[test]
+    // 验证优先最近授权聊天及微信构造、飞书缺失行为。
     fn platform_session_resolution_prefers_latest_matching_chat() {
         let document = json!({
             "sessions": {
@@ -790,6 +820,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    // 验证 Windows 工作路径哈希与 cc-connect 会话命名兼容。
     fn session_store_path_matches_cc_connect_windows_hashing() {
         let root = Path::new(r"C:\cc-connect-data");
         let path = cc_session_store_path(root, "CLIProxyAPI", r"F:\codex\CLIProxyAPI").unwrap();

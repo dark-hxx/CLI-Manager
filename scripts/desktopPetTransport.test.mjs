@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-desktop-pet-transport-"));
+// 退出时清理本测试生成的临时模块目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(new URL("../src/features/desktop-pet/lib/desktopPetTransport.ts", import.meta.url), "utf8");
@@ -21,6 +22,7 @@ const outputPath = join(tempDir, "desktopPetTransport.mjs");
 writeFileSync(outputPath, output, "utf8");
 const transport = await import(pathToFileURL(outputPath).href);
 
+// 构造含任务与接管字段的桌宠传输快照。
 function snapshot(overrides = {}) {
   return {
     mood: "working",
@@ -53,6 +55,7 @@ function snapshot(overrides = {}) {
   };
 }
 
+// 验证运行输出时间变化不单独触发新快照投递。
 test("running output timestamps do not trigger a new desktop pet delivery", () => {
   const first = snapshot();
   const next = snapshot({
@@ -65,6 +68,7 @@ test("running output timestamps do not trigger a new desktop pet delivery", () =
   );
 });
 
+// 验证可见任务状态变化仍改变快照指纹。
 test("visible desktop pet state changes still trigger delivery", () => {
   const first = snapshot();
   const next = snapshot({
@@ -78,6 +82,7 @@ test("visible desktop pet state changes still trigger delivery", () => {
   );
 });
 
+// 验证成功时间参与指纹以保留成功提示超时语义。
 test("success timestamps remain meaningful for the success timeout", () => {
   const first = snapshot({ mood: "success", updatedAt: 1000 });
   const next = snapshot({ mood: "success", updatedAt: 2000 });
@@ -87,6 +92,7 @@ test("success timestamps remain meaningful for the success timeout", () => {
   );
 });
 
+// 验证后台 daemon 轮询识别内容相同的任务数组。
 test("background daemon polling reuses unchanged task arrays", () => {
   const tasks = [{
     sessionId: "session-1",

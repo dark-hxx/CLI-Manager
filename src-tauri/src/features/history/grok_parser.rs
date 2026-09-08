@@ -12,6 +12,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 折叠 Grok 消息片段并统计工具及回合用量，最后补充摘要模型与 signals 信息。
 pub(super) fn scan_grok_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -282,6 +283,7 @@ pub(super) fn scan_grok_jsonl_session(
 }
 
 /// Merge sibling `signals.json` into session stats for TerminalStatsPanel (context/token cards).
+// 读取 Grok signals 补上下文、模型与工具计数，无输入输出时用上下文值回填输入。
 pub(super) fn apply_grok_signals_stats(updates_path: &Path, stats: &mut SessionStatsScan) {
     let signals_path = updates_path
         .parent()
@@ -346,6 +348,7 @@ pub(super) fn apply_grok_signals_stats(updates_path: &Path, stats: &mut SessionS
     }
 }
 
+// 从 params 或根对象提取 update，兼容直接携带 sessionUpdate 的载荷。
 pub(super) fn grok_update_value(value: &Value) -> Option<&Value> {
     let params = value.get("params").unwrap_or(value);
     params
@@ -353,6 +356,7 @@ pub(super) fn grok_update_value(value: &Value) -> Option<&Value> {
         .or_else(|| params.get("sessionUpdate").is_some().then_some(params))
 }
 
+// 优先读取更新及外层字符串时间，回退数值毫秒转 RFC3339。
 pub(super) fn grok_event_timestamp(value: &Value, update: &Value) -> Option<String> {
     extract_timestamp(update)
         .or_else(|| extract_timestamp(value))
@@ -363,6 +367,7 @@ pub(super) fn grok_event_timestamp(value: &Value, update: &Value) -> Option<Stri
         })
 }
 
+// 判断用户内容元数据是否包含 bash_command 字段。
 pub(super) fn grok_is_bash_command(update: &Value) -> bool {
     update
         .get("content")
@@ -371,6 +376,7 @@ pub(super) fn grok_is_bash_command(update: &Value) -> bool {
         .is_some()
 }
 
+// 提取 Grok 文本片段并去除 NUL，非空片段保留首尾空白用于拼接。
 pub(super) fn grok_content_text(value: &Value) -> Option<String> {
     let text = match value {
         Value::String(text) => text.clone(),
@@ -394,6 +400,7 @@ pub(super) fn grok_content_text(value: &Value) -> Option<String> {
     (!text.trim().is_empty()).then_some(text)
 }
 
+// 角色切换时先提交旧消息，再累计当前角色片段及首段定位元数据。
 pub(super) fn grok_append_pending_message_chunk(
     role: &'static str,
     text: String,
@@ -426,6 +433,7 @@ pub(super) fn grok_append_pending_message_chunk(
     pending_content.push_str(&text);
 }
 
+// 将待拼接正文规范化并生成一条历史消息，同时清空临时状态。
 pub(super) fn grok_flush_pending_message(
     pending_role: &mut Option<&'static str>,
     pending_content: &mut String,
@@ -455,6 +463,7 @@ pub(super) fn grok_flush_pending_message(
     messages.push(message);
 }
 
+// 从兼容字段提取修剪后的非空 Grok 工具调用 ID。
 pub(super) fn grok_tool_call_id(update: &Value) -> Option<String> {
     update
         .get("toolCallId")
@@ -466,10 +475,12 @@ pub(super) fn grok_tool_call_id(update: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+// 按 title、name 和 kind 候选提取 Grok 工具名称。
 pub(super) fn grok_tool_name(update: &Value) -> Option<String> {
     grok_string_by_paths(update, &[&["title"], &["name"], &["kind"]])
 }
 
+// 从兼容工具输入字段提取有界 JSON 摘要。
 pub(super) fn grok_tool_input(update: &Value) -> Option<String> {
     update
         .get("rawInput")
@@ -479,6 +490,7 @@ pub(super) fn grok_tool_input(update: &Value) -> Option<String> {
         .and_then(summarize_json_value)
 }
 
+// 优先提取嵌套工具正文，回退普通正文及 output/result 摘要。
 pub(super) fn grok_tool_output(update: &Value) -> Option<String> {
     update
         .get("content")
@@ -490,6 +502,7 @@ pub(super) fn grok_tool_output(update: &Value) -> Option<String> {
 
 /// Grok tool_call_update often wraps output as:
 /// `content: [{ "type": "content", "content": { "type": "text", "text": "..." } }]`
+// 递归展开 Grok content 包装与数组为工具正文。
 pub(super) fn grok_nested_content_text(value: &Value) -> Option<String> {
     match value {
         Value::Array(items) => {
@@ -514,6 +527,7 @@ pub(super) fn grok_nested_content_text(value: &Value) -> Option<String> {
     }
 }
 
+// 按状态关键词映射失败、完成或开始，其余状态保留小写值。
 pub(super) fn grok_tool_status(update: &Value) -> Option<String> {
     let status = update.get("status").and_then(Value::as_str)?.to_lowercase();
     if status.contains("fail") || status.contains("error") {
@@ -536,6 +550,7 @@ pub(super) struct GrokTurnUsageTotals {
     pub(super) model: Option<String>,
 }
 
+// 优先解析分模型用量并将顶层缺口补到首项，无模型项时使用总量及回退模型。
 pub(super) fn grok_turn_usage_scans(
     usage: &Value,
     fallback_model: Option<&str>,
@@ -608,6 +623,7 @@ pub(super) fn grok_turn_usage_scans(
     scans
 }
 
+// 按兼容字段提取 Grok token，并从含缓存输入扣除缓存读取。
 pub(super) fn grok_usage_token_scan(value: &Value) -> UsageTokenScan {
     let Some(map) = value.as_object() else {
         return UsageTokenScan::default();
@@ -639,6 +655,7 @@ pub(super) fn grok_usage_token_scan(value: &Value) -> UsageTokenScan {
     }
 }
 
+// 用提示或事件身份及模型构造 Grok 回合用量键，缺失身份时回退行号。
 pub(super) fn grok_usage_event_key(
     value: &Value,
     update: &Value,
@@ -658,6 +675,7 @@ pub(super) fn grok_usage_event_key(
     format!("grok:turn:{identity}:{}", model.unwrap_or("unknown"))
 }
 
+// 将工具名与可用输入摘要组成工具消息正文。
 pub(super) fn grok_tool_message_text(update: &Value, name: &str) -> String {
     let input = grok_tool_input(update).unwrap_or_default();
     if input.is_empty() {

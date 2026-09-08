@@ -8,6 +8,7 @@ use super::{
 use log::{debug, warn};
 use std::path::{Path, PathBuf};
 
+// 规范化来源和历史根目录，再用目录清单验证请求路径与项目身份。
 pub(crate) fn validate_session_file_ref(
     file_path: &str,
     source: &str,
@@ -28,6 +29,7 @@ pub(crate) fn validate_session_file_ref(
     )
 }
 
+// 验证转换输入的非空项目键及 JSONL 规范路径属于来源根目录，不要求索引命中。
 pub(super) fn validate_session_file_ref_for_conversion(
     file_path: &str,
     source: &str,
@@ -61,6 +63,7 @@ pub(super) fn validate_session_file_ref_for_conversion(
     })
 }
 
+// 将支持的文件历史来源映射到对应根目录，不支持的来源返回错误。
 pub(super) fn history_source_base(source: &str, roots: &HistoryRoots) -> Result<PathBuf, String> {
     match source {
         "claude" => Ok(resolve_claude_history_root(roots)),
@@ -77,6 +80,7 @@ pub(super) fn history_source_base(source: &str, roots: &HistoryRoots) -> Result<
     }
 }
 
+// 按不区分 ASCII 大小写的扩展名接受 JSON 或 JSONL 路径。
 pub(super) fn is_supported_session_file(path: &Path) -> bool {
     path.extension()
         .and_then(|value| value.to_str())
@@ -84,6 +88,7 @@ pub(super) fn is_supported_session_file(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// 校验规范路径位于历史范围，并在候选清单中匹配来源、实际路径与项目键。
 pub(super) fn resolve_session_file_ref(
     file_path: &str,
     source: &str,
@@ -174,6 +179,7 @@ pub(super) fn resolve_session_file_ref(
     Err("session_file_not_indexed".to_string())
 }
 
+// 按路径组件判断历史范围，WSL 路径额外统一发行版标识比较。
 pub(super) fn path_within_history_scope(requested: &Path, history_base: &Path) -> bool {
     let requested_scope = wsl_scope_path_parts(requested);
     let history_scope = wsl_scope_path_parts(history_base);
@@ -206,12 +212,14 @@ pub(super) fn path_within_history_scope(requested: &Path, history_base: &Path) -
     accepted
 }
 
+// 规范化 WSL UNC 写法并解析发行版与 Linux 路径。
 pub(super) fn wsl_scope_path_parts(path: &Path) -> Option<(String, String)> {
     let raw = path.to_string_lossy();
     let normalized = normalize_wsl_scope_unc(&raw);
     crate::wsl::parse_wsl_unc_path(&normalized)
 }
 
+// 生成原始路径、规范写法及 WSL 解析结果的诊断文本。
 pub(super) fn history_scope_debug_string(path: &Path) -> String {
     let raw = path.to_string_lossy();
     let normalized = normalize_wsl_scope_unc(&raw);
@@ -224,12 +232,14 @@ pub(super) fn history_scope_debug_string(path: &Path) -> String {
     )
 }
 
+// 将可选 WSL 路径分解结果格式化为诊断字符串。
 pub(super) fn format_wsl_scope_parts(parts: Option<&(String, String)>) -> String {
     parts
         .map(|(distro, linux)| format!("Some(distro={distro}, linux={linux})"))
         .unwrap_or_else(|| "None".to_string())
 }
 
+// 统一分隔符，并将 WSL 扩展 UNC 前缀转换为普通 UNC 写法。
 pub(super) fn normalize_wsl_scope_unc(path: &str) -> String {
     let normalized = path.trim().replace('/', "\\");
     let lower = normalized.to_ascii_lowercase();
@@ -246,16 +256,19 @@ pub(super) fn normalize_wsl_scope_unc(path: &str) -> String {
     normalized
 }
 
+// 对可识别的 WSL UNC 路径返回其 Linux 部分。
 pub(super) fn wsl_linux_path(path: &Path) -> Option<String> {
     let raw = path.to_string_lossy();
     let normalized = normalize_wsl_scope_unc(&raw);
     crate::wsl::parse_wsl_unc_path(&normalized).map(|(_, linux_path)| linux_path)
 }
 
+// 将 WSL 路径转换为 CLI 可用的 Linux 路径，其他路径保留原表示。
 pub(super) fn codex_runtime_path(path: &Path) -> String {
     wsl_linux_path(path).unwrap_or_else(|| path.to_string_lossy().into_owned())
 }
 
+// 仅对非 WSL UNC 路径允许走本地 Codex 状态库注册。
 pub(super) fn should_register_codex_state_db(path: &Path) -> bool {
     wsl_linux_path(path).is_none()
 }

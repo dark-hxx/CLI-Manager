@@ -72,6 +72,7 @@ struct InstallLock {
 
 #[cfg(unix)]
 impl Drop for InstallLock {
+    // 释放安装锁，并在标记要求清理时尝试删除空状态目录；两项清理失败均被忽略。
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.path);
         if self.remove_state_dir {
@@ -81,6 +82,7 @@ impl Drop for InstallLock {
 }
 
 #[cfg(unix)]
+// 返回 Unix 纪元秒数；系统时间早于纪元时回退为零。
 fn timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -89,6 +91,7 @@ fn timestamp() -> u64 {
 }
 
 #[cfg(any(unix, test))]
+// 展开独立波浪号或波浪号路径前缀，要求绝对路径且无父级段；不解析符号链接或限制到 HOME 内。
 fn normalized_absolute(path: &Path, home: &Path) -> Result<PathBuf, String> {
     let expanded = if path == Path::new("~") {
         home.to_path_buf()
@@ -108,11 +111,13 @@ fn normalized_absolute(path: &Path, home: &Path) -> Result<PathBuf, String> {
 }
 
 #[cfg(unix)]
+// 构造用户 HOME 下固定 .local/bin 启动器路径，与自定义版本安装根目录分离。
 fn launcher_path(layout: &AgentLayout) -> PathBuf {
     layout.home.join(".local/bin").join(AGENT_FILE_NAME)
 }
 
 #[cfg(any(unix, test))]
+// 以 64 KiB 缓冲流式计算文件 SHA-256，返回小写十六进制摘要并传播读取错误。
 fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file =
         File::open(path).map_err(|error| format!("agent_artifact_read_failed:{error}"))?;
@@ -131,6 +136,7 @@ fn sha256_file(path: &Path) -> Result<String, String> {
 }
 
 #[cfg(unix)]
+// 创建父目录，将格式化 JSON 写入唯一临时文件并同步，再重命名替换；失败不统一清理临时文件。
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let parent = path
         .parent()
@@ -147,6 +153,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> 
     fs::rename(&temporary, path).map_err(|error| format!("agent_state_promote_failed:{error}"))
 }
 
+// 记录路径不存在时返回 None，否则读取并反序列化；结构解析不等于路径、身份或内容可信验证。
 pub fn read_installation_record(
     layout: &AgentLayout,
 ) -> Result<Option<InstallationRecord>, String> {
@@ -161,6 +168,7 @@ pub fn read_installation_record(
 }
 
 #[cfg(unix)]
+// 仅对反序列化失败的安装记录改名归档后返回 None，读取及归档错误继续传播。
 fn recover_installation_record(layout: &AgentLayout) -> Result<Option<InstallationRecord>, String> {
     match read_installation_record(layout) {
         Ok(record) => Ok(record),
@@ -179,6 +187,7 @@ fn recover_installation_record(layout: &AgentLayout) -> Result<Option<Installati
 }
 
 #[cfg(unix)]
+// 依次读取两个 Linux machine-id 文件，返回首个非空值；均不可用时返回 unknown。
 fn machine_id() -> String {
     for path in ["/etc/machine-id", "/var/lib/dbus/machine-id"] {
         if let Ok(value) = fs::read_to_string(path) {
@@ -192,6 +201,8 @@ fn machine_id() -> String {
 }
 
 #[cfg(unix)]
+// 以独占新建文件取得安装锁，首次冲突时依据锁内 PID 和 /proc 尝试清理陈旧锁。
+// 最多两次尝试，不等待存活持有者；PID 写入失败会返回错误，但已创建的锁文件不会在此删除。
 fn acquire_lock(layout: &AgentLayout) -> Result<InstallLock, String> {
     fs::create_dir_all(&layout.state_dir)
         .map_err(|error| format!("agent_state_create_failed:{error}"))?;
@@ -224,6 +235,7 @@ fn acquire_lock(layout: &AgentLayout) -> Result<InstallLock, String> {
 }
 
 #[cfg(unix)]
+// 只接受符号链接并读取原始目标；缺失返回 None，普通文件或目录视为冲突。
 fn read_link(path: &Path) -> Result<Option<PathBuf>, String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => fs::read_link(path)
@@ -236,6 +248,7 @@ fn read_link(path: &Path) -> Result<Option<PathBuf>, String> {
 }
 
 #[cfg(unix)]
+// 在目标目录创建临时符号链接后重命名替换，拒绝已存在的非链接目标；不负责安装归属校验。
 fn replace_symlink(path: &Path, target: &Path) -> Result<(), String> {
     use std::os::unix::fs::symlink;
 
@@ -261,6 +274,7 @@ fn replace_symlink(path: &Path, target: &Path) -> Result<(), String> {
 }
 
 #[cfg(unix)]
+// 按旧目标尽力恢复链接，无旧目标则尽力删除；恢复失败不覆盖原操作错误。
 fn restore_symlink(path: &Path, target: Option<&Path>) {
     match target {
         Some(target) => {
@@ -273,6 +287,8 @@ fn restore_symlink(path: &Path, target: Option<&Path>) {
 }
 
 #[cfg(unix)]
+// 依次执行 version 和 doctor --self，核对名称、平台、可选版本及健康报告。
+// 使用同步 output 等待子进程并收集输出，此处未设置超时或输出大小上限。
 fn validate_installed_binary(path: &Path, expected_version: Option<&str>) -> Result<(), String> {
     let output = Command::new(path)
         .arg("version")
@@ -312,6 +328,7 @@ fn validate_installed_binary(path: &Path, expected_version: Option<&str>) -> Res
 }
 
 #[cfg(unix)]
+// 执行现有二进制的 version，校验名称与平台后取非空版本字符串；不执行 doctor 或语义版本解析。
 fn installed_binary_version(path: &Path) -> Result<String, String> {
     let output = Command::new(path)
         .arg("version")
@@ -336,11 +353,13 @@ fn installed_binary_version(path: &Path) -> Result<String, String> {
 }
 
 #[cfg(any(unix, test))]
+// 去除开头连续的 v 字符后解析语义版本，失败统一返回版本错误码。
 fn parse_version(value: &str) -> Result<Version, String> {
     Version::parse(value.trim_start_matches('v')).map_err(|_| "agent_version_invalid".to_string())
 }
 
 #[cfg(unix)]
+// 定位当前进程二进制并委托 Unix 安装流程，不在此下载或验证发布清单签名。
 pub fn install_current_exe(options: InstallOptions) -> Result<InstallResult, String> {
     let current_exe = std::env::current_exe()
         .map_err(|error| format!("agent_current_exe_unavailable:{error}"))?;
@@ -348,6 +367,8 @@ pub fn install_current_exe(options: InstallOptions) -> Result<InstallResult, Str
 }
 
 #[cfg(unix)]
+// 持锁恢复记录、校验根目录和降级策略，核对摘要后暂存自检，再切换链接并保存安装记录。
+// 仅 promote 阶段错误进入链接恢复与新版本清理；恢复为尽力操作，其他阶段可能遗留已创建资源。
 fn install_from_exe(options: InstallOptions, current_exe: &Path) -> Result<InstallResult, String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -517,11 +538,14 @@ fn install_from_exe(options: InstallOptions, current_exe: &Path) -> Result<Insta
 }
 
 #[cfg(not(unix))]
+// 非 Unix 平台拒绝安装并返回 unsupported_target，不修改文件系统。
 pub fn install_current_exe(_options: InstallOptions) -> Result<InstallResult, String> {
     Err("unsupported_target".to_string())
 }
 
 #[cfg(unix)]
+// 持锁核对安装根目录并交换 current/previous，自检后更新记录中的当前及上一版本。
+// 自检或记录写入失败会尽力恢复链接；第二次链接替换和后续版本读取的早退不走该恢复分支。
 pub fn rollback(install_dir: Option<PathBuf>) -> Result<InstallResult, String> {
     let layout = resolve_layout().map_err(str::to_string)?;
     let _lock = acquire_lock(&layout)?;
@@ -574,11 +598,14 @@ pub fn rollback(install_dir: Option<PathBuf>) -> Result<InstallResult, String> {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 平台不支持版本回滚，直接返回错误。
 pub fn rollback(_install_dir: Option<PathBuf>) -> Result<InstallResult, String> {
     Err("unsupported_target".to_string())
 }
 
 #[cfg(unix)]
+// 拒绝仍有托管 Hook 记录的卸载，隔离版本目录后删除链接与记录；普通卸载保留一份记录副本。
+// 删除主步骤失败时尽力恢复；隔离目录清理错误被忽略，purge 后续错误不整体回滚已完成卸载。
 pub fn uninstall(install_dir: Option<PathBuf>, purge: bool) -> Result<InstallResult, String> {
     let layout = resolve_layout().map_err(str::to_string)?;
     let mut lock = acquire_lock(&layout)?;
@@ -662,6 +689,7 @@ pub fn uninstall(install_dir: Option<PathBuf>, purge: bool) -> Result<InstallRes
 }
 
 #[cfg(not(unix))]
+// 非 Unix 平台拒绝卸载或清理请求，不修改文件系统。
 pub fn uninstall(_install_dir: Option<PathBuf>, _purge: bool) -> Result<InstallResult, String> {
     Err("unsupported_target".to_string())
 }
@@ -672,6 +700,7 @@ mod tests {
     use std::fs;
 
     #[test]
+    // 验证相对路径及父级穿越被拒绝，波浪号前缀按给定临时 HOME 展开。
     fn install_dir_rejects_relative_and_parent_paths() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
@@ -684,12 +713,14 @@ mod tests {
     }
 
     #[test]
+    // 验证版本比较遵循语义版本大小，并拒绝无效版本文本。
     fn semantic_versions_drive_downgrade_checks() {
         assert!(parse_version("1.10.0").unwrap() > parse_version("1.9.9").unwrap());
         assert!(parse_version("not-a-version").is_err());
     }
 
     #[test]
+    // 把固定字节写入临时文件，验证流式 SHA-256 与预期摘要一致。
     fn artifact_hash_is_stable() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("agent");
@@ -718,6 +749,7 @@ mod tests {
         struct EnvGuard(Vec<(&'static str, Option<OsString>)>);
 
         impl EnvGuard {
+            // 暂存并替换 HOME/XDG 环境以隔离 Unix 安装测试；调用方需持有测试环境锁。
             fn set(root: &Path) -> Self {
                 let values = [
                     ("HOME", root.join("home")),
@@ -737,6 +769,7 @@ mod tests {
         }
 
         impl Drop for EnvGuard {
+            // 恢复测试前的 HOME/XDG 环境值，对原先不存在的变量执行移除。
             fn drop(&mut self) {
                 for (key, value) in self.0.drain(..) {
                     match value {
@@ -747,6 +780,7 @@ mod tests {
             }
         }
 
+        // 在测试目录生成仅响应 version/doctor 的可执行 shell 脚本，模拟 Linux Agent 自检。
         fn fake_agent(root: &Path, version: &str) -> PathBuf {
             let path = root.join(format!("agent-{version}"));
             let report = format!(
@@ -764,6 +798,7 @@ mod tests {
             path
         }
 
+        // 构造不允许降级的手动安装测试选项，不要求外部清单地址或预期摘要。
         fn options(install_dir: Option<PathBuf>) -> InstallOptions {
             InstallOptions {
                 install_dir,
@@ -775,6 +810,7 @@ mod tests {
         }
 
         #[test]
+        // 在隔离 Unix 环境安装两次，验证记录中的自定义根目录被复用，同版本重装不虚构上一版本。
         fn custom_root_is_discovered_and_reused_for_upgrade() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();
@@ -797,6 +833,7 @@ mod tests {
         }
 
         #[test]
+        // 验证非法 JSON 安装记录被归档，随后可通过测试二进制重新建立记录。
         fn corrupt_record_is_archived_and_rebuilt() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();
@@ -815,6 +852,7 @@ mod tests {
         }
 
         #[test]
+        // 在无记录的临时安装布局放置高版本 current，验证现有二进制仍能阻止降级。
         fn current_binary_enforces_downgrade_without_a_record() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();
@@ -833,6 +871,7 @@ mod tests {
         }
 
         #[test]
+        // 用当前 PID 建立测试锁，验证安装流程拒绝第二个写入者。
         fn active_install_lock_rejects_a_second_writer() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();
@@ -852,6 +891,7 @@ mod tests {
         }
 
         #[test]
+        // 在隔离 Unix 布局安装再普通卸载，验证启动链接与版本目录删除、卸载记录副本保留。
         fn normal_uninstall_removes_links_and_keeps_one_record() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();
@@ -875,6 +915,7 @@ mod tests {
         }
 
         #[test]
+        // 在测试安装状态中加入 Hook 记录，验证卸载被拒绝且安装记录保留。
         fn uninstall_refuses_to_leave_managed_hooks_broken() {
             let _lock = ENV_LOCK.lock().unwrap();
             let temp = tempfile::tempdir().unwrap();

@@ -16,15 +16,18 @@ json=0
 uninstall=0
 purge=0
 
+# 向标准错误输出失败原因并以失败码终止安装器。
 fail() {
   printf '%s\n' "$1" >&2
   exit 1
 }
 
+# 向标准错误写入进度说明，保留标准输出供机器读取。
 log() {
   printf '%s\n' "$1" >&2
 }
 
+# 打印安装器支持的参数和用途，不开始安装。
 usage() {
   cat <<'EOF'
 Usage: install-ssh-agent.sh [options]
@@ -76,6 +79,7 @@ case "$install_dir" in
   *"/../"*|*"/.."|"../"*) fail "install directory cannot contain .." ;;
 esac
 
+# 按显式路径、PATH、默认位置及自定义安装根查找可执行 Agent。
 find_agent() {
   if [ -n "${CLI_MANAGER_SSH_AGENT_PATH:-}" ] && [ -x "$CLI_MANAGER_SSH_AGENT_PATH" ]; then
     printf '%s\n' "$CLI_MANAGER_SSH_AGENT_PATH"
@@ -128,6 +132,7 @@ signature_encoded="$tmp/manifest.sig"
 signature="$tmp/manifest.minisig"
 artifact="$tmp/cli-manager-ssh-agent"
 
+# 按允许协议和重定向限制下载文件，并复核实际大小上限。
 download() {
   output=$1
   url=$2
@@ -145,6 +150,7 @@ if ! command -v base64 >/dev/null 2>&1 && ! command -v openssl >/dev/null 2>&1; 
   fail "base64 or openssl is required"
 fi
 
+# 清理本次临时清单后下载清单及签名，验证成功才更新生效地址。
 load_manifest() {
   candidate=$1
   rm -f "$manifest" "$signature_encoded" "$signature"
@@ -172,6 +178,7 @@ case "$(uname -s 2>/dev/null)/$(uname -m 2>/dev/null)" in
   *) fail "unsupported target" ;;
 esac
 
+# 用 jq 提取所选平台的清单字段，交由后续步骤检查数量和语义。
 parse_with_jq() {
   jq -r --arg target "$target" '
     [.schemaVersion, .channel, .version, .protocolMin, .protocolMax,
@@ -179,6 +186,7 @@ parse_with_jq() {
   ' "$manifest"
 }
 
+# 使用内嵌 Python 顶层程序提取所选构件，拒绝缺失或含制表换行的字段。
 parse_with_python() {
   python3 - "$manifest" "$target" <<'PY'
 import json, sys
@@ -196,6 +204,7 @@ print("\t".join(map(str, values)))
 PY
 }
 
+# 选择可用解析器并验证协议、版本、渠道、构件地址、大小和摘要格式。
 read_release() {
   if command -v jq >/dev/null 2>&1; then
     fields=$(parse_with_jq) || fail "invalid release manifest"
@@ -228,6 +237,7 @@ read_release() {
 }
 
 read_release
+# 按可用摘要工具优先级计算已下载构件的 SHA-256。
 artifact_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
     sha256sum "$artifact" | awk '{print $1}'
@@ -240,6 +250,7 @@ artifact_sha256() {
   fi
 }
 
+# 重新下载构件并核对准确字节数与摘要，失败返回供镜像回退。
 download_verified_artifact() {
   rm -f "$artifact"
   download "$artifact" "$artifact_url" "$expected_size" || return 1

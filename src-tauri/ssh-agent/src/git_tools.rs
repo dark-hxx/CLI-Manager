@@ -186,6 +186,7 @@ struct SubmoduleInfo {
     status: String,
 }
 
+// 判断请求是否属于本模块固定的工作区工具集合，不代表请求已获授权或参数有效。
 pub fn handles(kind: &str) -> bool {
     matches!(
         kind,
@@ -209,10 +210,12 @@ pub fn handles(kind: &str) -> bool {
     )
 }
 
+// 反序列化到拒绝未知字段的请求类型，统一返回请求无效代码而不回显解析原文。
 fn parse<T: serde::de::DeserializeOwned>(payload: Value) -> Result<T, String> {
     serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid".to_string())
 }
 
+// 拒绝空值、超长、选项前缀和 NUL/换行；不做完整 Git 名称或 URL 语法校验。
 fn validate_value(value: &str, code: &str, max: usize) -> Result<(), String> {
     if value.is_empty()
         || value.len() > max
@@ -224,6 +227,7 @@ fn validate_value(value: &str, code: &str, max: usize) -> Result<(), String> {
     Ok(())
 }
 
+// 在通用参数检查上禁止空白字符；仍允许 revision 表达式，存在性由其他步骤验证。
 fn validate_ref(value: &str) -> Result<(), String> {
     validate_value(value, "invalid_git_ref", 256)?;
     if value.chars().any(char::is_whitespace) {
@@ -232,6 +236,8 @@ fn validate_ref(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 委托 Git 执行，网络调用使用 120 秒超时，否则使用读取超时；再限制 stdout 大小并有损解码。
+// 参数可能执行写操作，network 标志只控制调用策略，不表示只读或事务安全。
 fn output(repo: &Path, args: &[&str], network: bool) -> Result<String, String> {
     let value = run_git(
         repo,
@@ -249,6 +255,7 @@ fn output(repo: &Path, args: &[&str], network: bool) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&value.stdout).into_owned())
 }
 
+// 验证引用形态并要求其可解析为提交；解析命令的任何失败都映射为提交未找到。
 fn validate_commit(repo: &Path, value: &str) -> Result<(), String> {
     validate_ref(value)?;
     let commit = format!("{value}^{{commit}}");
@@ -257,10 +264,12 @@ fn validate_commit(repo: &Path, value: &str) -> Result<(), String> {
         .map_err(|_| "git_history_commit_not_found".to_string())
 }
 
+// 包装操作输出和当前时间戳；自身不执行 Git，也不判断操作是否改变了仓库。
 fn mutation(value: String) -> Value {
     json!({ "output": value, "asOf": as_of_ms() })
 }
 
+// 读取 stash 列表并解析前 500 行中的有效记录，拆出描述中的分支/消息和毫秒时间。
 fn list_stashes(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let text = output(
@@ -297,6 +306,7 @@ fn list_stashes(request: RepoRequest) -> Result<Value, String> {
     Ok(json!({ "stashes": stashes, "asOf": as_of_ms() }))
 }
 
+// 校验单行消息后执行 stash push，可按请求包含未跟踪文件；会改变索引、工作区和 stash 状态。
 fn stash_create(request: StashCreateRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if request.message.len() > 512 || request.message.contains(['\0', '\r', '\n']) {
@@ -313,6 +323,7 @@ fn stash_create(request: StashCreateRequest) -> Result<Value, String> {
     Ok(mutation(output(&repo, &args, false)?))
 }
 
+// 校验选择器基本形态并限定 apply/pop/drop 操作，再交给 Git 执行；冲突或失败不在此自动回滚。
 fn stash_action(request: StashActionRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_value(&request.selector, "git_stash_selector_invalid", 64)?;
@@ -329,6 +340,7 @@ fn stash_action(request: StashActionRequest) -> Result<Value, String> {
     )?))
 }
 
+// 最多读取 64 个 remote 的 fetch/push URL；此处直接返回配置值，不主动连网或脱敏 URL。
 fn list_remotes(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let names = output(&repo, &["remote"], false)?;
@@ -355,6 +367,7 @@ fn list_remotes(request: RepoRequest) -> Result<Value, String> {
     Ok(json!({ "remotes": remotes, "asOf": as_of_ms() }))
 }
 
+// 按白名单增改删 remote 配置或执行 fetch --prune；URL 只做通用形态检查，未在此限制协议。
 fn remote_action(request: RemoteActionRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_value(&request.name, "git_remote_name_invalid", 128)?;
@@ -382,6 +395,7 @@ fn remote_action(request: RemoteActionRequest) -> Result<Value, String> {
     Ok(mutation(text))
 }
 
+// 校验 remote 与引用参数后执行推送、删除远端分支或带 lease 的强推；失败直接返回，不自动重试。
 fn remote_ref(request: RemoteRefRequest, action: &str) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_value(&request.remote, "git_remote_name_invalid", 128)?;
@@ -411,6 +425,7 @@ fn remote_ref(request: RemoteRefRequest, action: &str) -> Result<Value, String> 
     Ok(mutation(output(&repo, &args, true)?))
 }
 
+// 查询最多 200 条 reflog，拆分操作与消息并转为毫秒时间，跳过字段不足的记录。
 fn list_reflog(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let text = output(
@@ -449,6 +464,7 @@ fn list_reflog(request: RepoRequest) -> Result<Value, String> {
     Ok(json!({ "entries": entries, "asOf": as_of_ms() }))
 }
 
+// 验证目标提交与新分支名后在选择器位置创建分支；不切换工作区，也不重置当前分支。
 fn restore_reflog(request: ReflogRestoreRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_ref(&request.selector)?;
@@ -466,6 +482,7 @@ fn restore_reflog(request: ReflogRestoreRequest) -> Result<Value, String> {
     )?))
 }
 
+// 校验仓库相对路径后用 log --follow 查询最多 200 条文件历史，返回解析成功的摘要。
 fn file_history(request: FileRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let path = validate_repo_relative_path(&request.path)?;
@@ -499,6 +516,7 @@ fn file_history(request: FileRequest) -> Result<Value, String> {
     Ok(json!({ "entries": entries, "asOf": as_of_ms() }))
 }
 
+// 读取 HEAD 文件的逐行 blame 并携带作者/提交/时间；当前头解析只识别 40 位十六进制 ID。
 fn blame_file(request: FileRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let path = validate_repo_relative_path(&request.path)?;
@@ -537,6 +555,7 @@ fn blame_file(request: FileRequest) -> Result<Value, String> {
     Ok(json!({ "lines": lines, "asOf": as_of_ms() }))
 }
 
+// 用 bisect log 判断状态；任何 Git 错误都降级为未激活，并不区分超时或其他执行失败。
 fn bisect_status(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     match run_git(&repo, &["bisect", "log"], false, READ_TIMEOUT) {
@@ -547,6 +566,7 @@ fn bisect_status(request: RepoRequest) -> Result<Value, String> {
     }
 }
 
+// 先验证所有已提供的 good/bad 引用，再执行白名单 bisect 操作；start 要求两端，操作可能切换检出。
 fn bisect_action(request: BisectActionRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if let Some(v) = request.good.as_deref() {
@@ -571,6 +591,7 @@ fn bisect_action(request: BisectActionRequest) -> Result<Value, String> {
     Ok(mutation(output(&repo, &args, false)?))
 }
 
+// 从 .gitmodules 建立路径到名称/URL 的映射；首次查询失败返回空表，单项 URL 查询失败使用空串。
 fn submodule_urls(repo: &Path) -> Result<HashMap<String, (String, String)>, String> {
     let result = run_git(
         repo,
@@ -612,6 +633,7 @@ fn submodule_urls(repo: &Path) -> Result<HashMap<String, (String, String)>, Stri
     Ok(map)
 }
 
+// 将配置中的子模块与递归 status 输出按路径合并；状态查询失败保留配置并使用空状态，未配置项不返回。
 fn list_submodules(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let configured = submodule_urls(&repo)?;
@@ -643,6 +665,8 @@ fn list_submodules(request: RepoRequest) -> Result<Value, String> {
     Ok(json!({"submodules":modules,"asOf":as_of_ms()}))
 }
 
+// 若指定路径则要求它已登记且为安全相对路径，再执行 init/update/sync；未指定时作用于全部子模块。
+// 三种操作均走网络超时策略，update 可初始化并递归更新检出内容。
 fn submodule_action(request: SubmoduleActionRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if let Some(path) = request.path.as_deref() {
@@ -663,6 +687,9 @@ fn submodule_action(request: SubmoduleActionRequest) -> Result<Value, String> {
     Ok(mutation(output(&repo, &args, true)?))
 }
 
+// 要求干净工作区、1 至 100 个顺序匹配的非合并提交及合法步骤，创建只增不覆盖的备份引用后 hard reset 到上游。
+// 逐步 cherry-pick/重写/合并；步骤 result 失败时尽力 abort/reset 回原 HEAD，备份引用保留。
+// reset 或 squash 消息读取中的提前返回不经过该回滚分支，因此整个流程不是原子事务。
 fn rewrite(request: RewriteRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_ref(&request.upstream)?;
@@ -789,6 +816,7 @@ fn rewrite(request: RewriteRequest) -> Result<Value, String> {
     Ok(mutation(backup))
 }
 
+// 按固定请求名选择类型化解析和处理函数；未知种类拒绝，授权及 capability 门禁由上游负责。
 pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
     match kind {
         "gitListStashes" => list_stashes(parse(payload)?),
@@ -818,6 +846,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    // 验证本模块接管 stash/历史重写请求，但不接管普通 changes 请求。
     fn advertises_only_workspace_tool_requests() {
         assert!(handles("gitListStashes"));
         assert!(handles("gitRewriteCommits"));
@@ -825,6 +854,7 @@ mod tests {
     }
 
     #[test]
+    // 验证多余字段在请求解析阶段即被拒绝，尚未解析或访问给定仓库。
     fn rejects_unknown_fields_before_touching_a_repository() {
         let error = dispatch(
             "gitListStashes",

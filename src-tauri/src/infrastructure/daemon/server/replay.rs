@@ -28,10 +28,12 @@ pub(super) struct SessionBuffer {
 
 impl SessionBuffer {
     #[cfg(test)]
+    // 为测试创建无磁盘路径的缓冲；超出内存阈值时无法溢写，会保留原帧。
     pub(super) fn new() -> Self {
         Self::with_spool(None)
     }
 
+    // 初始化空内存缓冲及可选 spool 路径；不创建文件，也不恢复已有文件的字节计数。
     pub(super) fn with_spool(spool_path: Option<PathBuf>) -> Self {
         Self {
             frames: VecDeque::new(),
@@ -43,6 +45,8 @@ impl SessionBuffer {
         }
     }
 
+    // 复制整帧入内存，超阈值时把最早帧移入 spool 并治理磁盘上限；追加失败则放回内存停止溢写。
+    // 此处不重新校验 ANSI 边界或序号顺序，依赖上游提供完整有序帧。
     pub(super) fn push_output(&mut self, cols: u16, rows: u16, sequence: u64, data: &[u8]) {
         self.total_bytes += data.len();
         self.frames.push_back(ReplayFrame {
@@ -65,6 +69,7 @@ impl SessionBuffer {
         }
     }
 
+    // 用空负载记录尺寸事件；尾帧已为空时直接更新尺寸与序号，合并连续 resize。
     pub(super) fn push_resize(&mut self, cols: u16, rows: u16, sequence: u64) {
         if let Some(last) = self.frames.back_mut() {
             if last.data.is_empty() {
@@ -82,6 +87,7 @@ impl SessionBuffer {
         });
     }
 
+    // 将完整回放视图逐帧转为协议条目，负载编码为 base64，保留尺寸与序号。
     pub(super) fn replay_entries(&self) -> Vec<ReplayEntry> {
         self.replay_frames()
             .into_iter()
@@ -94,6 +100,7 @@ impl SessionBuffer {
             .collect()
     }
 
+    // 先放检查点快照，再拼接磁盘与内存中的原始事件；返回拥有独立负载的回放集合。
     pub(super) fn replay_frames(&self) -> Vec<ReplayFrame> {
         self.checkpoint
             .iter()
@@ -104,6 +111,7 @@ impl SessionBuffer {
 
     /// 返回可按 sequence 继续投递的原始事件；checkpoint 是 xterm 快照，
     /// 只能通过 replay/reset 边界消费，不能拼接到现有 live terminal。
+    // 按磁盘记录在前、内存帧在后的顺序收集原始事件，不包含检查点也不重新排序。
     pub(super) fn live_frames(&self) -> Vec<ReplayFrame> {
         self.read_spooled_frames()
             .into_iter()
@@ -111,6 +119,7 @@ impl SessionBuffer {
             .collect()
     }
 
+    // 从给定帧快照中借用游标之后的非空输出，排除仅改变尺寸的空事件。
     pub(super) fn output_frames_after<'a>(
         frames: &'a [ReplayFrame],
         after_sequence: u64,
@@ -121,6 +130,7 @@ impl SessionBuffer {
             .collect()
     }
 
+    // 先生成回放条目再按严格大于游标过滤；未给游标按零处理，仍保留符合条件的空尺寸帧。
     pub(super) fn replay_entries_after(&self, after_sequence: Option<u64>) -> Vec<ReplayEntry> {
         let after_sequence = after_sequence.unwrap_or(0);
         self.replay_entries()
@@ -129,6 +139,7 @@ impl SessionBuffer {
             .collect()
     }
 
+    // 优先返回检查点序号，否则读取 spool 首帧，再退回内存首帧；不是跨来源求最小值。
     pub(super) fn oldest_sequence(&self) -> Option<u64> {
         self.checkpoint
             .as_ref()
@@ -141,6 +152,8 @@ impl SessionBuffer {
             .or_else(|| self.frames.front().map(|frame| frame.sequence))
     }
 
+    // 忽略不比现有检查点新的快照；接纳后移除已覆盖的内存事件，并重写仍在游标之后的 spool。
+    // 磁盘重写报错时检查点与内存已更新，不回滚；快照合法性和序号范围由调用方检查。
     pub(super) fn accept_checkpoint(
         &mut self,
         cols: u16,
@@ -178,10 +191,12 @@ impl SessionBuffer {
         self.write_spooled_frames(&retained)
     }
 
+    // 根据检查点、缓存的 spool 字节数或内存帧判断可回放性，不探测磁盘是否仍可读。
     pub(super) fn replay_available(&self) -> bool {
         self.checkpoint.is_some() || self.spool_bytes > 0 || !self.frames.is_empty()
     }
 
+    // 创建父目录并追加大端 16 字节头和负载；失败可能留下部分记录，不刷新 spool 字节计数。
     pub(super) fn append_spooled_frame(&self, frame: &ReplayFrame) -> Result<(), String> {
         let Some(path) = self.spool_path.as_ref() else {
             return Err("spool path unavailable".to_string());
@@ -203,6 +218,8 @@ impl SessionBuffer {
         Ok(())
     }
 
+    // 非空集合先写临时文件、flush，再删除旧文件并重命名；这不是原子替换，也未执行 fsync。
+    // 空集合尽力删除 spool 后清零计数；没有路径时同样清零并直接成功。
     pub(super) fn write_spooled_frames(&mut self, frames: &[ReplayFrame]) -> Result<(), String> {
         let Some(path) = self.spool_path.as_ref() else {
             self.spool_bytes = 0;
@@ -234,6 +251,7 @@ impl SessionBuffer {
         Ok(())
     }
 
+    // 从文件大小刷新计数，超限则按整帧丢弃最老记录并标记截断；压缩失败仅记录警告。
     pub(super) fn enforce_spool_cap(&mut self) {
         let actual = self
             .spool_path
@@ -260,6 +278,7 @@ impl SessionBuffer {
         }
     }
 
+    // 顺序读取有界负载记录；路径不可用返回空，头部 EOF 或坏记录终止读取并保留已读前缀。
     pub(super) fn read_spooled_frames(&self) -> Vec<ReplayFrame> {
         let Some(path) = self.spool_path.as_ref() else {
             return Vec::new();
@@ -303,6 +322,7 @@ impl SessionBuffer {
 }
 
 impl Drop for SessionBuffer {
+    // 缓冲销毁时尽力删除其 spool 文件，清理失败不会在析构中传播。
     fn drop(&mut self) {
         if let Some(path) = self.spool_path.as_ref() {
             let _ = std::fs::remove_file(path);

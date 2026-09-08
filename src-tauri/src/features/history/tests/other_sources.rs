@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证 Gemini JSON 消息解析及推理、缓存用量拆分。
 fn scan_json_session_reads_gemini_messages() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir
@@ -63,6 +64,7 @@ fn scan_json_session_reads_gemini_messages() {
 }
 
 #[test]
+// 验证 Kiro 工作区历史读取消息、模型与工作目录。
 fn scan_json_session_reads_kiro_workspace_history() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir
@@ -113,6 +115,7 @@ fn scan_json_session_reads_kiro_workspace_history() {
 }
 
 #[test]
+// 验证 Copilot 事件发现、消息与工具结果去重及历史扫描链路。
 fn copilot_events_jsonl_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join("session-state");
@@ -220,6 +223,7 @@ fn copilot_events_jsonl_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Antigravity 转录提取完成消息、过滤元数据并统计工具。
 fn antigravity_transcript_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join("antigravity-cli");
@@ -326,6 +330,7 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Pi 会话发现、模型继承、工具结果和消息迭代。
 fn pi_session_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join(".pi").join("agent");
@@ -427,6 +432,7 @@ fn pi_session_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Cline 任务消息、旁置时间、工具结果及文件变更解析。
 fn cline_task_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join("saoudrizwan.claude-dev");
@@ -550,6 +556,7 @@ fn cline_task_parser_covers_history_pipeline() {
 }
 
 #[test]
+// 验证 Cursor 代理转录发现、工具事件和文件变更解析链路。
 fn cursor_agent_transcript_parser_covers_history_pipeline() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join(".cursor").join("projects");
@@ -636,6 +643,7 @@ fn cursor_agent_transcript_parser_covers_history_pipeline() {
 }
 
 #[tokio::test]
+// 验证 Cursor 从临时 SQLite 数据库组合标题、时间和工作目录。
 async fn cursor_metadata_reads_sqlite_title_time_and_workspace() {
     let temp_dir = TempDir::new().unwrap();
     let session_id = "94cf58c5-78c3-49c8-9bb0-4c2ba2f97aa0";
@@ -720,6 +728,7 @@ async fn cursor_metadata_reads_sqlite_title_time_and_workspace() {
 }
 
 #[test]
+// 验证 Cursor 元数据替换回退标题但保留真实消息标题。
 fn cursor_metadata_updates_computation_without_overriding_real_title() {
     let metadata = CursorSessionMetadata {
         title: Some("Cursor DB title".to_string()),
@@ -751,6 +760,7 @@ fn cursor_metadata_updates_computation_without_overriding_real_title() {
 }
 
 #[test]
+// 验证 Kiro 扫描忽略注册与设置 JSON 文件。
 fn collect_kiro_session_files_skips_registry() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path();
@@ -769,6 +779,7 @@ fn collect_kiro_session_files_skips_registry() {
 }
 
 #[test]
+// 验证 Gemini 从项目哈希的 chats 目录筛选会话文件。
 fn collect_gemini_session_files_reads_project_hash_folder() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path();

@@ -30,6 +30,7 @@ pub struct ValidatedStartRequest {
     pub relative_path: String,
 }
 
+// 校验绝对项目路径并规范分隔符及尾斜杠，Windows 下转小写作为注册键。
 pub fn registry_key(project_path: &str) -> Result<String, String> {
     let trimmed = project_path.trim();
     let path = Path::new(trimmed);
@@ -43,6 +44,7 @@ pub fn registry_key(project_path: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+// 拒绝 WSL，校验 HTML 相对入口及规范路径在项目根内且为文件。
 pub fn validate_start_request(
     project_path: &str,
     relative_path: &str,
@@ -72,6 +74,7 @@ pub fn validate_start_request(
 /// the authority for all subsequent requests.  The handle pins the directory
 /// entry, so replacing the root path after this point cannot redirect a request
 /// to a different tree.
+// 打开目录能力句柄后复核根路径未解析到不同目标。
 pub fn open_root_dir(root: &Path) -> Result<Dir, String> {
     let directory = Dir::open_ambient_dir(root, ambient_authority())
         .map_err(|error| format!("root_canonicalize_failed: {error}"))?;
@@ -92,6 +95,7 @@ pub fn open_root_dir(root: &Path) -> Result<Dir, String> {
 /// Resolves an HTTP URL path to a safe path relative to the capability root.
 /// No ambient filesystem access occurs here; the caller must open the returned
 /// path through the `Dir` returned by [`open_root_dir`].
+// 百分号解码请求路径，补目录默认 index.html 并验证安全相对路径。
 pub fn resolve_request_path(request_path: &str) -> Result<PathBuf, String> {
     let decoded = decode_request_path(request_path)?;
     let relative = if decoded.is_empty() {
@@ -105,6 +109,7 @@ pub fn resolve_request_path(request_path: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(relative))
 }
 
+// 逐路径段百分号编码并保留目录分隔符，构造页面 URL。
 pub fn build_page_url(origin: &str, relative_path: &str) -> String {
     let encoded = relative_path
         .split('/')
@@ -114,6 +119,7 @@ pub fn build_page_url(origin: &str, relative_path: &str) -> String {
     format!("{origin}/{encoded}")
 }
 
+// 要求项目路径绝对，解析规范路径并确认其为目录。
 fn canonical_root(project_path: &str) -> Result<PathBuf, String> {
     let path = Path::new(project_path.trim());
     if !path.is_absolute() {
@@ -128,6 +134,7 @@ fn canonical_root(project_path: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 解析根下入口真实路径并检查未越出项目根。
 fn canonical_entry(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
     let canonical = root
         .join(relative_path)
@@ -137,6 +144,7 @@ fn canonical_entry(root: &Path, relative_path: &str) -> Result<PathBuf, String> 
     Ok(canonical)
 }
 
+// 拒绝空路径、绝对路径及反斜杠，再验证各路径段。
 fn validate_relative_path(relative_path: &str) -> Result<(), String> {
     if relative_path.is_empty() {
         return Err("path_empty".to_string());
@@ -150,6 +158,7 @@ fn validate_relative_path(relative_path: &str) -> Result<(), String> {
     validate_segments(relative_path)
 }
 
+// 拒绝当前目录、父目录及空路径段。
 fn validate_segments(relative_path: &str) -> Result<(), String> {
     for segment in relative_path.split('/') {
         match segment {
@@ -162,6 +171,7 @@ fn validate_segments(relative_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 去掉一个 URL 前导斜杠并将百分号编码解码为 UTF-8 文本。
 fn decode_request_path(request_path: &str) -> Result<String, String> {
     let encoded = request_path.strip_prefix('/').unwrap_or(request_path);
     percent_decode_str(encoded)
@@ -170,6 +180,7 @@ fn decode_request_path(request_path: &str) -> Result<String, String> {
         .map_err(|_| "invalid_url_encoding".to_string())
 }
 
+// 按路径组件前缀确认目标位于项目根内。
 fn ensure_within_root(root: &Path, path: &Path) -> Result<(), String> {
     if path.starts_with(root) {
         return Ok(());
@@ -177,6 +188,7 @@ fn ensure_within_root(root: &Path, path: &Path) -> Result<(), String> {
     Err("path_outside_root".to_string())
 }
 
+// 不区分 ASCII 大小写识别 html 或 htm 扩展名。
 fn is_html_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())

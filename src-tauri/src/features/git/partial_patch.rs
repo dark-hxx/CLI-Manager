@@ -9,6 +9,7 @@ use super::parse_hunk_header;
 /// * 选中的 `+` 行（workdir 有 / HEAD 无）：反向为 `-`（删除）。
 /// * 未选中的 `+` 行：降为上下文（workdir 仍有，需用于对齐）。
 /// 行号区间按反向后的实际行数重算（反向 old 侧起点 = 原 new_start）。
+// 仅反向选中的增删行并重算范围，未选新增降为上下文，无选择返回 None。
 pub(super) fn reverse_hunk_lines(
     hunk: &[&str],
     selected: &std::collections::HashSet<(String, u32)>,
@@ -89,6 +90,7 @@ pub(super) fn reverse_hunk_lines(
 
 /// 从完整 unified diff 文本构造行级反向 patch：仅回滚 `selected` 中的行。
 /// 跨多个 hunk 的选择逐 hunk 处理并合并；无选中行的 hunk 跳过。纯函数，便于单测。
+// 保留文件头并合并含选中行的反向 hunk，无匹配选择时返回错误。
 pub(super) fn build_reverse_lines_patch(
     diff_text: &str,
     selected: &[(String, u32)],

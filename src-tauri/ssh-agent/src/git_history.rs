@@ -105,6 +105,7 @@ pub struct GitCommitDiff {
     line_count: usize,
 }
 
+// 仅接受 40/64 字节的十六进制完整对象 ID；不查询对象是否存在或是否为提交。
 fn validate_oid(value: &str) -> Result<(), String> {
     if matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(())
@@ -113,6 +114,7 @@ fn validate_oid(value: &str) -> Result<(), String> {
     }
 }
 
+// 容错解码分隔符格式的提交记录，跳过字段数或 ID 非法项；时间解析失败取零，再转为毫秒。
 fn parse_commits(bytes: &[u8]) -> Vec<GitCommitSummary> {
     String::from_utf8_lossy(bytes)
         .split('\x1e')
@@ -146,6 +148,7 @@ fn parse_commits(bytes: &[u8]) -> Vec<GitCommitSummary> {
         .collect()
 }
 
+// 在标题、作者、邮箱和完整 ID 的小写文本中查找关键词；调用方需先把关键词转为小写。
 fn matches(commit: &GitCommitSummary, search: Option<&str>) -> bool {
     let Some(search) = search else { return true };
     commit.title.to_lowercase().contains(search)
@@ -157,6 +160,7 @@ fn matches(commit: &GitCommitSummary, search: Option<&str>) -> bool {
         || commit.id.to_lowercase().contains(search)
 }
 
+// 拒绝空值、超长、选项前缀及空白/控制字符；不限制为现存分支，也不排除合法 revision 表达式。
 fn validate_reference(value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 256
@@ -170,6 +174,7 @@ fn validate_reference(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 校验引用数量和形态、作者长度、非负有序时间范围及相对路径；作者内容仍按 Git 的匹配语义处理。
 fn validate_filters(filters: &GitHistoryFilters) -> Result<(), String> {
     if filters.references.len() > 64 {
         return Err("git_history_too_many_references".to_string());
@@ -192,6 +197,9 @@ fn validate_filters(filters: &GitHistoryFilters) -> Result<(), String> {
     Ok(())
 }
 
+// 按每批 500 条扫描历史，找到游标后再做文本筛选，最多返回 50 条并用额外一条判断是否有下一页。
+// all_refs 优先于引用列表和单引用；缺少 HEAD 的有效仓库返回空页，扫描中找不到游标则报错。
+// 每次 Git 调用各自限时，但总扫描批次数不设上限，游标也不冻结仓库快照。
 pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if let Some(cursor) = request.cursor.as_deref() {
@@ -312,6 +320,7 @@ pub fn list_commits(request: ListCommitsRequest) -> Result<GitCommitPage, String
     })
 }
 
+// 校验完整 ID 后用 show 读取提交摘要，返回首条可解析记录；无记录时报告提交未找到。
 fn load_commit(repo: &std::path::Path, commit_id: &str) -> Result<GitCommitSummary, String> {
     validate_oid(commit_id)?;
     let output = run_git(
@@ -332,6 +341,7 @@ fn load_commit(repo: &std::path::Path, commit_id: &str) -> Result<GitCommitSumma
         .ok_or_else(|| "git_history_commit_not_found".to_string())
 }
 
+// 普通或合并提交只对比第一父提交，根提交使用 show --root；启用重命名检测并禁用外部处理和颜色。
 fn diff_args(commit: &GitCommitSummary) -> Vec<String> {
     if let Some(parent) = commit.parents.first() {
         vec![
@@ -357,6 +367,7 @@ fn diff_args(commit: &GitCommitSummary) -> Vec<String> {
     }
 }
 
+// 解析 NUL 分隔的状态与路径；重命名/复制保留旧路径并只取状态首字母，路径使用有损 UTF-8。
 fn parse_name_status(bytes: &[u8]) -> Vec<(String, Option<String>, String)> {
     let fields = bytes
         .split(|byte| *byte == 0)
@@ -386,6 +397,7 @@ fn parse_name_status(bytes: &[u8]) -> Vec<(String, Option<String>, String)> {
     result
 }
 
+// 按目标路径聚合 NUL 分隔的增删统计，重命名取新路径；短横线标记二进制，非法数字按零处理。
 fn parse_numstat(bytes: &[u8]) -> HashMap<String, (usize, usize, bool)> {
     let mut result = HashMap::new();
     let records = bytes.split(|byte| *byte == 0).collect::<Vec<_>>();
@@ -419,6 +431,7 @@ fn parse_numstat(bytes: &[u8]) -> HashMap<String, (usize, usize, bool)> {
     result
 }
 
+// 加载提交后分别查询 name-status 与 numstat，再按路径合并文件详情；缺失统计使用零值与非二进制默认值。
 pub fn commit_detail(request: CommitRequest) -> Result<GitCommitDetail, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let commit = load_commit(&repo, &request.commit_id)?;
@@ -456,6 +469,8 @@ pub fn commit_detail(request: CommitRequest) -> Result<GitCommitDetail, String> 
     Ok(GitCommitDetail { commit, files })
 }
 
+// 校验新旧相对路径后生成三行上下文的历史 Diff，不要求文件仍在工作区存在。
+// 有损 UTF-8 转换后检查字节/行数上限；结果始终禁止分块回退，空内容可以成功返回。
 pub fn commit_file_diff(request: CommitFileRequest) -> Result<GitCommitDiff, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let path = validate_repo_relative_path(&request.relative_path)?;
@@ -503,6 +518,7 @@ mod tests {
     use std::process::Command;
 
     #[cfg(unix)]
+    // 在指定测试仓库执行 Git，为该子进程设置固定提交身份并断言成功。
     fn git(repo: &Path, args: &[&str]) {
         let status = Command::new("git")
             .arg("-C")
@@ -518,6 +534,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    // 在测试仓库捕获 Git stdout，要求命令成功且输出严格 UTF-8，再去掉两端空白。
     fn git_output(repo: &Path, args: &[&str]) -> String {
         let output = Command::new("git")
             .arg("-C")
@@ -530,6 +547,7 @@ mod tests {
     }
 
     #[cfg(unix)]
+    // 更新固定文件并创建带编号提交，为历史分页测试构造稳定数量的记录。
     fn commit_file(repo: &Path, index: usize) {
         std::fs::write(repo.join("page.txt"), format!("{index}\n")).unwrap();
         git(repo, &["add", "page.txt"]);
@@ -537,6 +555,7 @@ mod tests {
     }
 
     #[test]
+    // 验证两种完整十六进制 ID 长度可接受、分支名不作为 ID，并检查相对路径的父目录逃逸被拒绝。
     fn validates_full_commit_ids() {
         assert!(validate_oid("0123456789012345678901234567890123456789").is_ok());
         assert!(
@@ -549,6 +568,7 @@ mod tests {
     }
 
     #[test]
+    // 验证分隔符格式可解析出一条提交，短 ID 固定取前八个字符。
     fn parses_commit_wire_format() {
         let commits = parse_commits(b"\x1e0123456789012345678901234567890123456789\x1f\x1fA\x1fa@b.c\x1f1\x1fHEAD -> main\x1fTitle\n");
         assert_eq!(commits.len(), 1);
@@ -557,6 +577,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // 用临时仓库验证空历史、52 条提交的两页查询、根提交详情及已删除文件的历史 Diff，并拒绝逃逸路径。
     fn git_cli_history_handles_empty_repositories_and_cursor_pagination() {
         let temp = tempfile::tempdir().unwrap();
         git(temp.path(), &["init"]);

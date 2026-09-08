@@ -103,10 +103,12 @@ struct ResolvedSelection {
     source: &'static str,
 }
 
+// 委托供应商仓储规范化应用类型，统一别名与不支持类型的错误。
 fn normalize_type(value: &str) -> Result<String, String> {
     repository::normalize_app_type(value)
 }
 
+// 加载已启用供应商及可用密钥；指定密钥 ID 时检查归属和启用状态，否则选择启用的活动密钥，并拒绝空密钥。
 async fn load_provider(
     app_type: String,
     provider_id: String,
@@ -193,6 +195,7 @@ async fn load_provider(
     })
 }
 
+// 按供应商元数据决定是否合并公共配置，再投影当前密钥并解析为 JSON 配置值。
 async fn effective_settings(provider: NativeProvider) -> Result<Value, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let common = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?1")
@@ -216,6 +219,7 @@ async fn effective_settings(provider: NativeProvider) -> Result<Value, String> {
     serde_json::from_str(&projected).map_err(|_| "provider_config_invalid".to_string())
 }
 
+// 仅在主数据库文件存在时以只读方式打开，设置五秒忙等待；缺文件返回 None。
 async fn open_app_database() -> Result<Option<SqliteConnection>, String> {
     let path = app_paths::db_path()?;
     if !path.is_file() {
@@ -231,6 +235,7 @@ async fn open_app_database() -> Result<Option<SqliteConnection>, String> {
         .map_err(|_| "provider_scope_database_error".to_string())
 }
 
+// 仅允许项目或 Worktree 两种固定查询，按 ID 读取供应商覆盖原文。
 async fn read_scope_override(
     connection: &mut SqliteConnection,
     table: String,
@@ -248,6 +253,7 @@ async fn read_scope_override(
         .map_err(|_| "provider_scope_database_error".to_string())
 }
 
+// 解析本机 v2 供应商引用，兼容 Grok 外层别名与直接引用；旧格式或身份字段不符时要求迁移。
 pub(crate) fn parse_provider_reference(
     raw: Option<&str>,
     app_type: &str,
@@ -297,6 +303,7 @@ pub(crate) fn parse_provider_reference(
     Ok(Some(provider_id.to_string()))
 }
 
+// 查询应用标记为 current 的首条供应商 ID，未设置时返回专用错误。
 async fn current_provider_id(app_type: String) -> Result<String, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     sqlx::query_scalar::<_, String>(
@@ -312,6 +319,7 @@ async fn current_provider_id(app_type: String) -> Result<String, String> {
 /// 只解析显式 / Worktree / project 覆盖，不回落到全局 current。
 /// 无覆盖时返回 `None`，调用方据此判定"跟随全局"——全局 apply 已把供应商物化到
 /// 真实 Home，启动不需要任何隔离快照或命令参数。
+// 按显式 ID、所属项目的活动 Worktree、项目覆盖依次选择；无覆盖返回 None，不查询全局供应商。
 async fn scope_override(
     app_type: &str,
     input: &ScopeResolveInput,
@@ -369,6 +377,7 @@ async fn scope_override(
     Ok(None)
 }
 
+// 解析作用域覆盖，缺省时回落到全局 current，并加载可用供应商与密钥。
 async fn resolve_selection(input: ScopeResolveInput) -> Result<ResolvedSelection, String> {
     let app_type = normalize_type(&input.app_type)?;
     let (provider_id, source) = match scope_override(&app_type, &input).await? {
@@ -381,6 +390,7 @@ async fn resolve_selection(input: ScopeResolveInput) -> Result<ResolvedSelection
     })
 }
 
+// 限制快照 ID 为一至八十字节的 ASCII 字母、数字、连字符或下划线。
 fn snapshot_id_valid(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 80
@@ -389,6 +399,7 @@ fn snapshot_id_valid(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
 }
 
+// 规范化应用类型并验证快照 ID，构造供应商 generated 目录下的快照路径。
 fn generated_root(app_type: &str, snapshot_id: &str) -> Result<PathBuf, String> {
     let app_type = normalize_type(app_type)?;
     if !snapshot_id_valid(snapshot_id) {
@@ -400,6 +411,7 @@ fn generated_root(app_type: &str, snapshot_id: &str) -> Result<PathBuf, String> 
         .join(snapshot_id))
 }
 
+// 创建父目录后直接写入快照文件，将目录或写入失败统一映射为快照错误。
 fn write_snapshot_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -408,6 +420,7 @@ fn write_snapshot_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(|_| "provider_snapshot_write_failed".to_string())
 }
 
+// 递归复制普通文件和目录；遇到符号链接或其他文件类型即报错，不在此层清理已复制内容。
 fn copy_regular_tree(source: &Path, destination: &Path) -> Result<(), String> {
     fs::create_dir_all(destination)
         .map_err(|_| "provider_snapshot_history_recovery_failed".to_string())?;
@@ -434,6 +447,7 @@ fn copy_regular_tree(source: &Path, destination: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 目标已是普通目录时直接保留；否则复制到唯一暂存目录再重命名发布，失败时尽力删除暂存目录。
 fn stage_directory_copy(source: &Path, destination: &Path) -> Result<(), String> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() => {
@@ -465,6 +479,7 @@ fn stage_directory_copy(source: &Path, destination: &Path) -> Result<(), String>
     result
 }
 
+// 检查项目目录下是否存在会话目录；会话根无法读取时返回 false，已开始遍历后的条目错误向上传播。
 fn contains_grok_session_directories(sessions_root: &Path) -> Result<bool, String> {
     let Ok(projects) = fs::read_dir(sessions_root) else {
         return Ok(false);
@@ -495,6 +510,7 @@ fn contains_grok_session_directories(sessions_root: &Path) -> Result<bool, Strin
     Ok(false)
 }
 
+// 遍历备份中的项目和会话目录，拒绝链接并分会话暂存恢复，已有目标会话目录保持不变。
 fn restore_grok_sessions_from_backup(
     backup_sessions: &Path,
     target_sessions: &Path,
@@ -538,6 +554,7 @@ fn restore_grok_sessions_from_backup(
     Ok(())
 }
 
+// 仅在旧快照含会话目录时恢复历史，先拒绝 WSL 目标，再建立备份并将缺失会话恢复到目标。
 fn recover_legacy_grok_history_to(
     snapshot_root: &Path,
     backup_root: &Path,
@@ -555,6 +572,7 @@ fn recover_legacy_grok_history_to(
     restore_grok_sessions_from_backup(&backup_sessions, target_sessions)
 }
 
+// 按快照 ID 定位历史备份目录，选取默认 Grok 历史根后执行旧快照历史恢复。
 fn recover_legacy_grok_history(snapshot_root: &Path, snapshot_id: &str) -> Result<(), String> {
     let backup_root = app_paths::history_backups_dir()?
         .join(GROK_HISTORY_BACKUP_DIR)
@@ -564,6 +582,7 @@ fn recover_legacy_grok_history(snapshot_root: &Path, snapshot_id: &str) -> Resul
     recover_legacy_grok_history_to(snapshot_root, &backup_root, &target_sessions)
 }
 
+// 将生效的 Claude JSON 配置完整格式化序列化，并在结尾追加换行。
 fn claude_snapshot_bytes(effective: &Value) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec_pretty(effective)
         .map_err(|_| "provider_snapshot_write_failed".to_string())?;
@@ -571,16 +590,19 @@ fn claude_snapshot_bytes(effective: &Value) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+// 构造快照根目录下固定的 manifest.json 路径。
 fn snapshot_manifest_path(root: &Path) -> PathBuf {
     root.join("manifest.json")
 }
 
+// 将清单序列化为紧凑 JSON 并交给快照文件写入器保存。
 fn write_manifest(root: &Path, manifest: &SnapshotManifest) -> Result<(), String> {
     let bytes =
         serde_json::to_vec(manifest).map_err(|_| "provider_snapshot_write_failed".to_string())?;
     write_snapshot_file(&snapshot_manifest_path(root), &bytes)
 }
 
+// 验证路径组成后读取并反序列化快照清单；应用、供应商和快照身份匹配由调用方另行检查。
 fn read_manifest(app_type: &str, snapshot_id: &str) -> Result<(PathBuf, SnapshotManifest), String> {
     let root = generated_root(app_type, snapshot_id)?;
     let bytes = fs::read(snapshot_manifest_path(&root))
@@ -590,12 +612,14 @@ fn read_manifest(app_type: &str, snapshot_id: &str) -> Result<(PathBuf, Snapshot
     Ok((root, manifest))
 }
 
+// 将可选路径字符串转为 PathBuf 后直接比较，不进行规范化或文件系统解析。
 fn path_matches(expected: &Path, actual: Option<&str>) -> bool {
     actual
         .map(PathBuf::from)
         .is_some_and(|path| path == expected)
 }
 
+// 去除首尾空白并拒绝空值、控制字符及指定引号或 shell 特殊字符，再包裹为 TOML 单引号字面量。
 fn codex_toml_literal(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.is_empty()
@@ -612,6 +636,7 @@ fn codex_toml_literal(value: &str) -> Result<String, String> {
     Ok(format!("'{value}'"))
 }
 
+// 从生效配置解析 Codex 运行参数，生成引用专用密钥环境变量的提供商与可选模型覆盖项。
 fn codex_config_overrides(provider_id: &str, effective: &Value) -> Result<Vec<String>, String> {
     let settings =
         serde_json::to_string(effective).map_err(|_| "provider_config_invalid".to_string())?;
@@ -643,6 +668,7 @@ fn codex_config_overrides(provider_id: &str, effective: &Value) -> Result<Vec<St
     Ok(overrides)
 }
 
+// 在默认 Codex 配置根写入使用专用密钥环境变量的供应商 profile 文件，并返回 profile 名称。
 fn write_codex_profile(provider_id: &str, effective: &Value) -> Result<String, String> {
     let config_dir = home::default_config_root("codex")
         .ok_or_else(|| "provider_snapshot_write_failed".to_string())?;
@@ -661,6 +687,7 @@ fn write_codex_profile(provider_id: &str, effective: &Value) -> Result<String, S
     Ok(profile.profile_name)
 }
 
+// 按应用生成 Claude 设置、Codex 覆盖项或 Grok 运行元数据，再写入密钥文件与清单；不生成替代 Home。
 fn write_snapshot_bundle(
     root: &Path,
     provider: &NativeProvider,
@@ -719,6 +746,7 @@ fn write_snapshot_bundle(
     ))
 }
 
+// 创建快照包，失败时尽力删除整个传入快照根目录并保留原错误。
 fn write_snapshot_bundle_or_cleanup(
     root: &Path,
     provider: &NativeProvider,
@@ -734,6 +762,7 @@ fn write_snapshot_bundle_or_cleanup(
     }
 }
 
+// 解析可用供应商后只返回应用、供应商标识、名称和选择来源，不返回密钥。
 pub(crate) async fn resolve(input: ScopeResolveInput) -> Result<ResolvedProvider, String> {
     let selection = resolve_selection(input).await?;
     Ok(ResolvedProvider {
@@ -744,6 +773,7 @@ pub(crate) async fn resolve(input: ScopeResolveInput) -> Result<ResolvedProvider
     })
 }
 
+// 无显式或项目覆盖时直接返回 None；否则生成快照，Codex 另写默认配置根中的 profile，失败时尽力清理快照目录。
 pub(crate) async fn prepare(
     input: ScopePrepareInput,
 ) -> Result<Option<ProviderLaunchSnapshot>, String> {
@@ -793,6 +823,7 @@ pub(crate) async fn prepare(
     }))
 }
 
+// 按有效 ID 检查各应用快照清单，只删除身份匹配的目录；Grok 旧历史须先成功恢复，缺失或无效清单跳过。
 pub(crate) async fn release_snapshot(snapshot_id: String) -> Result<(), String> {
     let snapshot_id = snapshot_id.trim();
     if !snapshot_id_valid(snapshot_id) {
@@ -817,6 +848,7 @@ pub(crate) async fn release_snapshot(snapshot_id: String) -> Result<(), String> 
     Ok(())
 }
 
+// 验证 Claude 快照的应用、供应商与快照身份，并要求设置文件存在后返回路径。
 pub(crate) fn resolve_claude_settings_path(
     snapshot_id: &str,
     provider_id: &str,
@@ -835,6 +867,7 @@ pub(crate) fn resolve_claude_settings_path(
     Ok(path)
 }
 
+// 校验活动 ID 后遍历已知应用快照，跳过活动项和无效清单；Grok 先恢复旧历史，再删除未使用快照。
 pub(crate) async fn garbage_collect_snapshots(
     active_snapshot_ids: Vec<String>,
 ) -> Result<(), String> {
@@ -888,6 +921,7 @@ pub(crate) async fn garbage_collect_snapshots(
     Ok(())
 }
 
+// 在阻塞任务中运行快照环境校验与注入，任务连接失败映射为快照应用错误。
 pub(crate) async fn apply_launch_environment(
     config: ProviderLaunchConfig,
     shell: Option<String>,
@@ -900,6 +934,7 @@ pub(crate) async fn apply_launch_environment(
     .map_err(|_| "provider_snapshot_apply_failed".to_string())?
 }
 
+// 校验快照身份；Claude 仅验证设置路径，Codex/Grok 从快照读取密钥并注入传入环境表，拒绝替代 Home 配置。
 async fn apply_launch_environment_inner(
     config: ProviderLaunchConfig,
     _shell: Option<String>,
@@ -971,6 +1006,7 @@ async fn apply_launch_environment_inner(
     Ok(env_vars)
 }
 
+// 只更新 Grok 密钥与模型服务地址环境变量，不修改已有 Home。
 fn apply_grok_runtime_environment(
     env_vars: &mut HashMap<String, String>,
     base_url: &str,
@@ -986,6 +1022,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    // 验证原生 v2 引用可解析，旧 CC Switch 引用要求迁移。
     fn native_reference_is_required_for_runtime_scope() {
         let raw = r#"{"claude":{"schemaVersion":2,"source":"cli-manager","appType":"claude","providerId":"p1"}}"#;
         assert_eq!(
@@ -1000,6 +1037,7 @@ mod tests {
     }
 
     #[test]
+    // 验证外层 grok 别名可承载 appType 为 grokbuild 的原生引用。
     fn grok_legacy_reference_alias_is_accepted() {
         let raw = r#"{"grok":{"schemaVersion":2,"source":"cli-manager","appType":"grokbuild","providerId":"p1"}}"#;
         assert_eq!(
@@ -1009,6 +1047,7 @@ mod tests {
     }
 
     #[test]
+    // 验证正常快照 ID 被接受，含路径分隔符的越界写法与空 ID 被拒绝。
     fn snapshot_ids_cannot_escape_generated_root() {
         assert!(snapshot_id_valid("snapshot-1"));
         assert!(!snapshot_id_valid("..\\outside"));
@@ -1016,6 +1055,7 @@ mod tests {
     }
 
     #[test]
+    // 验证快照支持的应用集合固定为 Claude、Codex 与 GrokBuild。
     fn snapshot_app_types_are_native_only() {
         assert_eq!(SNAPSHOT_APP_TYPES, ["claude", "codex", "grokbuild"]);
     }
@@ -1023,6 +1063,7 @@ mod tests {
     // 无项目/Worktree/显式 ID 时必须在查全局 current 之前返回 None：
     // 跟随全局的启动不生成快照，也不会被 provider_current_not_set 阻断。
     #[test]
+    // 验证所有支持应用在无有效作用域 ID 时返回 None，不触发全局 current 查询。
     fn missing_scope_ids_resolve_to_global_passthrough_for_every_app_type() {
         for app_type in SNAPSHOT_APP_TYPES {
             let input = ScopeResolveInput {
@@ -1041,6 +1082,7 @@ mod tests {
     }
 
     #[test]
+    // 验证显式供应商 ID 去除空白后直接生效，来源标记为 explicit。
     fn explicit_provider_id_wins_over_global_for_every_app_type() {
         for app_type in SNAPSHOT_APP_TYPES {
             let input = ScopeResolveInput {
@@ -1060,6 +1102,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 快照覆盖项不含测试密钥、不创建替代 Home，并将测试密钥单独写入快照文件。
     fn codex_scope_snapshot_contains_only_non_secret_overrides() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("snapshot");
@@ -1096,6 +1139,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相同供应商 ID 生成稳定且仅含允许字符的 Codex profile 名称。
     fn codex_profile_name_is_stable_and_safe() {
         let first = crate::provider::runtime::codex_profile_name("Provider/One");
         assert_eq!(
@@ -1109,6 +1153,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Grok 快照保留实际 Home 策略，仅在清单中记录模型与服务地址。
     fn grok_scope_snapshot_keeps_real_home_and_exposes_runtime_model() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("snapshot");
@@ -1142,6 +1187,7 @@ mod tests {
     }
 
     #[test]
+    // 验证注入 Grok 密钥和地址时保留传入环境表中的 GROK_HOME。
     fn grok_runtime_environment_does_not_replace_home() {
         let mut env_vars = HashMap::from([(
             "GROK_HOME".to_string(),
@@ -1169,6 +1215,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时目录验证旧 Grok 会话先备份后恢复，重复恢复保持内容不变。
     fn legacy_grok_history_is_backed_up_and_restored_idempotently() {
         let directory = tempfile::tempdir().unwrap();
         let snapshot = directory.path().join("snapshot");
@@ -1196,6 +1243,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时目录验证已存在目标会话不被旧历史覆盖，旧内容仍保存到备份。
     fn legacy_grok_history_never_overwrites_existing_real_session() {
         let directory = tempfile::tempdir().unwrap();
         let snapshot = directory.path().join("snapshot");
@@ -1229,6 +1277,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL 目标路径在备份前被拒绝，原始测试会话保留且备份目录未创建。
     fn legacy_grok_history_wsl_target_fails_before_source_or_backup_changes() {
         let directory = tempfile::tempdir().unwrap();
         let snapshot = directory.path().join("snapshot");
@@ -1254,6 +1303,7 @@ mod tests {
     }
 
     #[test]
+    // 验证包含指定 shell 插值或连接字符的值无法生成 Codex TOML 字面量。
     fn codex_scope_overrides_reject_shell_interpolation() {
         for value in ["$(whoami)", "`whoami`", "100%", "a&b", "a|b"] {
             assert_eq!(
@@ -1264,6 +1314,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无效 Codex 配置导致快照生成失败，并清理已建立的临时快照根。
     fn failed_snapshot_materialization_removes_partial_root() {
         let directory = tempfile::tempdir().unwrap();
         let root = directory.path().join("snapshot");
@@ -1290,6 +1341,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 快照序列化同时保留权限字段与模型环境配置。
     fn claude_snapshot_keeps_common_fields() {
         let effective = serde_json::json!({
             "env": { "ANTHROPIC_MODEL": "provider-model" },

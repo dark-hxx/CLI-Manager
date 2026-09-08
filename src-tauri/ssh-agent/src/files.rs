@@ -192,6 +192,7 @@ pub struct FileAttachmentUploads {
 }
 
 impl FileAttachmentUploads {
+    // 解析附件缓存根，按旧版图片模式建立待上传项；过程可能创建目录并清理过期缓存。
     pub fn begin(
         &mut self,
         request: FileAttachBeginRequest,
@@ -200,6 +201,7 @@ impl FileAttachmentUploads {
         self.begin_in_root(request, root, AttachmentKind::LegacyImage)
     }
 
+    // 解析附件缓存根，按任意文件模式建立待上传项，保留原文件名且不验证图片格式。
     pub fn begin_any(
         &mut self,
         request: FileAttachBeginRequest,
@@ -208,6 +210,8 @@ impl FileAttachmentUploads {
         self.begin_in_root(request, root, AttachmentKind::AnyFile)
     }
 
+    // 校验大小、文件名及摘要后，在选定现存目录独占创建临时上传文件并登记状态。
+    // 不创建 UUID 子目录，目标文件是否存在留到 finish 检查；最多尝试四个随机临时名。
     pub fn begin_put(
         &mut self,
         request: FilePutBeginRequest,
@@ -267,6 +271,8 @@ impl FileAttachmentUploads {
         Err("attachment_create_failed".to_string())
     }
 
+    // 校验会话与类型配额，准备缓存目录并清理过期项，再按图片或任意文件模式创建临时文件。
+    // 图片用随机文件名，任意文件在独立上传子目录保留名称；创建失败尽力清理本次临时资源。
     fn begin_in_root(
         &mut self,
         request: FileAttachBeginRequest,
@@ -374,6 +380,8 @@ impl FileAttachmentUploads {
         Err("attachment_create_failed".to_string())
     }
 
+    // 解码并限制分片大小，要求偏移连续且不超声明总长，写入成功后更新累计摘要和已写字节数。
+    // write_all 失败可能已写入部分字节，但计数与摘要不更新；此处没有文件回退或自动终止。
     pub fn append(&mut self, request: FileAttachChunkRequest) -> Result<u64, String> {
         if request.data_base64.is_empty()
             || request.data_base64.len() > MAX_ATTACHMENT_CHUNK_BASE64_BYTES
@@ -407,6 +415,7 @@ impl FileAttachmentUploads {
         Ok(next_size)
     }
 
+    // 从活动表移除上传后执行完成校验与发布；失败后该 ID 也不再可继续追加。
     pub fn finish(&mut self, request: FileAttachFinishRequest) -> Result<FileAttachResult, String> {
         let pending = self
             .active
@@ -415,6 +424,7 @@ impl FileAttachmentUploads {
         finish_attachment(pending)
     }
 
+    // 移除待上传项、关闭文件并尽力删除临时文件与专用空目录；true 表示找到了上传，不保证清理成功。
     pub fn abort(&mut self, request: FileAttachAbortRequest) -> bool {
         let Some(pending) = self.active.remove(&request.upload_id) else {
             return false;
@@ -427,6 +437,7 @@ impl FileAttachmentUploads {
 }
 
 impl Drop for FileAttachmentUploads {
+    // 释放管理器时关闭全部待上传文件并尽力清理其临时路径和专用空目录，不删除已完成附件。
     fn drop(&mut self) {
         for (_, pending) in self.active.drain() {
             drop(pending.file);
@@ -439,6 +450,8 @@ impl Drop for FileAttachmentUploads {
 const MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH: usize = 4096;
 const ATTACHMENT_NAMESPACE: &str = "cli-manager-ssh-agent";
 
+// 从自定义路径或 XDG/HOME 默认缓存位置构造托管附件目录，不创建目录。
+// 斜杠开头的自定义绝对路径直接采用；其检查不等同于波浪号展开辅助函数的全部限制。
 fn attachment_cache_root(custom_root: &str) -> Result<PathBuf, String> {
     if custom_root.len() > MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH
         || custom_root.chars().any(char::is_control)
@@ -464,6 +477,7 @@ fn attachment_cache_root(custom_root: &str) -> Result<PathBuf, String> {
     Ok(cache_base.join(ATTACHMENT_NAMESPACE).join("attachments"))
 }
 
+// 解析并创建托管附件目录、设置权限后返回规范路径；该查询会修改目录状态。
 pub fn attachment_root(
     request: FileAttachmentRootRequest,
 ) -> Result<FileAttachmentRootResult, String> {
@@ -475,6 +489,7 @@ pub fn attachment_root(
     Ok(FileAttachmentRootResult { root_path })
 }
 
+// 校验绝对或 HOME 波浪号路径形式并展开，拒绝控制字符、父级段和 shell 展开符号。
 fn expand_custom_attachment_root(value: &str, home: &Path) -> Result<PathBuf, String> {
     if value.len() > MAX_CUSTOM_ATTACHMENT_ROOT_LENGTH
         || value.chars().any(char::is_control)
@@ -497,6 +512,7 @@ fn expand_custom_attachment_root(value: &str, home: &Path) -> Result<PathBuf, St
     Ok(expanded)
 }
 
+// 限制会话目录名为一至 128 字节 ASCII 字母、数字、横线或下划线。
 fn validate_attachment_session_id(value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 128
@@ -509,6 +525,7 @@ fn validate_attachment_session_id(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 校验文件名后取小写后缀，仅接受旧版图片上传白名单，不读取图片内容。
 fn attachment_extension(file_name: &str) -> Result<String, String> {
     validate_attachment_name(file_name)?;
     let extension = Path::new(file_name)
@@ -520,6 +537,7 @@ fn attachment_extension(file_name: &str) -> Result<String, String> {
     Ok(extension)
 }
 
+// 拒绝空名、超 255 字节、点目录名、路径分隔符及 NUL/回车/换行，不执行平台全部文件名规则校验。
 fn validate_attachment_name(file_name: &str) -> Result<(), String> {
     if file_name.is_empty()
         || file_name.len() > 255
@@ -531,12 +549,14 @@ fn validate_attachment_name(file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 仅尝试删除给定空目录，None 或删除失败均不传播错误。
 fn remove_attachment_dir(path: Option<&Path>) {
     if let Some(path) = path {
         let _ = fs::remove_dir(path);
     }
 }
 
+// 去除首尾空白并校验 64 位十六进制摘要，返回小写形式。
 fn normalize_sha256(value: &str) -> Result<String, String> {
     let value = value.trim();
     if value.len() != 64 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -545,6 +565,8 @@ fn normalize_sha256(value: &str) -> Result<String, String> {
     Ok(value.to_ascii_lowercase())
 }
 
+// 创建前后检查已有路径组件非符号链接，要求目标为目录并设权限，返回规范路径。
+// 多次路径检查不是对并发重定向的原子防护。
 fn ensure_private_dir(path: &Path) -> Result<PathBuf, String> {
     ensure_no_symlink_components(path)?;
     fs::create_dir_all(path).map_err(|_| "attachment_cache_create_failed".to_string())?;
@@ -559,6 +581,7 @@ fn ensure_private_dir(path: &Path) -> Result<PathBuf, String> {
         .map_err(|_| "attachment_cache_unavailable".to_string())
 }
 
+// 逐组件检查已有路径并拒绝符号链接，遇到首个缺失组件即停止，不校验后续尚不存在的组件。
 fn ensure_no_symlink_components(path: &Path) -> Result<(), String> {
     let mut current = PathBuf::new();
     for component in path.components() {
@@ -575,6 +598,7 @@ fn ensure_no_symlink_components(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 校验子目录名，创建或复用非链接目录、设置权限并要求规范路径仍在给定根下。
 fn ensure_private_child_dir(root: &Path, name: &str) -> Result<PathBuf, String> {
     validate_attachment_session_id(name)?;
     let path = root.join(name);
@@ -599,6 +623,7 @@ fn ensure_private_child_dir(root: &Path, name: &str) -> Result<PathBuf, String> 
 }
 
 #[cfg(unix)]
+// Unix 将附件目录设为 0700，失败返回权限错误。
 fn set_private_dir_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))
@@ -606,11 +631,13 @@ fn set_private_dir_permissions(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 不设置目录权限，直接成功。
 fn set_private_dir_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(unix)]
+// Unix 将临时附件文件设为 0600，失败返回权限错误。
 fn set_private_file_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
@@ -618,10 +645,13 @@ fn set_private_file_permissions(path: &Path) -> Result<(), String> {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 不设置文件权限，直接成功。
 fn set_private_file_permissions(_path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 核对累计长度与流式摘要、同步文件，图片模式另验尺寸，再复核父目录并重命名发布。
+// 已存在目标会被预检拒绝，但预检与 rename 分离；摘要不重新读取磁盘，失败清理为尽力操作。
 fn finish_attachment(mut pending: PendingFileAttachment) -> Result<FileAttachResult, String> {
     let temporary_path = pending.temporary_path.clone();
     let result = (|| {
@@ -683,6 +713,8 @@ fn finish_attachment(mut pending: PendingFileAttachment) -> Result<FileAttachRes
     result
 }
 
+// 枚举会话及一层上传子目录，跳过符号链接，尽力删除过期普通文件与随后空目录。
+// 枚举错误会返回失败，单项删除错误被忽略；不检查活动上传表，也不无限递归。
 fn cleanup_expired_attachments(root: &Path, retention: Duration) -> Result<(), String> {
     let now = SystemTime::now();
     for session in fs::read_dir(root).map_err(|_| "attachment_cleanup_failed".to_string())? {
@@ -743,6 +775,7 @@ fn cleanup_expired_attachments(root: &Path, retention: Duration) -> Result<(), S
     Ok(())
 }
 
+// 按修改时间与给定当前时间比较保留期，元数据失败或未来时间均视为未过期。
 fn attachment_path_expired(path: &Path, now: SystemTime, retention: Duration) -> bool {
     path.metadata()
         .ok()
@@ -751,6 +784,7 @@ fn attachment_path_expired(path: &Path, now: SystemTime, retention: Duration) ->
         .is_some_and(|age| age >= retention)
 }
 
+// 列出最多 500 个非链接项，再按 kind 逆序和不区分大小写名称排序；当前排序会把 file 放在 directory 前。
 pub fn list(request: FileListRequest) -> Result<Vec<RemoteFileEntry>, String> {
     let root = resolve_root(&request.root_path)?;
     let directory = resolve_relative(&root, &request.relative_path)?;
@@ -796,6 +830,8 @@ pub fn list(request: FileListRequest) -> Result<Vec<RemoteFileEntry>, String> {
     Ok(entries)
 }
 
+// 在解析范围内按后缀分流预览，拒绝视频，检查文本/图片大小及图片尺寸后返回 UTF-8 或图片 data URL。
+// 不截断内容；元数据校验与整体读取分开，SVG 不走像素校验。
 pub fn read(request: FileReadRequest) -> Result<RemoteFileRead, String> {
     let root = resolve_root(&request.root_path)?;
     let path = resolve_relative(&root, &request.relative_path)?;
@@ -845,6 +881,7 @@ pub fn read(request: FileReadRequest) -> Result<RemoteFileRead, String> {
     })
 }
 
+// 要求范围内普通非链接文件且元数据不超过 20 MiB，整体读取字节供协议分块发送，不解析内容。
 pub fn read_download(request: FileGetRequest) -> Result<FileDownload, String> {
     let root = resolve_root(&request.root_path)?;
     let path = resolve_relative(&root, &request.relative_path)?;
@@ -864,6 +901,7 @@ pub fn read_download(request: FileGetRequest) -> Result<FileDownload, String> {
     })
 }
 
+// 拒绝根目录及符号链接，只删除普通文件或空目录；非空目录返回明确错误，不递归删除。
 pub fn delete(request: FileDeleteRequest) -> Result<FileDeleteResult, String> {
     if request.relative_path.trim().is_empty() {
         return Err("remote_file_path_invalid".to_string());
@@ -898,6 +936,7 @@ pub fn delete(request: FileDeleteRequest) -> Result<FileDeleteResult, String> {
     })
 }
 
+// 对至少两字符且不超 256 字节的查询执行不区分大小写的名称或文本内容搜索，其他查询返回空。
 pub fn search(request: FileSearchRequest) -> Result<Vec<RemoteFileEntry>, String> {
     let query = request.query.trim().to_lowercase();
     if query.chars().count() < 2 || query.len() > 256 {
@@ -918,6 +957,8 @@ pub fn search(request: FileSearchRequest) -> Result<Vec<RemoteFileEntry>, String
     Ok(results)
 }
 
+// 在深度、访问项数和结果数预算内递归搜索，跳过符号链接，只对限额内 UTF-8 文件检查内容。
+// 内容读取失败视为不匹配，目录枚举或元数据错误则中止返回错误。
 fn walk_search(
     root: &Path,
     directory: &Path,
@@ -975,6 +1016,7 @@ fn walk_search(
     Ok(())
 }
 
+// 接受绝对路径或受控 HOME 形式，规范化后要求现存目录；根自身可经符号链接解析，不检查目录所有者。
 fn resolve_root(value: &str) -> Result<PathBuf, String> {
     let value = value.trim();
     if value.is_empty()
@@ -1000,6 +1042,7 @@ fn resolve_root(value: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+// 拒绝绝对引用、父级段与非法控制字符，检查已有组件非链接，再规范化并要求仍在根下。
 fn resolve_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.contains(['\0', '\r', '\n', '\\'])
         || Path::new(relative).is_absolute()
@@ -1018,6 +1061,7 @@ fn resolve_relative(root: &Path, relative: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 从已解析根开始逐个普通路径组件检查符号链接，遇到缺失项即停止，其他元数据错误返回失败。
 fn reject_symlink_components(root: &Path, relative: &str) -> Result<(), String> {
     let mut current = root.to_path_buf();
     for component in Path::new(relative).components() {
@@ -1037,12 +1081,14 @@ fn reject_symlink_components(root: &Path, relative: &str) -> Result<(), String> 
     Ok(())
 }
 
+// 把根内路径转为正斜杠相对文本，不访问文件系统；前缀不匹配返回范围错误。
 fn relative_path(root: &Path, path: &Path) -> Result<String, String> {
     path.strip_prefix(root)
         .map(|value| value.to_string_lossy().replace('\\', "/"))
         .map_err(|_| "remote_file_path_confined".to_string())
 }
 
+// 将文件修改时间转换为纪元毫秒，读取失败或早于纪元返回 None。
 fn modified_ms(metadata: &fs::Metadata) -> Option<i64> {
     metadata
         .modified()
@@ -1052,6 +1098,7 @@ fn modified_ms(metadata: &fs::Metadata) -> Option<i64> {
         .map(|value| value.as_millis() as i64)
 }
 
+// 按不区分大小写的后缀识别图片预览类型，包含 SVG，不验证实际内容。
 fn is_image(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -1062,6 +1109,7 @@ fn is_image(path: &Path) -> bool {
     )
 }
 
+// 按后缀白名单识别不支持预览的视频类型，不读取文件。
 fn is_video(path: &Path) -> bool {
     matches!(
         path.extension()
@@ -1088,6 +1136,7 @@ fn is_video(path: &Path) -> bool {
     )
 }
 
+// SVG 直接通过，其他图片读取尺寸后交给像素总量检查。
 fn validate_image_dimensions(path: &Path) -> Result<(), String> {
     if path
         .extension()
@@ -1101,6 +1150,7 @@ fn validate_image_dimensions(path: &Path) -> Result<(), String> {
     validate_image_pixel_count(width, height)
 }
 
+// 用 u64 乘积检查是否超过一千二百万像素，边界值允许通过。
 fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
     if u64::from(width) * u64::from(height) > MAX_IMAGE_PIXELS {
         return Err("image_dimensions_too_large".to_string());
@@ -1108,6 +1158,7 @@ fn validate_image_pixel_count(width: u32, height: u32) -> Result<(), String> {
     Ok(())
 }
 
+// 按图片后缀选择 MIME，未匹配后缀默认 image/png，不探测内容。
 fn image_mime(path: &Path) -> &'static str {
     match path
         .extension()
@@ -1124,6 +1175,7 @@ fn image_mime(path: &Path) -> &'static str {
     }
 }
 
+// 按标准字母表将字节三位一组编码为 Base64，并为不足三字节的尾组补等号。
 fn base64_encode(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut output = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -1161,6 +1213,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::fs;
 
+    // 在测试目录生成单像素 PNG，读取字节后删除源文件，供上传夹具使用。
     fn test_png(root: &std::path::Path) -> Vec<u8> {
         let path = root.join("source.png");
         image::save_buffer_with_format(
@@ -1177,6 +1230,7 @@ mod tests {
         bytes
     }
 
+    // 按测试字节生成固定会话和图片名的请求，长度及 SHA-256 与输入一致。
     fn begin_request(bytes: &[u8]) -> FileAttachBeginRequest {
         FileAttachBeginRequest {
             session_id: "session-1".into(),
@@ -1188,11 +1242,13 @@ mod tests {
     }
 
     #[test]
+    // 验证固定 hello 样本的编码符合标准 Base64。
     fn base64_encoding_is_standard() {
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
     }
 
     #[test]
+    // 验证普通相对根、父级穿越和作为相对引用传入的绝对路径被拒绝。
     fn paths_reject_traversal_and_absolute_relative_refs() {
         assert!(super::resolve_root("relative").is_err());
         let root = tempfile::tempdir().unwrap();
@@ -1202,6 +1258,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时根验证二进制下载无损及随后普通文件删除结果。
     fn file_download_reads_binary_and_delete_removes_files() {
         let root = tempfile::tempdir().unwrap();
         let file = root.path().join("archive.bin");
@@ -1226,6 +1283,7 @@ mod tests {
     }
 
     #[test]
+    // 验证非空目录删除被拒绝，空目录可删除，空引用不得删除根目录。
     fn delete_only_allows_empty_directories_and_never_the_root() {
         let root = tempfile::tempdir().unwrap();
         let non_empty = root.path().join("non-empty");
@@ -1260,6 +1318,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 HOME 展开辅助函数接受波浪号路径并拒绝相对、父级、变量和反斜杠形式。
     fn custom_attachment_roots_expand_home_and_reject_unsafe_paths() {
         let home = tempfile::tempdir().unwrap();
         let home = home.path().canonicalize().unwrap();
@@ -1275,6 +1334,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // Unix 临时路径下验证附件根接口创建并返回固定托管子目录。
     fn attachment_root_returns_the_managed_directory() {
         let parent = tempfile::tempdir().unwrap();
         let result = super::attachment_root(super::FileAttachmentRootRequest {
@@ -1289,6 +1349,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // Unix 临时根中放置根外文件链接，验证列表隐藏链接且读取拒绝该引用。
     fn symlink_entries_are_hidden_and_cannot_escape() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().unwrap();
@@ -1313,6 +1374,7 @@ mod tests {
     }
 
     #[test]
+    // 验证非 UTF-8 普通文件与超过文本大小限额的文件分别返回对应错误。
     fn read_rejects_binary_and_oversized_files() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("binary.bin"), [0xff, 0xfe]).unwrap();
@@ -1341,6 +1403,7 @@ mod tests {
     }
 
     #[test]
+    // 创建超过列表限额的临时文件，验证列表与名称搜索各自截在结果上限。
     fn list_and_search_enforce_result_limits() {
         let root = tempfile::tempdir().unwrap();
         for index in 0..(MAX_ENTRIES + 20) {
@@ -1369,6 +1432,7 @@ mod tests {
     }
 
     #[test]
+    // 生成单像素 PNG 并读取，验证图片类型与 MIME/Base64 data URL 前缀。
     fn image_read_returns_data_url() {
         let root = tempfile::tempdir().unwrap();
         image::save_buffer_with_format(
@@ -1390,6 +1454,7 @@ mod tests {
     }
 
     #[test]
+    // 验证视频后缀即使内容并非视频也被拒绝，同时 TypeScript 文件仍按文本返回。
     fn read_rejects_video_before_reading_content() {
         let root = tempfile::tempdir().unwrap();
         fs::write(root.path().join("clip.mp4"), b"not-a-video").unwrap();
@@ -1416,6 +1481,7 @@ mod tests {
     }
 
     #[test]
+    // 验证一千二百万像素恰好通过，超过边界的尺寸被拒绝。
     fn image_pixel_limit_allows_boundary_and_rejects_excess() {
         assert!(super::validate_image_pixel_count(4_000, 3_000).is_ok());
         assert_eq!(
@@ -1425,6 +1491,7 @@ mod tests {
     }
 
     #[test]
+    // 用两片上传 PNG 并验证会话缓存位置、后缀和字节，随后修改时间模拟过期并验证清理。
     fn attachment_upload_is_chunked_verified_and_committed_under_session_cache() {
         let root = tempfile::tempdir().unwrap();
         let bytes = test_png(root.path());
@@ -1482,6 +1549,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧图片接口拒绝非图片后缀，错误摘要或伪图片完成失败后临时内容被清除。
     fn attachment_upload_rejects_bad_metadata_and_removes_failed_content() {
         let root = tempfile::tempdir().unwrap();
         let bytes = test_png(root.path());
@@ -1556,6 +1624,7 @@ mod tests {
     }
 
     #[test]
+    // 验证任意文件模式保留中文无后缀文件名与非图片内容，并可按过期时间清理。
     fn arbitrary_file_upload_preserves_name_without_image_validation() {
         let root = tempfile::tempdir().unwrap();
         let bytes = b"not-an-image";
@@ -1596,6 +1665,7 @@ mod tests {
     }
 
     #[test]
+    // 仅验证 20 MiB 声明可开始且可中止、超限声明被拒绝，不传输完整 20 MiB 数据。
     fn arbitrary_file_upload_accepts_20_mib_and_rejects_larger_declarations() {
         let root = tempfile::tempdir().unwrap();
         let bytes = b"x";
@@ -1627,6 +1697,7 @@ mod tests {
     }
 
     #[test]
+    // 验证直接上传在指定目录以原名发布，完成后没有 UUID 子目录或临时文件残留。
     fn direct_file_upload_writes_to_the_selected_directory_without_uuid_children() {
         let root = tempfile::tempdir().unwrap();
         let target = root.path().join("uploads");
@@ -1660,6 +1731,7 @@ mod tests {
     }
 
     #[test]
+    // 验证错误起始偏移被拒绝，中止后测试会话目录不残留待上传文件。
     fn attachment_upload_enforces_offsets_and_abort_removes_partial_file() {
         let root = tempfile::tempdir().unwrap();
         let bytes = test_png(root.path());
@@ -1691,6 +1763,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // Unix 验证会话缓存链接到根外时上传被拒绝，根外目录保持空。
     fn attachment_upload_rejects_a_symlinked_session_cache() {
         use std::os::unix::fs::symlink;
 
@@ -1716,6 +1789,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // Unix 验证自定义缓存祖先含符号链接时上传被拒绝，链接目标未被写入。
     fn attachment_upload_rejects_a_symlinked_custom_root_component() {
         use super::ATTACHMENT_NAMESPACE;
         use std::os::unix::fs::symlink;

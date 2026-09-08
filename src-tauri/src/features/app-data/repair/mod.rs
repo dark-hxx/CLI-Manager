@@ -148,6 +148,7 @@ pub struct DbProjectPathBackfillResult {
 }
 
 #[tauri::command]
+// 使用应用固定数据库路径恢复空库、修复已知迁移漂移并执行兼容清理。
 pub async fn db_repair_known_migration_drift(
     app: AppHandle,
 ) -> Result<DbMigrationRepairResult, String> {
@@ -260,6 +261,7 @@ pub async fn db_repair_known_migration_drift(
     Ok(result)
 }
 
+// 将新的修复状态追加到结果，替换无操作的 already_consistent 标记。
 fn append_repair_status(current: &str, next: &str) -> String {
     if current == "already_consistent" {
         next.to_string()
@@ -273,6 +275,7 @@ fn append_repair_status(current: &str, next: &str) -> String {
 /// 两条分支曾独立占用 v33。仅把外观迁移改为 v34 会让已登记旧外观 v33 的数据库在 SQLx
 /// 校验 checksum 时启动失败。确认登记项确实是旧外观 SQL 后，先运行用量 schema bootstrap，
 /// 再把 v33 的登记项切换为用量诊断 SQL；随后由 v34 外观列修复登记当前外观迁移。
+// 仅识别旧外观 v33 的描述与校验和，补齐用量结构后改登记为用量诊断迁移。
 async fn reconcile_legacy_node_appearance_v33_migration(
     conn: &mut SqliteConnection,
 ) -> Result<bool, String> {
@@ -328,6 +331,7 @@ async fn reconcile_legacy_node_appearance_v33_migration(
 /// 的漂移，前者会让外观读写一直报 `no such column: color`，后者会让 sqlx 重放 ALTER 撞
 /// `duplicate column name`。这里在每次打开数据库前主动把两种漂移都补齐：
 /// 缺列就补列，版本未登记时按同一 checksum 登记，让 sqlx 跳过重放。
+// 在短事务中补齐项目与分组外观列及对应迁移登记。
 async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
     if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
         || !table_exists(conn, "groups").await?
@@ -416,6 +420,7 @@ async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<b
 /// 绑定路径迁移在 SQLx `Database.load` 前无法依赖插件自动执行：已存在的旧库可能已经
 /// 登记了后续迁移，或迁移登记与实际列发生漂移。先补齐列并登记对应 checksum，确保
 /// 前端首次写入分组时不会撞到 `no such column: bound_path`。
+// 在短事务中分别补齐分组绑定路径、项目路径模式及缺失迁移登记。
 async fn ensure_group_binding_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
     if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
         || !table_exists(conn, "groups").await?
@@ -515,6 +520,7 @@ async fn ensure_group_binding_columns(conn: &mut SqliteConnection) -> Result<boo
 /// migration 37 只有一条 `ADD COLUMN`。如果旧库在 migration 登记与实际 schema 之间发生漂移，
 /// 编辑 SSH Host 时读取 `attachment_root` 会直接失败；这里在 SQLx `Database.load` 前同时修复
 /// “列缺失但版本已登记”、“列存在但版本未登记”和“两者都缺失”三种状态。
+// 在短事务中独立修复 SSH 附件根列和迁移登记的缺失。
 async fn ensure_ssh_attachment_root_column(conn: &mut SqliteConnection) -> Result<bool, String> {
     if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? || !table_exists(conn, "ssh_hosts").await?
     {
@@ -581,6 +587,7 @@ async fn ensure_ssh_attachment_root_column(conn: &mut SqliteConnection) -> Resul
     }
 }
 
+// 确认存在历史用量及必要列后登记原始迁移校验和，将大批回填留到后台。
 async fn defer_request_log_project_path_backfill(
     conn: &mut SqliteConnection,
 ) -> Result<bool, String> {
@@ -649,6 +656,7 @@ async fn defer_request_log_project_path_backfill(
 }
 
 #[tauri::command]
+// 持单执行锁打开应用数据库并运行项目路径后台回填，完成后关闭连接。
 pub async fn db_backfill_request_log_project_paths() -> Result<DbProjectPathBackfillResult, String>
 {
     let _guard = REQUEST_LOG_PROJECT_PATH_BACKFILL_LOCK.lock().await;
@@ -674,6 +682,7 @@ struct BackfillProject {
     path: String,
 }
 
+// 修剪路径、统一分隔符并转为小写，去除末尾斜杠。
 fn normalize_backfill_path(value: &str) -> String {
     value
         .trim()
@@ -682,11 +691,13 @@ fn normalize_backfill_path(value: &str) -> String {
         .to_lowercase()
 }
 
+// 识别正斜杠根路径或盘符斜杠形式的绝对路径。
 fn is_absolute_backfill_path(value: &str) -> bool {
     let bytes = value.as_bytes();
     value.starts_with('/') || (bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/')
 }
 
+// 直接保留归一化绝对路径，或将名称与后缀唯一匹配到项目路径。
 fn resolve_backfill_project_path(key: &str, projects: &[BackfillProject]) -> Option<String> {
     let normalized_key = normalize_backfill_path(key);
     if normalized_key.is_empty() {
@@ -710,6 +721,7 @@ fn resolve_backfill_project_path(key: &str, projects: &[BackfillProject]) -> Opt
     (candidates.len() == 1).then(|| candidates.into_iter().next().unwrap())
 }
 
+// 构建无歧义项目映射和临时队列，分批回填空路径后传播到路由记录。
 async fn backfill_request_log_project_paths(
     conn: &mut SqliteConnection,
 ) -> Result<DbProjectPathBackfillResult, String> {
@@ -850,6 +862,7 @@ async fn backfill_request_log_project_paths(
     })
 }
 
+// 按行号分批为缺少路径的路由记录匹配同来源会话的最新已知项目路径。
 async fn backfill_route_project_paths(conn: &mut SqliteConnection) -> Result<u64, String> {
     let mut after_rowid = 0_i64;
     let mut updated_rows = 0_u64;
@@ -913,6 +926,7 @@ async fn backfill_route_project_paths(conn: &mut SqliteConnection) -> Result<u64
     Ok(updated_rows)
 }
 
+// 通过文件路径打开 SQLite，并设置十五秒忙等待超时。
 async fn open_cli_manager_db(path: &Path) -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -922,6 +936,7 @@ async fn open_cli_manager_db(path: &Path) -> Result<SqliteConnection, String> {
         .map_err(|err| format!("db_open_failed: {err}"))
 }
 
+// 用当前毫秒时间生成数据库备份文件后缀。
 fn backup_suffix() -> String {
     let millis = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -930,12 +945,14 @@ fn backup_suffix() -> String {
     format!("backup-{millis}")
 }
 
+// 在数据库完整文件名后追加 WAL 或 SHM 等侧文件后缀。
 fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
     let mut raw = path.as_os_str().to_os_string();
     raw.push(suffix);
     PathBuf::from(raw)
 }
 
+// 分别复制数据库、WAL 和 SHM 中现存的文件到带时间后缀的备份。
 fn backup_db_file_family(path: &Path) -> Result<(), String> {
     for candidate in [
         path.to_path_buf(),
@@ -956,6 +973,7 @@ fn backup_db_file_family(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 先备份目标数据库族，再复制源数据库及侧文件并移除源中缺失的目标侧文件。
 fn copy_db_file_family(source: &Path, target: &Path) -> Result<(), String> {
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)
@@ -978,6 +996,7 @@ fn copy_db_file_family(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 统计数据库中项目、分组和命令模板的行数，缺失文件或表按零处理。
 async fn user_data_row_count(path: &Path) -> Result<i64, String> {
     if !path.is_file() {
         return Ok(0);
@@ -1001,6 +1020,7 @@ async fn user_data_row_count(path: &Path) -> Result<i64, String> {
     Ok(total)
 }
 
+// 仅当旧库有指定用户数据而当前库没有时，复制旧数据库族进行恢复。
 async fn recover_legacy_db_file_if_current_empty(
     legacy_db_path: &Path,
     current_db_path: &Path,
@@ -1023,10 +1043,12 @@ async fn recover_legacy_db_file_if_current_empty(
     Ok(true)
 }
 
+// 返回旧模型价格迁移的一次性标记文件路径。
 fn legacy_model_prices_marker_path(data_dir: &Path) -> PathBuf {
     data_dir.join(LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE)
 }
 
+// 备份当前库后合并旧模型价格，保留非内置现值并写入完成标记。
 async fn merge_legacy_model_prices_once(
     legacy_db_path: &Path,
     current_db_path: &Path,
@@ -1157,6 +1179,7 @@ async fn merge_legacy_model_prices_once(
     Ok(merged)
 }
 
+// 依据物理结构生成预期已知迁移记录，仅在登记不一致时重写。
 async fn repair_known_migration_drift(
     conn: &mut SqliteConnection,
 ) -> Result<DbMigrationRepairResult, String> {
@@ -1185,6 +1208,7 @@ async fn repair_known_migration_drift(
     })
 }
 
+// 查询内联快照补丁并在事务中迁出到文件，成功后尽力收缩数据库。
 async fn cleanup_replay_snapshot_inline_patches(
     conn: &mut SqliteConnection,
     data_dir: &Path,
@@ -1242,6 +1266,7 @@ async fn cleanup_replay_snapshot_inline_patches(
     Ok(migrated)
 }
 
+// 按应用版本标记控制内联快照补丁清理，成功后记录当前版本。
 async fn cleanup_replay_snapshot_inline_patches_for_current_version(
     conn: &mut SqliteConnection,
     data_dir: &Path,
@@ -1262,10 +1287,12 @@ async fn cleanup_replay_snapshot_inline_patches_for_current_version(
     Ok(migrated)
 }
 
+// 返回快照补丁清理版本标记的应用数据路径。
 fn replay_snapshot_cleanup_marker_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join(REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE)
 }
 
+// 在现有事务中逐条写出快照补丁文件，并将数据库载荷改为文件引用。
 async fn cleanup_replay_snapshot_inline_patches_in_transaction(
     conn: &mut SqliteConnection,
     data_dir: &Path,
@@ -1349,6 +1376,7 @@ async fn cleanup_replay_snapshot_inline_patches_in_transaction(
     Ok(migrated)
 }
 
+// 用清理后的会话与检查点标识生成快照补丁相对路径。
 fn replay_snapshot_patch_relative_path(session_key: &str, checkpoint_id: &str) -> String {
     format!(
         "{}/{}/{}.patch",
@@ -1358,6 +1386,7 @@ fn replay_snapshot_patch_relative_path(session_key: &str, checkpoint_id: &str) -
     )
 }
 
+// 将路径片段限制为安全 ASCII 字符和最多 120 字节，空结果使用回退名称。
 fn sanitize_snapshot_path_segment(value: &str, fallback: &str) -> String {
     let mut safe = String::with_capacity(value.len().min(120));
     for ch in value.trim().chars() {
@@ -1378,6 +1407,7 @@ fn sanitize_snapshot_path_segment(value: &str, fallback: &str) -> String {
     }
 }
 
+// 按完整物理功能结构生成当前迁移清单，拒绝部分存在的功能结构。
 fn expected_migrations_for_features(
     features: &SchemaFeatures,
 ) -> Result<Vec<ExpectedMigration>, String> {
@@ -1437,6 +1467,7 @@ fn expected_migrations_for_features(
     Ok(expected)
 }
 
+// 将预期迁移转换为包含当前 SQL 校验和的登记记录。
 fn expected_rows(expected: &[ExpectedMigration]) -> Vec<MigrationRow> {
     expected
         .iter()
@@ -1448,10 +1479,12 @@ fn expected_rows(expected: &[ExpectedMigration]) -> Vec<MigrationRow> {
         .collect()
 }
 
+// 计算迁移 SQL 字节的 SHA-384 校验和。
 fn migration_checksum(sql: &str) -> Vec<u8> {
     Sha384::digest(sql.as_bytes()).to_vec()
 }
 
+// 读取仅属于已知 13–15 和 SSH 兼容版本的迁移登记，并按版本排序。
 async fn read_known_migration_rows(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<MigrationRow>, String> {
@@ -1471,6 +1504,7 @@ async fn read_known_migration_rows(
     rows.iter().map(migration_row_from_sqlite).collect()
 }
 
+// 从 SQLite 行解码迁移版本、描述及校验和。
 fn migration_row_from_sqlite(row: &SqliteRow) -> Result<MigrationRow, String> {
     Ok(MigrationRow {
         version: row
@@ -1485,6 +1519,7 @@ fn migration_row_from_sqlite(row: &SqliteRow) -> Result<MigrationRow, String> {
     })
 }
 
+// 开启立即事务重写已知迁移登记，步骤失败时尝试回滚。
 async fn rewrite_known_migration_rows(
     conn: &mut SqliteConnection,
     expected: &[ExpectedMigration],
@@ -1506,6 +1541,7 @@ async fn rewrite_known_migration_rows(
     result
 }
 
+// 在现有事务中删除已知版本登记，并插入按物理结构确认的预期记录。
 async fn rewrite_known_migration_rows_in_transaction(
     conn: &mut SqliteConnection,
     expected: &[ExpectedMigration],
@@ -1539,6 +1575,7 @@ async fn rewrite_known_migration_rows_in_transaction(
     Ok(())
 }
 
+// 读取相关表列，判定收藏快照、CLI 参数、工作树及 SSH 功能结构状态。
 async fn detect_schema_features(conn: &mut SqliteConnection) -> Result<SchemaFeatures, String> {
     let projects_columns = table_columns(conn, "projects").await?;
     let favorite_columns = table_columns(conn, "session_favorite_snapshots").await?;
@@ -1559,6 +1596,7 @@ async fn detect_schema_features(conn: &mut SqliteConnection) -> Result<SchemaFea
     })
 }
 
+// 按列集合区分表缺失、所需列齐全和部分结构。
 fn classify_table_schema(columns: &HashSet<String>, required: &[&str]) -> SchemaState {
     if columns.is_empty() {
         return SchemaState::Absent;
@@ -1570,6 +1608,7 @@ fn classify_table_schema(columns: &HashSet<String>, required: &[&str]) -> Schema
     }
 }
 
+// 联合项目工作树列与工作树表列判断隔离结构状态。
 fn classify_worktree_schema(
     projects_columns: &HashSet<String>,
     worktree_columns: &HashSet<String>,
@@ -1588,6 +1627,7 @@ fn classify_worktree_schema(
     }
 }
 
+// 联合 SSH 主机分组引用列与分组表判断分组结构状态。
 fn classify_ssh_group_schema(
     ssh_host_columns: &HashSet<String>,
     ssh_group_columns: &HashSet<String>,
@@ -1605,6 +1645,7 @@ fn classify_ssh_group_schema(
     }
 }
 
+// 联合项目 SSH 列与主机表判断 SSH 主机结构状态。
 fn classify_ssh_host_schema(
     projects_columns: &HashSet<String>,
     ssh_host_columns: &HashSet<String>,
@@ -1622,10 +1663,12 @@ fn classify_ssh_host_schema(
     }
 }
 
+// 检查列集合是否包含全部必需列名。
 fn has_columns(columns: &HashSet<String>, required: &[&str]) -> bool {
     required.iter().all(|column| columns.contains(*column))
 }
 
+// 通过 sqlite_master 查询指定表是否存在。
 async fn table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool, String> {
     let exists: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
@@ -1636,6 +1679,7 @@ async fn table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool, 
     Ok(exists.is_some())
 }
 
+// 对支持的固定表执行 PRAGMA 并返回列名集合，缺失表返回空集合。
 async fn table_columns(
     conn: &mut SqliteConnection,
     table: &'static str,

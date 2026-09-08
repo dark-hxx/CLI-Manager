@@ -9,6 +9,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::HashMap;
 use std::time::Duration;
 
+// 读取 SQLite 整数字段并校验 u16 范围。
 pub(super) fn sqlite_u16(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u16, String> {
     let value: i64 = row
         .try_get(field)
@@ -16,6 +17,7 @@ pub(super) fn sqlite_u16(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u
     u16::try_from(value).map_err(|_| format!("read SSH host {field} failed: out of range"))
 }
 
+// 读取 SQLite 整数字段并校验 u32 范围。
 pub(super) fn sqlite_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u32, String> {
     let value: i64 = row
         .try_get(field)
@@ -23,6 +25,7 @@ pub(super) fn sqlite_u32(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u
     u32::try_from(value).map_err(|_| format!("read SSH host {field} failed: out of range"))
 }
 
+// 读取 SQLite 非负整数字段并转换为 u64。
 pub(super) fn sqlite_u64(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u64, String> {
     let value: i64 = row
         .try_get(field)
@@ -30,6 +33,7 @@ pub(super) fn sqlite_u64(row: &sqlx::sqlite::SqliteRow, field: &str) -> Result<u
     u64::try_from(value).map_err(|_| format!("read SSH host {field} failed: out of range"))
 }
 
+// 查询注册主机并逐字段解码为结构化 SSH 配置。
 pub(super) async fn query_registered_ssh_host(
     connection: &mut SqliteConnection,
     host_id: &str,
@@ -96,6 +100,7 @@ pub(super) async fn query_registered_ssh_host(
     .transpose()
 }
 
+// 优先使用跳板别名，否则组合用户、IPv6 地址及非默认端口。
 pub(super) fn ssh_jump_target(host: &RegisteredSshHost) -> String {
     if !host.config_alias.trim().is_empty() {
         return host.config_alias.trim().to_string();
@@ -122,6 +127,7 @@ pub(super) fn ssh_jump_target(host: &RegisteredSshHost) -> String {
     format!("{user}{address}{port}")
 }
 
+// 直接代理或禁用跳板时忽略跳板引用，否则要求非空主机标识。
 pub(super) fn selected_ssh_jump_host_id<'a>(
     jump_mode: &str,
     jump_host_id: Option<&'a str>,
@@ -137,6 +143,7 @@ pub(super) fn selected_ssh_jump_host_id<'a>(
         .ok_or_else(|| "handoff_ssh_jump_host_missing".to_string())
 }
 
+// 从 JSON 对象收集字符串项目环境，解析失败返回空映射。
 pub(super) fn parse_project_environment(raw: &str) -> HashMap<String, String> {
     serde_json::from_str::<serde_json::Value>(raw)
         .ok()
@@ -150,6 +157,7 @@ pub(super) fn parse_project_environment(raw: &str) -> HashMap<String, String> {
         .unwrap_or_default()
 }
 
+// 只读加载 SSH 主机及跳板，合并 Codex 根和 Git 信任后校验启动计划。
 pub(super) fn load_ssh_codex_launch(project: &RegisteredProject) -> Result<SshCodexLaunch, String> {
     if project.environment_type != "ssh" {
         return Err("handoff_ssh_project_required".to_string());
@@ -249,6 +257,7 @@ pub(super) fn load_ssh_codex_launch(project: &RegisteredProject) -> Result<SshCo
     Ok(launch)
 }
 
+// 验证切换令牌并在当前注册项目目录中查找匹配项目。
 pub(super) fn registered_project_by_token(
     profile: &CcConnectProfile,
     token: &str,

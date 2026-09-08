@@ -78,6 +78,7 @@ struct SessionFileLines {
     ends_with_newline: bool,
 }
 
+// 按换行符读取会话原始行，并记录末尾换行以保持未改行格式。
 fn read_session_file_lines(path: &Path) -> Result<SessionFileLines, String> {
     let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
     let ends_with_newline = raw.ends_with('\n');
@@ -91,6 +92,7 @@ fn read_session_file_lines(path: &Path) -> Result<SessionFileLines, String> {
     })
 }
 
+// 按原换行状态重组内容，以临时文件重命名替换会话文件。
 fn write_session_file_lines(path: &Path, file_lines: &SessionFileLines) -> Result<(), String> {
     let mut content = file_lines.lines.join("\n");
     if file_lines.ends_with_newline {
@@ -104,6 +106,7 @@ fn write_session_file_lines(path: &Path, file_lines: &SessionFileLines) -> Resul
     })
 }
 
+// 比对文件修改时间，拒绝与前端预期不一致的写入。
 fn ensure_fingerprint(path: &Path, expected_updated_at: i64) -> Result<(), String> {
     if session_file_fingerprint(path).updated_at != expected_updated_at {
         return Err("history_file_changed".to_string());
@@ -111,6 +114,7 @@ fn ensure_fingerprint(path: &Path, expected_updated_at: i64) -> Result<(), Strin
     Ok(())
 }
 
+// 按物理行索引解析 JSON，越界或无效时报告行冲突。
 fn parse_line_value(file_lines: &SessionFileLines, line_index: usize) -> Result<Value, String> {
     let line = file_lines
         .lines
@@ -121,6 +125,7 @@ fn parse_line_value(file_lines: &SessionFileLines, line_index: usize) -> Result<
 
 /// 行级复核：目标行必须仍解析出同 role 的消息，且规范文本与前端加载时一致。
 /// 前端 `expected_text = editable_text ?? content`，两侧口径见 scan 的省略规则。
+// 复核目标消息角色及可编辑文本或展示内容，返回原可编辑文本。
 fn ensure_line_matches(
     value: &Value,
     expected_role: &str,
@@ -138,6 +143,7 @@ fn ensure_line_matches(
     Ok(editable)
 }
 
+// 定位 Claude 或 Codex 消息内容并应用文本替换。
 fn apply_text_to_line(value: &mut Value, new_text: &str) -> Result<(), String> {
     let root_type = value
         .get("type")
@@ -161,6 +167,7 @@ fn apply_text_to_line(value: &mut Value, new_text: &str) -> Result<(), String> {
     )
 }
 
+// 替换字符串或首个文本块，删除多余文本块并保留非文本块。
 fn apply_text_to_content(content: &mut Value, new_text: &str) -> Result<(), String> {
     match content {
         Value::String(_) => {
@@ -199,10 +206,12 @@ fn apply_text_to_content(content: &mut Value, new_text: &str) -> Result<(), Stri
     }
 }
 
+// 判断行类型是否为 Codex response_item。
 fn is_codex_message_line(value: &Value) -> bool {
     value.get("type").and_then(Value::as_str) == Some("response_item")
 }
 
+// 判断行类型是否为 Claude 用户或助手消息。
 fn is_claude_message_line(value: &Value) -> bool {
     matches!(
         value.get("type").and_then(Value::as_str),
@@ -210,6 +219,7 @@ fn is_claude_message_line(value: &Value) -> bool {
     )
 }
 
+// 按消息角色选择 Codex 回放事件类型。
 fn codex_event_payload_type(role: &str) -> &'static str {
     if role == "assistant" {
         "agent_message"
@@ -218,6 +228,7 @@ fn codex_event_payload_type(role: &str) -> &'static str {
     }
 }
 
+// 检查 Codex 事件类型与消息文本是否完全匹配。
 fn is_matching_codex_event(line: &str, event_type: &str, message_text: &str) -> bool {
     let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
         return false;
@@ -233,6 +244,7 @@ fn is_matching_codex_event(line: &str, event_type: &str, message_text: &str) -> 
 }
 
 /// 就近查找 response_item 的 TUI 配对行：先向后（写入器默认相邻），再向前兜底。
+// 在有限窗口内先向后再向前寻找匹配的 Codex 回放行。
 fn find_codex_event_pair(
     file_lines: &SessionFileLines,
     response_line: usize,
@@ -258,6 +270,7 @@ fn find_codex_event_pair(
     None
 }
 
+// 更新已定位 Codex 回放事件中的消息文本并重新序列化。
 fn rewrite_codex_event_message(
     file_lines: &mut SessionFileLines,
     event_line: usize,
@@ -274,11 +287,13 @@ fn rewrite_codex_event_message(
     Ok(())
 }
 
+// 将 JSON 值编码为单行文本。
 fn serialize_line(value: &Value) -> Result<String, String> {
     serde_json::to_string(value).map_err(|err| err.to_string())
 }
 
 /// Claude 删除/插入后的父链修复：所有 parentUuid 指向 `from_uuid` 的行改指 `to_parent`。
+// 将指向指定 UUID 的 Claude 子消息统一重挂到目标父节点。
 fn relink_claude_children(file_lines: &mut SessionFileLines, from_uuid: &str, to_parent: &Value) {
     for line in &mut file_lines.lines {
         let trimmed = line.trim();
@@ -299,6 +314,7 @@ fn relink_claude_children(file_lines: &mut SessionFileLines, from_uuid: &str, to
 }
 
 /// 锚点行缺失模板字段（cwd/sessionId 等）时，从文件其他行取第一个非空值兜底。
+// 优先使用锚点非 null 字段，否则从其他行查找首个非 null 值。
 fn claude_template_field(file_lines: &SessionFileLines, anchor: &Value, key: &str) -> Value {
     let anchor_value = anchor.get(key).cloned().unwrap_or(Value::Null);
     if !anchor_value.is_null() {
@@ -321,6 +337,7 @@ fn claude_template_field(file_lines: &SessionFileLines, anchor: &Value, key: &st
     Value::Null
 }
 
+// 根据锚点及文件模板构造带新 UUID 的 Claude 消息行。
 fn build_claude_inserted_line(
     file_lines: &SessionFileLines,
     anchor: &Value,
@@ -352,6 +369,7 @@ fn build_claude_inserted_line(
     })
 }
 
+// 构造时间一致的 Codex 上下文消息与 TUI 回放事件。
 fn build_codex_inserted_lines(anchor: &Value, role: &str, text: &str) -> (Value, Value) {
     let block_type = if role == "assistant" {
         "output_text"
@@ -383,6 +401,7 @@ fn build_codex_inserted_lines(anchor: &Value, role: &str, text: &str) -> (Value,
 }
 
 /// 首改备份：该文件的备份已存在时保持不动（还原语义 = 回到最早一次编辑前）。
+// 复用最早文件备份并尽力刷新消息变更清单。
 fn ensure_backup(session_path: &Path, backups_dir: &Path) -> Result<PathBuf, String> {
     let backup = ensure_file_backup(session_path, backups_dir)?;
     let source_session_id = session_path
@@ -399,10 +418,12 @@ fn ensure_backup(session_path: &Path, backups_dir: &Path) -> Result<PathBuf, Str
     Ok(backup)
 }
 
+// 解析消息编辑使用的默认备份目录。
 fn resolve_backups_dir() -> Result<PathBuf, String> {
     default_backup_root()
 }
 
+// 拒绝仅含空白的消息文本。
 fn ensure_non_empty_text(text: &str) -> Result<(), String> {
     if text.trim().is_empty() {
         return Err("empty_message_text".to_string());
@@ -410,6 +431,7 @@ fn ensure_non_empty_text(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 仅允许插入用户或助手角色消息。
 fn ensure_insert_role(role: &str) -> Result<(), String> {
     if role != "user" && role != "assistant" {
         return Err("invalid_insert_role".to_string());
@@ -417,6 +439,7 @@ fn ensure_insert_role(role: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 使历史缓存失效，重新读取详情并组合编辑结果。
 fn finish_edit(
     file_ref: &SessionFileRef,
     before_text: Option<String>,
@@ -433,6 +456,7 @@ fn finish_edit(
     })
 }
 
+// 通过文件与行守卫后备份并更新消息，同步关联的 Codex 回放行。
 fn update_message_in_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -468,6 +492,7 @@ fn update_message_in_file(
 }
 
 /// 单条删除 = 批量删除的单目标特例，保证两条入口共用同一套守卫/重链/配对逻辑。
+// 使用批量删除单目标路径实现单条消息删除。
 fn delete_message_in_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -495,6 +520,7 @@ fn delete_message_in_file(
     })
 }
 
+// 先校验全部目标，再备份并删除消息及回放行，修复 Claude 父链。
 fn delete_messages_in_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -577,6 +603,7 @@ fn delete_messages_in_file(
 }
 
 /// 连续删除时子链跨代上溯：沿被删 uuid 链向上找到第一个幸存祖先（全被删则为 null）。
+// 沿被删父链寻找幸存祖先，检测循环后断链到根。
 fn resolve_surviving_parent(start_uuid: &str, removed_parents: &HashMap<String, Value>) -> Value {
     let mut current = removed_parents
         .get(start_uuid)
@@ -597,6 +624,7 @@ fn resolve_surviving_parent(start_uuid: &str, removed_parents: &HashMap<String, 
     current
 }
 
+// 将幸存消息的已删父节点重定向到最近幸存祖先。
 fn relink_claude_children_after_removal(
     file_lines: &mut SessionFileLines,
     removed_parents: &HashMap<String, Value>,
@@ -622,6 +650,7 @@ fn relink_claude_children_after_removal(
     }
 }
 
+// 校验角色、文本、指纹及锚点后备份并插入消息。
 fn insert_message_in_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -646,6 +675,7 @@ fn insert_message_in_file(
 /// 审计撤回"删除"用：原行号只是提示（文件可能已再变化），
 /// 优先在提示行上方就近找可编辑消息锚点插到其后；上方没有则插到下方首个消息之前；
 /// 文件已无消息行时按来源格式追加到末尾。
+// 依据旧行号就近寻找锚点重新插入删除消息，无锚点时追加。
 fn reinsert_message_in_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -677,12 +707,14 @@ fn reinsert_message_in_file(
     finish_edit(file_ref, None, Some(text.to_string()), backup)
 }
 
+// 返回具有可编辑文本的消息 JSON 行。
 fn editable_message_line(file_lines: &SessionFileLines, line_index: usize) -> Option<Value> {
     let value = parse_line_value(file_lines, line_index).ok()?;
     extract_editable_text(&value)?;
     Some(value)
 }
 
+// 在锚点后插入消息，维护 Claude 父链或 Codex 成对回放顺序。
 fn insert_after_message(
     file_lines: &mut SessionFileLines,
     after_line_index: usize,
@@ -735,6 +767,7 @@ fn insert_after_message(
 
 /// 在目标消息之前插入：Claude 新消息接管目标的父链、目标改挂到新消息下；
 /// Codex 直接在 response_item 前放入新配对（顺序即上下文顺序）。
+// 在目标前插入消息，并维护 Claude 父链或 Codex 双行格式。
 fn insert_before_message(
     file_lines: &mut SessionFileLines,
     target_index: usize,
@@ -768,6 +801,7 @@ fn insert_before_message(
 }
 
 /// 文件里已没有任何可编辑消息行时的兜底：按文件形态追加到末尾。
+// 根据文件记录推断来源格式，在末尾追加消息。
 fn append_message_at_end(
     file_lines: &mut SessionFileLines,
     role: &str,
@@ -808,6 +842,7 @@ fn append_message_at_end(
     Ok(())
 }
 
+// 确认目标工具未运行后恢复备份，并返回刷新后的详情。
 fn restore_backup_for_file(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -819,10 +854,12 @@ fn restore_backup_for_file(
     finish_edit(file_ref, None, None, backup)
 }
 
+// 查询指定会话文件的备份状态。
 fn backup_status_for_file(file_ref: &SessionFileRef, backups_dir: &Path) -> HistoryBackupStatus {
     service_backup_status_for_file(&file_ref.path, backups_dir)
 }
 
+// 校验会话路径和来源恢复锁，并禁止子代理日志变更。
 fn validated_file_ref(
     file_path: &str,
     claude_config_dir: Option<String>,
@@ -843,6 +880,7 @@ fn validated_file_ref(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并执行消息文本更新。
 pub async fn history_update_message(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -883,6 +921,7 @@ pub async fn history_update_message(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并删除单条消息。
 pub async fn history_delete_message(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -921,6 +960,7 @@ pub async fn history_delete_message(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并批量删除目标消息。
 pub async fn history_delete_messages(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -950,6 +990,7 @@ pub async fn history_delete_messages(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并在指定消息后插入新消息。
 pub async fn history_insert_message(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -988,6 +1029,7 @@ pub async fn history_insert_message(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并按原行号提示恢复删除消息。
 pub async fn history_reinsert_message(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -1026,6 +1068,7 @@ pub async fn history_reinsert_message(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话并恢复其文件备份。
 pub async fn history_restore_session_backup(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -1053,6 +1096,7 @@ pub async fn history_restore_session_backup(
 }
 
 #[tauri::command]
+// 在阻塞任务中校验会话路径并读取备份状态。
 pub async fn history_get_backup_status(
     file_path: String,
     claude_config_dir: Option<String>,
@@ -1078,6 +1122,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    // 创建测试父目录并写入指定文本。
     fn write_text(path: &Path, content: &str) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
@@ -1085,6 +1130,7 @@ mod tests {
         std::fs::write(path, content).unwrap();
     }
 
+    // 构造给定路径及来源的会话测试引用。
     fn file_ref(path: &Path, source: &str) -> SessionFileRef {
         SessionFileRef {
             source: source.to_string(),
@@ -1093,10 +1139,12 @@ mod tests {
         }
     }
 
+    // 读取测试会话当前文件修改时间。
     fn fingerprint_updated_at(path: &Path) -> i64 {
         session_file_fingerprint(path).updated_at
     }
 
+    // 构造包含摘要与用户助手父链的 Claude 日志夹具。
     fn claude_fixture() -> String {
         [
             r#"{"type":"summary","summary":"noise"}"#,
@@ -1108,6 +1156,7 @@ mod tests {
             + "\n"
     }
 
+    // 构造包含元数据及上下文、回放配对行的 Codex 日志夹具。
     fn codex_fixture() -> String {
         [
             r#"{"type":"session_meta","payload":{"id":"s1","cwd":"D:\\work"}}"#,
@@ -1120,6 +1169,7 @@ mod tests {
             + "\n"
     }
 
+    // 将测试文件的非空行解析为 JSON 集合。
     fn read_lines(path: &Path) -> Vec<Value> {
         std::fs::read_to_string(path)
             .unwrap()
@@ -1130,6 +1180,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 字符串内容更新保留其他消息和 UUID。
     fn update_claude_string_content_and_keep_other_lines() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1168,6 +1219,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 文本块合并替换保留图像块。
     fn update_claude_block_content_preserves_non_text_blocks() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1202,6 +1254,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 消息编辑同步回放配对行而不影响用户消息。
     fn update_codex_message_syncs_event_pair() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("rollout-session.jsonl");
@@ -1232,6 +1285,7 @@ mod tests {
     }
 
     #[test]
+    // 验证删除 Claude 中间消息后子消息重挂到原祖先。
     fn delete_claude_message_relinks_parent_chain() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1260,6 +1314,7 @@ mod tests {
     }
 
     #[test]
+    // 验证删除 Codex 消息时同时移除对应回放行。
     fn delete_codex_message_removes_event_pair() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("rollout-session.jsonl");
@@ -1286,6 +1341,7 @@ mod tests {
     }
 
     #[test]
+    // 验证连续删除 Claude 父链节点后跨代重挂幸存消息。
     fn batch_delete_consecutive_claude_messages_relinks_across_generations() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1326,6 +1382,7 @@ mod tests {
     }
 
     #[test]
+    // 验证批量删除 Codex 消息移除所有配对行并保留元数据。
     fn batch_delete_codex_messages_removes_all_event_pairs() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("rollout-session.jsonl");
@@ -1355,6 +1412,7 @@ mod tests {
     }
 
     #[test]
+    // 验证批量目标重复或任一文本冲突时整批拒绝且不写文件。
     fn batch_delete_rejects_duplicate_or_conflicting_targets_without_writing() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1405,6 +1463,7 @@ mod tests {
     }
 
     #[test]
+    // 验证重新插入 Claude 消息恢复原位置附近的父子链。
     fn reinsert_restores_deleted_claude_message_near_original_position() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1449,6 +1508,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无上方锚点时重新插入到首条消息之前。
     fn reinsert_before_first_message_when_no_anchor_above() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1490,6 +1550,7 @@ mod tests {
     }
 
     #[test]
+    // 验证重新插入 Codex 消息在后续消息之前恢复完整双行。
     fn reinsert_codex_message_writes_pair_before_following_message() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("rollout-session.jsonl");
@@ -1529,6 +1590,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 插入消息承接锚点子链并继承会话模板字段。
     fn insert_claude_message_links_uuid_chain() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1562,6 +1624,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 新消息双行插入在锚点回放配对之后。
     fn insert_codex_message_writes_response_and_event_pair_after_anchor_pair() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("rollout-session.jsonl");
@@ -1596,6 +1659,7 @@ mod tests {
     }
 
     #[test]
+    // 验证过期文件修改时间阻止写入且保留原始内容。
     fn stale_fingerprint_rejects_write() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1620,6 +1684,7 @@ mod tests {
     }
 
     #[test]
+    // 验证文本冲突及非消息目标行不能被编辑。
     fn line_conflict_and_non_editable_lines_reject_write() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1657,6 +1722,7 @@ mod tests {
     }
 
     #[test]
+    // 验证多次编辑复用最初备份且恢复可还原原始内容。
     fn backup_created_once_and_restore_recovers_original() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");
@@ -1704,6 +1770,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空文本更新及不支持的插入角色被拒绝。
     fn empty_text_and_invalid_role_are_rejected() {
         let temp = TempDir::new().unwrap();
         let session = temp.path().join("session.jsonl");

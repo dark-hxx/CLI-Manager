@@ -6,10 +6,13 @@ use std::time::Duration;
 
 const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 
+// 仅按第一个子命令识别 SSH 代理 helper，不读取可能从父进程继承的 AskPass 环境。
 pub fn is_helper_request(args: &[String]) -> bool {
     args.get(1).map(String::as_str) == Some("__ssh_proxy")
 }
 
+// 原样采用显式/旧式 ProxyCommand，或为无凭据 HTTP/SOCKS5 生成当前可执行文件的 helper 命令。
+// 原生代理限制主机字符和非零端口，保留 %h/%p 由 OpenSSH 替换；不执行命令或查询 DNS。
 pub fn build_proxy_command(
     proxy_type: &str,
     proxy_host: &str,
@@ -53,6 +56,7 @@ pub fn build_proxy_command(
     }
 }
 
+// 解析代理与目标参数后运行隧道，成功退出 0，失败向 stderr 写错误并退出 1。
 pub fn run_helper_and_exit(args: &[String]) -> ! {
     let result = (|| {
         let proxy_type = arg_value(args, "--type").ok_or("ssh_proxy_type_invalid")?;
@@ -78,6 +82,7 @@ pub fn run_helper_and_exit(args: &[String]) -> ! {
     }
 }
 
+// 借用首次匹配选项的后项；未检查后项是否是另一选项，缺值返回 None。
 fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
     args.iter()
         .position(|arg| arg == key)
@@ -85,6 +90,7 @@ fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
         .map(String::as_str)
 }
 
+// 将选项值解析为非零 u16 端口；缺失、格式错误和零值统一报告地址无效。
 fn parse_port(args: &[String], key: &str) -> Result<u16, String> {
     arg_value(args, key)
         .and_then(|value| value.parse::<u16>().ok())
@@ -92,6 +98,7 @@ fn parse_port(args: &[String], key: &str) -> Result<u16, String> {
         .ok_or_else(|| "ssh_proxy_address_invalid".to_string())
 }
 
+// 以 30 秒单次 socket 超时连接并握手，再把隧道与 stdin/stdout 双向桥接。
 fn run_proxy(
     proxy_type: &str,
     proxy_host: &str,
@@ -104,6 +111,7 @@ fn run_proxy(
     bridge_stdio(stream, &initial_remote_bytes)
 }
 
+// 建立代理连接并完成目标隧道握手后返回，不发送 SSH 业务数据，也不启动 stdio 桥接。
 pub fn probe_proxy(
     proxy_type: &str,
     proxy_host: &str,
@@ -117,6 +125,7 @@ pub fn probe_proxy(
     Ok(())
 }
 
+// 解析地址并逐个尝试连接，成功后设置 TCP_NODELAY 和读写超时；DNS 及多地址总耗时不由单次超时约束。
 fn connect_proxy_socket(
     proxy_host: &str,
     proxy_port: u16,
@@ -151,6 +160,7 @@ fn connect_proxy_socket(
     ))
 }
 
+// 按协议执行握手；HTTP 返回已读到的隧道前缀，SOCKS5 只消费精确握手长度并返回空前缀。
 fn handshake_proxy(
     stream: &mut TcpStream,
     proxy_type: &str,
@@ -167,6 +177,8 @@ fn handshake_proxy(
     }
 }
 
+// 发送 CONNECT 并读取到响应头结束，要求状态码 200，返回同批读取中剩余的隧道字节。
+// 16 KiB 上限在查找头结束前检查，包含同批首段负载；目标字符串的可信边界由上游负责。
 fn connect_http(
     stream: &mut TcpStream,
     target_host: &str,
@@ -213,6 +225,7 @@ fn connect_http(
     Ok(response[header_end..].to_vec())
 }
 
+// 协商无认证 SOCKS5，按 IP 或域名编码目标，校验成功响应并消费绑定地址及端口，不保留其值。
 fn connect_socks5(
     stream: &mut TcpStream,
     target_host: &str,
@@ -280,6 +293,8 @@ fn connect_socks5(
     Ok(())
 }
 
+// 后台复制 stdin 到隧道并半关闭写端；前台先输出握手余留字节，再逐块 flush 远端数据。
+// 正常下载结束后等待上传线程，等待没有独立超时；前台错误提前返回时不 join 上传线程。
 fn bridge_stdio(stream: TcpStream, initial_remote_bytes: &[u8]) -> Result<(), String> {
     let mut reader = stream
         .try_clone()
@@ -307,6 +322,7 @@ fn bridge_stdio(stream: TcpStream, initial_remote_bytes: &[u8]) -> Result<(), St
     Ok(())
 }
 
+// 每读取一块就完整写出并 flush，重试被中断的读取；EOF 返回累计字节，其余错误直接传播。
 fn copy_with_flush(reader: &mut impl Read, writer: &mut impl Write) -> io::Result<u64> {
     let mut buffer = [0_u8; 16 * 1024];
     let mut copied = 0_u64;
@@ -324,6 +340,7 @@ fn copy_with_flush(reader: &mut impl Read, writer: &mut impl Write) -> io::Resul
     }
 }
 
+// 为含冒号且未以左方括号开头的主机补方括号再附端口；不验证它是否为合法 IPv6。
 fn format_authority(host: &str, port: u16) -> String {
     if host.contains(':') && !host.starts_with('[') {
         format!("[{host}]:{port}")
@@ -332,6 +349,7 @@ fn format_authority(host: &str, port: u16) -> String {
     }
 }
 
+// 返回首个 CRLFCRLF 之后的字节偏移，便于分离 HTTP 头与已读隧道负载。
 fn find_header_end(value: &[u8]) -> Option<usize> {
     value
         .windows(4)
@@ -355,6 +373,7 @@ mod tests {
     }
 
     impl Read for FlushGatedReader {
+        // 首次提供固定小包，后续读取要求写端已经 flush，否则以错误暴露缓冲顺序问题。
         fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
             if !self.sent {
                 self.sent = true;
@@ -378,11 +397,13 @@ mod tests {
     }
 
     impl Write for FlushTrackingWriter {
+        // 将测试写入完整追加到内存，并报告全部字节已接收。
         fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
             self.bytes.extend_from_slice(buffer);
             Ok(buffer.len())
         }
 
+        // 设置与读取端共享的刷新标志，让下一次读取可以返回 EOF。
         fn flush(&mut self) -> io::Result<()> {
             self.flushed.set(true);
             Ok(())
@@ -390,6 +411,7 @@ mod tests {
     }
 
     #[test]
+    // 验证原生 HTTP/SOCKS5 命令指向 helper，并保留 OpenSSH 目标主机和端口占位符。
     fn builds_native_http_and_socks_proxy_commands() {
         let http = build_proxy_command("http", "127.0.0.1", 8080, "").unwrap();
         assert!(http.contains("__ssh_proxy --type http"));
@@ -400,12 +422,14 @@ mod tests {
     }
 
     #[test]
+    // 验证仅凭 __ssh_proxy 子命令即可识别代理 helper；不在测试中修改 AskPass 环境。
     fn detects_proxy_helper_before_inherited_askpass_environment_is_considered() {
         let args = vec!["cli-manager.exe".to_string(), "__ssh_proxy".to_string()];
         assert!(is_helper_request(&args));
     }
 
     #[test]
+    // 用刷新门控假读写器验证小包在再次读取前已 flush，并核对完整内容和字节数。
     fn flushes_each_remote_packet_before_waiting_for_more_data() {
         let flushed = Rc::new(Cell::new(false));
         let mut reader = FlushGatedReader {
@@ -422,6 +446,7 @@ mod tests {
     }
 
     #[test]
+    // 验证含空格的代理主机和零端口都被命令构造拒绝。
     fn rejects_invalid_proxy_addresses() {
         assert_eq!(
             build_proxy_command("socks5", "bad host", 1080, "").unwrap_err(),
@@ -434,6 +459,7 @@ mod tests {
     }
 
     #[test]
+    // 用 loopback 假代理检查 CONNECT 请求并返回 200，不连接目标 example.com。
     fn probes_http_connect_proxy() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
@@ -460,6 +486,7 @@ mod tests {
     }
 
     #[test]
+    // 用 loopback 假代理验证无认证协商、域名目标编码及成功响应处理，不建立真实目标隧道。
     fn probes_socks5_proxy() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();

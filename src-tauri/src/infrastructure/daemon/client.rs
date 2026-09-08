@@ -33,6 +33,7 @@ const SPAWN_RETRY_MAX: usize = 20;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[cfg(target_os = "windows")]
+// 返回仅隐藏控制台的 Windows 创建标志，保留 ConPTY 的 Ctrl+C 进程组兼容性。
 fn windows_daemon_creation_flags() -> u32 {
     CREATE_NO_WINDOW
 }
@@ -52,12 +53,14 @@ pub struct DaemonBridge {
 }
 
 impl DaemonBridge {
+    // 创建尚未连接 daemon 的客户端插槽。
     pub fn new() -> Self {
         Self {
             inner: Mutex::new(None),
         }
     }
 
+    // 在锁可用时替换客户端插槽，锁中毒时不更新。
     pub fn set(&self, client: Arc<DaemonClient>) {
         if let Ok(mut inner) = self.inner.lock() {
             *inner = Some(client);
@@ -65,6 +68,7 @@ impl DaemonBridge {
     }
 
     /// 取存活的客户端；连接已断则清槽返回 None。
+    // 返回标记为已连接的客户端，发现断连时清空插槽。
     pub fn get(&self) -> Option<Arc<DaemonClient>> {
         let mut inner = self.inner.lock().ok()?;
         match inner.as_ref() {
@@ -79,15 +83,18 @@ impl DaemonBridge {
 }
 
 impl DaemonClient {
+    // 借用当前 daemon 发现及握手信息。
     pub fn info(&self) -> &DaemonInfo {
         &self.info
     }
 
+    // 读取接收线程维护的连接状态标记，不主动探测网络。
     pub fn is_connected(&self) -> bool {
         self.connected.load(Ordering::SeqCst)
     }
 
     /// 连接并完成鉴权握手；成功后启动推送分发线程。
+    // 连接本机 daemon 并完成鉴权，更新协议能力后启动后台接收线程。
     pub fn connect(mut info: DaemonInfo, app_handle: AppHandle) -> Result<Arc<Self>, String> {
         let addr = SocketAddr::from(([127, 0, 0, 1], info.port));
         let stream = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT)
@@ -145,6 +152,7 @@ impl DaemonClient {
         Ok(client)
     }
 
+    // 启动接收分发线程，读取结束或帧损坏后标记断连并清除等待请求。
     fn spawn_reader(self: &Arc<Self>, mut reader: BufReader<TcpStream>, app_handle: AppHandle) {
         let client = Arc::clone(self);
         std::thread::spawn(move || {
@@ -169,6 +177,7 @@ impl DaemonClient {
         });
     }
 
+    // 将异步输出与通知转发到应用事件，将带请求 ID 的应答送回等待方。
     fn route_frame(&self, frame: DaemonFrame, app_handle: &AppHandle) {
         match frame {
             DaemonFrame::Output {
@@ -249,15 +258,18 @@ impl DaemonClient {
         }
     }
 
+    // 原子递增并返回下一个请求 ID。
     pub fn next_request_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
     }
 
     /// 发请求并等待对应 id 的应答（超时/断连返回 Err）。
+    // 使用默认应答等待时限发送请求。
     pub fn request(&self, id: u64, frame: &ClientFrame) -> Result<DaemonFrame, String> {
         self.request_with_timeout(id, frame, REQUEST_TIMEOUT)
     }
 
+    // 登记请求并写入连接，随后限时等待对应应答；等待失败时移除登记。
     fn request_with_timeout(
         &self,
         id: u64,
@@ -294,6 +306,7 @@ impl DaemonClient {
         reply
     }
 
+    // 发送请求并要求 Ok 应答，daemon 错误或其他帧转换为错误。
     fn expect_ok(&self, frame: &ClientFrame, id: u64) -> Result<(), String> {
         match self.request(id, frame)? {
             DaemonFrame::Ok { .. } => Ok(()),
@@ -302,6 +315,7 @@ impl DaemonClient {
         }
     }
 
+    // 请求当前会话列表并检查响应类型。
     pub fn list(&self) -> Result<Vec<SessionMeta>, String> {
         let id = self.next_request_id();
         match self.request(id, &ClientFrame::List { id })? {
@@ -311,6 +325,7 @@ impl DaemonClient {
         }
     }
 
+    // 获取所有会话状态并转换为前端使用的进程状态结构。
     pub fn status_all(&self) -> Result<HashMap<String, PtyProcessStatus>, String> {
         let id = self.next_request_id();
         match self.request(id, &ClientFrame::Status { id })? {
@@ -331,6 +346,7 @@ impl DaemonClient {
         }
     }
 
+    // 提交当前活动会话标识列表，返回 daemon 的协调摘要。
     pub fn reconcile(&self, active_session_ids: Vec<String>) -> Result<serde_json::Value, String> {
         let id = self.next_request_id();
         match self.request(
@@ -346,11 +362,13 @@ impl DaemonClient {
         }
     }
 
+    // 请求 daemon 在允许的空闲状态下关闭，并等待确认。
     pub fn shutdown_if_idle(&self) -> Result<(), String> {
         let id = self.next_request_id();
         self.expect_ok(&ClientFrame::Shutdown { id }, id)
     }
 
+    // 按远程请求类别选择应答等待时限，发送 SSH Agent 请求并返回其载荷。
     pub fn ssh_agent_request(
         &self,
         consumer_id: String,
@@ -386,6 +404,7 @@ impl DaemonClient {
         }
     }
 
+    // 通知 daemon 释放指定主机的消费者引用，并等待确认。
     pub fn ssh_agent_release(&self, host_id: String, consumer_id: String) -> Result<(), String> {
         let id = self.next_request_id();
         self.expect_ok(
@@ -400,6 +419,7 @@ impl DaemonClient {
 }
 
 /// 发现或拉起 daemon 并建立连接。失败返回 Err，由调用方向前端报告不可用。
+// 优先连接已记录的存活 daemon，空闲旧版本可重启；失效记录移除后重新启动。
 pub fn connect_or_spawn(
     app_handle: AppHandle,
     data_dir: &Path,
@@ -444,6 +464,7 @@ pub fn connect_or_spawn(
     spawn_and_connect(app_handle, &info_path)
 }
 
+// 启动 daemon 后按固定间隔重试发现与鉴权，耗尽次数则返回未就绪错误。
 fn spawn_and_connect(app_handle: AppHandle, info_path: &Path) -> Result<Arc<DaemonClient>, String> {
     spawn_daemon_process()?;
     for _ in 0..SPAWN_RETRY_MAX {
@@ -458,6 +479,7 @@ fn spawn_and_connect(app_handle: AppHandle, info_path: &Path) -> Result<Arc<Daem
     Err("daemon did not become ready in time".to_string())
 }
 
+// 取得当前可执行文件路径并确认仍为文件，作为 daemon 自启动入口。
 fn daemon_executable_path() -> Result<std::path::PathBuf, String> {
     let current = std::env::current_exe().map_err(|err| format!("current_exe failed: {err}"))?;
     if current.is_file() {
@@ -466,6 +488,7 @@ fn daemon_executable_path() -> Result<std::path::PathBuf, String> {
     Err("main executable not found for daemon self-spawn".to_string())
 }
 
+// 以 __daemon 子命令启动当前程序，丢弃标准流；Unix 使用独立会话，Windows 隐藏窗口。
 fn spawn_daemon_process() -> Result<(), String> {
     let exe = daemon_executable_path()?;
     let mut command = std::process::Command::new(&exe);
@@ -504,6 +527,7 @@ fn spawn_daemon_process() -> Result<(), String> {
 }
 
 /// 读一行并施加单帧字节上限（与 daemon 服务端同规则）。
+// 在帧字节预算内读取带换行的 UTF-8 文本，移除 CR/LF；不完整或读取失败返回 None。
 fn read_line_bounded(reader: &mut BufReader<TcpStream>) -> Option<String> {
     let mut buf = Vec::new();
     let mut limited = reader.by_ref().take((MAX_FRAME_BYTES + 1) as u64);
@@ -531,6 +555,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证 Windows daemon 不启用 detached 或新进程组标志。
     fn windows_daemon_keeps_conpty_ctrl_c_process_group_compatible() {
         const DETACHED_PROCESS: u32 = 0x0000_0008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;

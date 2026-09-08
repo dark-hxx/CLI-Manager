@@ -5,6 +5,7 @@ use crate::provider::database;
 use serde_json::Value;
 use sqlx::SqliteConnection;
 
+// 从指定连接读取按类型命名的公共配置；缺失返回错误，非 Claude 的旧式空对象文本兼容转换为空字符串。
 pub(crate) async fn get_common_config_value(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -21,6 +22,7 @@ pub(crate) async fn get_common_config_value(
     Ok(value)
 }
 
+// 规范化类型后读取公共配置并附带格式标记；保留原文供编辑器回显，不对敏感字段脱敏。
 pub(crate) async fn get_common_config(app_type: String) -> Result<CommonConfigDocument, String> {
     let app_type = normalize_app_type(&app_type)?;
     let mut connection = database::open_connection().await?;
@@ -36,10 +38,12 @@ pub(crate) async fn get_common_config(app_type: String) -> Result<CommonConfigDo
     })
 }
 
+// 仅委托输入格式校验，不打开数据库或保存配置。
 pub(crate) fn validate_common_config(input: CommonConfigSetInput) -> Result<(), String> {
     validate_common_config_input(&input)
 }
 
+// 校验后裁剪首尾空白并写入或替换公共配置，返回保存值；不直接应用到 CLI Home 文件。
 pub(crate) async fn set_common_config(
     input: CommonConfigSetInput,
 ) -> Result<CommonConfigDocument, String> {
@@ -61,6 +65,7 @@ pub(crate) async fn set_common_config(
     })
 }
 
+// 将 Claude 映射为 JSON，其他输入映射为 TOML；类型合法性由调用方先校验。
 fn common_config_format(app_type: &str) -> &'static str {
     if app_type == "claude" {
         "json"
@@ -69,6 +74,7 @@ fn common_config_format(app_type: &str) -> &'static str {
     }
 }
 
+// 验证类型、非空值和匹配的 JSON 对象或 TOML 语法，不过滤密钥字段或校验 CLI 配置语义。
 fn validate_common_config_input(input: &CommonConfigSetInput) -> Result<(), String> {
     let app_type = normalize_app_type(&input.app_type)?;
     let value = input.value.trim();
@@ -107,6 +113,7 @@ fn validate_common_config_input(input: &CommonConfigSetInput) -> Result<(), Stri
 mod tests {
     use super::{validate_common_config, CommonConfigSetInput};
 
+    // 构造公共配置测试输入，将借用字符串转换为拥有所有权的字段。
     fn input(app_type: &str, value: &str, format: Option<&str>) -> CommonConfigSetInput {
         CommonConfigSetInput {
             app_type: app_type.to_string(),
@@ -116,6 +123,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 接受指定 JSON 格式的对象配置。
     fn validates_claude_json_object() {
         assert!(
             validate_common_config(input("claude", r#"{"model":"sonnet"}"#, Some("json"))).is_ok()
@@ -123,6 +131,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Claude 拒绝 JSON 数组根节点并返回稳定错误码。
     fn rejects_claude_non_object() {
         assert_eq!(
             validate_common_config(input("claude", "[]", Some("json"))).unwrap_err(),
@@ -131,11 +140,13 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 接受有效的 TOML 模型配置。
     fn validates_codex_toml() {
         assert!(validate_common_config(input("codex", "model = \"gpt-5\"", Some("toml"))).is_ok());
     }
 
     #[test]
+    // 验证 Grok 别名对应的公共配置拒绝不完整 TOML 赋值。
     fn rejects_invalid_grok_toml() {
         assert_eq!(
             validate_common_config(input("grok", "model =", Some("toml"))).unwrap_err(),
@@ -144,6 +155,7 @@ mod tests {
     }
 
     #[test]
+    // 验证含 token/auth 字样的普通 Codex 配置字段不会被误判为禁用密钥字段。
     fn accepts_codex_toml_with_secret_like_field_names() {
         // issue #241：字段名含 token / auth 子串的普通配置项不能被当成密钥拦截。
         let value = concat!(
@@ -162,6 +174,7 @@ mod tests {
     }
 
     #[test]
+    // 用固定虚构密钥验证公共配置允许凭据字段，不将格式校验当作密钥拦截器。
     fn accepts_common_config_carrying_real_secrets() {
         assert!(validate_common_config(input(
             "codex",

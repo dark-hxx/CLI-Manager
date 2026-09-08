@@ -90,6 +90,7 @@ enum ProjectionMode {
     LocalRoute(LocalRouteProjection),
 }
 
+// 将可选路由投影转换为直接配置模式或持有端点副本的本地路由模式。
 fn projection_mode(projection: Option<&LocalRouteProjection>) -> ProjectionMode {
     projection.map_or(ProjectionMode::Direct, |value| {
         ProjectionMode::LocalRoute(value.clone())
@@ -204,6 +205,7 @@ static APPLY_LOCKS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static PREVIEW_PLAN_CACHE: OnceLock<Mutex<Vec<PreviewPlanCacheEntry>>> = OnceLock::new();
 const PREVIEW_PLAN_CACHE_TTL: Duration = Duration::from_secs(30);
 
+// 以应用与 Home 身份组成进程内互斥键，已有同键操作时立即返回忙错误。
 fn acquire_apply_lock(app_type: &str, home_identity: &str) -> Result<ApplyLock, String> {
     let locks = APPLY_LOCKS.get_or_init(|| Mutex::new(HashSet::new()));
     let key = format!("{app_type}:{home_identity}");
@@ -217,6 +219,7 @@ fn acquire_apply_lock(app_type: &str, home_identity: &str) -> Result<ApplyLock, 
 }
 
 impl Drop for ApplyLock {
+    // 释放进程内应用锁键；锁表不可用或中毒时忽略清理失败。
     fn drop(&mut self) {
         if let Some(locks) = APPLY_LOCKS.get() {
             if let Ok(mut values) = locks.lock() {
@@ -231,10 +234,12 @@ enum LivePath {
     Wsl { distro: String, linux_path: String },
 }
 
+// 委托供应商仓储规范化应用类型。
 fn normalize_type(value: &str) -> Result<String, String> {
     crate::provider::repository::normalize_app_type(value)
 }
 
+// 将环境身份转换为自动模式的 Home 查询输入，不指定自定义路径。
 fn home_input(identity: &HomeIdentityInput) -> HomeSelectInput {
     HomeSelectInput {
         environment_kind: identity.environment_kind.clone(),
@@ -244,6 +249,7 @@ fn home_input(identity: &HomeIdentityInput) -> HomeSelectInput {
     }
 }
 
+// 从所选 Home 的应用配置根拼接目标文件名，返回有损转换后的路径字符串。
 fn target_path(home: &ProviderHomeState, app_type: &str, name: &str) -> String {
     let root = match app_type {
         "claude" => &home.targets.claude_config_dir,
@@ -256,6 +262,7 @@ fn target_path(home: &ProviderHomeState, app_type: &str, name: &str) -> String {
         .into_owned()
 }
 
+// 识别 WSL UNC 路径并提取发行版与 Linux 路径，否则按本机路径处理。
 fn live_path(path: &str) -> LivePath {
     if let Some((distro, linux_path)) = wsl::parse_wsl_unc_path(path) {
         LivePath::Wsl { distro, linux_path }
@@ -264,6 +271,7 @@ fn live_path(path: &str) -> LivePath {
     }
 }
 
+// 对存在的字节计算 SHA-256，缺失内容使用专用 missing 标记。
 fn fingerprint(bytes: Option<&[u8]>) -> String {
     let Some(bytes) = bytes else {
         return "missing".to_string();
@@ -271,6 +279,7 @@ fn fingerprint(bytes: Option<&[u8]>) -> String {
     format!("sha256:{:x}", Sha256::digest(bytes))
 }
 
+// 对有序字符串映射的 JSON 字节计算聚合指纹，序列化失败时使用空字节。
 fn aggregate_fingerprint(values: &BTreeMap<String, String>) -> String {
     let raw = serde_json::to_vec(values).unwrap_or_default();
     format!("sha256:{:x}", Sha256::digest(raw))
@@ -284,6 +293,7 @@ struct ProviderSource {
     active_key: String,
 }
 
+// 加载已启用供应商及非空、启用的活动密钥，为配置生成提供内部源数据。
 async fn load_source(app_type: &str, provider_id: &str) -> Result<ProviderSource, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let row = sqlx::query(
@@ -335,6 +345,7 @@ async fn load_source(app_type: &str, provider_id: &str) -> Result<ProviderSource
     })
 }
 
+// 根据元数据选择是否合并公共配置，再投影活动密钥并解析生效设置。
 async fn effective_settings(
     connection: &mut sqlx::SqliteConnection,
     app_type: &str,
@@ -364,6 +375,7 @@ async fn effective_settings(
     settings_config(&projected)
 }
 
+// 对供应商身份、配置、元数据、密钥和生效配置共同计算签名，用于缓存计划复核。
 fn source_signature(source: &ProviderSource, effective: &Value) -> String {
     let raw = serde_json::to_vec(&(
         &source.id,
@@ -377,10 +389,12 @@ fn source_signature(source: &ProviderSource, effective: &Value) -> String {
     format!("sha256:{:x}", Sha256::digest(raw))
 }
 
+// 按输入的可选路由投影选择模式并构建配置计划。
 async fn build_plan(input: &GlobalPreviewInput) -> Result<ProviderPlan, String> {
     build_plan_with_mode(input, projection_mode(input.projection.as_ref())).await
 }
 
+// 读取 Home、供应商和现有配置，按应用生成期望内容及字段所有权，再按需叠加路由投影。
 async fn build_plan_with_mode(
     input: &GlobalPreviewInput,
     mode: ProjectionMode,
@@ -451,6 +465,7 @@ async fn build_plan_with_mode(
 
 const ROUTED_CREDENTIAL_SENTINEL: &str = "CLI_MANAGER_ROUTED";
 
+// 仅接受非特权端口的 HTTP 回环地址或非未指定、非回环、非组播 IPv4 网关，规范化后追加后缀。
 fn route_endpoint_with_suffix(endpoint: &str, suffix: &str) -> Result<String, String> {
     let endpoint = endpoint.trim().trim_end_matches('/');
     let port = endpoint
@@ -476,6 +491,7 @@ fn route_endpoint_with_suffix(endpoint: &str, suffix: &str) -> Result<String, St
     Ok(format!("{host}:{port}{suffix}"))
 }
 
+// 修改计划中的服务地址与凭据占位值以指向本地路由；Codex 地址追加 /v1，不在此处写入文件。
 fn apply_local_route_projection(
     plan: &mut ProviderPlan,
     projection: &LocalRouteProjection,
@@ -558,6 +574,7 @@ fn apply_local_route_projection(
     Ok(())
 }
 
+// 比较计划的原内容与期望内容生成目标动作，并聚合应用、供应商、Home 与文件指纹。
 fn plan_preview(plan: &ProviderPlan) -> GlobalPreview {
     let mut snapshot = BTreeMap::new();
     snapshot.insert("plan.app_type".to_string(), plan.app_type.clone());
@@ -606,6 +623,7 @@ fn plan_preview(plan: &ProviderPlan) -> GlobalPreview {
     }
 }
 
+// 按应用、供应商、环境身份和路由端点组成预览缓存键，部分字段去空白或转小写。
 fn preview_plan_cache_key(
     app_type: &str,
     provider_id: &str,
@@ -624,6 +642,7 @@ fn preview_plan_cache_key(
     )
 }
 
+// 尽力缓存计划副本与指纹，移除过期和同键项，最多保留十六条三十秒内记录。
 fn cache_preview_plan(input: &GlobalPreviewInput, plan: &ProviderPlan, fingerprint: &str) {
     let key = preview_plan_cache_key(
         &input.app_type,
@@ -650,6 +669,7 @@ fn cache_preview_plan(input: &GlobalPreviewInput, plan: &ProviderPlan, fingerpri
     }
 }
 
+// 清理过期记录后按请求键和预览指纹一次性取出缓存计划。
 fn take_cached_preview_plan(input: &GlobalApplyInput) -> Option<ProviderPlan> {
     let key = preview_plan_cache_key(
         &input.app_type,
@@ -668,6 +688,7 @@ fn take_cached_preview_plan(input: &GlobalApplyInput) -> Option<ProviderPlan> {
     Some(entries.remove(index).plan)
 }
 
+// 重新比较 Home 状态、供应商源签名及目标原内容，任一变化均视为应用冲突。
 async fn validate_cached_plan(plan: &ProviderPlan, input: &GlobalApplyInput) -> Result<(), String> {
     let current_home = home::get(home_input(&input.home_identity)).await?;
     if serde_json::to_vec(&current_home).ok() != serde_json::to_vec(&plan.home).ok() {
@@ -695,6 +716,7 @@ async fn validate_cached_plan(plan: &ProviderPlan, input: &GlobalApplyInput) -> 
     Ok(())
 }
 
+// 仅在目标集合非空且每份原内容都与期望字节相同时判定已应用。
 fn plan_matches_live(plan: &ProviderPlan) -> bool {
     !plan.targets.is_empty()
         && plan
@@ -703,6 +725,7 @@ fn plan_matches_live(plan: &ProviderPlan) -> bool {
             .all(|target| target.before.as_deref() == Some(target.desired.as_slice()))
 }
 
+// 在应用数据目录的供应商备份根下拼接日志 ID；此函数不单独校验 ID。
 fn backup_root(journal_id: &str) -> Result<PathBuf, String> {
     Ok(app_paths::cli_manager_data_dir()?
         .join("backups")
@@ -710,6 +733,7 @@ fn backup_root(journal_id: &str) -> Result<PathBuf, String> {
         .join(journal_id))
 }
 
+// 按计划目标顺序生成备份与同目录暂存路径，记录目标原先是否存在。
 fn journal_targets(plan: &ProviderPlan, journal_id: &str) -> Result<Vec<JournalTarget>, String> {
     let backup_root = backup_root(journal_id)?;
     plan.targets
@@ -731,6 +755,7 @@ fn journal_targets(plan: &ProviderPlan, journal_id: &str) -> Result<Vec<JournalT
         .collect()
 }
 
+// 为本机或 WSL 目标生成同目录暂存文件名，包含日志 ID 和目标序号。
 fn stage_path_for_target(path: &str, journal_id: &str, index: usize) -> Result<String, String> {
     match live_path(path) {
         LivePath::Local(path) => {
@@ -762,6 +787,7 @@ fn stage_path_for_target(path: &str, journal_id: &str, index: usize) -> Result<S
     }
 }
 
+// Windows 使用带替换与写穿标志的 MoveFileExW，其他平台使用 rename 发布暂存文件。
 fn replace_local_file(source: &Path, destination: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
@@ -793,6 +819,7 @@ fn replace_local_file(source: &Path, destination: &Path) -> Result<(), String> {
     fs::rename(source, destination).map_err(|_| "provider_target_write_failed".to_string())
 }
 
+// 本机文件委托平台替换，同一 WSL 发行版内执行 mv -f；跨环境或跨发行版替换被拒绝。
 pub(crate) fn replace_live_from_stage(target_path: &str, stage_path: &str) -> Result<(), String> {
     match (live_path(stage_path), live_path(target_path)) {
         (LivePath::Local(stage), LivePath::Local(target)) => replace_local_file(&stage, &target),
@@ -818,6 +845,7 @@ pub(crate) fn replace_live_from_stage(target_path: &str, stage_path: &str) -> Re
     }
 }
 
+// 写入并回读所有暂存文件，验证格式后保存各目标原内容备份；失败清理由调用方负责。
 fn stage_plan(plan: &ProviderPlan, journal_targets: &[JournalTarget]) -> Result<(), String> {
     let backup_parent = journal_targets
         .iter()
@@ -857,6 +885,7 @@ fn stage_plan(plan: &ProviderPlan, journal_targets: &[JournalTarget]) -> Result<
     Ok(())
 }
 
+// 按目标类型验证暂存字节可解析为 JSON 对象或 TOML 文档，不在此处比较期望字节。
 fn parse_staged_target(target: &PlannedTarget, bytes: &[u8]) -> Result<(), String> {
     let result = match target.target.as_str() {
         "claude.settings" | "codex.auth" => parse_json_object(Some(bytes)).map(|_| ()),
@@ -866,12 +895,14 @@ fn parse_staged_target(target: &PlannedTarget, bytes: &[u8]) -> Result<(), Strin
     result.map_err(|_| "provider_apply_stage_failed".to_string())
 }
 
+// 尽力删除所有日志目标的暂存文件，忽略单项失败。
 fn cleanup_stage_files(journal_targets: &[JournalTarget]) {
     for target in journal_targets {
         let _ = remove_live(&target.stage_path);
     }
 }
 
+// 尽力删除备份文件及空父目录；提供允许根时额外执行词法路径、扩展名和嵌套层级检查。
 fn cleanup_backup_paths(paths: &[String], allowed_root: Option<&Path>) {
     let mut parents = HashSet::new();
     for raw_path in paths {
@@ -908,6 +939,7 @@ fn cleanup_backup_paths(paths: &[String], allowed_root: Option<&Path>) {
     }
 }
 
+// 从本次日志目标提取备份路径并清理，此入口不传允许根限制。
 fn cleanup_backup_files(journal_targets: &[JournalTarget]) {
     let paths = journal_targets
         .iter()
@@ -916,6 +948,7 @@ fn cleanup_backup_files(journal_targets: &[JournalTarget]) {
     cleanup_backup_paths(&paths, None);
 }
 
+// 清理持久化备份路径时限制在应用供应商备份根下，根目录解析失败则跳过。
 fn cleanup_persisted_backup_paths(paths: &[String]) {
     let Ok(root) =
         app_paths::cli_manager_data_dir().map(|path| path.join("backups").join("providers"))
@@ -925,6 +958,7 @@ fn cleanup_persisted_backup_paths(paths: &[String]) {
     cleanup_backup_paths(paths, Some(&root));
 }
 
+// 读取已提交、失败或已恢复日志的备份列表，跳过无效记录并尽力清理文件。
 async fn cleanup_finished_journal_backups() -> Result<(), String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let rows = sqlx::query(
@@ -947,6 +981,7 @@ async fn cleanup_finished_journal_backups() -> Result<(), String> {
     Ok(())
 }
 
+// 查询指定应用与 Home 是否存在暂存、替换、验证或待恢复日志。
 pub(crate) async fn pending_journal(app_type: &str, home_identity: &str) -> Result<bool, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let count: i64 = sqlx::query_scalar(
@@ -962,6 +997,7 @@ pub(crate) async fn pending_journal(app_type: &str, home_identity: &str) -> Resu
     Ok(count > 0)
 }
 
+// 记录计划目标、备份路径及新旧指纹，初始日志状态设为 staged。
 async fn insert_journal(
     journal_id: &str,
     plan: &ProviderPlan,
@@ -1004,6 +1040,7 @@ async fn insert_journal(
     Ok(())
 }
 
+// 更新日志状态与错误码，仅为终态写入完成时间，不校验受影响行数。
 async fn update_journal(
     journal_id: &str,
     state: &str,
@@ -1029,6 +1066,7 @@ async fn update_journal(
     Ok(())
 }
 
+// 在同一数据库事务中切换应用 current 标记并提交本条应用日志。
 async fn commit_current(plan: &ProviderPlan, journal_id: &str) -> Result<(), String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let mut transaction = connection
@@ -1068,6 +1106,7 @@ async fn commit_current(plan: &ProviderPlan, journal_id: &str) -> Result<(), Str
         .map_err(|_| "provider_database_error".to_string())
 }
 
+// 逆序处理指定已变更路径，仅当现内容仍匹配期望新内容时恢复原字节或删除新增文件，累计首个错误。
 fn restore_targets(plan: &ProviderPlan, changed_paths: &[String]) -> Result<(), String> {
     let mut first_error = None;
     for target in plan.targets.iter().rev() {
@@ -1097,6 +1136,7 @@ fn restore_targets(plan: &ProviderPlan, changed_paths: &[String]) -> Result<(), 
     first_error.map_or(Ok(()), Err)
 }
 
+// 构建配置计划并缓存副本，返回不含配置正文的指纹与目标动作预览。
 pub(crate) async fn preview(input: GlobalPreviewInput) -> Result<GlobalPreview, String> {
     let plan = build_plan(&input).await?;
     let preview = plan_preview(&plan);
@@ -1104,6 +1144,7 @@ pub(crate) async fn preview(input: GlobalPreviewInput) -> Result<GlobalPreview, 
     Ok(preview)
 }
 
+// 优先选择与现有文件匹配的供应商，其次使用 current 候选，并结合待恢复日志、密钥和配置差异计算界面状态。
 pub(crate) async fn current(input: GlobalCurrentInput) -> Result<GlobalCurrent, String> {
     let app_type = normalize_type(&input.app_type)?;
     let home = home::get(home_input(&input.home_identity)).await?;
@@ -1237,10 +1278,12 @@ pub(crate) async fn current(input: GlobalCurrentInput) -> Result<GlobalCurrent, 
     })
 }
 
+// 应用已预览配置，并在验证成功后提交供应商 current 与日志。
 pub(crate) async fn apply(input: GlobalApplyInput) -> Result<GlobalApplyResult, String> {
     apply_internal(input, true).await
 }
 
+// 校验预览并锁定应用/Home，记录日志后暂存、替换、验证并按需提交 current；失败尝试补偿，成功清理备份，延迟提交模式的日志由外层完成。
 async fn apply_internal(
     input: GlobalApplyInput,
     commit_provider_current: bool,
@@ -1455,6 +1498,7 @@ pub(crate) struct HotSwitchTarget {
     pub projection: LocalRouteProjection,
 }
 
+// 按应用串行协调多个 Home 的投影应用，全部成功后统一提交 current 和日志；中途失败尝试逆序重应用旧供应商。
 pub(crate) async fn apply_hot_switch(
     app_type: &str,
     previous_provider_id: &str,
@@ -1542,6 +1586,7 @@ pub(crate) async fn apply_hot_switch(
     Ok(applied)
 }
 
+// 逆序为已应用目标重新预览并应用旧供应商，不直接恢复原始字节；首个失败即向上传播。
 async fn rollback_hot_switch(
     app_type: &str,
     previous_provider_id: &str,
@@ -1573,6 +1618,7 @@ async fn rollback_hot_switch(
     Ok(rollback_results)
 }
 
+// 在一个数据库事务中切换当前供应商并将给定日志集合标记为已提交。
 async fn commit_provider_current(
     app_type: &str,
     provider_id: &str,
@@ -1618,6 +1664,7 @@ async fn commit_provider_current(
         .map_err(|_| "provider_database_error".to_string())
 }
 
+// 提交旧供应商及回滚日志后，逐条将原热切换日志标记失败。
 async fn complete_hot_switch_rollback(
     app_type: &str,
     previous_provider_id: &str,
@@ -1648,6 +1695,7 @@ pub(crate) struct RecoveryReport {
     pub blocked: usize,
 }
 
+// 恢复流程确认配置已达到期望后，在数据库事务中切换 current 并提交日志。
 async fn complete_recovered_journal(
     journal_id: &str,
     app_type: &str,
@@ -1691,6 +1739,7 @@ async fn complete_recovered_journal(
         .map_err(|_| "provider_database_error".to_string())
 }
 
+// 比较日志目标与新旧指纹：全新则补提交、全旧则标记恢复、混合则逆序还原并复验；出现第三种内容时要求人工恢复。
 async fn recover_one(
     id: String,
     app_type: String,
@@ -1783,6 +1832,7 @@ async fn recover_one(
     Ok("recovered")
 }
 
+// 按开始时间遍历未完成日志，为各应用/Home 获取进程内锁后尝试恢复并统计结果，最后尽力清理已结束日志备份。
 pub(crate) async fn recover_pending() -> Result<RecoveryReport, String> {
     let mut connection = crate::provider::database::open_connection().await?;
     let rows = sqlx::query(

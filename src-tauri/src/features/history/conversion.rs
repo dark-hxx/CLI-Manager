@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
 
+// 将 Claude 与 Codex 历史转换为新会话文件及索引，并解析回读验证返回身份。
 pub(super) fn convert_history_session(
     detail: &HistorySessionDetail,
     target_source: &str,
@@ -132,6 +133,7 @@ pub(super) fn convert_history_session(
     })
 }
 
+// 拒绝子代理直接删除，备份父子 transcript 后逐个删除，失败恢复已删除文件。
 pub(super) fn delete_session_tree_with_backup_root(
     file_ref: &SessionFileRef,
     backups_dir: &Path,
@@ -195,11 +197,13 @@ pub(super) fn delete_session_tree_with_backup_root(
     Ok(deleted)
 }
 
+// 使用默认备份根目录执行会话 transcript 树删除。
 pub(super) fn delete_session_tree(file_ref: &SessionFileRef) -> Result<usize, String> {
     let backups_dir = default_backup_root()?;
     delete_session_tree_with_backup_root(file_ref, &backups_dir)
 }
 
+// 优先保留详情 cwd，缺失时使用非空项目键作为转换工作目录。
 pub(super) fn converted_session_cwd(detail: &HistorySessionDetail) -> Option<String> {
     detail
         .cwd
@@ -217,6 +221,7 @@ pub(super) fn converted_session_cwd(detail: &HistorySessionDetail) -> Option<Str
         })
 }
 
+// 保留消息非空时间字符串，缺失时使用当前 UTC 时间。
 pub(super) fn conversion_timestamp(message: &HistoryMessage) -> String {
     message
         .timestamp
@@ -227,10 +232,12 @@ pub(super) fn conversion_timestamp(message: &HistoryMessage) -> String {
         .unwrap_or_else(now_rfc3339)
 }
 
+// 返回带毫秒精度的当前 UTC RFC3339 时间。
 pub(crate) fn now_rfc3339() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
+// 助手角色保留为 assistant，其他角色转换为 user。
 pub(super) fn converted_message_role(role: &str) -> &'static str {
     if role.eq_ignore_ascii_case("assistant") {
         "assistant"
@@ -239,6 +246,7 @@ pub(super) fn converted_message_role(role: &str) -> &'static str {
     }
 }
 
+// 修剪消息正文，并为工具角色添加 Tool 标记。
 pub(super) fn converted_message_content(message: &HistoryMessage) -> String {
     let content = message.content.trim();
     if message.role.eq_ignore_ascii_case("tool") {
@@ -248,6 +256,7 @@ pub(super) fn converted_message_content(message: &HistoryMessage) -> String {
     }
 }
 
+// 将非空消息转换为带 UUID 父链的 Claude 文本 JSONL 记录。
 pub(super) fn build_claude_conversion_lines(
     detail: &HistorySessionDetail,
     session_id: &str,
@@ -282,6 +291,7 @@ pub(super) fn build_claude_conversion_lines(
     lines
 }
 
+// 助手正文包装为 text 块数组，其他角色使用字符串正文。
 pub(super) fn claude_message_content_value(role: &str, content: String) -> Value {
     if role == "assistant" {
         json!([{ "type": "text", "text": content }])
@@ -290,6 +300,7 @@ pub(super) fn claude_message_content_value(role: &str, content: String) -> Value
     }
 }
 
+// 生成 Codex 会话元数据、上下文及每条消息的响应项与 UI 事件。
 pub(super) fn build_codex_conversion_lines(
     detail: &HistorySessionDetail,
     session_id: &str,
@@ -363,6 +374,7 @@ pub(super) fn build_codex_conversion_lines(
     lines
 }
 
+// 按转换后角色生成 Codex agent_message 或 user_message 事件。
 pub(super) fn codex_ui_event_message(role: &str, content: &str, timestamp: &str) -> Value {
     if role == "assistant" {
         json!({
@@ -385,6 +397,7 @@ pub(super) fn codex_ui_event_message(role: &str, content: &str, timestamp: &str)
     }
 }
 
+// 根据 cwd 或项目键确定 Claude 项目目录并选择尚不存在的文件名。
 pub(super) fn converted_claude_session_path(
     detail: &HistorySessionDetail,
     roots: &HistoryRoots,
@@ -408,6 +421,7 @@ pub(super) fn converted_claude_session_path(
     )
 }
 
+// 在当前 UTC 年月日目录下构造带时间和会话 ID 的 rollout 候选路径。
 pub(super) fn converted_codex_session_path(roots: &HistoryRoots, session_id: &str) -> PathBuf {
     let now = Utc::now();
     let dir = resolve_codex_history_root(roots)
@@ -418,6 +432,7 @@ pub(super) fn converted_codex_session_path(roots: &HistoryRoots, session_id: &st
     unique_jsonl_path(dir, &format!("rollout-{timestamp}-{session_id}"))
 }
 
+// 创建配置目录并为转换会话追加 Codex history.jsonl 记录。
 pub(super) fn append_codex_history_index(
     roots: &HistoryRoots,
     detail: &HistorySessionDetail,
@@ -440,6 +455,7 @@ pub(super) fn append_codex_history_index(
     append_jsonl_line(&path, &line)
 }
 
+// 优先选择转换后的首条用户正文，再回退首条非空消息并限制字符数。
 pub(super) fn codex_history_index_text(detail: &HistorySessionDetail) -> Option<String> {
     detail
         .messages
@@ -459,6 +475,7 @@ pub(super) fn codex_history_index_text(detail: &HistorySessionDetail) -> Option<
         .filter(|content| !content.trim().is_empty())
 }
 
+// 取首条消息的 RFC3339 秒时间，无法解析时使用当前秒数。
 pub(super) fn codex_history_index_timestamp(detail: &HistorySessionDetail) -> i64 {
     detail
         .messages
@@ -469,6 +486,7 @@ pub(super) fn codex_history_index_timestamp(detail: &HistorySessionDetail) -> i6
         .unwrap_or_else(|| Utc::now().timestamp())
 }
 
+// 为转换会话追加带标题、cwd 和 rollout 路径的 Codex 标题索引记录。
 pub(super) fn append_codex_session_index(
     roots: &HistoryRoots,
     detail: &HistorySessionDetail,
@@ -499,6 +517,7 @@ pub(super) fn append_codex_session_index(
     append_jsonl_line(&path, &line)
 }
 
+// 以一次 write_all 追加含末尾换行的序列化 JSON 记录并刷新缓冲。
 pub(super) fn append_jsonl_line(path: &Path, line: &Value) -> Result<(), String> {
     let mut encoded = serde_json::to_string(line).map_err(|err| err.to_string())?;
     encoded.push('\n');
@@ -512,6 +531,7 @@ pub(super) fn append_jsonl_line(path: &Path, line: &Value) -> Result<(), String>
     file.flush().map_err(|err| err.to_string())
 }
 
+// 结合源详情、转换结果及 Codex 配置构造状态库注册字段。
 pub(super) fn build_codex_thread_registration(
     roots: &HistoryRoots,
     detail: &HistorySessionDetail,
@@ -559,12 +579,14 @@ pub(super) fn build_codex_thread_registration(
     }
 }
 
+// 将修剪后的 RFC3339 字符串转换为 Unix 毫秒时间。
 pub(super) fn rfc3339_millis(timestamp: &str) -> Option<i64> {
     DateTime::parse_from_rfc3339(timestamp.trim())
         .ok()
         .map(|value| value.timestamp_millis())
 }
 
+// 仅对现有本地 Codex 状态库插入或更新线程注册，WSL 或缺库时跳过。
 pub(super) async fn register_codex_thread(
     registration: &CodexThreadRegistration,
 ) -> Result<(), String> {
@@ -630,6 +652,7 @@ pub(super) async fn register_codex_thread(
     Ok(())
 }
 
+// 使用十五秒忙等待打开可写 SQLite 连接并映射连接错误。
 pub(super) async fn open_sqlite_readwrite(path: &Path) -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -639,6 +662,7 @@ pub(super) async fn open_sqlite_readwrite(path: &Path) -> Result<SqliteConnectio
         .map_err(|err| format!("db_open_failed: {err}"))
 }
 
+// 递增数字后缀直到候选 JSONL 路径不存在，不执行文件创建。
 pub(super) fn unique_jsonl_path(dir: PathBuf, stem: &str) -> PathBuf {
     let mut candidate = dir.join(format!("{stem}.jsonl"));
     let mut index = 1usize;
@@ -649,6 +673,7 @@ pub(super) fn unique_jsonl_path(dir: PathBuf, stem: &str) -> PathBuf {
     candidate
 }
 
+// 创建父目录并创建或截断目标文件，逐行写入 JSON 与换行后刷新。
 pub(super) fn write_jsonl_lines(path: &Path, lines: &[Value]) -> Result<(), String> {
     let parent = path
         .parent()

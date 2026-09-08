@@ -2,6 +2,7 @@ use super::*;
 use sqlx::Executor;
 
 #[test]
+// 验证完整功能结构映射到当前五项迁移版本。
 fn maps_complete_feature_schema_to_current_migration_versions() {
     let features = SchemaFeatures {
         favorite_snapshots: SchemaState::Complete,
@@ -27,6 +28,7 @@ fn maps_complete_feature_schema_to_current_migration_versions() {
 }
 
 #[test]
+// 验证部分工作树结构会阻止迁移登记修复。
 fn rejects_partial_worktree_schema() {
     let features = SchemaFeatures {
         favorite_snapshots: SchemaState::Absent,
@@ -43,6 +45,7 @@ fn rejects_partial_worktree_schema() {
 }
 
 #[tokio::test]
+// 验证旧工作树分支的迁移顺序被重写为当前版本映射。
 async fn rewrites_old_worktree_lineage_rows_to_current_versions() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -90,6 +93,7 @@ async fn rewrites_old_worktree_lineage_rows_to_current_versions() {
 }
 
 #[tokio::test]
+// 验证仅存在 CLI 参数列的旧库只移动对应登记，缺失功能留给 SQLx。
 async fn moves_cli_args_only_lineage_forward_and_leaves_missing_features_to_sqlx() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -124,6 +128,7 @@ async fn moves_cli_args_only_lineage_forward_and_leaves_missing_features_to_sqlx
 }
 
 #[tokio::test]
+// 验证前端已创建的 SSH 分组结构补登记后仍可继续后续迁移。
 async fn marks_frontend_created_ssh_group_schema_as_migrated() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -194,6 +199,7 @@ async fn marks_frontend_created_ssh_group_schema_as_migrated() {
 }
 
 #[tokio::test]
+// 验证内联快照补丁迁出到临时文件并替换为完整文件元数据。
 async fn migrates_replay_snapshot_inline_patch_to_file_metadata() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     conn.execute(
@@ -259,6 +265,7 @@ async fn migrates_replay_snapshot_inline_patch_to_file_metadata() {
 }
 
 #[tokio::test]
+// 验证当前版本清理标记存在时保留内联补丁且不创建补丁目录。
 async fn skips_replay_snapshot_cleanup_when_current_version_marker_exists() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     conn.execute(
@@ -311,6 +318,7 @@ async fn skips_replay_snapshot_cleanup_when_current_version_marker_exists() {
 }
 
 #[tokio::test]
+// 验证无快照表时版本清理仍写入当前版本完成标记。
 async fn writes_replay_snapshot_cleanup_marker_after_version_check() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     let data_dir = tempfile::tempdir().unwrap();
@@ -328,6 +336,7 @@ async fn writes_replay_snapshot_cleanup_marker_after_version_check() {
 }
 
 #[tokio::test]
+// 验证旧库有用户数据且当前库为空时恢复数据并备份当前库。
 async fn recovers_legacy_db_when_current_db_has_no_user_rows() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = temp.path().join("legacy.db");
@@ -362,6 +371,7 @@ async fn recovers_legacy_db_when_current_db_has_no_user_rows() {
 }
 
 #[tokio::test]
+// 验证当前数据库已有用户数据时不被旧数据库覆盖。
 async fn does_not_overwrite_current_db_when_it_has_user_rows() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = temp.path().join("legacy.db");
@@ -390,6 +400,7 @@ async fn does_not_overwrite_current_db_when_it_has_user_rows() {
 }
 
 #[tokio::test]
+// 验证旧自定义价格只替换内置价格，保留当前自定义值且迁移只执行一次。
 async fn merges_legacy_custom_model_prices_without_overwriting_current_custom_prices() {
     let temp = tempfile::tempdir().unwrap();
     let legacy = temp.path().join("legacy.db");
@@ -449,6 +460,7 @@ async fn merges_legacy_custom_model_prices_without_overwriting_current_custom_pr
 }
 
 #[tokio::test]
+// 验证延后大数据回填时登记原始 SQL 校验和而不修改历史行。
 async fn defers_large_project_path_migration_with_original_checksum() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -497,6 +509,7 @@ async fn defers_large_project_path_migration_with_original_checksum() {
 }
 
 #[tokio::test]
+// 验证空数据库或缺少必要结构的数据库保留标准迁移流程。
 async fn leaves_empty_or_incompatible_databases_to_standard_migrations() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -515,6 +528,7 @@ async fn leaves_empty_or_incompatible_databases_to_standard_migrations() {
 }
 
 #[test]
+// 验证项目名只在唯一匹配时解析，绝对路径可直接归一化。
 fn resolves_only_unambiguous_local_project_paths() {
     let projects = vec![
         BackfillProject {
@@ -543,6 +557,7 @@ fn resolves_only_unambiguous_local_project_paths() {
 }
 
 #[tokio::test]
+// 验证五万余条历史记录分批回填，传播会话路径并保留歧义和现有值。
 async fn backfills_large_legacy_sets_in_batches_and_inherits_route_paths() {
     let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
     create_project_path_backfill_schema(&mut conn).await;
@@ -670,6 +685,7 @@ async fn backfills_large_legacy_sets_in_batches_and_inherits_route_paths() {
     assert_eq!(rerun.updated_rows, 0);
 }
 
+// 在测试连接创建 SQLx 迁移登记表。
 async fn create_migration_table(conn: &mut SqliteConnection) {
     conn.execute(
         "CREATE TABLE _sqlx_migrations (
@@ -685,6 +701,7 @@ async fn create_migration_table(conn: &mut SqliteConnection) {
     .unwrap();
 }
 
+// 创建可选择包含外观列的项目与分组漂移测试结构。
 async fn create_appearance_drift_schema(conn: &mut SqliteConnection, with_columns: bool) {
     let group_extra = if with_columns {
         ", icon TEXT NOT NULL DEFAULT '', color TEXT NOT NULL DEFAULT ''"
@@ -705,6 +722,7 @@ async fn create_appearance_drift_schema(conn: &mut SqliteConnection, with_column
     .unwrap();
 }
 
+// 向测试数据库登记当前外观迁移及其精确校验和。
 async fn register_appearance_migration(conn: &mut SqliteConnection) {
     sqlx::query(
         "INSERT INTO _sqlx_migrations
@@ -719,6 +737,7 @@ async fn register_appearance_migration(conn: &mut SqliteConnection) {
     .unwrap();
 }
 
+// 创建可选择包含绑定路径和路径模式列的漂移测试结构。
 async fn create_group_binding_drift_schema(conn: &mut SqliteConnection, with_columns: bool) {
     let group_extra = if with_columns {
         ", bound_path TEXT NOT NULL DEFAULT ''"
@@ -744,6 +763,7 @@ async fn create_group_binding_drift_schema(conn: &mut SqliteConnection, with_col
     .unwrap();
 }
 
+// 创建可选择包含附件根列的 SSH 主机测试表。
 async fn create_ssh_attachment_drift_schema(conn: &mut SqliteConnection, with_column: bool) {
     let attachment_extra = if with_column {
         ", attachment_root TEXT NOT NULL DEFAULT ''"
@@ -760,6 +780,7 @@ async fn create_ssh_attachment_drift_schema(conn: &mut SqliteConnection, with_co
     .unwrap();
 }
 
+// 检查测试数据库中指定迁移是否已有成功登记。
 async fn binding_migration_registered(conn: &mut SqliteConnection, version: i64) -> bool {
     sqlx::query_scalar::<_, i64>(
         "SELECT EXISTS(SELECT 1 FROM _sqlx_migrations WHERE version = ?1 AND success = 1)",
@@ -771,6 +792,7 @@ async fn binding_migration_registered(conn: &mut SqliteConnection, version: i64)
         != 0
 }
 
+// 将旧外观 SQL 以冲突的 v33 版本写入测试迁移登记。
 async fn register_legacy_node_appearance_v33_migration(conn: &mut SqliteConnection) {
     sqlx::query(
         "INSERT INTO _sqlx_migrations
@@ -785,6 +807,7 @@ async fn register_legacy_node_appearance_v33_migration(conn: &mut SqliteConnecti
     .unwrap();
 }
 
+// 读取测试项目和分组的列集合供外观修复断言。
 async fn appearance_columns(conn: &mut SqliteConnection) -> (HashSet<String>, HashSet<String>) {
     (
         table_columns(conn, "groups").await.unwrap(),
@@ -793,6 +816,7 @@ async fn appearance_columns(conn: &mut SqliteConnection) -> (HashSet<String>, Ha
 }
 
 #[tokio::test]
+// 验证外观版本已登记但列缺失时补列，并保持重复修复幂等。
 async fn appearance_repair_adds_columns_when_migration_registered_but_columns_missing() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -809,6 +833,7 @@ async fn appearance_repair_adds_columns_when_migration_registered_but_columns_mi
 }
 
 #[tokio::test]
+// 验证分组绑定修复同时补列和登记迁移，重复执行无变化。
 async fn group_binding_repair_adds_columns_and_registers_migrations() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -829,6 +854,7 @@ async fn group_binding_repair_adds_columns_and_registers_migrations() {
 }
 
 #[tokio::test]
+// 验证分组绑定列已存在时仅补迁移登记。
 async fn group_binding_repair_registers_migrations_when_columns_exist() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -841,6 +867,7 @@ async fn group_binding_repair_registers_migrations_when_columns_exist() {
 }
 
 #[tokio::test]
+// 验证 SSH 附件根列和迁移登记同时缺失时一并修复。
 async fn ssh_attachment_root_repair_adds_column_and_registers_migration() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -858,6 +885,7 @@ async fn ssh_attachment_root_repair_adds_column_and_registers_migration() {
 }
 
 #[tokio::test]
+// 验证 SSH 附件根修复兼容仅缺列或仅缺登记且不重复插入。
 async fn ssh_attachment_root_repair_handles_registered_and_preexisting_states() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -900,6 +928,7 @@ async fn ssh_attachment_root_repair_handles_registered_and_preexisting_states() 
 }
 
 #[tokio::test]
+// 验证外观列已存在但版本缺失时只补迁移登记。
 async fn appearance_repair_registers_migration_when_columns_exist_but_version_missing() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -918,6 +947,7 @@ async fn appearance_repair_registers_migration_when_columns_exist_but_version_mi
 }
 
 #[tokio::test]
+// 验证外观列和版本均缺失时在 SQLx 前完整补齐且保持幂等。
 async fn appearance_repair_applies_missing_columns_before_sqlx() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -940,6 +970,7 @@ async fn appearance_repair_applies_missing_columns_before_sqlx() {
 }
 
 #[tokio::test]
+// 验证旧外观 v33 转为用量诊断登记，并补登记当前外观迁移和错误详情列。
 async fn legacy_node_appearance_v33_migration_is_reconciled_before_sqlx_runs() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_migration_table(&mut conn).await;
@@ -992,6 +1023,7 @@ async fn legacy_node_appearance_v33_migration_is_reconciled_before_sqlx_runs() {
     assert_eq!(error_detail_columns, 1);
 }
 
+// 创建项目路径回填所需的项目、用量表及索引。
 async fn create_project_path_backfill_schema(conn: &mut SqliteConnection) {
     conn.execute(
         "CREATE TABLE projects (
@@ -1032,6 +1064,7 @@ async fn create_project_path_backfill_schema(conn: &mut SqliteConnection) {
 }
 
 #[allow(clippy::too_many_arguments)]
+// 向测试用量表插入指定来源、会话、项目路径和时间记录。
 async fn insert_usage_row(
     conn: &mut SqliteConnection,
     record_id: &str,
@@ -1060,6 +1093,7 @@ async fn insert_usage_row(
     .unwrap();
 }
 
+// 在临时路径创建用户数据测试库并插入指定项目。
 async fn create_user_data_db(path: &Path, projects: &[(&str, &str)]) {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -1100,6 +1134,7 @@ async fn create_user_data_db(path: &Path, projects: &[(&str, &str)]) {
     conn.close().await.unwrap();
 }
 
+// 在测试数据库创建模型价格表。
 async fn create_model_prices_table(path: &Path) {
     let mut conn = open_cli_manager_db(path).await.unwrap();
     conn.execute(
@@ -1121,6 +1156,7 @@ async fn create_model_prices_table(path: &Path) {
     conn.close().await.unwrap();
 }
 
+// 向测试数据库插入指定模型的输入价格与来源。
 async fn insert_model_price(path: &Path, model: &str, input: f64, source: &str) {
     let mut conn = open_cli_manager_db(path).await.unwrap();
     sqlx::query(
@@ -1138,6 +1174,7 @@ async fn insert_model_price(path: &Path, model: &str, input: f64, source: &str) 
     conn.close().await.unwrap();
 }
 
+// 从测试数据库读取指定模型的输入价格与来源。
 async fn read_model_price(path: &Path, model: &str) -> (f64, String) {
     let mut conn = open_cli_manager_db(path).await.unwrap();
     let row = sqlx::query("SELECT input_per_1m, source FROM model_prices WHERE model = ?1")
@@ -1151,6 +1188,7 @@ async fn read_model_price(path: &Path, model: &str) -> (f64, String) {
     )
 }
 
+// 创建收藏快照、CLI 参数和工作树的完整迁移测试结构。
 async fn create_complete_feature_schema(conn: &mut SqliteConnection) {
     conn.execute(
         "CREATE TABLE projects (
@@ -1198,6 +1236,7 @@ async fn create_complete_feature_schema(conn: &mut SqliteConnection) {
     .unwrap();
 }
 
+// 向测试迁移表插入指定版本、描述和 SQL 校验和。
 async fn insert_migration_row(
     conn: &mut SqliteConnection,
     version: i64,

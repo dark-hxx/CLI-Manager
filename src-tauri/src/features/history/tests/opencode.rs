@@ -1,6 +1,7 @@
 use super::*;
 
 #[tokio::test]
+// 验证 OpenCode SQLite 会话解析保留消息、模型、推理用量及工具事件。
 async fn parse_opencode_database_reads_sqlite_sessions() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("opencode.db");
@@ -79,6 +80,7 @@ async fn parse_opencode_database_reads_sqlite_sessions() {
 }
 
 #[test]
+// 验证 OpenCode 定位器仅接受有效的 ses_ 会话标识。
 fn opencode_session_locator_requires_a_valid_session_id() {
     let valid = parse_opencode_session_locator(
         "C:/Users/test/.local/share/opencode/opencode.db#session=ses_abc123",
@@ -95,6 +97,7 @@ fn opencode_session_locator_requires_a_valid_session_id() {
 }
 
 #[tokio::test]
+// 验证删除 OpenCode 会话仅影响目标记录，缺失会话不会删除孤立关联行。
 async fn delete_opencode_session_is_transactional_and_isolated() {
     let temp_dir = TempDir::new().unwrap();
     let db_path = temp_dir.path().join("opencode.db");

@@ -41,11 +41,13 @@ enum ParseScope {
 }
 
 #[tauri::command]
+// 返回当前用户默认 SSH 配置目录的字符串路径。
 pub fn ssh_config_default_directory() -> Result<String, String> {
     Ok(default_ssh_directory()?.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
+// 在阻塞任务中解析所选目录生成只读主机导入预览。
 pub async fn ssh_config_import_preview(
     config_dir: String,
 ) -> Result<SshConfigImportPreview, String> {
@@ -57,10 +59,12 @@ pub async fn ssh_config_import_preview(
     .map_err(|err| format!("ssh_config_import_task_failed: {err}"))?
 }
 
+// 将环境解析的用户主目录拼接为 .ssh 目录。
 fn default_ssh_directory() -> Result<PathBuf, String> {
     Ok(crate::app_paths::home_dir_from_env()?.join(".ssh"))
 }
 
+// 规范化所选目录与 config 文件并构造别名和警告预览。
 fn build_import_preview(config_dir: &str, home: &Path) -> Result<SshConfigImportPreview, String> {
     let trimmed = config_dir.trim();
     if trimmed.is_empty() {
@@ -114,6 +118,7 @@ struct ConfigParser {
 }
 
 impl ConfigParser {
+    // 初始化包含去重和递归跟踪集合的配置解析器。
     fn new(home: PathBuf) -> Self {
         Self {
             user_config_dir: home.join(".ssh"),
@@ -126,6 +131,7 @@ impl ConfigParser {
         }
     }
 
+    // 限制文件数、递归深度及元数据大小后读取配置并检测包含环。
     fn parse_file(
         &mut self,
         path: &Path,
@@ -168,6 +174,7 @@ impl ConfigParser {
         Ok(scope)
     }
 
+    // 解析 Host、Match 及可用 Include，收集具体别名与条件跳过警告。
     fn parse_text(
         &mut self,
         source: &Path,
@@ -221,6 +228,7 @@ impl ConfigParser {
         Ok(scope)
     }
 
+    // 展开环境、用户主目录及通配符，相对 Include 基于用户 .ssh。
     fn expand_include(&self, value: &str) -> Result<Vec<PathBuf>, String> {
         let expanded = expand_environment(value)?;
         let expanded = expanded.replace("%d", &self.home.to_string_lossy());
@@ -243,6 +251,7 @@ impl ConfigParser {
     }
 }
 
+// 去除注释并拆分大小写归一化的指令键和值。
 fn parse_directive(line: &str) -> Result<Option<(String, Vec<String>)>, String> {
     let uncommented = strip_comment(line)?;
     let trimmed = uncommented.trim();
@@ -260,6 +269,7 @@ fn parse_directive(line: &str) -> Result<Option<(String, Vec<String>)>, String> 
     Ok(Some((keyword, split_words(values)?)))
 }
 
+// 保留引号内井号并移除行注释，拒绝未闭合引号或转义。
 fn strip_comment(line: &str) -> Result<String, String> {
     let mut result = String::new();
     let mut quote: Option<char> = None;
@@ -297,6 +307,7 @@ fn strip_comment(line: &str) -> Result<String, String> {
     Ok(result)
 }
 
+// 按引号及受支持的反斜杠转义拆分配置值。
 fn split_words(value: &str) -> Result<Vec<String>, String> {
     let mut words = Vec::new();
     let mut current = String::new();
@@ -341,6 +352,7 @@ fn split_words(value: &str) -> Result<Vec<String>, String> {
     Ok(words)
 }
 
+// 排除包含通配符或否定符号的非具体主机别名。
 fn is_concrete_alias(value: &&String) -> bool {
     !value.is_empty()
         && !value
@@ -348,6 +360,7 @@ fn is_concrete_alias(value: &&String) -> bool {
             .any(|ch| matches!(ch, '*' | '?' | '[' | ']' | '!'))
 }
 
+// 展开合法且存在的 ${NAME} 环境变量，拒绝无效引用。
 fn expand_environment(value: &str) -> Result<String, String> {
     let mut result = String::new();
     let mut remaining = value;
@@ -374,6 +387,7 @@ fn expand_environment(value: &str) -> Result<String, String> {
     Ok(result)
 }
 
+// 判断路径是否含支持的通配符起始字符。
 fn has_glob(value: &Path) -> bool {
     value
         .to_string_lossy()
@@ -381,6 +395,7 @@ fn has_glob(value: &Path) -> bool {
         .any(|ch| matches!(ch, '*' | '?' | '['))
 }
 
+// 逐段枚举匹配路径并返回排序去重后的文件列表。
 fn expand_glob_path(path: &Path) -> Result<Vec<PathBuf>, String> {
     if !has_glob(path) {
         if path.is_file() {
@@ -442,6 +457,7 @@ fn expand_glob_path(path: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(candidates)
 }
 
+// 将单段 glob 转换为正则，Windows 下忽略大小写。
 fn glob_segment_regex(pattern: &str) -> Result<regex::Regex, String> {
     let mut regex = String::from("^");
     let chars: Vec<char> = pattern.chars().collect();
@@ -485,6 +501,7 @@ fn glob_segment_regex(pattern: &str) -> Result<regex::Regex, String> {
 mod tests {
     use super::*;
 
+    // 在测试路径创建父目录并写入指定配置字节。
     fn write(path: &Path, content: &[u8]) {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).unwrap();
@@ -493,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 BOM、CRLF、多别名及模式主机过滤。
     fn parses_bom_crlf_multiple_aliases_and_skips_patterns() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
@@ -516,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    // 验证相对通配符 Include 按文件字典序展开。
     fn follows_relative_glob_includes_in_lexical_order() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
@@ -537,6 +556,7 @@ mod tests {
     }
 
     #[test]
+    // 验证配置文件循环包含被拒绝。
     fn rejects_recursive_include_cycles() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
@@ -551,6 +571,7 @@ mod tests {
     }
 
     #[test]
+    // 验证条件作用域 Include 不展开并产生警告。
     fn skips_conditional_includes_with_warning() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
@@ -579,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺少 config 文件时返回稳定错误。
     fn rejects_missing_config_file() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path();
@@ -592,6 +614,7 @@ mod tests {
     }
 
     #[test]
+    // 验证分词不会吞掉 Windows 普通路径反斜杠。
     fn preserves_windows_path_separators_in_tokens() {
         assert_eq!(
             split_words(r#"C:\Users\dev\.ssh\conf.d\*.conf"#).unwrap(),

@@ -11,6 +11,7 @@ pub struct AppVersion {
 
 /// 获取应用版本号
 #[tauri::command]
+// 从 Tauri 配置读取版本/产品名并补默认值，发行方式由数据路径模块判断，不查询远端更新。
 pub fn get_app_version(app: tauri::AppHandle) -> AppVersion {
     let config = app.config();
     AppVersion {
@@ -28,6 +29,7 @@ pub fn get_app_version(app: tauri::AppHandle) -> AppVersion {
 
 /// 获取当前操作系统平台（"windows" / "macos" / "linux" / "unknown"）
 #[tauri::command]
+// 按编译目标返回平台标签，与终端选用 WSL 或其他 Shell 无关。
 pub fn get_os_platform() -> String {
     #[cfg(target_os = "windows")]
     {
@@ -52,6 +54,7 @@ mod tests {
     use crate::app_paths::{app_distribution, AppDistribution};
 
     #[test]
+    // 验证发行方式属于三个枚举分支；当前断言不检查实际序列化字符串。
     fn distribution_has_a_stable_serialized_name() {
         assert!(matches!(
             app_distribution(),

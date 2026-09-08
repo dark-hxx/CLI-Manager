@@ -60,6 +60,7 @@ struct GitCommandOutput {
 }
 
 impl GitCommandOutput {
+    // 合并标准输出和错误输出，并去除首尾空白。
     fn combined(&self) -> String {
         format!("{}{}", self.stdout, self.stderr).trim().to_string()
     }
@@ -67,6 +68,7 @@ impl GitCommandOutput {
 
 const GIT_CREATE_ERROR_SNIPPET_LEN: usize = 300;
 
+// 归一化 Git 进度换行并保留末尾 300 字符，避免遗漏最终错误。
 fn git_create_error_snippet(output: &str) -> String {
     let normalized = output.replace('\r', "\n");
     let lines = normalized
@@ -83,6 +85,7 @@ fn git_create_error_snippet(output: &str) -> String {
     format!("...{}", chars[start..].iter().collect::<String>())
 }
 
+// 移除 Windows 扩展路径前缀，并将扩展 UNC 路径还原为普通 UNC。
 fn strip_windows_extended_path_prefix(path: &str) -> String {
     if let Some(rest) = path.strip_prefix("\\\\?\\") {
         if let Some(unc_tail) = rest.strip_prefix("UNC\\") {
@@ -99,26 +102,31 @@ fn strip_windows_extended_path_prefix(path: &str) -> String {
     path.to_string()
 }
 
+// 修剪输入并移除 Windows 扩展前缀，构造本地路径。
 fn local_path_from_input(path: &str) -> PathBuf {
     PathBuf::from(strip_windows_extended_path_prefix(path.trim()))
 }
 
+// 将路径转换为不带 Windows 扩展前缀的 Git 参数。
 fn path_to_git_arg(path: &Path) -> String {
     strip_windows_extended_path_prefix(&path.to_string_lossy())
 }
 
+// 归一化分隔符与大小写，识别两种 WSL UNC 路径。
 fn is_wsl_path(path: &str) -> bool {
     let plain = strip_windows_extended_path_prefix(path);
     let normalized = plain.replace('/', "\\").to_lowercase();
     normalized.starts_with("\\\\wsl$\\") || normalized.starts_with("\\\\wsl.localhost\\")
 }
 
+// 识别 UNC、URL 和 git@ 形式的远程路径。
 fn is_unc_or_remote_path(path: &str) -> bool {
     let plain = strip_windows_extended_path_prefix(path.trim());
     let normalized = plain.replace('/', "\\").to_lowercase();
     normalized.starts_with("\\\\") || normalized.contains("://") || normalized.starts_with("git@")
 }
 
+// 拒绝 WSL 和远程路径，仅允许继续处理本地路径。
 fn ensure_supported_local_path(path: &str) -> Result<(), String> {
     if is_wsl_path(path) {
         return Err("unsupported_wsl".to_string());
@@ -129,6 +137,7 @@ fn ensure_supported_local_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 打开本地非裸仓库，并要求项目路径等于仓库工作区根目录。
 fn open_main_repo(project_path: &str) -> Result<Repository, String> {
     ensure_supported_local_path(project_path)?;
     let path = local_path_from_input(project_path);
@@ -148,6 +157,7 @@ fn open_main_repo(project_path: &str) -> Result<Repository, String> {
     Ok(repo)
 }
 
+// 修剪任务名并限制长度、ASCII 字符和 Windows 保留名称。
 fn validate_task_name(task_name: &str) -> Result<String, String> {
     let trimmed = task_name.trim();
     if trimmed.is_empty() {
@@ -174,6 +184,7 @@ fn validate_task_name(task_name: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+// 要求分支以 wt/ 开头且后缀为有效任务名。
 fn validate_worktree_branch(branch: &str) -> Result<(), String> {
     let task_name = branch
         .strip_prefix(WORKTREE_BRANCH_PREFIX)
@@ -182,6 +193,7 @@ fn validate_worktree_branch(branch: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 拒绝空值、首尾空白及不允许的基础分支字符或片段。
 fn validate_plain_branch_name(branch: &str) -> Result<(), String> {
     let trimmed = branch.trim();
     if trimmed.is_empty() {
@@ -206,6 +218,7 @@ fn validate_plain_branch_name(branch: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 读取当前本地分支名，拒绝缺失 HEAD 和游离 HEAD。
 fn current_branch_name(repo: &Repository) -> Result<String, String> {
     let head = repo.head().map_err(|_| "head_not_found".to_string())?;
     if !head.is_branch() {
@@ -221,6 +234,7 @@ fn current_branch_name(repo: &Repository) -> Result<String, String> {
 /// 认不出开发者、任务流程走不下去。这里在 worktree 创建后，best-effort 地把主仓库的
 /// 身份文件复制过去。文件不存在（主仓库自己也没初始化）或复制失败都安全忽略，
 /// 不影响 worktree 本身的创建结果。
+// 尽力复制主仓库的 Trellis 身份文件，但不覆盖工作树已有身份。
 fn seed_trellis_developer_identity(main_repo: &Path, worktree_path: &Path) {
     let source = main_repo.join(".trellis").join(".developer");
     if !source.is_file() {
@@ -237,6 +251,7 @@ fn seed_trellis_developer_identity(main_repo: &Path, worktree_path: &Path) {
     let _ = fs::copy(&source, &dest);
 }
 
+// 在项目同级生成带 -worktrees 后缀的默认根目录。
 fn default_worktree_root(project_path: &Path) -> Result<PathBuf, String> {
     let project_name = project_path
         .file_name()
@@ -249,6 +264,7 @@ fn default_worktree_root(project_path: &Path) -> Result<PathBuf, String> {
     Ok(parent.join(format!("{project_name}-worktrees")))
 }
 
+// 创建并规范化工作树根目录，要求目标不存在且位于根目录下。
 fn resolve_worktree_target_path(
     project_path: &Path,
     task_name: &str,
@@ -283,6 +299,7 @@ fn resolve_worktree_target_path(
     Ok(target)
 }
 
+// 在指定目录执行真实 Git，隐藏 Windows 窗口并收集输出与退出状态。
 fn run_git_raw<I, S>(cwd: &Path, args: I) -> Result<GitCommandOutput, String>
 where
     I: IntoIterator<Item = S>,
@@ -317,6 +334,7 @@ where
     })
 }
 
+// 执行 Git 并检查退出状态，失败时返回截断的错误内容。
 fn run_git_checked<I, S>(cwd: &Path, args: I) -> Result<String, String>
 where
     I: IntoIterator<Item = S>,
@@ -332,6 +350,7 @@ where
     }
 }
 
+// 识别权限、文件占用和资源忙等可重试的删除错误。
 fn is_retryable_worktree_remove_error(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     normalized.contains("permission denied")
@@ -342,6 +361,7 @@ fn is_retryable_worktree_remove_error(error: &str) -> bool {
         || normalized.contains("device or resource busy")
 }
 
+// 识别工作树注册或 .git 指针失效导致的删除错误。
 fn is_stale_worktree_remove_error(error: &str) -> bool {
     let normalized = error.to_ascii_lowercase();
     normalized.contains("is not a working tree")
@@ -350,6 +370,7 @@ fn is_stale_worktree_remove_error(error: &str) -> bool {
         || normalized.contains("gitdir file points to non-existent location")
 }
 
+// 强制移除工作树，对可重试的文件占用错误最多追加五次重试。
 fn run_git_worktree_remove_with_retry(
     project_path: &Path,
     target_arg: &str,
@@ -371,6 +392,7 @@ fn run_git_worktree_remove_with_retry(
     Err(last_error)
 }
 
+// 将非空输出修剪后按行追加到已有结果。
 fn append_output_line(output: &mut String, line: &str) {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -382,6 +404,7 @@ fn append_output_line(output: &mut String, line: &str) {
     output.push_str(trimmed);
 }
 
+// 调用删除函数并重试可恢复错误，将目标已不存在视为成功。
 fn remove_worktree_path_with_retry<F>(target_path: &Path, mut remove: F) -> Result<(), String>
 where
     F: FnMut(&Path) -> io::Result<()>,
@@ -404,6 +427,7 @@ where
     Err(format!("remove_stale_worktree_dir_failed: {last_error}"))
 }
 
+// 递归清理已登记的失效工作树目录，将目录缺失视为已完成。
 fn remove_registered_stale_worktree_dir(target_path: &Path) -> Result<String, String> {
     if !target_path.exists() {
         return Ok("stale_registered_worktree_path_missing".to_string());
@@ -415,6 +439,7 @@ fn remove_registered_stale_worktree_dir(target_path: &Path) -> Result<String, St
     Ok("removed_stale_registered_worktree_dir".to_string())
 }
 
+// 清理已登记的失效工作树目录后执行 Git 注册信息清理。
 fn cleanup_registered_stale_worktree_path(
     project_path: &Path,
     target_path: &Path,
@@ -427,12 +452,14 @@ fn cleanup_registered_stale_worktree_path(
     Ok(output)
 }
 
+// 通过完整本地分支引用判断分支是否存在。
 fn branch_exists(project_path: &Path, branch: &str) -> Result<bool, String> {
     let branch_ref = format!("refs/heads/{branch}");
     let output = run_git_raw(project_path, ["rev-parse", "--verify", branch_ref.as_str()])?;
     Ok(output.success)
 }
 
+// 比较两个分支的文件名差异，判断是否存在内容差异。
 fn has_branch_content_diff(
     project_path: &Path,
     base_branch: &str,
@@ -445,6 +472,7 @@ fn has_branch_content_diff(
     Ok(output.lines().any(|line| !line.trim().is_empty()))
 }
 
+// 仅允许清理本次添加前不存在且符合 wt/ 规则的分支。
 fn should_cleanup_worktree_branch_after_failed_add(
     branch: &str,
     branch_existed_before_add: bool,
@@ -452,6 +480,7 @@ fn should_cleanup_worktree_branch_after_failed_add(
     !branch_existed_before_add && validate_worktree_branch(branch).is_ok()
 }
 
+// 工作树添加失败后尽力删除本次新建的合法工作树分支。
 fn cleanup_worktree_branch_after_failed_add(
     project_path: &Path,
     branch: &str,
@@ -476,6 +505,7 @@ enum WorktreeRegistration {
     Missing,
 }
 
+// 解析 porcelain 工作树列表中的路径与本地分支对应关系。
 fn parse_worktree_list_entries(output: &str) -> Vec<WorktreeListEntry> {
     let mut entries = Vec::new();
     let mut current_path: Option<PathBuf> = None;
@@ -512,6 +542,7 @@ fn parse_worktree_list_entries(output: &str) -> Vec<WorktreeListEntry> {
     entries
 }
 
+// 尽力规范化路径并统一分隔符，在 Windows 下忽略大小写。
 fn normalize_path_for_compare(path: &Path) -> String {
     let normalized_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let mut value = normalized_path.to_string_lossy().replace('\\', "/");
@@ -525,6 +556,7 @@ fn normalize_path_for_compare(path: &Path) -> String {
     }
 }
 
+// 按路径和分支的联合匹配区分登记吻合、错配与缺失。
 fn classify_worktree_registration(
     entries: &[WorktreeListEntry],
     worktree_path: &Path,
@@ -551,6 +583,7 @@ fn classify_worktree_registration(
     }
 }
 
+// 读取 Git 工作树登记列表并分类指定路径与分支的对应关系。
 fn worktree_registration(
     project_path: &Path,
     worktree_path: &Path,
@@ -564,6 +597,7 @@ fn worktree_registration(
     ))
 }
 
+// 读取目录首个条目，判断失效工作树目录是否为空。
 fn is_empty_dir(path: &Path) -> Result<bool, String> {
     let mut entries =
         fs::read_dir(path).map_err(|e| format!("read_stale_worktree_dir_failed: {e}"))?;
@@ -573,6 +607,7 @@ fn is_empty_dir(path: &Path) -> Result<bool, String> {
 /// worktree 移除后，若其所在的根目录（如 `<project>-worktrees`）已空，顺手清掉，
 /// 避免（尤其是批量）删除后残留一个空文件夹。`fs::remove_dir` 仅能删空目录，
 /// 非空/出错都安全忽略；git 下次 `worktree add` 会通过 create_dir_all 自动重建根目录。
+// 工作树移除后尽力删除已空的父目录，保留非空父目录。
 fn cleanup_empty_worktree_parent(worktree_path: &Path) {
     if let Some(parent) = worktree_path.parent() {
         if is_empty_dir(parent).unwrap_or(false) {
@@ -581,6 +616,7 @@ fn cleanup_empty_worktree_parent(worktree_path: &Path) {
     }
 }
 
+// 仅清理未登记的空目录或缺失登记，并按请求删除残留分支。
 fn cleanup_stale_unregistered_worktree(
     project_path: &Path,
     target_path: &Path,
@@ -608,6 +644,7 @@ fn cleanup_stale_unregistered_worktree(
     Ok(output.trim().to_string())
 }
 
+// 按锁文件及依赖目录判断是否建议安装 Node 或 Rust 依赖。
 fn check_dependency_need(path: &Path) -> GitWorktreeDepsCheckResult {
     let node_modules_missing = !path.join("node_modules").exists();
     if path.join("pnpm-lock.yaml").exists() && node_modules_missing {
@@ -648,6 +685,7 @@ fn check_dependency_need(path: &Path) -> GitWorktreeDepsCheckResult {
     }
 }
 
+// 读取未合并文件名列表，命令启动失败时返回空列表。
 fn conflict_files(project_path: &Path) -> Vec<String> {
     match run_git_raw(project_path, ["diff", "--name-only", "--diff-filter=U"]) {
         Ok(output) => output
@@ -662,6 +700,7 @@ fn conflict_files(project_path: &Path) -> Vec<String> {
 }
 
 #[tauri::command]
+// 在线程池检查路径是否为支持的本地主仓库根目录。
 pub async fn git_worktree_validate(project_path: String) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
         if is_wsl_path(&project_path) {
@@ -678,6 +717,7 @@ pub async fn git_worktree_validate(project_path: String) -> Result<bool, String>
 }
 
 #[tauri::command]
+// 基于当前 HEAD 创建 wt/ 分支工作树，并尽力同步 Trellis 身份。
 pub async fn git_worktree_create(
     req: GitWorktreeCreateRequest,
 ) -> Result<GitWorktreeCreateResult, String> {
@@ -730,6 +770,7 @@ pub async fn git_worktree_create(
 }
 
 #[tauri::command]
+// 校验工作树为受支持的本地目录后返回依赖安装建议。
 pub async fn git_worktree_check_deps(
     worktree_path: String,
 ) -> Result<GitWorktreeDepsCheckResult, String> {
@@ -749,6 +790,7 @@ pub async fn git_worktree_check_deps(
 }
 
 #[tauri::command]
+// 检查主工作区清洁和分支差异后合并工作树分支，冲突时尝试中止。
 pub async fn git_worktree_merge(
     project_path: String,
     worktree_branch: String,
@@ -824,6 +866,7 @@ pub async fn git_worktree_merge(
 }
 
 #[tauri::command]
+// 核对工作树路径与分支登记后删除工作树，并按请求清理分支和空父目录。
 pub async fn git_worktree_remove(
     project_path: String,
     worktree_path: String,
@@ -907,6 +950,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     #[test]
+    // 验证任务名的空值、长度、字符和 Windows 保留名称限制。
     fn validates_task_names() {
         assert_eq!(
             validate_task_name("task-0705_1200").unwrap(),
@@ -930,6 +974,7 @@ mod tests {
     }
 
     #[test]
+    // 验证工作树分支必须具有 wt/ 前缀和合法任务后缀。
     fn validates_worktree_branch_prefix() {
         assert!(validate_worktree_branch("wt/task-1").is_ok());
         assert_eq!(
@@ -943,6 +988,7 @@ mod tests {
     }
 
     #[test]
+    // 验证大量检出进度不会挤掉末尾的 Git 致命错误。
     fn keeps_final_git_error_after_checkout_progress() {
         let output = format!(
             "Preparing worktree\r{}fatal: unable to checkout files",
@@ -953,6 +999,7 @@ mod tests {
     }
 
     #[test]
+    // 验证常见权限与文件占用错误可重试，而无关错误不可重试。
     fn detects_retryable_worktree_remove_errors() {
         assert!(is_retryable_worktree_remove_error(
             "git_failed: error: failed to delete 'task-1': Permission denied"
@@ -972,6 +1019,7 @@ mod tests {
     }
 
     #[test]
+    // 验证失效工作树登记错误与普通权限错误的区别。
     fn detects_stale_worktree_remove_errors() {
         assert!(is_stale_worktree_remove_error(
             "git_failed: fatal: 'F:\\repo\\worktrees\\task-1' is not a working tree"
@@ -988,6 +1036,7 @@ mod tests {
     }
 
     #[test]
+    // 验证默认工作树根目录位于项目同级并带固定后缀。
     fn computes_default_worktree_root_next_to_project() {
         let project_path = Path::new("/repo/demo-app");
         let root = default_worktree_root(project_path).unwrap();
@@ -995,6 +1044,7 @@ mod tests {
     }
 
     #[test]
+    // 验证自定义工作树根目录被创建且目标位于规范化根目录下。
     fn resolves_target_path_under_custom_root() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
@@ -1006,6 +1056,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Git 路径参数移除两种 Windows 扩展路径前缀。
     fn git_path_args_do_not_keep_windows_extended_prefix() {
         assert_eq!(
             path_to_git_arg(Path::new("\\\\?\\D:\\repo\\worktrees\\task-1")),
@@ -1018,6 +1069,7 @@ mod tests {
     }
 
     #[test]
+    // 验证添加失败时只允许清理新建的合法工作树分支。
     fn cleanup_after_failed_add_is_limited_to_new_wt_branches() {
         assert!(should_cleanup_worktree_branch_after_failed_add(
             "wt/task-1",
@@ -1037,6 +1089,7 @@ mod tests {
     }
 
     #[test]
+    // 验证基础分支名允许普通层级名称并拒绝危险片段。
     fn validates_base_branch_names() {
         assert!(validate_plain_branch_name("main").is_ok());
         assert!(validate_plain_branch_name("release/1.0").is_ok());
@@ -1055,6 +1108,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 porcelain 工作树列表解析路径和分支。
     fn parses_porcelain_worktree_entries() {
         let output = "worktree C:/repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree C:/repo/wt/task\nHEAD def\nbranch refs/heads/wt/task\n";
         let entries = parse_worktree_list_entries(output);
@@ -1064,6 +1118,7 @@ mod tests {
     }
 
     #[test]
+    // 验证路径与分支联合匹配、单项错配及双项缺失的分类。
     fn classifies_worktree_registration() {
         let entries = parse_worktree_list_entries(
             "worktree C:/repo/main\nHEAD abc\nbranch refs/heads/main\n\nworktree C:/repo/wt/task\nHEAD def\nbranch refs/heads/wt/task\n",
@@ -1087,6 +1142,7 @@ mod tests {
     }
 
     #[test]
+    // 验证工作树父目录清理只删除空目录并保留兄弟工作树。
     fn cleanup_empty_worktree_parent_removes_only_empty_root() {
         let temp = tempfile::tempdir().unwrap();
 
@@ -1111,6 +1167,7 @@ mod tests {
     }
 
     #[test]
+    // 验证主仓库的 Trellis 身份被复制到已有工作树配置目录。
     fn seeds_trellis_developer_identity_into_worktree() {
         let temp = tempfile::tempdir().unwrap();
         let main_repo = temp.path().join("main");
@@ -1129,6 +1186,7 @@ mod tests {
     }
 
     #[test]
+    // 验证主仓库缺少 Trellis 身份时不创建目标身份文件。
     fn seed_trellis_developer_identity_is_noop_when_source_missing() {
         let temp = tempfile::tempdir().unwrap();
         let main_repo = temp.path().join("main");
@@ -1142,6 +1200,7 @@ mod tests {
     }
 
     #[test]
+    // 验证同步 Trellis 身份不会覆盖工作树已有身份。
     fn seed_trellis_developer_identity_does_not_overwrite_existing() {
         let temp = tempfile::tempdir().unwrap();
         let main_repo = temp.path().join("main");
@@ -1164,6 +1223,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未登记工作树只能清理空目录并保留非空目录。
     fn cleanup_stale_unregistered_worktree_removes_empty_dir_only() {
         let temp = tempfile::tempdir().unwrap();
         let empty = temp.path().join("empty");
@@ -1185,6 +1245,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已登记失效工作树的清理函数可以删除非空临时目录。
     fn registered_stale_worktree_cleanup_can_remove_non_empty_dir() {
         let temp = tempfile::tempdir().unwrap();
         let stale = temp.path().join("stale");
@@ -1197,6 +1258,7 @@ mod tests {
     }
 
     #[test]
+    // 验证目录删除遇到模拟文件锁时重试，并在第三次成功。
     fn stale_worktree_path_remove_retries_windows_file_lock_errors() {
         let temp = tempfile::tempdir().unwrap();
         let stale = temp.path().join("stale");
@@ -1222,6 +1284,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺少 Node 与 Rust 依赖目录时返回对应安装建议。
     fn detects_dependency_install_matrix() {
         let temp = tempfile::tempdir().unwrap();
         fs::write(temp.path().join("package.json"), "{}").unwrap();

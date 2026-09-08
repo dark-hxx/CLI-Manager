@@ -6,6 +6,7 @@ use super::{
 use serde_json::{Map, Value};
 use toml_edit::{DocumentMut, Item, Table, Value as TomlValue};
 
+// 将缺失或 ASCII 空白字节视为空对象，其他内容必须是合法 JSON 对象。
 pub(super) fn parse_json_object(bytes: Option<&[u8]>) -> Result<Map<String, Value>, String> {
     let Some(bytes) = bytes else {
         return Ok(Map::new());
@@ -21,6 +22,7 @@ pub(super) fn parse_json_object(bytes: Option<&[u8]>) -> Result<Map<String, Valu
         .ok_or_else(|| "provider_config_invalid".to_string())
 }
 
+// 将对象格式化为 JSON 字节并追加换行，序列化失败返回配置错误。
 pub(super) fn json_bytes(object: Map<String, Value>) -> Result<Vec<u8>, String> {
     let mut bytes = serde_json::to_vec_pretty(&Value::Object(object))
         .map_err(|_| "provider_config_invalid".to_string())?;
@@ -28,6 +30,7 @@ pub(super) fn json_bytes(object: Map<String, Value>) -> Result<Vec<u8>, String> 
     Ok(bytes)
 }
 
+// 将缺失或空白输入视为空 TOML 文档；拒绝无效 UTF-8 或 TOML。
 pub(super) fn toml_document(bytes: Option<&[u8]>) -> Result<DocumentMut, String> {
     let Some(bytes) = bytes else {
         return Ok(DocumentMut::new());
@@ -40,6 +43,7 @@ pub(super) fn toml_document(bytes: Option<&[u8]>) -> Result<DocumentMut, String>
         .map_err(|_| "provider_config_invalid".to_string())
 }
 
+// 解析并要求供应商设置为 JSON 对象，不检查内部配置字段。
 pub(super) fn settings_config(value: &str) -> Result<Value, String> {
     let settings =
         serde_json::from_str::<Value>(value).map_err(|_| "provider_config_invalid".to_string())?;
@@ -50,6 +54,7 @@ pub(super) fn settings_config(value: &str) -> Result<Value, String> {
     }
 }
 
+// 只复制 Claude 所有权名单中的环境字段，并依据认证键存在/空值选择一个字段写入给定密钥，删除另一个认证字段。
 pub(super) fn provider_owned_env(
     effective: &Value,
     secret: &str,
@@ -101,6 +106,7 @@ pub(super) fn provider_owned_env(
     Ok(desired)
 }
 
+// 在已有 JSON 中替换或移除所有权名单内的环境字段，保留其他字段，返回生成字节及所有权键，不写文件。
 pub(crate) fn materialize_claude(
     before: Option<&[u8]>,
     effective: &Value,
@@ -131,6 +137,7 @@ pub(crate) fn materialize_claude(
     ))
 }
 
+// 移除已有认证所有权键和整个 auth 节点，写入顶层 OPENAI_API_KEY；忽略 effective，返回字节及预定义所有权键。
 pub(crate) fn materialize_codex_auth(
     before: Option<&[u8]>,
     _effective: &Value,
@@ -154,6 +161,7 @@ pub(crate) fn materialize_codex_auth(
     ))
 }
 
+// 按名单复制来源的顶层 TOML 项，来源缺失时删除目标项，返回名单本身作为所有权列表。
 pub(super) fn copy_toml_owned(
     source: &DocumentMut,
     target: &mut DocumentMut,
@@ -169,6 +177,7 @@ pub(super) fn copy_toml_owned(
     keys.iter().map(|key| (*key).to_string()).collect()
 }
 
+// 复制所属 TOML 字段、清除旧顶层连接字段并投影显式模型与端点，最后清理模型供应商凭据，返回字节而非写入文件。
 pub(crate) fn materialize_codex_config(
     before: Option<&[u8]>,
     effective: &Value,
@@ -214,6 +223,7 @@ pub(crate) fn materialize_codex_config(
     Ok((target.to_string().into_bytes(), owned))
 }
 
+// 确保普通模型供应商表存在，缺失名称时补 CLI-Manager，并写入可选端点；结构不符返回错误。
 pub(super) fn ensure_codex_provider_mapping(
     target: &mut DocumentMut,
     provider_name: &str,
@@ -240,6 +250,7 @@ pub(super) fn ensure_codex_provider_mapping(
     Ok(())
 }
 
+// 规范化键名后按已知凭据名及 token/secret/password/api_key 后缀识别，不检查值内容。
 pub(super) fn is_toml_secret_key(key: &str) -> bool {
     let normalized = key.trim().to_ascii_lowercase().replace(['-', '.'], "_");
     matches!(
@@ -267,6 +278,7 @@ pub(super) fn is_toml_secret_key(key: &str) -> bool {
         || normalized.ends_with("apikey")
 }
 
+// 按 TOML 项类型递归删除敏感字段，表数组逐项处理并累计删除标记，不短路。
 pub(super) fn remove_toml_secret_fields(item: &mut Item) -> bool {
     match item {
         Item::Table(table) => remove_toml_secret_table(table),
@@ -282,6 +294,7 @@ pub(super) fn remove_toml_secret_fields(item: &mut Item) -> bool {
     }
 }
 
+// 删除当前表中识别出的敏感键，再遍历全部剩余子项，返回是否发生删除。
 pub(super) fn remove_toml_secret_table(table: &mut Table) -> bool {
     let secret_keys = table
         .iter()
@@ -298,6 +311,7 @@ pub(super) fn remove_toml_secret_table(table: &mut Table) -> bool {
     removed
 }
 
+// 清理内联表敏感键并递归全部嵌套值和数组元素，标量内容不扫描。
 pub(super) fn remove_toml_secret_value(value: &mut TomlValue) -> bool {
     let mut removed = false;
     if let Some(table) = value.as_inline_table_mut() {
@@ -321,6 +335,7 @@ pub(super) fn remove_toml_secret_value(value: &mut TomlValue) -> bool {
     removed
 }
 
+// 清理普通 model_providers 表中各供应商的敏感字段，并删除普通供应商表的 env_key；无该表或结构不符时直接返回。
 pub(super) fn sanitize_codex_model_providers(target: &mut DocumentMut) {
     let Some(item) = target.get_mut("model_providers") else {
         return;
@@ -337,6 +352,7 @@ pub(super) fn sanitize_codex_model_providers(target: &mut DocumentMut) {
     }
 }
 
+// 委托 Grok 配置生成器以内联凭据模式生成全局配置字节及所有权字段。
 pub(crate) fn materialize_grok_global_config(
     before: Option<&[u8]>,
     effective: &Value,

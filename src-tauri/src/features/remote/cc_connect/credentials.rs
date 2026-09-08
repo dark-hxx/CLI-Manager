@@ -7,12 +7,14 @@ use super::{
 };
 
 #[cfg(target_os = "windows")]
+// 通过 Windows 凭据条目保存平台密钥。
 pub(super) fn set_credential(account: &str, value: &str) -> Result<(), String> {
     crate::credential_store::entry(account)?
         .set_password(value)
         .map_err(|err| format!("save cc-connect credential failed: {err}"))
 }
 #[cfg(target_os = "windows")]
+// 读取 Windows 平台凭据，将无条目映射为空。
 pub(super) fn get_credential(account: &str) -> Result<Option<String>, String> {
     match crate::credential_store::entry(account)?.get_password() {
         Ok(value) => Ok(Some(value)),
@@ -21,6 +23,7 @@ pub(super) fn get_credential(account: &str) -> Result<Option<String>, String> {
     }
 }
 #[cfg(target_os = "windows")]
+// 删除 Windows 平台凭据，缺失条目视为成功。
 pub(super) fn delete_credential(account: &str) -> Result<(), String> {
     match crate::credential_store::entry(account)?.delete_credential() {
         Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
@@ -28,18 +31,22 @@ pub(super) fn delete_credential(account: &str) -> Result<(), String> {
     }
 }
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台明确拒绝保存 cc-connect 凭据。
 pub(super) fn set_credential(_account: &str, _value: &str) -> Result<(), String> {
     Err("secure cc-connect credential storage is only available on Windows".to_string())
 }
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台返回无可用 cc-connect 凭据。
 pub(super) fn get_credential(_account: &str) -> Result<Option<String>, String> {
     Ok(None)
 }
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台将凭据删除处理为空操作。
 pub(super) fn delete_credential(_account: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 仅保存请求中提供的非空去空白凭据。
 pub(super) fn save_request_credentials(
     request: &CcConnectSaveProfileRequest,
 ) -> Result<(), String> {
@@ -65,6 +72,7 @@ pub(super) fn save_request_credentials(
     Ok(())
 }
 
+// 检查所选平台的必要凭据是否全部非空。
 pub(super) fn credentials_ready(platform: CcConnectPlatform) -> Result<bool, String> {
     Ok(match platform {
         CcConnectPlatform::Telegram => {
@@ -86,6 +94,7 @@ pub(super) fn credentials_ready(platform: CcConnectPlatform) -> Result<bool, Str
     })
 }
 
+// 读取所选平台凭据并返回子进程环境及脱敏秘密列表。
 pub(super) fn credential_environment(
     platform: CcConnectPlatform,
 ) -> Result<(Vec<(String, String)>, Vec<String>), String> {
@@ -141,6 +150,7 @@ pub(super) fn credential_environment(
     }
 }
 
+// 要求至少启用一个平台且所有启用平台凭据就绪。
 pub(super) fn credentials_ready_for_profile(profile: &CcConnectProfile) -> Result<bool, String> {
     let enabled = enabled_platforms(profile);
     if enabled.is_empty() {
@@ -154,6 +164,7 @@ pub(super) fn credentials_ready_for_profile(profile: &CcConnectProfile) -> Resul
     Ok(true)
 }
 
+// 汇总启用平台的凭据环境与日志脱敏秘密列表。
 pub(super) fn credential_environment_for_profile(
     profile: &CcConnectProfile,
 ) -> Result<(Vec<(String, String)>, Vec<String>), String> {
@@ -172,6 +183,7 @@ pub(super) fn credential_environment_for_profile(
     Ok((environment, secrets))
 }
 
+// 返回各平台启用状态，凭据查询失败视为未就绪。
 pub(super) fn platform_statuses(
     profile: Option<&CcConnectProfile>,
 ) -> Vec<CcConnectPlatformStatus> {

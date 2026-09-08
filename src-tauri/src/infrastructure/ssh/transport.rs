@@ -47,6 +47,7 @@ pub enum SshRemoteHomePathError {
     ParentTraversal,
 }
 
+// 仅接受绝对 POSIX 或 ~/ 简写，拒绝父目录段及指定扩展/控制字符；不访问远端文件系统。
 pub fn validate_remote_home_path(path: &str) -> Result<(), SshRemoteHomePathError> {
     if path.contains(['\0', '\r', '\n', '\\', '$', '`'])
         || !(path.starts_with('/') || path == "~" || path.starts_with("~/"))
@@ -59,6 +60,7 @@ pub fn validate_remote_home_path(path: &str) -> Result<(), SshRemoteHomePathErro
     Ok(())
 }
 
+// 将 ~ 前缀转为受引号保护的远端 HOME，其他路径单引号转义；调用方需先校验路径。
 pub fn format_remote_home_path(path: &str) -> String {
     if path == "~" {
         return "\"${HOME}\"".to_string();
@@ -69,11 +71,13 @@ pub fn format_remote_home_path(path: &str) -> String {
     posix_quote(path)
 }
 
+// 用 POSIX 单引号包装字符串，并通过退出/重进引号表达其中的单引号字符。
 pub fn posix_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 impl SshTransportSpec {
+    // 校验连接必填项、认证模式、时间参数、配置文件及单行/代理形态；不测试网络或凭据是否可用。
     pub fn validate(&self) -> Result<(), String> {
         if self.config_alias.trim().is_empty() && self.host.trim().is_empty() {
             return Err("ssh_host_address_required".to_string());
@@ -131,6 +135,7 @@ impl SshTransportSpec {
         Ok(())
     }
 
+    // 优先使用去空白的 Config alias，否则组成 user@host 或裸 host，不在此另行校验。
     pub fn target(&self) -> String {
         if !self.config_alias.trim().is_empty() {
             return self.config_alias.trim().to_string();
@@ -142,6 +147,7 @@ impl SshTransportSpec {
         }
     }
 
+    // 构造强制分配 PTY 的 ssh -tt 参数，远端命令由调用方提供；凭据模式会启动允许终端回退的 broker。
     pub fn build_interactive_launch(
         &self,
         remote_command: String,
@@ -160,6 +166,8 @@ impl SshTransportSpec {
         })
     }
 
+    // 构造无 PTY 的 ssh -T 单次连接，可开启 verbose/accept-new；仅凭据模式禁用 BatchMode。
+    // 不启动 SSH，但凭据模式会准备一次性 broker，且显式禁用终端回退。
     pub fn build_one_shot_launch(
         &self,
         remote_command: String,
@@ -196,6 +204,8 @@ impl SshTransportSpec {
         })
     }
 
+    // 追加配置、超时与 KeepAlive；无 alias/jump/显式配置的指定认证模式使用 -F none，其他模式保留默认配置。
+    // 单次连接只尝试一次，有 alias 时不追加端口覆盖，交由 SSH Config 解析。
     fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
         if !self.config_file.trim().is_empty() {
             args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
@@ -226,6 +236,7 @@ impl SshTransportSpec {
         }
     }
 
+    // 按认证模式生成互不沿用的密钥/密码/交互选项；密码类单次请求最多一次提示，ssh_config 不额外覆盖。
     fn append_auth_args(&self, args: &mut Vec<String>, one_shot: bool) {
         if self.auth_mode == "identity_file" && !self.identity_file.trim().is_empty() {
             args.extend(["-i".to_string(), self.identity_file.trim().to_string()]);
@@ -272,6 +283,7 @@ impl SshTransportSpec {
         }
     }
 
+    // 显式代理命令优先于 jump host；只有代理为空才追加 -J，避免同时配置两条路由。
     fn append_route_args(&self, args: &mut Vec<String>) -> Result<(), String> {
         let proxy_command = crate::ssh_proxy::build_proxy_command(
             &self.proxy_type,
@@ -288,6 +300,7 @@ impl SshTransportSpec {
         Ok(())
     }
 
+    // 仅凭据模式读取系统凭据并准备 broker 环境，再设置终端回退开关；其他认证模式返回空映射。
     fn askpass_environment(
         &self,
         allow_terminal_fallback: bool,
@@ -302,6 +315,7 @@ impl SshTransportSpec {
     }
 }
 
+// 在环境映射中显式写入允许或禁止回退值，覆盖任何旧值但不修改当前进程环境。
 fn configure_askpass_terminal_fallback(
     env: &mut HashMap<String, String>,
     allow_terminal_fallback: bool,
@@ -317,6 +331,7 @@ fn configure_askpass_terminal_fallback(
     );
 }
 
+// 拒绝 NUL、CR、LF，允许空值和其他字符；不代替具体字段的语法校验。
 fn validate_single_line(value: &str) -> Result<(), String> {
     if value.contains(['\0', '\r', '\n']) {
         return Err("ssh_launch_argument_invalid".to_string());
@@ -324,6 +339,7 @@ fn validate_single_line(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 空值表示沿用默认配置；非空值要求本机绝对文件路径，跟随符号链接但不检查文件内容或读取权限。
 fn validate_config_file(value: &str) -> Result<(), String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -338,6 +354,7 @@ fn validate_config_file(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 对空白分隔 token 做启发式检测：URL authority 中的 userinfo 含冒号才视为凭据，不是完整 URL 解析器。
 fn contains_url_credentials(value: &str) -> bool {
     value.split_whitespace().any(|token| {
         let Some((_, remainder)) = token.split_once("://") else {
@@ -358,6 +375,7 @@ mod tests {
     };
     use std::collections::HashMap;
 
+    // 创建带固定示例主机、jump 和超时参数的测试配置，不包含真实凭据引用。
     fn spec(auth_mode: &str) -> SshTransportSpec {
         SshTransportSpec {
             host: "example.com".into(),
@@ -380,6 +398,7 @@ mod tests {
     }
 
     #[test]
+    // 验证交互与单次 launch 共用连接路由参数，同时分别使用 -tt/-T 和单次重试限制。
     fn interactive_and_one_shot_share_connection_routing() {
         let value = spec("identity_file");
         let interactive = value.build_interactive_launch("shell".into()).unwrap();
@@ -404,6 +423,7 @@ mod tests {
     }
 
     #[test]
+    // 验证只有 identity_file 模式添加 -i，其他模式不沿用残留密钥路径。
     fn auth_modes_do_not_leak_stale_identity_arguments() {
         for mode in ["ssh_config", "agent", "password_prompt", "interactive"] {
             let launch = spec(mode).build_interactive_launch("shell".into()).unwrap();
@@ -416,6 +436,7 @@ mod tests {
     }
 
     #[test]
+    // 验证凭据引用必填、密码与键盘交互参数及一次提示限制，不实际读取凭据库。
     fn credential_mode_uses_password_auth_and_one_prompt() {
         let mut value = spec("credential_ref");
         assert_eq!(value.validate().unwrap_err(), "ssh_credential_ref_required");
@@ -431,6 +452,7 @@ mod tests {
     }
 
     #[test]
+    // 验证交互模式明确启用 AskPass 回退，单次模式会覆盖旧值为禁用。
     fn askpass_terminal_fallback_is_explicit_for_each_launch_mode() {
         let key = crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV;
         let mut interactive = HashMap::new();
@@ -449,6 +471,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 alias 可替代空 host/零 port，且启动参数不强制覆盖端口或默认 Config。
     fn config_alias_owns_host_and_port_resolution() {
         let mut value = spec("ssh_config");
         value.config_alias = "prod".into();
@@ -463,6 +486,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无 alias/jump 时指定认证模式使用 -F none；凭据模式只测试参数追加，不启动 broker。
     fn explicit_authentication_modes_ignore_the_default_ssh_config() {
         for mode in ["identity_file", "password_prompt", "interactive"] {
             let mut value = spec(mode);
@@ -491,6 +515,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 agent 与 ssh_config 即使使用显式地址也不追加 -F none。
     fn agent_and_ssh_config_modes_keep_the_default_config_for_explicit_addresses() {
         for mode in ["agent", "ssh_config"] {
             let mut value = spec(mode);
@@ -511,6 +536,7 @@ mod tests {
     }
 
     #[test]
+    // 验证使用命名跳板时保留默认 SSH Config，并添加预期 -J 参数。
     fn config_alias_jump_keeps_the_default_ssh_config_enabled() {
         let launch = spec("agent")
             .build_interactive_launch("shell".into())
@@ -520,6 +546,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时文件验证自定义 -F 配置同时进入交互和单次参数，不执行 SSH。
     fn custom_config_file_is_shared_by_interactive_and_one_shot_launches() {
         let temp = tempfile::NamedTempFile::new().unwrap();
         let mut value = spec("ssh_config");
@@ -538,6 +565,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SOCKS5 直接代理生成 ProxyCommand 并抑制已有 jump 参数。
     fn direct_proxy_takes_precedence_over_jump_host() {
         let mut value = spec("agent");
         value.proxy_type = "socks5".into();
@@ -554,6 +582,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 HOME 简写格式化和绝对路径引号，并拒绝父目录逃逸及直接 $HOME 扩展输入。
     fn remote_home_paths_expand_only_the_supported_shorthand() {
         assert_eq!(format_remote_home_path("~"), "\"${HOME}\"");
         assert_eq!(

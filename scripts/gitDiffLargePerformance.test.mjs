@@ -18,8 +18,10 @@ import {
   estimateGitDiffHunkHeight,
 } from "../src/features/git/components/diff/gitDiffVirtualization.ts";
 
+// 按相对路径读取被测源码。
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
+// 验证差异处理阈值在精确边界仍启用对应能力。
 test("Git diff thresholds keep exact boundary values enabled", () => {
   assert.equal(shouldParseGitDiffInWorker(GIT_DIFF_WORKER_THRESHOLD_BYTES), false);
   assert.equal(shouldParseGitDiffInWorker(GIT_DIFF_WORKER_THRESHOLD_BYTES + 1), true);
@@ -37,6 +39,7 @@ test("Git diff thresholds keep exact boundary values enabled", () => {
   }), false);
 });
 
+// 验证旧差异载荷按 UTF-8 字节与 Rust 行语义补齐元数据。
 test("legacy payload metadata is normalized with UTF-8 byte and Rust line semantics", () => {
   const payload = normalizeGitDiffPayload({
     content: "新增\nline\n",
@@ -48,29 +51,35 @@ test("legacy payload metadata is normalized with UTF-8 byte and Rust line semant
   assert.equal(countGitDiffLines("one"), 1);
   assert.equal(countGitDiffLines("one\n"), 1);
 
+  // 验证实际内容字节数超限被拒绝。
   assert.throws(() => normalizeGitDiffPayload({
     content: "a".repeat(GIT_DIFF_MAX_BYTES + 1),
     canRevertHunks: true,
   }), /git_diff_too_large/);
+  // 验证实际内容行数超限被拒绝。
   assert.throws(() => normalizeGitDiffPayload({
     content: "x\n".repeat(GIT_DIFF_MAX_LINES + 1),
     canRevertHunks: true,
   }), /git_diff_too_large/);
 });
 
+// 验证传输元数据不能超过硬性字节和行数上限。
 test("transport normalization rejects byte and line values above the hard limits", () => {
+  // 验证元数据等于硬上限时仍被接受。
   assert.doesNotThrow(() => normalizeGitDiffPayload({
     content: "a",
     canRevertHunks: false,
     byteLength: GIT_DIFF_MAX_BYTES,
     lineCount: GIT_DIFF_MAX_LINES,
   }));
+  // 验证声明字节数超过硬上限时被拒绝。
   assert.throws(() => normalizeGitDiffPayload({
     content: "a",
     canRevertHunks: false,
     byteLength: GIT_DIFF_MAX_BYTES + 1,
     lineCount: 1,
   }), /git_diff_too_large/);
+  // 验证声明行数超过硬上限时被拒绝。
   assert.throws(() => normalizeGitDiffPayload({
     content: "a",
     canRevertHunks: false,
@@ -79,6 +88,7 @@ test("transport normalization rejects byte and line values above the hard limits
   }), /git_diff_too_large/);
 });
 
+// 验证纯解析器返回可结构化克隆的数据。
 test("pure parser returns structured clone friendly file data", () => {
   const file = parseGitDiffFile([
     "diff --git a/a.txt b/a.txt",
@@ -90,9 +100,11 @@ test("pure parser returns structured clone friendly file data", () => {
   ].join("\n"));
   assert.equal(file?.hunks.length, 1);
   assert.equal(file?.hunks[0].changes.length, 2);
+  // 验证解析结果不含阻止结构化克隆的值。
   assert.doesNotThrow(() => structuredClone(file));
 });
 
+// 验证统一与分栏视图的行数及高度估算。
 test("virtual height estimation matches unified and split row composition", () => {
   const changes = [
     { type: "delete" },
@@ -104,6 +116,7 @@ test("virtual height estimation matches unified and split row composition", () =
   assert.equal(estimateGitDiffHunkHeight({ changes }, "split"), 76);
 });
 
+// 验证 Worker 取消与虚拟化仅处理可见内容的源码契约。
 test("worker parsing and hunk virtualization keep cancellation and visible-only work", () => {
   const hook = read("../src/features/git/components/diff/useGitDiffParser.ts");
   const worker = read("../src/features/git/components/diff/gitDiffParser.worker.ts");
@@ -131,6 +144,7 @@ test("worker parsing and hunk virtualization keep cancellation and visible-only 
   );
 });
 
+// 验证本地和 SSH 传输在统一边界归一化可选元数据。
 test("local and SSH transport normalize optional metadata at one boundary", () => {
   const transport = read("../src/features/git/lib/gitTransport.ts");
   const matches = transport.match(/normalizeGitDiffPayload/g) ?? [];
@@ -138,6 +152,7 @@ test("local and SSH transport normalize optional metadata at one boundary", () =
   assert.match(transport, /value: normalizeGitDiffPayload\(result\.value\)/);
 });
 
+// 验证桌面与代理遵守同一差异载荷错误契约。
 test("Desktop and Agent enforce the same final payload error contract", () => {
   const desktop = read("../src-tauri/src/features/git/diff.rs");
   const agent = read("../src-tauri/ssh-agent/src/git_diff.rs");

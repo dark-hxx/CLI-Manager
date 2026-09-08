@@ -4,6 +4,7 @@ use std::path::Path;
 
 /// 解析 unified diff 的 hunk 头 `@@ -a,b +c,d @@ heading`。
 /// 返回 (old_start, old_count, new_start, new_count, heading)。count 省略时为 1。
+// 解析 unified hunk 的新旧起点、行数和标题，省略行数时取一。
 pub(super) fn parse_hunk_header(header: &str) -> Result<(u32, u32, u32, u32, String), String> {
     let body = header.strip_prefix("@@ ").ok_or("bad_hunk_header")?;
     let close = body.find(" @@").ok_or("bad_hunk_header")?;
@@ -17,6 +18,7 @@ pub(super) fn parse_hunk_header(header: &str) -> Result<(u32, u32, u32, u32, Str
     Ok((old_start, old_count, new_start, new_count, heading))
 }
 
+// 解析起点及可选逗号行数，缺省行数为一。
 pub(super) fn parse_range(s: &str) -> Result<(u32, u32), String> {
     if let Some((start, count)) = s.split_once(',') {
         Ok((
@@ -29,6 +31,7 @@ pub(super) fn parse_range(s: &str) -> Result<(u32, u32), String> {
 }
 
 /// 反向单个 hunk：交换 old/new 行号区间，交换 +/- 行；上下文与 `\ No newline` 行原样保留。
+// 交换 hunk 新旧范围与增删前缀，保留上下文、无末尾换行标记及 CR。
 pub(super) fn reverse_hunk(hunk: &[&str]) -> Result<Vec<String>, String> {
     let header = *hunk.first().ok_or("empty_hunk")?;
     let cr = header.ends_with('\r');
@@ -63,6 +66,7 @@ pub(super) fn reverse_hunk(hunk: &[&str]) -> Result<Vec<String>, String> {
 
 /// 从完整 unified diff 文本中提取第 `hunk_index` 个 hunk，构造"反向 patch"。
 /// 正向 apply 该反向 patch 即等于撤销这个 hunk 的改动。纯函数，便于单测。
+// 按索引提取一个 hunk 并反向，保留原文件头和末尾换行。
 pub(super) fn build_reverse_hunk_patch(
     diff_text: &str,
     hunk_index: usize,
@@ -118,6 +122,7 @@ pub(super) fn build_reverse_hunk_patch(
 
 /// 把反向 patch 应用到工作区：解析 → dry-run 校验 → 正式 apply。
 /// dry-run 防止 stale diff 错位应用损坏工作区；失败返回稳定错误串。
+// 解析反向 Patch，先检查可应用性，再仅应用到工作区。
 pub(super) fn apply_patch_to_repo(repo: &Repository, reverse_patch: &str) -> Result<(), String> {
     let diff = git2::Diff::from_buffer(reverse_patch.as_bytes())
         .map_err(|e| format!("parse_patch_failed: {e}"))?;
@@ -135,6 +140,7 @@ pub(super) fn apply_patch_to_repo(repo: &Repository, reverse_patch: &str) -> Res
     Ok(())
 }
 
+// 检查路径并打开仓库，再执行工作区 Patch 的预检及正式应用。
 pub(super) fn apply_patch_to_workdir(
     project_path: &str,
     reverse_patch: &str,

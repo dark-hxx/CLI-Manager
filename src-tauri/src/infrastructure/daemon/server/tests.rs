@@ -11,12 +11,14 @@ use crate::daemon::protocol::{
 use tungstenite::client::IntoClientRequest;
 
 #[test]
+// 验证输出批次在已有数据时不跨越实时帧预算，并允许空批次接收首个大块。
 fn daemon_output_batch_stops_before_crossing_live_frame_budget() {
     assert!(!output_batch_would_overflow(0, 80 * 1024));
     assert!(!output_batch_would_overflow(32 * 1024, 32 * 1024));
     assert!(output_batch_would_overflow(40 * 1024, 40 * 1024));
 }
 
+// 构造带指定回放缓冲和下一序号的共享会话夹具，不创建真实 PTY。
 fn test_session(session_id: &str, buffer: SessionBuffer, next_sequence: u64) -> SharedSession {
     Arc::new(Mutex::new(SessionEntry {
         meta: SessionMeta {
@@ -42,6 +44,7 @@ fn test_session(session_id: &str, buffer: SessionBuffer, next_sequence: u64) -> 
     }))
 }
 
+// 构造带固定测试身份及来源的 SSH 启动计划，仅提供绑定数据，不建立远程连接。
 fn remote_hook_launch(source: &str) -> SshLaunchPlan {
     SshLaunchPlan {
         host_id: "host-1".to_string(),
@@ -77,6 +80,7 @@ fn remote_hook_launch(source: &str) -> SshLaunchPlan {
 }
 
 #[test]
+// 验证 Claude/Codex 远端 Hook 使用绑定的侧栏项目名，且通知不把远端目录当成本地 cwd。
 fn remote_hook_binding_injects_sidebar_project_for_claude_and_codex() {
     for (index, source) in ["claude", "codex"].into_iter().enumerate() {
         let host = DaemonHost::new();
@@ -114,6 +118,7 @@ fn remote_hook_binding_injects_sidebar_project_for_claude_and_codex() {
 }
 
 #[test]
+// 验证 SSH Codex 权限请求经审批感知接收器立即转发，并保留 SSH 环境标识。
 fn remote_codex_permission_request_bypasses_provisional_approval_in_daemon_host() {
     let host = DaemonHost::new();
     let launch = remote_hook_launch("codex");
@@ -152,6 +157,7 @@ fn remote_codex_permission_request_bypasses_provisional_approval_in_daemon_host(
 }
 
 #[test]
+// 通过回环 WebSocket 验证终端输出使用二进制帧，并检查协议版本、类型和末尾载荷。
 fn websocket_writer_sends_binary_terminal_output() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -190,6 +196,7 @@ fn websocket_writer_sends_binary_terminal_output() {
 }
 
 #[test]
+// 在回环 NDJSON 连接认证后发送未知类型，验证错误只返回通用消息，不回显测试敏感文本。
 fn ndjson_redacts_unknown_frame_types() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -242,6 +249,7 @@ fn ndjson_redacts_unknown_frame_types() {
 }
 
 #[test]
+// 验证 WebSocket 拒绝路由控制帧并标明传输限制，同时对未知帧类型返回不含原文的错误。
 fn websocket_rejects_routing_control_and_redacts_unknown_frame_types() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -330,6 +338,7 @@ fn websocket_rejects_routing_control_and_redacts_unknown_frame_types() {
 }
 
 #[test]
+// 验证路由未运行时重置熔断返回 stopped 状态，且响应不回显测试供应商标识。
 fn routing_reset_circuit_before_runtime_returns_closed_status() {
     let server = DaemonServer {
         host: Arc::new(DaemonHost::new()),
@@ -357,6 +366,7 @@ fn routing_reset_circuit_before_runtime_returns_closed_status() {
 }
 
 #[test]
+// 通过帧处理入口启动回环路由再停止，验证状态变化及停止后保留实际端口。
 fn routing_start_binds_and_stop_keeps_actual_port() {
     let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let preferred_port = probe.local_addr().unwrap().port();
@@ -396,6 +406,7 @@ fn routing_start_binds_and_stop_keeps_actual_port() {
 }
 
 #[test]
+// 验证路由运行期间 Shutdown 返回成功但不停止路由，随后显式停止测试监听。
 fn shutdown_retains_daemon_while_routing_runtime_is_active() {
     let probe = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let preferred_port = probe.local_addr().unwrap().port();
@@ -429,6 +440,7 @@ fn shutdown_retains_daemon_while_routing_runtime_is_active() {
 }
 
 #[test]
+// 验证即使路由尚未启动，重载请求也拒绝通配监听地址。
 fn routing_reload_rejects_wildcard_while_stopped() {
     let server = DaemonServer {
         host: Arc::new(DaemonHost::new()),
@@ -457,6 +469,7 @@ fn routing_reload_rejects_wildcard_while_stopped() {
 }
 
 #[test]
+// 验证回放队列先发送 reset，控制帧可在回放条目间插入，最终 Attached 不重复携带回放。
 fn websocket_replay_allows_control_frames_to_preempt_between_entries() {
     let session_id = "0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff";
     let meta = test_session(session_id, SessionBuffer::new(), 1)
@@ -543,6 +556,7 @@ fn websocket_replay_allows_control_frames_to_preempt_between_entries() {
 }
 
 #[test]
+// 用回环客户端验证 Attach 返回已缓冲输出，并把会话登记到客户端订阅集合。
 fn attach_returns_replay_and_registers_client() {
     let listener = TcpListener::bind("127.0.0.1:0").expect("bind test listener");
     let address = listener.local_addr().expect("read test listener address");
@@ -608,6 +622,7 @@ fn attach_returns_replay_and_registers_client() {
 }
 
 #[test]
+// 验证 Attach 屏障期间暂存的实时输出在 Attached 回放响应之后发送。
 fn attach_barrier_sends_replay_control_before_buffered_live_output() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -677,6 +692,7 @@ fn attach_barrier_sends_replay_control_before_buffered_live_output() {
 }
 
 #[test]
+// 验证会话分离同时清除订阅、未确认计数、暂停标志及收发确认序号。
 fn detach_session_clears_flow_control_state() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -710,6 +726,7 @@ fn detach_session_clears_flow_control_state() {
 }
 
 #[test]
+// 模拟高水位慢客户端，验证新输出先进入回放缓存，ACK 降到低水位后补发并更新计数。
 fn output_flow_control_buffers_slow_client_and_flushes_after_ack() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -788,6 +805,7 @@ fn output_flow_control_buffers_slow_client_and_flushes_after_ack() {
 }
 
 #[test]
+// 在两个回环客户端中只暂停高水位客户端，验证另一个仍及时收到相同会话输出。
 fn output_flow_control_pauses_only_the_slow_client() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -862,6 +880,7 @@ fn output_flow_control_pauses_only_the_slow_client() {
 }
 
 #[test]
+// 模拟待补发序号超出保留窗口，验证 ACK 恢复时关闭客户端写入器并清除订阅状态。
 fn output_flow_control_closes_client_when_replay_window_has_gap() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -908,6 +927,7 @@ fn output_flow_control_closes_client_when_replay_window_has_gap() {
 }
 
 #[test]
+// 在隔离临时文件中验证超出内存预算后按整帧落盘，完整回放仍包含全部输出字节。
 fn session_buffer_spills_whole_frames_without_losing_replay() {
     let temp = tempfile::tempdir().unwrap();
     let mut buffer = SessionBuffer::with_spool(Some(temp.path().join("session.bin")));
@@ -929,6 +949,7 @@ fn session_buffer_spills_whole_frames_without_losing_replay() {
 }
 
 #[test]
+// 验证检查点进入回放，但实时帧筛选只返回检查点之后的输出，不重发序列化终端快照。
 fn session_buffer_does_not_send_checkpoint_as_live_output() {
     let mut buffer = SessionBuffer::new();
     buffer.push_output(80, 24, 1, b"before-checkpoint");
@@ -953,6 +974,7 @@ fn session_buffer_does_not_send_checkpoint_as_live_output() {
 }
 
 #[test]
+// 验证连续尺寸变化合并为最新边界，并保留该边界与后续输出的序号。
 fn session_buffer_preserves_resize_boundaries() {
     let mut buffer = SessionBuffer::new();
     buffer.push_output(80, 24, 1, b"first");
@@ -969,6 +991,7 @@ fn session_buffer_preserves_resize_boundaries() {
 }
 
 #[test]
+// 验证前端传入空活跃会话列表时，对账不会删除 daemon 后台会话。
 fn reconcile_never_closes_daemon_background_sessions() {
     let host = Arc::new(DaemonHost::new());
     let session_id = "0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff";
@@ -1000,6 +1023,7 @@ fn reconcile_never_closes_daemon_background_sessions() {
 }
 
 #[test]
+// 用两个同步起跑线程预约同一会话标识，验证仅一次成功且只保留一个条目。
 fn session_reservation_is_atomic_for_duplicate_ids() {
     let host = Arc::new(DaemonHost::new());
     let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -1024,6 +1048,7 @@ fn session_reservation_is_atomic_for_duplicate_ids() {
 }
 
 #[test]
+// 验证合法会话标识及空值、路径穿越文本和超长标识的拒绝规则。
 fn session_id_validation() {
     assert!(is_valid_session_id("0e0f7b0a-1234-4c5d-9e8f-aabbccddeeff"));
     assert!(!is_valid_session_id(""));
@@ -1032,6 +1057,7 @@ fn session_id_validation() {
 }
 
 #[test]
+// 验证提示、审批、停止及失败事件的任务状态映射，SessionStart 不产生状态。
 fn hook_events_map_to_task_status() {
     assert_eq!(
         map_hook_event_to_task_status("UserPromptSubmit"),

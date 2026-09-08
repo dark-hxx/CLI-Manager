@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 /// Codex 的 function_call / custom_tool_call / mcp_tool_call 事件（按 call_id 去重）。
 /// MCP 按 server 聚合：Claude 工具名形如 mcp__<server>__<tool>，Codex 可在 namespace
 /// 或 invocation.server 里携带 server；Skill 工具取 input.skill。
+// 提取 Claude 和 Codex 工具调用，按可用 ID 去重并分类累计 MCP、Skill 与内置工具。
 pub(super) fn collect_tool_calls(
     value: &Value,
     seen_call_ids: &mut HashSet<String>,
@@ -105,6 +106,7 @@ pub(super) fn collect_tool_calls(
     }
 }
 
+// 解析支持来源的工具开始及结果事件，去重创建或回填已有调用诊断。
 pub(super) fn collect_tool_events_from_value(
     value: &Value,
     message_index: Option<usize>,
@@ -322,6 +324,7 @@ pub(super) fn collect_tool_events_from_value(
     }
 }
 
+// 记录非空调用 ID 并返回是否首次出现，无 ID 的事件始终接受。
 pub(super) fn mark_tool_event_seen(
     call_id: Option<&str>,
     seen_call_ids: &mut HashSet<String>,
@@ -332,6 +335,7 @@ pub(super) fn mark_tool_event_seen(
     seen_call_ids.insert(id.to_string())
 }
 
+// 按 MCP 服务名或工具名确定分类，并组装给定字段的工具事件。
 pub(super) fn make_tool_event(
     call_id: Option<String>,
     name: &str,
@@ -363,6 +367,7 @@ pub(super) fn make_tool_event(
     }
 }
 
+// 按非空调用 ID 找最近事件，仅覆盖本次提供的输出摘要与状态。
 pub(super) fn update_tool_event_output(
     events: &mut [HistoryToolEvent],
     call_id: Option<&str>,
@@ -386,6 +391,7 @@ pub(super) fn update_tool_event_output(
     }
 }
 
+// 转换 JSON 为规范文本，字节长度超过阈值时保留最多 500 字符并追加省略号。
 pub(super) fn summarize_json_value(value: &Value) -> Option<String> {
     let text = match value {
         Value::Null => return None,
@@ -403,6 +409,7 @@ pub(super) fn summarize_json_value(value: &Value) -> Option<String> {
     }
 }
 
+// 从兼容耗时字段读取非负毫秒数。
 pub(super) fn extract_tool_duration_ms(value: &Value) -> Option<u64> {
     value
         .get("duration_ms")
@@ -412,6 +419,7 @@ pub(super) fn extract_tool_duration_ms(value: &Value) -> Option<u64> {
         .and_then(extract_positive_u64)
 }
 
+// 从 mcp__ 前缀名称提取首段非空服务名。
 pub(super) fn extract_mcp_server(value: &str) -> Option<&str> {
     let rest = value.strip_prefix("mcp__")?;
     let server = rest.split("__").next().unwrap_or(rest).trim();
@@ -419,6 +427,7 @@ pub(super) fn extract_mcp_server(value: &str) -> Option<&str> {
 }
 
 /// 提取斜杠命令标记 `<command-name>/foo</command-name>` 中的命令名（去掉前导 "/"）。
+// 提取 command-name 标签内的命令名并去掉前导斜杠。
 pub(super) fn extract_command_name(line: &str) -> Option<String> {
     let start = line.find("<command-name>")? + "<command-name>".len();
     let end = line[start..].find("</command-name>")? + start;
@@ -426,6 +435,7 @@ pub(super) fn extract_command_name(line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
+// 将工具计数映射为列表，按次数降序并以名称升序打破平局。
 pub(super) fn sorted_tool_counts(map: &HashMap<String, u64>) -> Vec<HistoryToolCount> {
     let mut items: Vec<HistoryToolCount> = map
         .iter()

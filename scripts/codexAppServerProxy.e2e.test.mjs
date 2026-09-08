@@ -35,6 +35,7 @@ if (process.platform !== "win32") {
   process.exit(0);
 }
 
+// 构建真实 Codex 代理二进制，限制等待时间并隐藏 Windows 控制台。
 function buildProxy() {
   const build = spawnSync(
     "cargo",
@@ -60,6 +61,7 @@ function buildProxy() {
   assert.equal(build.status, 0, "building the real Codex proxy must succeed");
 }
 
+// 依据 Cargo 目标目录设置定位调试代理可执行文件。
 function resolveProxyPath() {
   const configuredTarget = process.env.CARGO_TARGET_DIR;
   const targetRoot = configuredTarget
@@ -68,6 +70,7 @@ function resolveProxyPath() {
   return path.join(targetRoot, "debug", "cli-manager-codex-proxy.exe");
 }
 
+// 校验 PE 头并读取 Windows 子系统类型。
 function readPeSubsystem(executablePath) {
   const image = readFileSync(executablePath);
   assert.ok(image.length >= 0x40, "proxy must contain a DOS header");
@@ -87,6 +90,7 @@ function readPeSubsystem(executablePath) {
   return image.readUInt16LE(optionalHeaderOffset + 68);
 }
 
+// 复制进程环境并清除代理测试相关变量后应用覆盖值。
 function cleanProxyEnvironment(overrides = {}) {
   const environment = { ...process.env };
   for (const key of proxyEnvironmentKeys) {
@@ -95,6 +99,7 @@ function cleanProxyEnvironment(overrides = {}) {
   return { ...environment, ...overrides };
 }
 
+// 启动真实代理及测试启动器，传递请求并读取捕获结果。
 function runProxy({
   proxyPath,
   launcher,
@@ -152,6 +157,7 @@ function runProxy({
   return { result, request, capture: JSON.parse(readFileSync(capturePath, "utf8")) };
 }
 
+// 验证 JSONL 请求和响应标识及载荷被原样转发。
 function assertForwarding(run) {
   assert.deepEqual(run.capture.request, run.request, "stdin JSONL must reach Codex unchanged");
   const response = JSON.parse(run.result.stdout.trim());
@@ -268,6 +274,7 @@ process.exitCode = Number(process.env.FAKE_CODEX_EXIT_CODE || "0");
   ]);
   assert.equal(withProvider.capture.apiKeyPresent, true);
   assert.equal(withProvider.capture.apiKeyMatches, true);
+  // 检查启动参数中没有泄露测试供应商密钥。
   assert.ok(!withProvider.capture.args.some((argument) => argument.includes(providerSecret)));
   assert.ok(!withProvider.result.stdout.includes(providerSecret));
   assert.ok(!withProvider.result.stderr.includes(providerSecret));

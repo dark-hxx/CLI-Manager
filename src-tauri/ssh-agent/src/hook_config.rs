@@ -84,6 +84,7 @@ enum Source {
 }
 
 impl Source {
+    // 仅接受四个已支持的 Hook 来源字符串，未知来源返回统一错误。
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "claude" => Ok(Self::Claude),
@@ -94,6 +95,7 @@ impl Source {
         }
     }
 
+    // 把来源枚举转换为协议和记录使用的稳定小写标识。
     fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -103,6 +105,7 @@ impl Source {
         }
     }
 
+    // 返回各来源在 HOME 下的默认配置目录名，不执行路径解析。
     fn default_dir(self) -> &'static str {
         match self {
             Self::Claude => ".claude",
@@ -112,6 +115,7 @@ impl Source {
         }
     }
 
+    // 返回 JSON Hook 来源的事件、桥接事件和 matcher 映射；Kimi 使用独立 TOML 定义而返回空表。
     fn hooks(self) -> &'static [(&'static str, &'static str, &'static str)] {
         match self {
             Self::Claude => CLAUDE_HOOKS,
@@ -121,6 +125,7 @@ impl Source {
         }
     }
 
+    // 返回应托管的条目数，Kimi 从独立定义集计数而非 JSON Hook 映射。
     fn required_entries(self) -> u32 {
         match self {
             Self::Kimi => kimi::DEFINITIONS.len() as u32,
@@ -149,10 +154,12 @@ struct FileState {
 }
 
 impl FileState {
+    // 根据文件是否存在计算内容指纹，明确区分缺失文件与空文件。
     fn fingerprint(&self) -> String {
         fingerprint(self.exists.then_some(self.bytes.as_slice()))
     }
 
+    // 输出当前文件状态的角色、规范路径、存在性和指纹，不包含配置正文。
     fn report(&self) -> HookConfigFile {
         HookConfigFile {
             role: self.role.to_string(),
@@ -171,10 +178,12 @@ struct PlannedFile {
 }
 
 impl PlannedFile {
+    // 根据计划的目标存在性和内容计算应用后指纹。
     fn after_fingerprint(&self) -> String {
         fingerprint(self.after_exists.then_some(self.after.as_slice()))
     }
 
+    // 比较前后指纹与存在性生成 unchanged/delete/update/create 摘要，不写入文件。
     fn change(&self) -> HookConfigChange {
         let before = self.before.fingerprint();
         let after = self.after_fingerprint();
@@ -217,11 +226,13 @@ struct TransactionJournal {
 struct HookLock(PathBuf);
 
 impl Drop for HookLock {
+    // 释放 Hook 配置锁时尽力删除锁文件，清理失败不传播。
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
 }
 
+// 返回 Unix 纪元毫秒数；系统时间早于纪元时回退零。
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -229,10 +240,12 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+// 将路径有损转换为字符串供报告使用，不执行路径合法性检查。
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+// 要求 Unicode 绝对路径且不含 NUL、回车、换行或反斜杠；不在此 canonicalize 或验证归属。
 fn validate_canonical_path(path: &Path) -> Result<(), String> {
     let text = path
         .to_str()
@@ -243,6 +256,7 @@ fn validate_canonical_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 存在字节计算 SHA-256；None 使用 missing 哨兵，不混同于空内容摘要。
 fn fingerprint(bytes: Option<&[u8]>) -> String {
     let Some(bytes) = bytes else {
         return MISSING_FINGERPRINT.to_string();
@@ -252,12 +266,14 @@ fn fingerprint(bytes: Option<&[u8]>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+// 对路径的操作系统编码字节取 SHA-256，作为已解析配置根的状态隔离键。
 fn config_root_hash(path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.as_os_str().as_encoded_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+// Unix 检查目标元数据 UID 与有效用户一致；非 Unix 不执行所有者检查。
 fn ensure_current_user_owner(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -272,11 +288,13 @@ fn ensure_current_user_owner(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 接受 missing 哨兵或 64 位十六进制摘要格式，不验证其对应文件内容。
 fn valid_fingerprint(value: &str) -> bool {
     value == MISSING_FINGERPRINT
         || (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
+// 允许空默认值、HOME 波浪号形式或绝对路径，拒绝父级段、控制字符及变量或反引号展开。
 fn validate_configured_root(value: &str) -> Result<(), String> {
     if value.contains(['\0', '\r', '\n', '\\', '$', '`']) {
         return Err("hook_config_root_invalid".to_string());
@@ -297,6 +315,7 @@ fn validate_configured_root(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 把空值映射到来源默认目录并展开 HOME 波浪号前缀；调用方负责先校验配置文本。
 fn expand_root(value: &str, source: Source, layout: &AgentLayout) -> PathBuf {
     if value.is_empty() {
         return layout.home.join(source.default_dir());
@@ -310,6 +329,8 @@ fn expand_root(value: &str, source: Source, layout: &AgentLayout) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(value))
 }
 
+// 解析配置根并校验目录、规范路径及 Unix 所有者；仅缺失的默认根可按参数创建。
+// existed 表示调用前是否存在，即使本次已创建目录也保留原状态供报告使用。
 fn resolve_root(
     configured: &str,
     source: Source,
@@ -358,6 +379,8 @@ fn resolve_root(
     })
 }
 
+// 扫描最多 256 个目录项，以来源、配置文本和可选旧规范根匹配卸载记录，并核对候选根信息。
+// 只允许唯一匹配；可恢复已删除根，现存根另验目录、规范路径稳定性和 Unix 所有者。
 fn resolve_recorded_uninstall_root(
     configured: &str,
     expected_canonical_root: Option<&str>,
@@ -456,6 +479,7 @@ fn resolve_recorded_uninstall_root(
     }
 }
 
+// 优先解析当前根，缺失或与期望旧根不同才转查记录；其他解析错误直接传播。
 fn resolve_uninstall_root(
     configured: &str,
     expected_canonical_root: Option<&str>,
@@ -477,6 +501,7 @@ fn resolve_uninstall_root(
     }
 }
 
+// 重解析请求根以确认仍指向已捕获规范路径；仅原本缺失且仍缺失的根可免除存在性要求。
 fn root_target_unchanged(root: &ResolvedRoot) -> Result<(), String> {
     match fs::symlink_metadata(&root.requested) {
         Ok(_) => {
@@ -501,6 +526,8 @@ fn root_target_unchanged(root: &ResolvedRoot) -> Result<(), String> {
     }
 }
 
+// 解析配置文件前后复核根目标，捕获真实路径、内容、存在性与 Unix 权限，并检查所有者和大小。
+// 已有符号链接可指向根外文件；元数据大小检查与后续读取并非原子快照。
 fn resolve_config_file(
     root: &ResolvedRoot,
     role: &'static str,
@@ -562,6 +589,7 @@ fn resolve_config_file(
     })
 }
 
+// 要求本地 Agent 安装记录存在并检查启动器路径格式，不在此校验所有记录字段或启动器内容。
 fn installation(layout: &AgentLayout) -> Result<InstallationRecord, String> {
     let record = read_installation_record(layout)?
         .ok_or_else(|| "agent_installation_record_missing".to_string())?;
@@ -569,6 +597,8 @@ fn installation(layout: &AgentLayout) -> Result<InstallationRecord, String> {
     Ok(record)
 }
 
+// 以空标准输入和丢弃输出执行 Kimi，轮询退出状态，十秒后尝试终止并回收。
+// kill/wait 结果被忽略，try_wait 出错直接返回；这里不保证进程树清理或硬性总耗时上限。
 fn run_kimi_command(executable: &Path, args: &[&str]) -> Result<bool, String> {
     let mut child = Command::new(executable)
         .args(args)
@@ -594,6 +624,7 @@ fn run_kimi_command(executable: &Path, args: &[&str]) -> Result<bool, String> {
     }
 }
 
+// 按 PATH 候选再 HOME 默认位置依次执行能力探测，返回首个支持 doctor 的 Kimi。
 fn discover_kimi_executable(layout: &AgentLayout) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("PATH") {
@@ -608,10 +639,12 @@ fn discover_kimi_executable(layout: &AgentLayout) -> Result<PathBuf, String> {
     Err("kimi_code_unsupported".to_string())
 }
 
+// 要求候选为文件且 doctor --help 成功；探测错误视为不支持。
 fn supports_current_kimi(executable: &Path) -> bool {
     executable.is_file() && run_kimi_command(executable, &["doctor", "--help"]).unwrap_or(false)
 }
 
+// 仅 Kimi 来源执行可执行文件发现，其他来源返回 None 且不启动 CLI。
 fn ensure_kimi_capability(source: Source, layout: &AgentLayout) -> Result<Option<PathBuf>, String> {
     if source == Source::Kimi {
         discover_kimi_executable(layout).map(Some)
@@ -620,6 +653,8 @@ fn ensure_kimi_capability(source: Source, layout: &AgentLayout) -> Result<Option
     }
 }
 
+// 把候选配置写入同目录临时文件并同步，设置权限后运行 doctor config 校验，最后尽力删除候选。
+// 不替换实际配置文件；临时文件清理失败不会改变校验结果。
 fn validate_kimi_candidate(
     executable: &Path,
     config_path: &Path,
@@ -652,10 +687,13 @@ fn validate_kimi_candidate(
     result
 }
 
+// 用 POSIX 单引号引用字符串，并将内嵌单引号转为闭合、转义、重新打开形式。
 fn posix_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+// 引用安装启动器路径并拼接固定 Hook 参数，Kimi 额外带精确 owner token。
+// 事件与安装 ID 直接拼入命令，依赖调用方提供可信定义及安装记录。
 fn hook_command(installation: &InstallationRecord, source: Source, event: &str) -> String {
     let owner = (source == Source::Kimi).then(|| {
         format!(
@@ -674,6 +712,7 @@ fn hook_command(installation: &InstallationRecord, source: Source, event: &str) 
     )
 }
 
+// 按 Kimi 定义生成桥接事件到托管命令的有序映射。
 fn kimi_commands(installation: &InstallationRecord) -> BTreeMap<String, String> {
     kimi::DEFINITIONS
         .iter()
@@ -686,6 +725,7 @@ fn kimi_commands(installation: &InstallationRecord) -> BTreeMap<String, String> 
         .collect()
 }
 
+// 编码安装 ID、原值与是否新建 features 表，作为 Codex 布尔值尾部恢复标记。
 fn feature_marker(installation_id: &str, previous: &str, table_created: bool) -> String {
     format!(
         " # cli-manager-ssh-agent installation={} previous={} tableCreated={}",
@@ -693,6 +733,7 @@ fn feature_marker(installation_id: &str, previous: &str, table_created: bool) ->
     )
 }
 
+// 提取 TOML 值的字符串后缀装饰；非值或不可表示的后缀返回空串。
 fn marker_suffix(item: &Item) -> String {
     item.as_value()
         .and_then(|value| value.decor().suffix())
@@ -701,6 +742,7 @@ fn marker_suffix(item: &Item) -> String {
         .unwrap_or_default()
 }
 
+// 从最后一个托管标记解析同安装 ID 的恢复信息；缺失 previous/tableCreated 时分别默认 missing/false。
 fn parse_owned_marker(suffix: &str, installation_id: &str) -> Option<(String, bool, String)> {
     let marker = "# cli-manager-ssh-agent ";
     let (original_suffix, fields) = suffix.rsplit_once(marker)?;
@@ -725,6 +767,7 @@ fn parse_owned_marker(suffix: &str, installation_id: &str) -> Option<(String, bo
     })
 }
 
+// 提取 TOML 值的前后装饰文本用于保留格式，非值或缺失装饰按空串处理。
 fn item_decor(item: &Item) -> (String, String) {
     let Some(value) = item.as_value() else {
         return (String::new(), String::new());
@@ -744,12 +787,14 @@ fn item_decor(item: &Item) -> (String, String) {
     (prefix, suffix)
 }
 
+// 先要求 UTF-8，再解析为可保留格式的 TOML 文档，分别映射编码与语法错误。
 fn parse_toml(state: &FileState) -> Result<DocumentMut, String> {
     let text = std::str::from_utf8(&state.bytes)
         .map_err(|_| "hook_config_toml_utf8_invalid".to_string())?;
     DocumentMut::from_str(text).map_err(|_| "hook_config_toml_invalid".to_string())
 }
 
+// 仅当 features 表形结构中的 hooks 明确为布尔 true 时判为启用。
 fn codex_feature_enabled(document: &DocumentMut) -> bool {
     document
         .get("features")
@@ -759,6 +804,7 @@ fn codex_feature_enabled(document: &DocumentMut) -> bool {
         == Some(true)
 }
 
+// 用户已启用时不改；否则开启 hooks 并记录缺失或 false 的原值、表归属和原装饰文本。
 fn install_codex_feature(document: &mut DocumentMut, installation_id: &str) -> Result<(), String> {
     if codex_feature_enabled(document) {
         return Ok(());
@@ -789,6 +835,7 @@ fn install_codex_feature(document: &mut DocumentMut, installation_id: &str) -> R
     Ok(())
 }
 
+// 仅还原仍为 true 且带本安装标记的 hooks，恢复原 false 或删除新增项，并按标记清理空表。
 fn uninstall_codex_feature(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -833,6 +880,7 @@ fn uninstall_codex_feature(
     Ok(())
 }
 
+// 记录 Grok 兼容开关原值及两层表是否新建，供同安装卸载恢复。
 fn grok_compat_marker(
     installation_id: &str,
     previous: &str,
@@ -844,6 +892,7 @@ fn grok_compat_marker(
     )
 }
 
+// 解析最后一个同安装 Grok 标记，要求原值字段及两个合法布尔表归属字段完整。
 fn parse_grok_compat_marker(
     suffix: &str,
     installation_id: &str,
@@ -887,6 +936,7 @@ fn parse_grok_compat_marker(
     ))
 }
 
+// 为指定兼容来源禁用 hooks 并标记原值和新建表；用户原本已禁用时保持不变。
 fn install_grok_compat_hooks(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -927,6 +977,7 @@ fn install_grok_compat_hooks(
     Ok(())
 }
 
+// 依次禁用 Claude 与 Cursor 兼容 Hook；出错不撤销已修改的内存文档。
 fn install_grok_compat_isolation(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -937,6 +988,7 @@ fn install_grok_compat_isolation(
     Ok(())
 }
 
+// 仅恢复仍为 false 且有完整同安装标记的兼容开关，清理本安装新增空 vendor 表并返回 compat 表归属。
 fn uninstall_grok_compat_hooks(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -983,6 +1035,7 @@ fn uninstall_grok_compat_hooks(
     Ok(compat_created)
 }
 
+// 依次恢复两类兼容 Hook，若标记表明 compat 为本安装创建且已空，再移除顶层表。
 fn uninstall_grok_compat_isolation(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1002,6 +1055,7 @@ fn uninstall_grok_compat_isolation(
     Ok(())
 }
 
+// 按嵌套表、点号表和点号键的优先顺序读取兼容 hooks，只有明确 false 才视为禁用。
 fn grok_compat_hooks_disabled(document: &DocumentMut, vendor: &str) -> bool {
     let nested = document
         .get("compat")
@@ -1023,12 +1077,15 @@ fn grok_compat_hooks_disabled(document: &DocumentMut, vendor: &str) -> bool {
     nested.or(dotted_table).or(dotted_key) == Some(false)
 }
 
+// 要求 Claude 与 Cursor 两类兼容 Hook 都被明确禁用。
 fn grok_compat_isolated(document: &DocumentMut) -> bool {
     ["claude", "cursor"]
         .iter()
         .all(|vendor| grok_compat_hooks_disabled(document, vendor))
 }
 
+// 按来源读取当前配置，生成检查、安装或卸载的候选字节与存在性，不在此应用文件变更。
+// Kimi 用共享 TOML 规划器，Grok/Codex 各联动 JSON 与 TOML；返回的布尔值合并冲突和过期状态。
 fn plan_files(
     root: &ResolvedRoot,
     source: Source,
@@ -1193,6 +1250,7 @@ fn plan_files(
     Ok((plans, managed_entries, conflict || outdated))
 }
 
+// 基于计划中的 before 状态判定安装状态和托管数量，并结合 Codex 功能开关或 Grok 兼容隔离状态。
 fn current_status(
     plans: &[PlannedFile],
     source: Source,
@@ -1253,6 +1311,7 @@ fn current_status(
     Ok((status.to_string(), managed))
 }
 
+// 要求请求提供同数量、合法格式的期望指纹，再按角色和规范路径逐项比对当前计划前态。
 fn expected_files_match(plans: &[PlannedFile], request: &HookConfigRequest) -> Result<(), String> {
     if request.expected_files.len() != plans.len() {
         return Err("hook_config_fingerprint_required".to_string());
@@ -1281,10 +1340,12 @@ fn expected_files_match(plans: &[PlannedFile], request: &HookConfigRequest) -> R
     Ok(())
 }
 
+// 构造 Agent 状态目录下的 hooks 子目录，不创建目录。
 fn hook_state_dir(layout: &AgentLayout) -> PathBuf {
     layout.state_dir.join("hooks")
 }
 
+// Unix 有有效 PID 且 /proc 可用时按进程存在性判断，否则退回文件修改时间超过五分钟的规则。
 fn lock_is_stale(path: &Path) -> bool {
     #[cfg(unix)]
     if let Some(pid) = fs::read_to_string(path)
@@ -1302,6 +1363,7 @@ fn lock_is_stale(path: &Path) -> bool {
         .is_some_and(|age| age > Duration::from_secs(300))
 }
 
+// 按根哈希独占新建锁，最多尝试十二次并清理陈旧锁；竞争时短暂等待，PID 写入为尽力操作。
 fn acquire_lock(layout: &AgentLayout, root_hash: &str) -> Result<HookLock, String> {
     let directory = hook_state_dir(layout);
     fs::create_dir_all(&directory).map_err(|_| "hook_config_state_create_failed".to_string())?;
@@ -1331,6 +1393,7 @@ fn acquire_lock(layout: &AgentLayout, root_hash: &str) -> Result<HookLock, Strin
     Err("hook_config_locked".to_string())
 }
 
+// 路径不存在返回缺失空值，否则先检查元数据大小再读取内容；不是并发写入下的原子快照。
 fn read_current(path: &Path) -> Result<(bool, Vec<u8>), String> {
     if !path.exists() {
         return Ok((false, Vec::new()));
@@ -1345,6 +1408,7 @@ fn read_current(path: &Path) -> Result<(bool, Vec<u8>), String> {
     ))
 }
 
+// 重新解析逻辑文件或其父目录，确认目标仍等于计划规范路径；允许计划前后均缺失的特定情况。
 fn config_target_unchanged(state: &FileState) -> Result<(), String> {
     let current = match fs::symlink_metadata(&state.logical_path) {
         Ok(_) => fs::canonicalize(&state.logical_path)
@@ -1373,6 +1437,7 @@ fn config_target_unchanged(state: &FileState) -> Result<(), String> {
     Ok(())
 }
 
+// Unix 按可选权限值设置文件模式；None 或非 Unix 平台不修改权限。
 fn set_mode(path: &Path, mode: Option<u32>) -> Result<(), String> {
     #[cfg(unix)]
     if let Some(mode) = mode {
@@ -1385,6 +1450,8 @@ fn set_mode(path: &Path, mode: Option<u32>) -> Result<(), String> {
     Ok(())
 }
 
+// 写入并同步同目录临时文件，应用原权限或默认 0600 后重命名替换目标。
+// Windows 先删除旧目标再重命名，因此不是原子替换；失败不统一清理临时文件。
 fn replace_file(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1403,6 +1470,7 @@ fn replace_file(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), Stri
     fs::rename(&temporary, path).map_err(|_| "hook_config_replace_failed".to_string())
 }
 
+// 按原存在性恢复字节与权限，或删除本次创建的文件；原本及当前均缺失时直接成功。
 fn restore_file(path: &Path, existed: bool, bytes: &[u8], mode: Option<u32>) -> Result<(), String> {
     if existed {
         replace_file(path, bytes, mode)
@@ -1413,16 +1481,20 @@ fn restore_file(path: &Path, existed: bool, bytes: &[u8], mode: Option<u32>) -> 
     }
 }
 
+// 按配置根哈希构造 Hook 事务日志目录，调用方提供可信哈希。
 fn transaction_dir(layout: &AgentLayout, root_hash: &str) -> PathBuf {
     hook_state_dir(layout).join("transactions").join(root_hash)
 }
 
+// 把状态序列化为格式化 JSON，再委托状态字节写入流程。
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|_| "hook_config_state_serialize_failed".to_string())?;
     write_bytes_atomic(path, &bytes)
 }
 
+// 将状态字节写入唯一临时文件并同步、设为 0600 后替换目标。
+// Windows 先删除现有目标，失败可能留下临时文件；函数名不代表所有平台都原子替换。
 fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1442,6 +1514,7 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(temporary, path).map_err(|_| "hook_config_state_promote_failed".to_string())
 }
 
+// 有旧记录字节时恢复，否则删除新记录；已不存在视为成功。
 fn restore_hook_record(path: &Path, previous: Option<&[u8]>) -> Result<(), String> {
     if let Some(previous) = previous {
         write_bytes_atomic(path, previous)
@@ -1454,6 +1527,8 @@ fn restore_hook_record(path: &Path, previous: Option<&[u8]>) -> Result<(), Strin
     }
 }
 
+// 按日志逆序恢复仍匹配事务后态的文件，已为前态则跳过，外部冲突保留并最终报错。
+// 无冲突才删除事务目录；中途错误可发生在部分文件已恢复之后，日志内容被作为本地恢复依据。
 fn recover_transaction(layout: &AgentLayout, root_hash: &str) -> Result<(), String> {
     let directory = transaction_dir(layout, root_hash);
     let journal_path = directory.join("journal.json");
@@ -1489,6 +1564,7 @@ fn recover_transaction(layout: &AgentLayout, root_hash: &str) -> Result<(), Stri
     fs::remove_dir_all(directory).map_err(|_| "hook_config_journal_cleanup_failed".to_string())
 }
 
+// 尝试恢复事务，成功保留原错误，失败则把恢复错误追加到原错误文本。
 fn transaction_error(layout: &AgentLayout, root_hash: &str, error: String) -> String {
     match recover_transaction(layout, root_hash) {
         Ok(()) => error,
@@ -1496,6 +1572,8 @@ fn transaction_error(layout: &AgentLayout, root_hash: &str, error: String) -> St
     }
 }
 
+// 恢复旧事务并预检所有目标后备份、写日志，逐文件复核、应用并验证，再删除日志目录。
+// 路径或指纹冲突及替换错误触发恢复；部分读取与日志操作直接早退，不能将任意错误等同于完整回滚。
 fn apply_transaction(
     layout: &AgentLayout,
     root_hash: &str,
@@ -1586,6 +1664,7 @@ fn apply_transaction(
     fs::remove_dir_all(directory).map_err(|_| "hook_config_journal_cleanup_failed".to_string())
 }
 
+// 按预览或已应用动作选择前后文件指纹，汇总根目录、变更和可选安装记录；不重新读取文件。
 fn report(
     outcome: (&str, String),
     source: Source,
@@ -1630,6 +1709,7 @@ fn report(
     }
 }
 
+// 由成功候选计划构造 Hook 安装记录，保存前后指纹与归属；仅 Claude/Codex 附历史源候选。
 fn installation_record(
     source: Source,
     root: &ResolvedRoot,
@@ -1664,12 +1744,14 @@ fn installation_record(
     }
 }
 
+// 以来源和根哈希构造安装记录路径，不访问文件系统。
 fn record_path(layout: &AgentLayout, source: Source, root_hash: &str) -> PathBuf {
     hook_state_dir(layout)
         .join("installations")
         .join(format!("{}-{root_hash}.json", source.as_str()))
 }
 
+// 读取来源、根和安装状态并生成检查报告，不写配置；Kimi 检查会实际执行能力探测。
 pub fn inspect(request: HookConfigRequest) -> Result<HookConfigReport, String> {
     let source = Source::parse(&request.source)?;
     let layout = resolve_layout().map_err(str::to_string)?;
@@ -1689,6 +1771,7 @@ pub fn inspect(request: HookConfigRequest) -> Result<HookConfigReport, String> {
     ))
 }
 
+// 为安装或卸载生成候选变更与当前状态，不写配置；Kimi 安装预览会探测 CLI，卸载可沿旧记录解析根。
 pub fn preview(request: HookConfigRequest, install: bool) -> Result<HookConfigReport, String> {
     if install && request.expected_canonical_root.is_some() {
         return Err("hook_config_action_invalid".to_string());
@@ -1729,6 +1812,8 @@ pub fn preview(request: HookConfigRequest, install: bool) -> Result<HookConfigRe
     ))
 }
 
+// 解析根后持锁恢复事务、复核预览指纹，Kimi 安装先检查候选，再保存安装记录并应用配置计划。
+// 安装失败尝试恢复旧记录；配置、记录及默认根创建不是一个联合事务，卸载记录删除失败不回滚配置。
 pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigReport, String> {
     if install && request.expected_canonical_root.is_some() {
         return Err("hook_config_action_invalid".to_string());

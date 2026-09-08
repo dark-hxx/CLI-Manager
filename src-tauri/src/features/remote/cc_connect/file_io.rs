@@ -9,6 +9,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+// 将路径转为用户格式，并在 Windows 去除扩展长度前缀。
 pub(super) fn user_path_string(path: &Path) -> String {
     let value = path.to_string_lossy();
     #[cfg(target_os = "windows")]
@@ -24,16 +25,19 @@ pub(super) fn user_path_string(path: &Path) -> String {
     value
 }
 
+// 去除空白和空值后规范化可执行路径显示形式。
 pub(super) fn normalize_executable_path_value(raw: Option<&str>) -> Option<String> {
     raw.map(str::trim)
         .filter(|value| !value.is_empty())
         .map(|value| user_path_string(Path::new(value)))
 }
 
+// 将用户路径转换为配置使用的正斜杠形式。
 pub(super) fn config_path_value(path: &Path) -> String {
     user_path_string(path).replace('\\', "/")
 }
 
+// 写入并同步同目录临时文件后替换目标，失败时清理临时文件。
 pub(super) fn write_file_atomically(
     path: &Path,
     payload: &[u8],
@@ -67,6 +71,7 @@ pub(super) fn write_file_atomically(
     result
 }
 
+// 已有字节相同时跳过写入，否则执行临时文件替换。
 pub(super) fn write_file_atomically_if_changed(
     path: &Path,
     payload: &[u8],
@@ -79,6 +84,7 @@ pub(super) fn write_file_atomically_if_changed(
 }
 
 #[cfg(unix)]
+// 写入变更后的脚本并确保 Unix 权限为 0755。
 pub(super) fn write_executable_file_atomically_if_changed(
     path: &Path,
     payload: &[u8],
@@ -99,6 +105,7 @@ pub(super) fn write_executable_file_atomically_if_changed(
 }
 
 #[cfg(target_os = "windows")]
+// 比较 SHA-256 后按需复制、同步并替换 Windows 目标文件。
 pub(super) fn copy_file_atomically_if_changed(
     source: &Path,
     destination: &Path,
@@ -145,6 +152,7 @@ pub(super) fn copy_file_atomically_if_changed(
 }
 
 #[cfg(target_os = "windows")]
+// 调用 Windows MoveFileExW 替换目标并请求写穿透。
 pub(super) fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -172,14 +180,17 @@ pub(super) fn replace_file(source: &Path, destination: &Path) -> Result<(), Stri
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台通过 rename 替换目标文件。
 pub(super) fn replace_file(source: &Path, destination: &Path) -> Result<(), String> {
     fs::rename(source, destination).map_err(|err| err.to_string())
 }
 
+// 以无额外启动覆盖的配置生成路径写入托管配置。
 pub(super) fn write_managed_config(profile: &CcConnectProfile) -> Result<PathBuf, String> {
     write_managed_config_with_codex(profile, None)
 }
 
+// 携带可选 Codex 启动配置转交完整托管写入入口。
 pub(super) fn write_managed_config_with_codex(
     profile: &CcConnectProfile,
     codex_launch: Option<&RemoteCodexLaunch>,
@@ -187,6 +198,7 @@ pub(super) fn write_managed_config_with_codex(
     write_managed_config_with_agent_launch(profile, codex_launch, None, None, &BTreeMap::new())
 }
 
+// 生成配置、项目清单与切换脚本，任一写入失败时恢复三个快照。
 pub(super) fn write_managed_config_with_agent_launch(
     profile: &CcConnectProfile,
     codex_launch: Option<&RemoteCodexLaunch>,

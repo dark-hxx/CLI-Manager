@@ -9,6 +9,7 @@ use super::{
     CachedSessionFiles, HistoryRoots, SessionFileRef, SESSION_FILES_TTL_MS,
 };
 
+// 按来源收集会话文件，允许复用有效期内的目录缓存。
 pub(super) fn collect_session_files(
     source_filter: Option<&str>,
     roots: &HistoryRoots,
@@ -16,6 +17,7 @@ pub(super) fn collect_session_files(
     collect_session_files_with_force(source_filter, roots, false)
 }
 
+// 按来源和配置根目录复用目录缓存，强制或过期时重新扫描并缓存结果。
 pub(super) fn collect_session_files_with_force(
     source_filter: Option<&str>,
     roots: &HistoryRoots,
@@ -55,6 +57,7 @@ pub(super) fn collect_session_files_with_force(
     files
 }
 
+// 按来源选择对应磁盘历史收集器，合并各配置根目录的会话引用。
 pub(super) fn scan_session_files(
     source_filter: Option<&str>,
     roots: &HistoryRoots,

@@ -30,6 +30,7 @@ const OOM_TRANSCRIPT_APPEND_WARN_BYTES: usize = 1024 * 1024;
 const OOM_TRANSCRIPT_OFFSET_WARN_BYTES: u64 = 10 * 1024 * 1024;
 const TRANSCRIPT_READ_MAX_BYTES: u64 = 1024 * 1024;
 
+// 按追加量和累计偏移选择告警级别，记录路径与读取规模而不输出转录正文。
 fn log_transcript_oom_diagnostic(
     phase: &str,
     key: &str,
@@ -86,11 +87,13 @@ pub struct SubagentTranscriptBridge {
 }
 
 impl SubagentTranscriptBridge {
+    // 创建空的订阅停止标记表。
     pub fn new() -> Self {
         Self::default()
     }
 
     /// 订阅一个转录文件并开始 tail。替换同 key 的旧订阅。路径为空返回错误。
+    // 替换同键订阅，读取初始内容后启动独立轮询线程，并返回路径与初始片段。
     pub fn subscribe(
         &self,
         app_handle: AppHandle,
@@ -145,6 +148,7 @@ impl SubagentTranscriptBridge {
     }
 
     /// 停止并移除指定订阅。
+    // 移除指定订阅并置停止标记；不等待旧线程退出。
     pub fn unsubscribe(&self, key: &str) {
         if let Ok(mut guard) = self.entries.lock() {
             if let Some(stop) = guard.remove(key) {
@@ -156,6 +160,7 @@ impl SubagentTranscriptBridge {
 }
 
 /// 轮询循环：每 POLL_MS 读取自上次 offset 起的新完整行并推送，直到 stop 置位。
+// 轮询文件增量并发送转录事件，文件缩短或首次读取时标记重置。
 fn tail_loop(
     app_handle: AppHandle,
     key: String,
@@ -214,6 +219,7 @@ fn tail_loop(
 
 /// 从 `offset` 起读取新内容，仅返回到最后一个换行为止的完整行。
 /// 返回 `(完整行内容, 新 offset, 是否因文件变短而重置)`；无新完整行时返回 None。
+// 按读取上限获取截至末尾换行的内容与字节偏移；初次大文件只保留尾部窗口。
 fn read_new_lines(path: &Path, offset: u64) -> Option<(String, u64, bool)> {
     let len = fs::metadata(path).ok()?.len();
     let (mut start, shrank) = if len < offset {
@@ -262,6 +268,7 @@ fn read_new_lines(path: &Path, offset: u64) -> Option<(String, u64, bool)> {
 
 /// cwd → Claude projects 目录 slug：把 `:`、`\`、`/` 全部替换为 `-`，其余保留。
 /// 例：`D:\work\pythonProject\CLI-Manager` → `D--work-pythonProject-CLI-Manager`。
+// 将工作目录中的冒号和路径分隔符替换为 Claude 项目目录使用的连字符。
 fn slug_for_cwd(cwd: &str) -> String {
     cwd.chars()
         .map(|c| {
@@ -274,12 +281,14 @@ fn slug_for_cwd(cwd: &str) -> String {
         .collect()
 }
 
+// 去除可选字符串两端空白，将空内容归为缺失。
 fn trimmed(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
 }
 
+// 复制并修剪可选字符串切片，将空内容归为缺失。
 fn trimmed_str(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -287,10 +296,12 @@ fn trimmed_str(value: Option<&str>) -> Option<String> {
         .map(str::to_string)
 }
 
+// 按修剪后是否以斜杠开头判断 Linux 绝对路径形式。
 fn is_linux_absolute_path(path: &str) -> bool {
     path.trim().starts_with('/')
 }
 
+// 已知发行版时将显式 Linux 路径转为 WSL UNC；其他路径保留修剪后的文本。
 pub(crate) fn normalize_explicit_transcript_path(
     path: String,
     wsl_distro_name: Option<&str>,
@@ -311,6 +322,7 @@ pub(crate) fn normalize_explicit_transcript_path(
     path
 }
 
+// 检查路径解析后的组件是否包含当前目录或父目录组件。
 fn has_current_or_parent_component(path: &Path) -> bool {
     path.components().any(|component| {
         matches!(
@@ -320,18 +332,21 @@ fn has_current_or_parent_component(path: &Path) -> bool {
     })
 }
 
+// 判断路径组件中是否包含指定的连续组件序列。
 fn components_contain_sequence(components: &[String], sequence: &[&str]) -> bool {
     components
         .windows(sequence.len())
         .any(|window| window.iter().zip(sequence).all(|(a, b)| a == b))
 }
 
+// 按路径前缀检查本机 Claude 根目录或当前 Codex sessions 根目录范围。
 fn is_native_transcript_scope(path: &Path) -> Result<bool, String> {
     let home = home_dir().ok_or_else(|| "no_home_dir".to_string())?;
     let allowed_roots = [home.join(".claude"), resolve_codex_sessions_root(None)];
     Ok(allowed_roots.iter().any(|root| path.starts_with(root)))
 }
 
+// 检查 Linux 绝对路径的组件，拒绝点组件并要求包含支持的转录目录序列。
 fn is_linux_transcript_scope(linux_path: &str) -> bool {
     let linux_path = linux_path.trim();
     if !linux_path.starts_with('/') {
@@ -352,6 +367,7 @@ fn is_linux_transcript_scope(linux_path: &str) -> bool {
         || components_contain_sequence(&components, &[".codex", "sessions"])
 }
 
+// 按本机或 WSL 路径形式校验允许范围；这里只做词法检查，不解析文件链接。
 pub(crate) fn validate_explicit_transcript_path(path: &str) -> Result<(), String> {
     let normalized_wsl = crate::wsl::normalize_wsl_unc_path(path);
     if let Some((_distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&normalized_wsl) {
@@ -375,6 +391,7 @@ pub(crate) fn validate_explicit_transcript_path(path: &str) -> Result<(), String
     }
 }
 
+// 将 WSL UNC 或 Windows 工作目录转换为生成 Linux 项目 slug 所需的路径。
 fn cwd_for_wsl_slug(cwd: &str) -> String {
     if is_linux_absolute_path(cwd) {
         return cwd.trim().to_string();
@@ -386,6 +403,7 @@ fn cwd_for_wsl_slug(cwd: &str) -> String {
 }
 
 /// 由 home + cwd + 父 sessionId + agentId 推导子 Agent 转录 jsonl 路径。
+// 按 Claude 项目 slug、会话和子代理标识拼接本机转录文件路径。
 fn derive_transcript_path(home: &Path, cwd: &str, session_id: &str, agent_id: &str) -> String {
     home.join(".claude")
         .join("projects")
@@ -398,6 +416,7 @@ fn derive_transcript_path(home: &Path, cwd: &str, session_id: &str, agent_id: &s
 }
 
 /// 由父会话 transcript 的真实位置推导同会话下的子 Agent 转录路径。
+// 校验父转录范围、扩展名及会话名，再从父文件推导并校验子代理路径。
 fn derive_transcript_path_from_parent(
     parent_transcript_path: String,
     session_id: &str,
@@ -429,6 +448,7 @@ fn derive_transcript_path_from_parent(
     Ok(child)
 }
 
+// 依据 Linux home 和转换后的工作目录拼接 WSL 内的 Claude 子代理转录路径。
 fn derive_wsl_linux_transcript_path(
     linux_home: &str,
     cwd: &str,
@@ -443,6 +463,7 @@ fn derive_wsl_linux_transcript_path(
     )
 }
 
+// 将推导出的 Linux 子代理转录路径映射到指定发行版的 UNC 路径。
 fn derive_wsl_unc_transcript_path(
     linux_home: &str,
     cwd: &str,
@@ -454,6 +475,7 @@ fn derive_wsl_unc_transcript_path(
     crate::wsl::linux_to_unc_wsl_path(&linux_path, distro)
 }
 
+// 优先使用探测到的 WSL 可执行文件，缺失时回退到命令名。
 fn wsl_exe() -> String {
     crate::wsl::find_wsl_exe()
         .as_deref()
@@ -461,12 +483,14 @@ fn wsl_exe() -> String {
         .unwrap_or_else(|| "wsl.exe".to_string())
 }
 
+// 构造指定发行版的 --exec 参数，保留每个原始参数的边界。
 fn build_wsl_command_args(distro: &str, args: &[&str]) -> Vec<String> {
     let mut command_args = vec!["-d".to_string(), distro.to_string(), "--exec".to_string()];
     command_args.extend(args.iter().map(|arg| (*arg).to_string()));
     command_args
 }
 
+// 创建隐藏窗口的 WSL 命令并交给同步执行器读取输出。
 fn wsl_command_text(distro: &str, args: &[&str]) -> Result<(String, String), String> {
     let program = wsl_exe();
     let mut cmd = silent_command(&program);
@@ -474,6 +498,7 @@ fn wsl_command_text(distro: &str, args: &[&str]) -> Result<(String, String), Str
     run_wsl_command(cmd, &program)
 }
 
+// 同步等待 WSL 命令完成，返回有损 UTF-8 解码的输出；非零退出返回错误。
 fn run_wsl_command(
     mut cmd: std::process::Command,
     program: &str,
@@ -497,6 +522,7 @@ fn run_wsl_command(
     Ok((stdout, stderr))
 }
 
+// 通过指定发行版中的 shell 查询 HOME，拒绝空结果。
 fn wsl_home_dir(distro: &str) -> Result<String, String> {
     debug!("[subagent_transcript:wsl] resolving HOME: distro={distro}");
     let (stdout, _stderr) = wsl_command_text(distro, &["sh", "-lc", "printf %s \"$HOME\""])?;
@@ -507,6 +533,7 @@ fn wsl_home_dir(distro: &str) -> Result<String, String> {
     Ok(home.to_string())
 }
 
+// 查询 WSL HOME 后推导子代理 UNC 路径并记录解析信息。
 fn resolve_wsl_transcript_path(
     cwd: String,
     session_id: String,
@@ -522,6 +549,7 @@ fn resolve_wsl_transcript_path(
     Ok(resolved)
 }
 
+// 优先采用显式发行版，否则从工作目录的 WSL UNC 路径提取。
 fn resolve_wsl_distro_name(cwd: Option<&str>, wsl_distro_name: Option<String>) -> Option<String> {
     if let Some(distro) = trimmed(wsl_distro_name) {
         return Some(distro);
@@ -532,6 +560,7 @@ fn resolve_wsl_distro_name(cwd: Option<&str>, wsl_distro_name: Option<String>) -
         .map(|(distro, _)| distro)
 }
 
+// 按平台顺序读取用户目录环境变量，返回首个可用路径。
 fn home_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -549,6 +578,7 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+// 依次采用显式配置、CODEX_HOME 或默认用户目录，并定位 sessions 子目录。
 fn resolve_codex_sessions_root(codex_config_dir: Option<String>) -> PathBuf {
     let base = trimmed(codex_config_dir)
         .map(PathBuf::from)
@@ -564,6 +594,7 @@ fn resolve_codex_sessions_root(codex_config_dir: Option<String>) -> PathBuf {
     ensure_codex_sessions_root(base)
 }
 
+// 已有 sessions 末级目录时直接使用，否则追加该目录名。
 fn ensure_codex_sessions_root(base: PathBuf) -> PathBuf {
     if base
         .file_name()
@@ -575,6 +606,7 @@ fn ensure_codex_sessions_root(base: PathBuf) -> PathBuf {
     }
 }
 
+// 将显式 Codex 配置路径转换为 Linux 形式；未指定时使用 Linux home 下的默认目录。
 fn resolve_wsl_codex_config_root(
     codex_config_dir: Option<String>,
     distro: &str,
@@ -599,6 +631,7 @@ fn resolve_wsl_codex_config_root(
     ))
 }
 
+// 优先从父转录提取 sessions 根路径，否则解析配置目录并转换为指定发行版 UNC。
 fn resolve_wsl_codex_sessions_root(
     codex_config_dir: Option<String>,
     parent_transcript_path: Option<String>,
@@ -646,6 +679,7 @@ fn resolve_wsl_codex_sessions_root(
     )))
 }
 
+// 遍历本机目录树并收集名称匹配子代理标识的 rollout 文件，跳过无法读取的目录。
 fn list_native_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
     let expected_suffix = format!("-{agent_id}.jsonl");
     let mut out = Vec::new();
@@ -697,6 +731,7 @@ fn list_native_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<Path
     out
 }
 
+// 通过 WSL find 搜索 rollout 文件，将输出路径转换为 UNC；命令失败返回空列表。
 fn list_wsl_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
     let root_str = root.to_string_lossy().to_string();
     let Some((distro, linux_root)) = crate::wsl::parse_wsl_unc_path(&root_str) else {
@@ -754,6 +789,7 @@ fn list_wsl_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf
     }
 }
 
+// 根据根路径是否为 WSL UNC，选择本机遍历或 WSL find 搜索。
 fn list_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
     let root_str = root.to_string_lossy().to_string();
     if crate::wsl::is_wsl_config_dir(&root_str) {
@@ -770,6 +806,7 @@ fn list_codex_rollout_candidates(root: &Path, agent_id: &str) -> Vec<PathBuf> {
     list_native_codex_rollout_candidates(root, agent_id)
 }
 
+// 读取候选文件首行的 session_meta，提取非空父线程标识。
 fn codex_rollout_parent_thread_id(path: &Path) -> Option<String> {
     let path_text = path.to_string_lossy();
     let file = match File::open(path) {
@@ -838,6 +875,7 @@ fn codex_rollout_parent_thread_id(path: &Path) -> Option<String> {
 }
 
 /// 解析转录路径：优先显式子路径，其次由父 transcript 定位，最后回退 cwd 推导。
+// 按显式子路径、父转录路径、工作目录的优先级解析本机或 WSL 子代理转录路径。
 fn resolve_transcript_path(
     transcript_path: Option<String>,
     parent_transcript_path: Option<String>,
@@ -904,6 +942,7 @@ fn resolve_transcript_path(
 
 /// 订阅子 Agent 转录并开始 tail；返回最终解析到的文件路径（供前端展示/调试）。
 #[tauri::command]
+// 校验订阅键并解析转录路径，然后注册轮询订阅。
 pub async fn subagent_transcript_subscribe(
     app_handle: AppHandle,
     bridge: State<'_, SubagentTranscriptBridge>,
@@ -932,6 +971,7 @@ pub async fn subagent_transcript_subscribe(
 
 /// 取消订阅并停止 tail 线程。
 #[tauri::command]
+// 请求停止指定键的转录订阅，返回成功而不等待线程退出。
 pub async fn subagent_transcript_unsubscribe(
     bridge: State<'_, SubagentTranscriptBridge>,
     key: String,
@@ -943,6 +983,7 @@ pub async fn subagent_transcript_unsubscribe(
 /// 扫描 subagents 目录，返回发现的 agent-*.jsonl 文件列表（仅文件名，不含路径）。
 /// 用于 AgentToolStart fallback：当 hook payload 缺少 agentId 时，前端短时轮询此命令发现新 child。
 #[tauri::command]
+// 按工作目录和会话扫描 Claude 子代理目录，返回匹配的文件名列表。
 pub async fn subagent_transcript_discover(
     cwd: String,
     session_id: String,
@@ -998,6 +1039,7 @@ pub async fn subagent_transcript_discover(
 }
 
 #[tauri::command]
+// 定位 Codex sessions 根目录并筛选候选文件，返回首个父线程标识匹配的路径。
 pub async fn codex_subagent_transcript_discover(
     parent_session_id: String,
     agent_id: String,
@@ -1072,6 +1114,7 @@ pub async fn codex_subagent_transcript_discover(
     Ok(None)
 }
 
+// 查询 WSL HOME 并用 find 列出直接子代理文件；扫描命令失败时返回空列表。
 fn discover_wsl_subagent_files(
     cwd: &str,
     session_id: &str,
@@ -1136,6 +1179,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证 WSL 参数使用 --exec，并将 glob 作为独立参数保留。
     fn wsl_command_args_use_exec_and_preserve_glob_arguments() {
         assert_eq!(
             build_wsl_command_args(
@@ -1164,6 +1208,7 @@ mod tests {
     }
 
     #[test]
+    // 验证项目 slug 只替换冒号与路径分隔符。
     fn slug_replaces_separators_only() {
         assert_eq!(
             slug_for_cwd(r"D:\work\pythonProject\CLI-Manager"),
@@ -1174,6 +1219,7 @@ mod tests {
     }
 
     #[test]
+    // 验证本机子代理路径包含项目 slug、会话目录和 agent 文件名。
     fn derive_builds_subagent_jsonl_path() {
         let home = Path::new(r"C:\Users\me");
         let path =
@@ -1188,6 +1234,7 @@ mod tests {
     }
 
     #[test]
+    // 验证允许范围内的显式路径优先使用且去除两端空白。
     fn resolve_prefers_explicit_transcript_path() {
         let explicit = home_dir()
             .unwrap()
@@ -1210,6 +1257,7 @@ mod tests {
     }
 
     #[test]
+    // 验证父转录路径优先于 Worktree 工作目录推导子代理位置。
     fn resolve_uses_parent_transcript_before_worktree_cwd() {
         let parent = home_dir()
             .unwrap()
@@ -1236,6 +1284,7 @@ mod tests {
     }
 
     #[test]
+    // 验证显式子转录路径优先于会话名不匹配的父转录路径。
     fn resolve_explicit_child_precedes_parent_transcript() {
         let root = home_dir()
             .unwrap()
@@ -1259,6 +1308,7 @@ mod tests {
     }
 
     #[test]
+    // 验证父转录文件名与会话标识不匹配时返回错误。
     fn resolve_rejects_parent_transcript_for_another_session() {
         let parent = home_dir()
             .unwrap()
@@ -1282,6 +1332,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 验证 Windows 下 Linux 父转录结合发行版可推导 WSL 子代理 UNC 路径。
     fn resolve_converts_linux_parent_transcript_to_wsl_child_path() {
         let got = resolve_transcript_path(
             None,
@@ -1300,6 +1351,7 @@ mod tests {
     }
 
     #[test]
+    // 验证允许目录范围外的显式路径被拒绝。
     fn resolve_rejects_explicit_transcript_path_outside_allowed_roots() {
         let err = resolve_transcript_path(
             Some(r"C:\tmp\a.jsonl".to_string()),
@@ -1317,6 +1369,7 @@ mod tests {
     }
 
     #[test]
+    // 验证已知发行版时显式 Linux 转录路径转换为 WSL UNC。
     fn explicit_linux_path_converts_to_wsl_unc_when_distro_known() {
         let got = resolve_transcript_path(
             Some(" /home/me/.claude/projects/p/s/subagents/agent-a.jsonl ".to_string()),
@@ -1334,6 +1387,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未指定发行版时本机显式路径保持本机形式。
     fn explicit_native_path_stays_native_without_wsl_distro() {
         let explicit = home_dir()
             .unwrap()
@@ -1356,6 +1410,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Windows 工作目录先转换为 Linux slug 再拼接 WSL 转录路径。
     fn derives_wsl_unc_path_from_windows_cwd_using_linux_slug() {
         let got = derive_wsl_unc_transcript_path(
             "/home/me",
@@ -1371,12 +1426,14 @@ mod tests {
     }
 
     #[test]
+    // 验证没有显式发行版时从普通 WSL UNC 工作目录提取。
     fn resolves_wsl_distro_from_unc_cwd_when_env_missing() {
         let got = resolve_wsl_distro_name(Some(r"\\wsl.localhost\Ubuntu\data\test\sys"), None);
         assert_eq!(got.as_deref(), Some("Ubuntu"));
     }
 
     #[test]
+    // 验证没有显式发行版时从扩展前缀 WSL UNC 工作目录提取。
     fn resolves_wsl_distro_from_verbatim_unc_cwd_when_env_missing() {
         let got =
             resolve_wsl_distro_name(Some(r"\\?\UNC\wsl.localhost\Ubuntu\data\test\sys"), None);
@@ -1384,18 +1441,21 @@ mod tests {
     }
 
     #[test]
+    // 验证显式 Codex 路径已以 sessions 结尾时不会重复追加。
     fn codex_sessions_root_does_not_duplicate_sessions() {
         let got = resolve_codex_sessions_root(Some("/home/me/.codex/sessions".to_string()));
         assert_eq!(got, PathBuf::from("/home/me/.codex/sessions"));
     }
 
     #[test]
+    // 验证未指定配置路径时使用 Linux home 下的 .codex。
     fn resolves_default_wsl_codex_config_root_from_linux_home() {
         let got = resolve_wsl_codex_config_root(None, "Ubuntu", "/home/me").unwrap();
         assert_eq!(got, "/home/me/.codex");
     }
 
     #[test]
+    // 验证 Linux、普通及扩展 WSL UNC、Windows 盘符配置路径的转换。
     fn resolves_wsl_codex_config_root_path_variants() {
         assert_eq!(
             resolve_wsl_codex_config_root(Some("/home/me/custom-codex".to_string()), "Ubuntu", "",)
@@ -1428,6 +1488,7 @@ mod tests {
     }
 
     #[test]
+    // 验证从 Linux 父转录路径直接提取并转换 WSL sessions 根目录。
     fn resolves_wsl_codex_sessions_root_from_parent_transcript() {
         let got = resolve_wsl_codex_sessions_root(
             None,
@@ -1442,6 +1503,7 @@ mod tests {
     }
 
     #[test]
+    // 验证父转录中的 sessions 根目录优先于错误的显式配置。
     fn parent_transcript_root_overrides_incorrect_explicit_config() {
         let got = resolve_wsl_codex_sessions_root(
             Some("/home/dministrator".to_string()),
@@ -1456,6 +1518,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL 配置已指向 sessions 时不重复追加目录。
     fn resolves_wsl_codex_sessions_root_without_duplicate_sessions() {
         let got = resolve_wsl_codex_sessions_root(
             Some("/home/me/.codex/sessions".to_string()),
@@ -1470,6 +1533,7 @@ mod tests {
     }
 
     #[test]
+    // 验证显式发行版覆盖 UNC 工作目录中推断的发行版。
     fn explicit_wsl_distro_overrides_unc_cwd() {
         let got = resolve_wsl_distro_name(
             Some(r"\\wsl.localhost\Ubuntu\data\test\sys"),
@@ -1479,6 +1543,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺少显式路径和必要推导参数时返回错误。
     fn resolve_requires_parts_when_no_explicit_path() {
         let err = resolve_transcript_path(None, None, None, None, None, None).unwrap_err();
         // 缺 home 或缺 cwd 都应报错（不静默编出错误路径）。
@@ -1486,6 +1551,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时文件验证只消费完整换行记录，并从上次偏移读取新增完整行。
     fn read_new_lines_returns_offset_for_complete_lines_only() {
         let path = std::env::temp_dir().join(format!(
             "cli-manager-subagent-transcript-{}.jsonl",

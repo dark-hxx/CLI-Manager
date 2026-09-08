@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证远程同步分页期间来源实例身份变化被拒绝。
 fn remote_history_sync_rejects_identity_changes_between_pages() {
     let plan = remote_history_plan();
     let result = remote_sync_result();
@@ -20,6 +21,7 @@ fn remote_history_sync_rejects_identity_changes_between_pages() {
 }
 
 #[test]
+// 验证缺失直接转录路径编码为空字符串，显式路径保持不变。
 fn remote_history_get_payload_encodes_missing_transcript_ref_as_empty_string() {
     let payload = remote_history_get_payload(
         "claude",
@@ -45,6 +47,7 @@ fn remote_history_get_payload_encodes_missing_transcript_ref_as_empty_string() {
 }
 
 #[test]
+// 验证远程详情缓存按最近使用淘汰，并能清空整个实例。
 fn remote_history_detail_cache_evicts_lru_and_invalidates_instance() {
     let mut cache = RemoteHistoryDetailCache::default();
     for index in 0..REMOTE_HISTORY_DETAIL_CACHE_MAX {

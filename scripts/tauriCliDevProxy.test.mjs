@@ -17,10 +17,12 @@ const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "cli-manager-tauri
 const logPath = path.join(temporaryDirectory, "commands.log");
 const environmentLogPath = path.join(temporaryDirectory, "cargo-environment.log");
 
+// 在本测试临时目录写入命令替身，记录调用而不运行真实 Cargo 或 Tauri。
 function writeCommand(name, body) {
   writeFileSync(path.join(temporaryDirectory, `${name}.cmd`), `@echo off\r\n${body}\r\n`, "utf8");
 }
 
+// 将临时替身置于子进程 PATH 首位，运行包装器并收集命令及配置环境日志。
 function runTauriCli(args, cargoExitCode = 0) {
   writeFileSync(logPath, "", "utf8");
   writeFileSync(environmentLogPath, "", "utf8");

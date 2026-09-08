@@ -9,6 +9,7 @@ use std::env;
 use std::fs::{self};
 use std::path::{Path, PathBuf};
 
+// 优先取非空 USERPROFILE，再回退 HOME 作为用户目录。
 pub(super) fn user_home_dir() -> Option<PathBuf> {
     env::var_os("USERPROFILE")
         .filter(|value| !value.is_empty())
@@ -16,6 +17,7 @@ pub(super) fn user_home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+// 返回对应 Agent 的默认可执行命令名。
 pub(super) fn default_agent_command(agent: CcConnectAgent) -> &'static str {
     match agent {
         CcConnectAgent::Claude => "claude",
@@ -25,6 +27,7 @@ pub(super) fn default_agent_command(agent: CcConnectAgent) -> &'static str {
     }
 }
 
+// 比较原路径或规范路径是否指向同一目录。
 pub(super) fn directory_matches(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
@@ -35,6 +38,7 @@ pub(super) fn directory_matches(left: &Path, right: &Path) -> bool {
     }
 }
 
+// 搜索 PATH 中可用启动程序并跳过指定托管包装目录。
 pub(super) fn resolve_program_from_path(
     program: &str,
     path_value: &std::ffi::OsStr,
@@ -83,6 +87,7 @@ pub(super) fn resolve_program_from_path(
 }
 
 #[cfg(all(test, unix))]
+// 在 Unix 测试中解析包装目录之外的 Codex 启动程序。
 pub(super) fn resolve_codex_launcher_from_path(
     wrapper_dir: &Path,
     path_value: impl AsRef<std::ffi::OsStr>,
@@ -90,6 +95,7 @@ pub(super) fn resolve_codex_launcher_from_path(
     resolve_program_from_path("codex", path_value.as_ref(), Some(wrapper_dir))
 }
 
+// 按工作目录解析显式程序路径，否则搜索 PATH 并避开 Codex 包装器。
 pub(super) fn resolve_local_agent_program(
     program: &str,
     work_dir: &Path,
@@ -117,6 +123,7 @@ pub(super) fn resolve_local_agent_program(
     resolve_program_from_path(program, &path_value, skip_wrapper.as_deref())
 }
 
+// 识别各 Agent 的恢复、继续及会话选择参数。
 pub(super) fn has_handoff_session_argument(agent: CcConnectAgent, argument: &str) -> bool {
     let option = argument
         .split_once('=')
@@ -134,6 +141,7 @@ pub(super) fn has_handoff_session_argument(agent: CcConnectAgent, argument: &str
         || matches!(agent, CcConnectAgent::Opencode) && matches!(option.as_str(), "-c" | "-s")
 }
 
+// 识别需要独立值的 Codex 选项，排除等号和组合短参数。
 pub(super) fn codex_resume_option_takes_value(argument: &str) -> bool {
     if argument.contains('=')
         || argument
@@ -166,6 +174,7 @@ pub(super) fn codex_resume_option_takes_value(argument: &str) -> bool {
     )
 }
 
+// 判定各 Agent 会话选择参数是否消费后续值。
 pub(super) fn handoff_session_argument_takes_value(agent: CcConnectAgent, argument: &str) -> bool {
     let option = argument
         .split_once('=')
@@ -192,6 +201,7 @@ pub(super) fn handoff_session_argument_takes_value(agent: CcConnectAgent, argume
     }
 }
 
+// 移除注册命令中的会话目标，同时保留 Codex 配置选项和值。
 pub(super) fn strip_registered_launcher_session_arguments(
     agent: CcConnectAgent,
     args: Vec<String>,
@@ -253,6 +263,7 @@ pub(super) fn strip_registered_launcher_session_arguments(
     kept
 }
 
+// 拒绝残留会话选择参数及与托管 Provider 冲突的选项。
 pub(super) fn validate_registered_launcher_arguments(
     agent: CcConnectAgent,
     args: &[String],
@@ -281,6 +292,7 @@ pub(super) fn validate_registered_launcher_arguments(
 }
 
 #[cfg(target_os = "windows")]
+// 对 Windows 脚本启动路径和参数拒绝命令解释器元字符。
 pub(super) fn validate_windows_script_launcher(
     executable: &Path,
     args: &[String],
@@ -304,6 +316,7 @@ pub(super) fn validate_windows_script_launcher(
     Ok(())
 }
 
+// 校验注册 Agent 身份、清理会话参数并解析可用启动程序。
 pub(super) fn ensure_local_agent_available(
     project: &RegisteredProject,
 ) -> Result<ResolvedAgentLauncher, String> {
@@ -333,6 +346,7 @@ pub(super) fn ensure_local_agent_available(
     })
 }
 
+// 组合结构化启动参数，Windows PowerShell 脚本使用 -File 入口。
 pub(super) fn managed_agent_command(launcher: &ResolvedAgentLauncher) -> Vec<String> {
     let executable = config_path_value(&launcher.executable);
     #[cfg(target_os = "windows")]
@@ -356,6 +370,7 @@ pub(super) fn managed_agent_command(launcher: &ResolvedAgentLauncher) -> Vec<Str
     command
 }
 
+// 仅为 Pi/OpenCode 提取受限项目环境，并分离占位符与进程明文。
 pub(super) fn managed_project_environment(
     project: &RegisteredProject,
 ) -> (BTreeMap<String, String>, Vec<(String, String)>) {

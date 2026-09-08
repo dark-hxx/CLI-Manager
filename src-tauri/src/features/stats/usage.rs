@@ -25,6 +25,7 @@ pub struct UsageTokens {
 }
 
 impl UsageTokens {
+    // 饱和累加四类 Token，避免总量溢出。
     pub fn total(self) -> u64 {
         self.input_tokens
             .saturating_add(self.output_tokens)
@@ -32,6 +33,7 @@ impl UsageTokens {
             .saturating_add(self.cache_creation_tokens)
     }
 
+    // 逐项保留已有值与新快照中的较大 Token 计数。
     fn max_assign(&mut self, other: Self) {
         self.input_tokens = self.input_tokens.max(other.input_tokens);
         self.output_tokens = self.output_tokens.max(other.output_tokens);
@@ -89,6 +91,7 @@ pub enum UsageStatus {
 }
 
 impl UsageStatus {
+    // 返回用量状态对应的持久化字符串。
     fn as_str(self) -> &'static str {
         match self {
             Self::Complete => "complete",
@@ -100,14 +103,17 @@ impl UsageStatus {
     }
 }
 
+// 生成 UUID v4 作为路由请求标识。
 pub fn new_request_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+// 读取本进程路由用量写入代次，供统计缓存失效使用。
 pub fn route_usage_generation() -> u64 {
     ROUTE_USAGE_GENERATION.load(Ordering::Acquire)
 }
 
+// 按代理类型优先从请求头再从请求体提取会话标识，排除 Codex 响应标识。
 pub fn session_id_from_headers_and_body(
     app_type: &str,
     headers: &[(String, String)],
@@ -158,6 +164,7 @@ pub fn session_id_from_headers_and_body(
     None
 }
 
+// 提取安全错误详情并递归扫描响应中的用量、模型和结束状态。
 pub fn parse_response_json(value: &Value) -> UsageCapture {
     let mut capture = UsageCapture::default();
     capture.error_detail = extract_error_detail(value);
@@ -165,6 +172,7 @@ pub fn parse_response_json(value: &Value) -> UsageCapture {
     capture
 }
 
+// 遍历 JSON 对象与数组，以字段最大值合并用量并记录模型及状态。
 fn scan_json(value: &Value, capture: &mut UsageCapture) {
     if let Some(object) = value.as_object() {
         if let Some(usage) = object
@@ -207,6 +215,7 @@ fn scan_json(value: &Value, capture: &mut UsageCapture) {
     }
 }
 
+// 只从白名单标量字段选择错误详情，再执行脱敏与截断。
 fn extract_error_detail(value: &Value) -> Option<String> {
     let error = value.get("error");
     let candidate = [
@@ -234,6 +243,7 @@ fn extract_error_detail(value: &Value) -> Option<String> {
     candidate.and_then(sanitize_error_detail)
 }
 
+// 惰性编译凭据赋值文本的脱敏正则。
 fn sensitive_assignment_re() -> &'static Regex {
     SENSITIVE_ASSIGNMENT_RE.get_or_init(|| {
         Regex::new(
@@ -243,6 +253,7 @@ fn sensitive_assignment_re() -> &'static Regex {
     })
 }
 
+// 惰性编译 Bearer 令牌的脱敏正则。
 fn bearer_token_re() -> &'static Regex {
     BEARER_TOKEN_RE.get_or_init(|| {
         Regex::new(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]+")
@@ -250,6 +261,7 @@ fn bearer_token_re() -> &'static Regex {
     })
 }
 
+// 惰性编译常见 API 密钥和 JWT 形状的脱敏正则。
 fn secret_value_re() -> &'static Regex {
     SECRET_VALUE_RE.get_or_init(|| {
         Regex::new(
@@ -259,6 +271,7 @@ fn secret_value_re() -> &'static Regex {
     })
 }
 
+// 合并错误文本空白、遮蔽敏感模式，并限制正文字符数后附加省略号。
 fn sanitize_error_detail(raw: &str) -> Option<String> {
     let normalized = raw.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
@@ -288,6 +301,7 @@ fn sanitize_error_detail(raw: &str) -> Option<String> {
     })
 }
 
+// 按兼容字段名读取四类 Token，缺失值按零处理。
 fn parse_usage(value: &Value) -> UsageTokens {
     let get = |keys: &[&str]| {
         keys.iter()
@@ -325,6 +339,7 @@ fn parse_usage(value: &Value) -> UsageTokens {
     }
 }
 
+// 将非负整数或整数字符串解析为 u64。
 fn as_non_negative_u64(value: &Value) -> Option<u64> {
     match value {
         Value::Number(value) => value.as_u64().or_else(|| {
@@ -345,6 +360,7 @@ pub struct SseUsageCollector {
 }
 
 impl SseUsageCollector {
+    // 追加 SSE 字节文本并限制缓冲，再逐个消费完整事件。
     pub fn observe(&mut self, bytes: &Bytes) {
         self.buffer.push_str(&String::from_utf8_lossy(bytes));
         if self.buffer.len() > MAX_SSE_BUFFER_BYTES {
@@ -358,6 +374,7 @@ impl SseUsageCollector {
         }
     }
 
+    // 解析 SSE data 或原始 JSON 事件，合并用量与终止状态。
     fn observe_event(&mut self, event: &str) {
         let mut data = String::new();
         for line in event.lines() {
@@ -395,6 +412,7 @@ impl SseUsageCollector {
         }
     }
 
+    // 消费剩余未分隔事件并返回最终用量捕获。
     pub fn finish(mut self) -> UsageCapture {
         if !self.buffer.trim().is_empty() {
             let event = std::mem::take(&mut self.buffer);
@@ -404,6 +422,7 @@ impl SseUsageCollector {
     }
 }
 
+// 寻找最早的 LF 或 CRLF 空行事件边界。
 fn sse_event_boundary(buffer: &str) -> Option<(usize, usize)> {
     let lf = buffer.find("\n\n").map(|index| (index, 2));
     let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
@@ -414,6 +433,7 @@ fn sse_event_boundary(buffer: &str) -> Option<(usize, usize)> {
     }
 }
 
+// 写入路由尝试用量及诊断，增加缓存代次并定向补齐会话归属。
 pub async fn record_route_usage(
     context: RouteUsageContext,
     capture: UsageCapture,
@@ -511,6 +531,7 @@ pub async fn record_route_usage(
     Ok(())
 }
 
+// 根据 Token、完成状态及请求结果判定完整、部分、缺失或不适用。
 fn usage_status_for(
     capture: &UsageCapture,
     is_streaming: bool,
@@ -530,6 +551,7 @@ fn usage_status_for(
     }
 }
 
+// 尽力写入路由用量，失败仅记录带请求标识的警告。
 pub async fn record_route_usage_best_effort(
     context: RouteUsageContext,
     capture: UsageCapture,
@@ -555,6 +577,7 @@ pub async fn record_route_usage_best_effort(
     }
 }
 
+// 按开始时间范围读取路由用量，并将负数持久化计数归零。
 pub async fn load_route_usage_records(
     start_at: i64,
     end_at: i64,
@@ -613,6 +636,7 @@ pub async fn load_route_usage_records(
         .collect()
 }
 
+// 打开用量数据库后执行遗留路由归属协调。
 pub async fn reconcile_route_attribution() -> Result<u64, String> {
     let mut connection = crate::usage_schema::open_usage_database().await?;
     reconcile_route_attribution_with_connection(
@@ -622,6 +646,7 @@ pub async fn reconcile_route_attribution() -> Result<u64, String> {
     .await
 }
 
+// 按同源会话补齐路由项目与文件信息，并标记未匹配记录。
 async fn reconcile_route_attribution_with_connection(
     connection: &mut SqliteConnection,
     updated_at_ms: i64,
@@ -690,6 +715,7 @@ async fn reconcile_route_attribution_with_connection(
         .saturating_add(unattributed.rows_affected()))
 }
 
+// 仅更新指定来源与会话的路由记录归属及物化项目路径。
 pub(crate) async fn reconcile_route_attribution_for_session_with_connection(
     connection: &mut SqliteConnection,
     source: &str,
@@ -742,6 +768,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证常见响应字段被解析为模型与四类 Token。
     fn parses_common_usage_shapes() {
         let capture = parse_response_json(&serde_json::json!({
             "model": "actual-model",
@@ -757,6 +784,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSE 累计用量保留最大值而非重复累加。
     fn sse_collector_preserves_max_cumulative_usage() {
         let mut collector = SseUsageCollector::default();
         collector.observe(&Bytes::from_static(
@@ -769,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSE 支持 CRLF 事件分隔及完成标记。
     fn sse_collector_accepts_crlf_delimiters() {
         let mut collector = SseUsageCollector::default();
         collector.observe(&Bytes::from_static(
@@ -781,6 +810,7 @@ mod tests {
     }
 
     #[test]
+    // 验证错误详情仅取白名单字段并遮蔽凭据。
     fn error_detail_uses_allowed_fields_and_redacts_sensitive_values() {
         let capture = parse_response_json(&serde_json::json!({
             "type": "error",
@@ -802,6 +832,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超长错误正文被截断并追加省略字符。
     fn error_detail_is_length_limited() {
         let long_detail = "x".repeat(MAX_ERROR_DETAIL_CHARS + 32);
         let capture = parse_response_json(&serde_json::json!({
@@ -814,6 +845,7 @@ mod tests {
     }
 
     #[test]
+    // 验证无 SSE 外壳的末尾 JSON 错误仍被捕获并脱敏。
     fn sse_collector_captures_terminal_raw_json_error_detail() {
         let mut collector = SseUsageCollector::default();
         collector.observe(&Bytes::from_static(
@@ -829,6 +861,7 @@ mod tests {
     }
 
     #[test]
+    // 验证空失败或跳过记录不适用，而空成功记录标为缺失。
     fn failed_empty_capture_is_not_applicable_but_successful_empty_capture_is_missing() {
         let capture = UsageCapture::default();
         assert_eq!(
@@ -851,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    // 验证语义错误即使传入成功结果也归为不适用。
     fn semantic_error_payload_without_tokens_is_not_applicable() {
         let capture = UsageCapture {
             failed: true,
@@ -863,6 +897,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证同源会话归属补齐项目与文件，并标记未匹配记录。
     async fn route_attribution_resolves_project_and_session_file() {
         let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(
@@ -934,6 +969,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证定向归属更新复制会话日志的物化项目路径。
     async fn targeted_route_attribution_copies_materialized_project_path() {
         let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
         sqlx::query(

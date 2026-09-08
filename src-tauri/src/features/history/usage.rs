@@ -8,6 +8,7 @@ use serde_json::Value;
 /// 相邻高水位差分还原单回合用量；累计值变小是陈旧/交错快照，不产生新增用量。
 /// Codex 的 `input_tokens` 包含 `cached_input_tokens`，此处归一化为
 /// 非缓存 input + cache_read，与 Claude 口径一致。
+// 累计总量上升时计算饱和差分，再转换为非缓存输入与缓存读取用量。
 pub(super) fn codex_usage_delta(
     previous: Option<CodexCumulativeUsage>,
     current: CodexCumulativeUsage,
@@ -28,6 +29,7 @@ pub(super) fn codex_usage_delta(
     codex_usage_from_counts(delta)
 }
 
+// 从 Codex 含缓存输入中扣除缓存读取，生成统一 token 用量结构。
 pub(super) fn codex_usage_from_counts(counts: CodexCumulativeUsage) -> UsageTokenScan {
     UsageTokenScan {
         input_tokens: counts
@@ -44,6 +46,7 @@ pub(super) fn codex_usage_from_counts(counts: CodexCumulativeUsage) -> UsageToke
 ///
 /// 边界情况：无 message.id 的带 usage 行不去重。
 /// Claude Code / Codex 正常都有 message.id，属边界情况，保持现状。
+// 由非空 message.id 与可选 requestId 构造流式用量去重键。
 pub(super) fn extract_usage_dedup_key(value: &Value) -> Option<String> {
     let message_id = value
         .get("message")
@@ -59,6 +62,7 @@ pub(super) fn extract_usage_dedup_key(value: &Value) -> Option<String> {
     Some(format!("{message_id}|{request_id}"))
 }
 
+// 优先使用消息身份，其次 Codex 累计快照，否则用物理行号和用量构造事件键。
 pub(super) fn build_usage_event_key(
     value: &Value,
     physical_line_index: usize,
@@ -89,10 +93,12 @@ pub(super) fn build_usage_event_key(
     )
 }
 
+// 不区分 ASCII 大小写判断修剪后的模型名是否为合成占位符。
 pub(super) fn is_synthetic_model(model: &str) -> bool {
     model.trim().eq_ignore_ascii_case("<synthetic>")
 }
 
+// 按兼容字段归一化输入、输出、缓存和显式成本，必要时用总量回退输入。
 pub(super) fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
     let Value::Object(map) = value else {
         return UsageTokenScan::default();
@@ -228,6 +234,7 @@ pub(super) fn extract_usage_tokens_from_value(value: &Value) -> UsageTokenScan {
     }
 }
 
+// 按字段顺序读取首个可转换的非负整数，包括零。
 pub(super) fn extract_u64_by_keys(
     map: &serde_json::Map<String, Value>,
     keys: &[&str],
@@ -237,6 +244,7 @@ pub(super) fn extract_u64_by_keys(
         .find_map(extract_positive_u64)
 }
 
+// 按字段顺序读取首个有限非负浮点数。
 pub(super) fn extract_f64_by_keys(
     map: &serde_json::Map<String, Value>,
     keys: &[&str],
@@ -246,6 +254,7 @@ pub(super) fn extract_f64_by_keys(
         .find_map(extract_non_negative_f64)
 }
 
+// 将数字或数字字符串转换为有限非负浮点数。
 pub(super) fn extract_non_negative_f64(value: &Value) -> Option<f64> {
     match value {
         Value::Number(v) => v.as_f64().filter(|n| n.is_finite() && *n >= 0.0),
@@ -258,6 +267,7 @@ pub(super) fn extract_non_negative_f64(value: &Value) -> Option<f64> {
     }
 }
 
+// 饱和累加四类原始 token 用量。
 pub(super) fn usage_total_tokens(usage: UsageTokenScan) -> u64 {
     usage
         .input_tokens
@@ -266,6 +276,7 @@ pub(super) fn usage_total_tokens(usage: UsageTokenScan) -> u64 {
         .saturating_add(usage.cache_creation_tokens)
 }
 
+// 判断消息是否含有任一大于零的 token 用量。
 pub(super) fn message_has_token_usage(message: &HistoryMessage) -> bool {
     message.input_tokens.unwrap_or(0) > 0
         || message.output_tokens.unwrap_or(0) > 0
@@ -273,10 +284,12 @@ pub(super) fn message_has_token_usage(message: &HistoryMessage) -> bool {
         || message.cache_creation_tokens.unwrap_or(0) > 0
 }
 
+// 仅将大于零的 token 数转换为可选值。
 pub(super) fn positive_usage_token(value: u64) -> Option<u64> {
     (value > 0).then_some(value)
 }
 
+// 把非零用量回填到最近一条无 token 用量的助手消息，必要时补时间。
 pub(super) fn backfill_latest_assistant_message_usage(
     messages: &mut [HistoryMessage],
     usage: UsageTokenScan,
@@ -302,6 +315,7 @@ pub(super) fn backfill_latest_assistant_message_usage(
     message.cache_creation_tokens = positive_usage_token(usage.cache_creation_tokens);
 }
 
+// 饱和累加统计结构中的四类 token 用量。
 pub(super) fn usage_stats_total_tokens(usage: UsageStatsScan) -> u64 {
     usage
         .input_tokens
@@ -310,6 +324,7 @@ pub(super) fn usage_stats_total_tokens(usage: UsageStatsScan) -> u64 {
         .saturating_add(usage.cache_creation_tokens)
 }
 
+// 将原始用量和模型映射为包含总量的趋势点。
 pub(super) fn usage_trend_point(
     usage: UsageTokenScan,
     model: Option<String>,
@@ -324,6 +339,7 @@ pub(super) fn usage_trend_point(
     }
 }
 
+// 饱和累加模型统计条目的四类 token 用量。
 pub(super) fn history_stats_total_tokens(item: &HistoryStatsModelItem) -> u64 {
     item.input_tokens
         .saturating_add(item.output_tokens)
@@ -331,6 +347,7 @@ pub(super) fn history_stats_total_tokens(item: &HistoryStatsModelItem) -> u64 {
         .saturating_add(item.cache_creation_tokens)
 }
 
+// 仅按本地模型定价计算四类用量成本，未定价用量记入未计价 token。
 pub(super) fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStatsScan {
     let total_tokens = usage_total_tokens(usage);
     if total_tokens == 0 {
@@ -374,6 +391,7 @@ pub(super) struct HistoryModelPricing {
     pub(super) cache_creation_per_million: f64,
 }
 
+// 从模型定价缓存读取历史计价所需单价，缓存不可用或缺失时返回空值。
 pub(super) fn find_history_model_pricing(model: &str) -> Option<HistoryModelPricing> {
     match find_cached_model_pricing(model) {
         CachedModelPricingLookup::Found(cached) => {
@@ -388,6 +406,7 @@ pub(super) fn find_history_model_pricing(model: &str) -> Option<HistoryModelPric
     }
 }
 
+// 将布尔、非负数字或整数字符串转换为 u64，允许零及浮点截断。
 pub(super) fn extract_positive_u64(value: &Value) -> Option<u64> {
     match value {
         Value::Null => None,
@@ -407,6 +426,7 @@ pub(super) fn extract_positive_u64(value: &Value) -> Option<u64> {
     }
 }
 
+// 从兼容模型字段及指定嵌套对象递归提取首个非空模型名。
 pub(super) fn extract_model(value: &Value) -> Option<String> {
     let direct_candidates = [
         value.get("model").and_then(Value::as_str),
@@ -440,6 +460,7 @@ pub(super) fn extract_model(value: &Value) -> Option<String> {
     None
 }
 
+// 读取 Codex turn_context 的思考强度，已知标签规范化，未知值转小写。
 pub(super) fn extract_reasoning_effort(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("turn_context") {
         return None;
@@ -465,6 +486,7 @@ pub(super) fn extract_reasoning_effort(value: &Value) -> Option<String> {
     })
 }
 
+// 仅为受支持的纯 GPT 版本模型组合规范思考强度后缀。
 pub(super) fn qualify_model_with_reasoning_effort(model: String, effort: Option<&str>) -> String {
     let trimmed = model.trim();
     if trimmed.is_empty() {
@@ -490,6 +512,7 @@ pub(super) fn qualify_model_with_reasoning_effort(model: String, effort: Option<
     format!("{base_model}({effort})")
 }
 
+// 拆分可识别的括号或连字符思考强度后缀，无法识别时保留模型名。
 pub(super) fn split_model_reasoning_effort(model: &str) -> (&str, Option<&'static str>) {
     let trimmed = model.trim();
     if let Some(open) = trimmed.rfind('(') {
@@ -515,6 +538,7 @@ pub(super) fn split_model_reasoning_effort(model: &str) -> (&str, Option<&'stati
     (trimmed, None)
 }
 
+// 仅接受 gpt- 后跟两段数字版本的模型作为思考强度变体。
 pub(super) fn supports_reasoning_effort_model_variant(model: &str) -> bool {
     let Some(version) = model.trim().strip_prefix("gpt-") else {
         return false;
@@ -533,6 +557,7 @@ pub(super) fn supports_reasoning_effort_model_variant(model: &str) -> bool {
         && minor.chars().all(|ch| ch.is_ascii_digit())
 }
 
+// 忽略非字母数字符号与大小写，将已知思考强度映射到规范标签。
 pub(super) fn normalize_reasoning_effort_label(value: &str) -> Option<&'static str> {
     let key: String = value
         .trim()

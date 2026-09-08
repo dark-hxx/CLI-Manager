@@ -17,6 +17,7 @@ pub struct ExternalTab {
 }
 
 #[cfg(target_os = "windows")]
+// 含路径分隔符的 shell 字符串按自定义文件检查，存在则返回原修剪路径；不含分隔符视为内置键。
 fn resolve_custom_shell_path(shell: &str) -> Result<Option<String>, String> {
     let trimmed = shell.trim();
     let looks_like_path = trimmed.contains('\\') || trimmed.contains('/');
@@ -31,6 +32,7 @@ fn resolve_custom_shell_path(shell: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(target_os = "windows")]
+// Windows 优先解析自定义 shell 路径，否则映射内置 shell 与保持窗口参数，未知键默认 PowerShell。
 fn shell_exe(shell: &str) -> Result<(String, Option<&'static str>), String> {
     if let Some(custom_shell) = resolve_custom_shell_path(shell)? {
         return Ok((custom_shell, None));
@@ -54,6 +56,7 @@ fn shell_exe(shell: &str) -> Result<(String, Option<&'static str>), String> {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 取得去除首尾空白后的非空启动命令，不解析或转义其内容。
 fn trimmed_startup_cmd(tab: &ExternalTab) -> Option<&str> {
     tab.startup_cmd
         .as_deref()
@@ -62,6 +65,7 @@ fn trimmed_startup_cmd(tab: &ExternalTab) -> Option<&str> {
 }
 
 #[cfg(target_os = "windows")]
+// 向 Windows Terminal 参数追加目录、标题和 shell；启动命令按 cmd、Git Bash、自定义 shell 或其他 shell 分支组装。
 fn push_tab_args(args: &mut Vec<String>, tab: &ExternalTab) -> Result<(), String> {
     args.push("new-tab".into());
     if let Some(cwd) = &tab.cwd {
@@ -104,11 +108,13 @@ fn push_tab_args(args: &mut Vec<String>, tab: &ExternalTab) -> Result<(), String
 }
 
 #[cfg(not(target_os = "windows"))]
+// 将字符串包裹为 POSIX 单引号参数，并拆分转义内部单引号。
 fn escape_posix_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 #[cfg(not(target_os = "windows"))]
+// 选择支持的 Unix shell 或存在的自定义路径，未知值在 macOS 默认 zsh、其他平台默认 bash。
 fn unix_shell_exe(shell: Option<&str>) -> String {
     match shell {
         Some("bash") => "bash".to_string(),
@@ -123,6 +129,7 @@ fn unix_shell_exe(shell: Option<&str>) -> String {
 }
 
 #[cfg(not(target_os = "windows"))]
+// 顺序拼接可选 cd、原样启动命令与 exec shell，以分号连接，因此 cd 失败不会自动阻止后续命令。
 fn build_unix_terminal_command(tab: &ExternalTab) -> String {
     let shell = unix_shell_exe(tab.shell.as_deref());
     let mut parts: Vec<String> = Vec::new();
@@ -142,11 +149,13 @@ fn build_unix_terminal_command(tab: &ExternalTab) -> String {
 }
 
 #[cfg(target_os = "macos")]
+// 转义 AppleScript 字符串中的反斜杠和双引号。
 fn escape_applescript_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 #[cfg(target_os = "windows")]
+// 依次生成 wt、wt.exe 及 LOCALAPPDATA 下应用执行别名候选路径，不检查存在性。
 fn windows_terminal_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![PathBuf::from("wt"), PathBuf::from("wt.exe")];
     if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
@@ -161,6 +170,7 @@ fn windows_terminal_candidates() -> Vec<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
+// 依次尝试启动 Windows Terminal 候选，首次 spawn 成功即返回；全部失败返回最后错误，不等待终端退出。
 fn spawn_windows_terminal(args: &[String]) -> Result<PathBuf, std::io::Error> {
     let candidates = windows_terminal_candidates();
     let mut last_err: Option<std::io::Error> = None;
@@ -184,6 +194,7 @@ fn spawn_windows_terminal(args: &[String]) -> Result<PathBuf, std::io::Error> {
 }
 
 #[cfg(target_os = "windows")]
+// 将全部标签参数交给 Windows Terminal 的零号窗口，找不到程序时返回安装或设置提示。
 fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
     if tabs.is_empty() {
         return Ok(());
@@ -218,6 +229,7 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
 }
 
 #[cfg(target_os = "macos")]
+// 逐标签通过 AppleScript 激活 Terminal.app 并执行命令，等待 osascript 成功；后续失败不关闭已打开标签。
 fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
     if tabs.is_empty() {
         return Ok(());
@@ -252,6 +264,7 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
 }
 
 #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+// 逐标签依次尝试五种终端模拟器，首次进程启动成功即停止尝试；失败不回滚此前已打开终端。
 fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
     if tabs.is_empty() {
         return Ok(());
@@ -308,11 +321,13 @@ fn open_platform_terminal(tabs: &[ExternalTab]) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 保留历史 IPC 名称，按当前平台分派外部终端启动。
 pub async fn open_windows_terminal(tabs: Vec<ExternalTab>) -> Result<(), String> {
     open_platform_terminal(&tabs)
 }
 
 #[cfg(target_os = "windows")]
+// 按前三字节识别盘符、冒号和路径分隔符组成的 Windows 绝对盘符路径。
 fn is_windows_drive_path(path: &str) -> bool {
     let bytes = path.as_bytes();
     bytes.len() >= 3
@@ -322,6 +337,7 @@ fn is_windows_drive_path(path: &str) -> bool {
 }
 
 #[cfg(target_os = "windows")]
+// 去除盘符路径多余前导斜杠并统一反斜杠，规范化 WSL UNC，其余路径仅去除首尾空白。
 fn normalize_windows_explorer_path(path: &str) -> String {
     let trimmed = path.trim();
     let path = match trimmed.strip_prefix('/') {
@@ -342,6 +358,7 @@ fn normalize_windows_explorer_path(path: &str) -> String {
 
 /// 在系统文件管理器中打开指定路径
 #[tauri::command]
+// 检查路径存在后调用系统文件管理器；Windows 按 open_file 决定打开或选中，macOS 定位文件，其他平台打开父目录。
 pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let system_path = normalize_windows_explorer_path(&path);
@@ -417,6 +434,7 @@ mod tests {
     use super::normalize_windows_explorer_path;
 
     #[test]
+    // 验证带多余前导斜杠、正斜杠与原生反斜杠的盘符路径归一结果一致。
     fn normalize_windows_explorer_path_normalizes_drive_paths() {
         assert_eq!(
             normalize_windows_explorer_path(
@@ -435,6 +453,7 @@ mod tests {
     }
 
     #[test]
+    // 验证普通 UNC 保持不变，带 verbatim 前缀的 WSL UNC 转为标准形式。
     fn normalize_windows_explorer_path_preserves_unc_and_normalizes_wsl_unc() {
         assert_eq!(
             normalize_windows_explorer_path(r"\\server\share\project.knxproj"),

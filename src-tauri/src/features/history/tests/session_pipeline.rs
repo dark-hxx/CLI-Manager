@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证 JSON 会话迭代保留消息顺序、角色和文本。
 fn iter_session_messages_reads_json_sessions() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("session.json");
@@ -32,6 +33,7 @@ fn iter_session_messages_reads_json_sessions() {
 }
 
 #[test]
+// 验证 Claude 编辑与 Codex 转义补丁均被提取并保留操作时间顺序。
 fn scan_file_changes_reads_claude_and_codex_jsonl_operations_in_time_order() {
     let temp_dir = TempDir::new().unwrap();
     let path = temp_dir.path().join("session.jsonl");
@@ -101,6 +103,7 @@ fn scan_file_changes_reads_claude_and_codex_jsonl_operations_in_time_order() {
 }
 
 #[test]
+// 验证 Codex 文件发现从 cwd 提取项目名称。
 fn collect_codex_session_files_uses_cwd_project_name() {
     let temp_dir = TempDir::new().unwrap();
     let root = temp_dir.path().join(".codex");
@@ -124,6 +127,7 @@ fn collect_codex_session_files_uses_cwd_project_name() {
 }
 
 #[test]
+// 验证 Codex 使用元数据会话标识并在缺失日志时间时保留文件时间。
 fn build_session_computation_uses_codex_session_meta_id() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir
@@ -142,6 +146,7 @@ fn build_session_computation_uses_codex_session_meta_id() {
 }
 
 #[test]
+// 验证 Codex 会话时长采用转录中的起止时间。
 fn build_session_computation_uses_codex_transcript_timestamps_for_duration() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir
@@ -170,6 +175,7 @@ fn build_session_computation_uses_codex_transcript_timestamps_for_duration() {
 }
 
 #[test]
+// 验证 Codex 子代理元数据中的父线程标识被提取。
 fn build_session_computation_extracts_codex_parent_thread_id() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-child.jsonl");
@@ -188,6 +194,7 @@ fn build_session_computation_extracts_codex_parent_thread_id() {
 }
 
 #[test]
+// 验证线程名称索引保留最新有效名称并跳过无效行。
 fn codex_thread_name_index_uses_last_valid_name_and_skips_invalid_rows() {
     let names = parse_codex_thread_name_index(concat!(
         r#"{"id":"session-1","thread_name":"Old name"}"#,
@@ -206,6 +213,7 @@ fn codex_thread_name_index_uses_last_valid_name_and_skips_invalid_rows() {
 }
 
 #[test]
+// 验证会话详情公开元数据中的工作目录。
 fn build_session_detail_exposes_cwd() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -225,6 +233,7 @@ fn build_session_detail_exposes_cwd() {
 }
 
 #[test]
+// 验证父子会话聚合合并消息、Token 趋势及各类工具计数。
 fn build_session_detail_aggregates_subtasks_for_realtime_stats() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
@@ -275,6 +284,7 @@ fn build_session_detail_aggregates_subtasks_for_realtime_stats() {
 }
 
 #[test]
+// 验证禁止独立删除子代理，父会话备份删除会级联子日志。
 fn delete_session_tree_rejects_subagent_and_cascades_from_parent() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
@@ -307,6 +317,7 @@ fn delete_session_tree_rejects_subagent_and_cascades_from_parent() {
 }
 
 #[test]
+// 验证直接读取子代理详情时消息不可编辑。
 fn build_session_detail_marks_direct_subagent_messages_not_editable() {
     let temp_dir = TempDir::new().unwrap();
     let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
@@ -331,6 +342,7 @@ fn build_session_detail_marks_direct_subagent_messages_not_editable() {
 }
 
 #[test]
+// 验证 Codex 缺失元数据标识时回退文件名。
 fn build_session_computation_falls_back_for_codex_without_session_meta_id() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -345,6 +357,7 @@ fn build_session_computation_falls_back_for_codex_without_session_meta_id() {
 }
 
 #[test]
+// 验证 Claude 文件保持文件名标识，不采用 Codex 元数据标识。
 fn build_session_computation_keeps_claude_file_stem_session_id() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("claude-session.jsonl");
@@ -359,6 +372,7 @@ fn build_session_computation_keeps_claude_file_stem_session_id() {
 }
 
 #[test]
+// 验证标题可从内部目标上下文提取实际任务目标。
 fn build_session_computation_title_uses_objective_from_internal_context() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -383,6 +397,7 @@ fn build_session_computation_title_uses_objective_from_internal_context() {
 }
 
 #[test]
+// 验证标题选择跳过系统提醒而使用真实用户文本。
 fn build_session_computation_title_skips_system_like_user_blocks() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -407,6 +422,7 @@ fn build_session_computation_title_skips_system_like_user_blocks() {
 }
 
 #[test]
+// 验证 AGENTS 指令不被作为会话标题。
 fn build_session_computation_title_skips_agents_instructions() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -431,6 +447,7 @@ fn build_session_computation_title_skips_agents_instructions() {
 }
 
 #[test]
+// 验证图像标签转换为占位符并保留用户文字标题。
 fn build_session_computation_title_uses_image_placeholders_with_remaining_text() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("image-session.jsonl");
@@ -455,6 +472,7 @@ fn build_session_computation_title_uses_image_placeholders_with_remaining_text()
 }
 
 #[test]
+// 验证标题移除图像闭合标签并去重重复占位符。
 fn build_session_computation_title_skips_image_close_and_repeated_placeholder() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("image-with-text-session.jsonl");
@@ -479,6 +497,7 @@ fn build_session_computation_title_skips_image_close_and_repeated_placeholder() 
 }
 
 #[test]
+// 验证行内图像闭合标签不会污染后续标题文字。
 fn build_session_computation_title_skips_inline_image_close_before_text() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("image-inline-close-session.jsonl");
@@ -499,6 +518,7 @@ fn build_session_computation_title_skips_inline_image_close_before_text() {
 }
 
 #[test]
+// 验证纯图像用户消息生成单个图像占位标题。
 fn build_session_computation_title_uses_single_image_placeholder() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("image-only-session.jsonl");
@@ -518,6 +538,7 @@ fn build_session_computation_title_uses_single_image_placeholder() {
 }
 
 #[test]
+// 验证匹配文件指纹的项目缓存可直接复用。
 fn get_or_scan_session_project_reuses_matching_fingerprint_cache() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -545,6 +566,7 @@ fn get_or_scan_session_project_reuses_matching_fingerprint_cache() {
 }
 
 #[test]
+// 验证命令标签解析移除开头斜杠且无标签时返回空值。
 fn extract_command_name_strips_slash() {
     assert_eq!(
         extract_command_name(r#"text <command-name>/goal</command-name> rest"#),
@@ -554,6 +576,7 @@ fn extract_command_name_strips_slash() {
 }
 
 #[test]
+// 验证纯工具结果用户行归类为工具，真实文本仍为用户。
 fn parse_message_classifies_tool_result_lines_as_tool() {
     // Claude 的工具结果行：user 角色 + content 全为 tool_result 块 → 归类为 tool
     let tool_result_line: Value = serde_json::from_str(
@@ -577,6 +600,7 @@ fn parse_message_classifies_tool_result_lines_as_tool() {
 }
 
 #[test]
+// 验证 Codex developer 消息映射为系统角色和片段。
 fn parse_message_classifies_codex_developer_messages_as_system() {
     let line: Value = serde_json::from_str(
         r#"{"type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"<skills_instructions>internal context</skills_instructions>"}]}}"#,
@@ -591,6 +615,7 @@ fn parse_message_classifies_codex_developer_messages_as_system() {
 }
 
 #[test]
+// 验证 Claude 混合内容保留推理、文本及工具片段类型。
 fn parse_message_preserves_mixed_content_part_kinds() {
     let line: Value = serde_json::from_str(
         r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"inspect state"},{"type":"text","text":"done"},{"type":"tool_use","id":"t1","name":"Read","input":{"file_path":"README.md"}}]}}"#,
@@ -608,6 +633,7 @@ fn parse_message_preserves_mixed_content_part_kinds() {
 }
 
 #[test]
+// 验证 Codex 混合响应内容保留各片段类型及调用标识。
 fn parse_message_preserves_codex_response_item_part_kinds() {
     let line: Value = serde_json::from_str(
         r#"{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"reasoning","text":"inspect state"},{"type":"output_text","text":"done"},{"type":"custom_tool_call","call_id":"c1","name":"shell_command","input":"Get-ChildItem"}]}}"#,
@@ -625,6 +651,7 @@ fn parse_message_preserves_codex_response_item_part_kinds() {
 }
 
 #[test]
+// 验证注入的用户提醒保留角色但标记为系统片段。
 fn parse_message_marks_injected_user_prompt_as_system_part() {
     let line: Value = serde_json::from_str(
         r#"{"type":"user","message":{"role":"user","content":"<system-reminder>internal context</system-reminder>"}}"#,
@@ -638,6 +665,7 @@ fn parse_message_marks_injected_user_prompt_as_system_part() {
 }
 
 #[test]
+// 验证嵌入 Codex 权限与技能上下文标记为系统片段。
 fn parse_message_marks_embedded_codex_context_as_system_part() {
     let line: Value = serde_json::from_str(
         r#"{"type":"user","message":{"role":"user","content":[{"type":"input_text","text":"<permissions instructions>internal context</permissions instructions>\n### Available skills\n- browser"}]}}"#,
@@ -650,6 +678,7 @@ fn parse_message_marks_embedded_codex_context_as_system_part() {
 }
 
 #[test]
+// 验证技能目录指令文本标记为系统片段。
 fn parse_message_marks_skill_directory_context_as_system_part() {
     let line: Value = serde_json::from_str(
         r#"{"type":"user","message":{"role":"user","content":"Base directory for this skill: F:\\github\\CLI-Manager\\.claude\\skills\\trellis-update-spec\n\n# Update Code-Spec"}}"#,
@@ -662,6 +691,7 @@ fn parse_message_marks_skill_directory_context_as_system_part() {
 }
 
 #[test]
+// 验证重复流式消息仍保留，但清空后续重复 Token 计数。
 fn iter_session_messages_blanks_duplicate_usage_lines() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -683,6 +713,7 @@ fn iter_session_messages_blanks_duplicate_usage_lines() {
 }
 
 #[test]
+// 验证消息模型可从显式字段或最近回合上下文补全。
 fn iter_session_messages_extracts_model_with_fallback() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -707,6 +738,7 @@ fn iter_session_messages_extracts_model_with_fallback() {
 }
 
 #[test]
+// 验证单遍详情扫描保留重复消息而仅累计一次用量。
 fn scan_session_detail_collects_messages_and_stats_in_one_pass() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -732,6 +764,7 @@ fn scan_session_detail_collects_messages_and_stats_in_one_pass() {
 }
 
 #[test]
+// 验证 Claude 消息物理行号、编辑权限及规范文本映射。
 fn scan_session_detail_maps_claude_messages_to_physical_lines() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -771,6 +804,7 @@ fn scan_session_detail_maps_claude_messages_to_physical_lines() {
 }
 
 #[test]
+// 验证 Codex 回放行占据物理行号但不重复生成消息。
 fn scan_session_detail_maps_codex_messages_to_physical_lines() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -800,6 +834,7 @@ fn scan_session_detail_maps_codex_messages_to_physical_lines() {
 }
 
 #[test]
+// 验证聚合子消息清空跨文件行映射并禁用编辑。
 fn build_session_detail_blanks_line_mapping_for_aggregated_subtask_messages() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
@@ -846,6 +881,7 @@ fn build_session_detail_blanks_line_mapping_for_aggregated_subtask_messages() {
 }
 
 #[test]
+// 验证单遍详情从最近回合上下文回填助手模型。
 fn scan_session_detail_backfills_assistant_model_from_turn_context() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -865,6 +901,7 @@ fn scan_session_detail_backfills_assistant_model_from_turn_context() {
 }
 
 #[test]
+// 验证 Codex Token 事件回填最近助手消息并保持统计一致。
 fn scan_session_detail_backfills_codex_token_count_to_latest_assistant_message() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");

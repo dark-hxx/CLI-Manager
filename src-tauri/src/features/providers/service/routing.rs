@@ -174,6 +174,7 @@ pub(crate) struct RoutingRetryContext {
 }
 
 impl RoutingRetryContext {
+    // 总开关和对应规则开关均开启、且该规则尚未使用时，允许本次整流重试。
     pub(crate) fn can_retry(
         &self,
         config: &RoutingRectifierConfig,
@@ -196,6 +197,7 @@ impl RoutingRetryContext {
     }
 
     #[allow(dead_code)]
+    // 标记指定整流规则已使用，限制同一上下文内重复重试。
     pub(crate) fn mark_used(&mut self, rule: RoutingRectifierRule) {
         match rule {
             RoutingRectifierRule::ThinkingSignature => self.thinking_signature_used = true,
@@ -275,11 +277,11 @@ const GLOBAL_PROXY_TEST_ENDPOINTS: [&str; 3] = [
     "https://www.google.com/generate_204",
     "https://api.anthropic.com/",
 ];
-
+// 按应用类型构造带版本的故障转移设置键。
 fn failover_settings_key(app_type: &str) -> String {
     format!("{FAILOVER_SETTINGS_PREFIX}{app_type}.v1")
 }
-
+// 构造未关联供应商、计数归零的关闭态熔断摘要。
 fn default_circuit_state() -> RoutingCircuitState {
     RoutingCircuitState {
         provider_id: String::new(),
@@ -288,7 +290,7 @@ fn default_circuit_state() -> RoutingCircuitState {
         successful_probes: 0,
     }
 }
-
+// 校验版本、重试次数上限、非零超时与计数阈值，以及零至一的错误率。
 fn validate_failover_config(config: &RoutingFailoverConfig) -> Result<(), String> {
     if config.schema_version != 1
         || config.max_retries > 32
@@ -305,14 +307,14 @@ fn validate_failover_config(config: &RoutingFailoverConfig) -> Result<(), String
     }
     Ok(())
 }
-
+// 仅校验整流配置版本为一，不改变各功能开关。
 fn validate_rectifier_config(config: &RoutingRectifierConfig) -> Result<(), String> {
     if config.schema_version != 1 {
         return Err("routing_rectifier_config_invalid".to_string());
     }
     Ok(())
 }
-
+// 仅校验优化配置版本为一，不改变各功能开关。
 fn validate_optimizer_config(config: &RoutingOptimizerConfig) -> Result<(), String> {
     if config.schema_version != 1 {
         return Err("routing_optimizer_config_invalid".to_string());
@@ -320,6 +322,7 @@ fn validate_optimizer_config(config: &RoutingOptimizerConfig) -> Result<(), Stri
     Ok(())
 }
 
+// 读取并解析已存在的整流设置，校验版本后返回。
 pub(crate) async fn load_rectifier_config() -> Result<RoutingRectifierConfig, String> {
     let mut connection = database::open_connection().await?;
     let raw = load_setting(&mut connection, RECTIFIER_SETTINGS_KEY).await?;
@@ -329,6 +332,7 @@ pub(crate) async fn load_rectifier_config() -> Result<RoutingRectifierConfig, St
     Ok(config)
 }
 
+// 校验整流配置并更新设置，要求恰好更新一行。
 pub(crate) async fn save_rectifier_config(config: &RoutingRectifierConfig) -> Result<(), String> {
     validate_rectifier_config(config)?;
     let mut connection = database::open_connection().await?;
@@ -344,6 +348,7 @@ pub(crate) async fn save_rectifier_config(config: &RoutingRectifierConfig) -> Re
     Ok(())
 }
 
+// 读取并解析已存在的优化设置，校验版本后返回。
 pub(crate) async fn load_optimizer_config() -> Result<RoutingOptimizerConfig, String> {
     let mut connection = database::open_connection().await?;
     let raw = load_setting(&mut connection, OPTIMIZER_SETTINGS_KEY).await?;
@@ -353,6 +358,7 @@ pub(crate) async fn load_optimizer_config() -> Result<RoutingOptimizerConfig, St
     Ok(config)
 }
 
+// 校验优化配置并更新设置，要求恰好更新一行。
 pub(crate) async fn save_optimizer_config(config: &RoutingOptimizerConfig) -> Result<(), String> {
     validate_optimizer_config(config)?;
     let mut connection = database::open_connection().await?;
@@ -368,6 +374,7 @@ pub(crate) async fn save_optimizer_config(config: &RoutingOptimizerConfig) -> Re
     Ok(())
 }
 
+// 使用已有连接读取应用故障转移配置，并校验字段范围。
 async fn load_failover_config(
     connection: &mut SqliteConnection,
     app_type: &str,
@@ -380,6 +387,7 @@ async fn load_failover_config(
     Ok(config)
 }
 
+// 规范化应用类型后，为守护进程加载经过校验的故障转移配置。
 pub(crate) async fn load_failover_config_for_daemon(
     app_type: &str,
 ) -> Result<RoutingFailoverConfig, String> {
@@ -388,6 +396,7 @@ pub(crate) async fn load_failover_config_for_daemon(
     load_failover_config(&mut connection, &app_type).await
 }
 
+// 规范化应用类型并校验参数，更新对应故障转移设置且要求记录存在。
 pub(crate) async fn save_failover_config(
     app_type: &str,
     config: &RoutingFailoverConfig,
@@ -407,7 +416,7 @@ pub(crate) async fn save_failover_config(
     }
     Ok(())
 }
-
+// 解析代理持久化数据，要求版本为一且凭据账户为固定账户。
 fn parse_global_proxy_stored(raw: &str) -> Result<RoutingGlobalProxyStored, String> {
     let config = serde_json::from_str::<RoutingGlobalProxyStored>(raw)
         .map_err(|_| format!("routing_settings_invalid:{GLOBAL_PROXY_SETTINGS_KEY}"))?;
@@ -421,6 +430,7 @@ fn parse_global_proxy_stored(raw: &str) -> Result<RoutingGlobalProxyStored, Stri
     Ok(config)
 }
 
+// 读取固定设置键并解析全局代理持久化数据。
 async fn load_global_proxy_stored(
     connection: &mut SqliteConnection,
 ) -> Result<RoutingGlobalProxyStored, String> {
@@ -428,6 +438,7 @@ async fn load_global_proxy_stored(
     parse_global_proxy_stored(&raw)
 }
 
+// 加载代理配置，有 URL 时读取密码，再根据路由端点判断是否绕过系统代理。
 pub(crate) async fn load_global_proxy_runtime_config(
 ) -> Result<RoutingGlobalProxyRuntimeConfig, String> {
     let mut connection = database::open_connection().await?;
@@ -447,7 +458,7 @@ pub(crate) async fn load_global_proxy_runtime_config(
         bypass_system_proxy: system_proxy_should_bypass(&persisted),
     })
 }
-
+// 将存储配置投影为界面状态，仅暴露密码是否存在，不返回密码或凭据账户。
 fn global_proxy_state(
     config: RoutingGlobalProxyStored,
     has_password: bool,
@@ -460,6 +471,7 @@ fn global_proxy_state(
     }
 }
 
+// 空输入表示不设代理；其他输入须为支持协议、有主机和解析后显式端口且不含内嵌凭据的 URL。
 pub(crate) fn normalize_global_proxy_url(raw: Option<&str>) -> Result<Option<String>, String> {
     let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(None);
@@ -475,20 +487,21 @@ pub(crate) fn normalize_global_proxy_url(raw: Option<&str>) -> Result<Option<Str
     }
     Ok(Some(url.to_string()))
 }
-
+// 去除用户名首尾空白，空用户名转换为 None。
 fn normalize_global_proxy_username(raw: Option<String>) -> Option<String> {
     raw.and_then(|value| {
         let value = value.trim().to_string();
         (!value.is_empty()).then_some(value)
     })
 }
-
+// 端口必须相同；主机按回环别名等价或忽略大小写的字符串相等判断。
 fn global_proxy_matches_endpoint(
     host: &str,
     port: u16,
     advertised_host: &str,
     advertised_port: u16,
 ) -> bool {
+    // 去除空白与方括号并转小写，判断是否为三种已知回环别名。
     fn loopback_alias(value: &str) -> bool {
         let value = value.trim().trim_matches(['[', ']']).to_ascii_lowercase();
         matches!(value.as_str(), "localhost" | "127.0.0.1" | "::1")
@@ -508,6 +521,7 @@ const SYSTEM_PROXY_ENV_VARS: [&str; 6] = [
     "all_proxy",
 ];
 
+// 解析代理主机和端口；缺端口时为已知 HTTP、HTTPS 或 SOCKS 协议补默认值。
 fn proxy_endpoint(raw_url: &str) -> Option<(String, u16)> {
     let url = reqwest::Url::parse(raw_url.trim()).ok()?;
     let host = url.host_str()?.to_string();
@@ -520,6 +534,7 @@ fn proxy_endpoint(raw_url: &str) -> Option<(String, u16)> {
     Some((host, port))
 }
 
+// 判断代理端点是否匹配服务实际端口或任一接管端点，不额外检查服务启用状态。
 fn proxy_matches_persisted_state(raw_url: Option<&str>, persisted: &RoutingPersistedState) -> bool {
     let Some(raw_url) = raw_url else {
         return false;
@@ -539,6 +554,7 @@ fn proxy_matches_persisted_state(raw_url: Option<&str>, persisted: &RoutingPersi
     })
 }
 
+// 检查六种大小写代理环境变量，任一个指向已记录路由端点就要求绕过系统代理。
 fn system_proxy_should_bypass(persisted: &RoutingPersistedState) -> bool {
     SYSTEM_PROXY_ENV_VARS.iter().any(|name| {
         std::env::var(name)
@@ -547,6 +563,7 @@ fn system_proxy_should_bypass(persisted: &RoutingPersistedState) -> bool {
     })
 }
 
+// 规范化代理 URL，并拒绝与给定服务或接管端点形成自身回环的配置。
 fn validate_global_proxy_for_state(
     raw_url: Option<&str>,
     persisted: &RoutingPersistedState,
@@ -560,6 +577,7 @@ fn validate_global_proxy_for_state(
     Ok(())
 }
 
+// 加载持久化路由状态后校验代理 URL 不指向自身端点。
 pub(crate) async fn validate_global_proxy_not_self_loop(
     raw_url: Option<&str>,
 ) -> Result<(), String> {
@@ -567,11 +585,13 @@ pub(crate) async fn validate_global_proxy_not_self_loop(
     validate_global_proxy_for_state(raw_url, &persisted)
 }
 
+// 从固定系统凭据账户读取代理密码，隐藏凭据存储原始错误。
 fn read_global_proxy_password() -> Result<Option<String>, String> {
     crate::credential_store::get(GLOBAL_PROXY_CREDENTIAL_ACCOUNT)
         .map_err(|_| "routing_proxy_credential_read_failed".to_string())
 }
 
+// 有密码时写入固定凭据账户，None 时删除，按操作映射错误。
 fn write_global_proxy_password(password: Option<&str>) -> Result<(), String> {
     match password {
         Some(password) => crate::credential_store::set(GLOBAL_PROXY_CREDENTIAL_ACCOUNT, password)
@@ -581,6 +601,7 @@ fn write_global_proxy_password(password: Option<&str>) -> Result<(), String> {
     }
 }
 
+// 通过现有连接更新代理设置记录，要求恰好更新一行。
 async fn write_global_proxy_stored(
     connection: &mut SqliteConnection,
     config: &RoutingGlobalProxyStored,
@@ -599,6 +620,7 @@ async fn write_global_proxy_stored(
     Ok(())
 }
 
+// 读取代理设置和凭据存在性，返回不含密码的界面状态。
 pub(crate) async fn load_global_proxy() -> Result<RoutingGlobalProxyState, String> {
     let mut connection = database::open_connection().await?;
     let config = load_global_proxy_stored(&mut connection).await?;
@@ -606,6 +628,7 @@ pub(crate) async fn load_global_proxy() -> Result<RoutingGlobalProxyState, Strin
     Ok(global_proxy_state(config, password.is_some()))
 }
 
+// 校验输入与回环风险，保存凭据及数据库并重载网络客户端；失败时尝试恢复旧值，恢复失败要求修复。
 pub(crate) async fn save_global_proxy(
     input: RoutingGlobalProxyInput,
 ) -> Result<RoutingGlobalProxyState, String> {
@@ -680,6 +703,7 @@ pub(crate) async fn save_global_proxy(
     Ok(global_proxy_state(next, has_password))
 }
 
+// 逐一探测八个固定回环 TCP 端口，仅返回可连接候选，不验证代理协议。
 pub(crate) fn scan_global_proxy() -> Result<Vec<RoutingProxyScanCandidate>, String> {
     let mut candidates = Vec::new();
     for port in GLOBAL_PROXY_SCAN_PORTS {
@@ -694,6 +718,7 @@ pub(crate) fn scan_global_proxy() -> Result<Vec<RoutingProxyScanCandidate>, Stri
     Ok(candidates)
 }
 
+// 合并草稿与已存代理凭据，在总计五秒内尝试固定外部端点；收到非 407 响应即视为成功。
 pub(crate) async fn test_global_proxy(
     input: RoutingGlobalProxyTestInput,
 ) -> Result<RoutingGlobalProxyTestResult, String> {
@@ -741,6 +766,7 @@ pub(crate) async fn test_global_proxy(
         .unwrap_or_else(|_| Err("routing_proxy_test_failed".to_string()))
 }
 
+// 加载故障转移配置和供应商队列视图，初始熔断摘要为默认值，未读取守护进程运行状态。
 pub(crate) async fn load_failover_state(app_type: &str) -> Result<RoutingFailoverState, String> {
     let app_type = normalize_routing_app_type(app_type)?;
     let mut connection = database::open_connection().await?;
@@ -770,6 +796,7 @@ pub(crate) async fn load_failover_state(app_type: &str) -> Result<RoutingFailove
     })
 }
 
+// 筛选就绪队列供应商，并将符合条件的当前供应商移到首位供守护进程使用。
 pub(crate) async fn load_failover_provider_ids_for_daemon(
     app_type: &str,
 ) -> Result<Vec<String>, String> {
@@ -784,6 +811,7 @@ pub(crate) async fn load_failover_provider_ids_for_daemon(
     Ok(provider_ids)
 }
 
+// 按输入顺序保留已入队且就绪的供应商 ID，不在此处排序。
 fn eligible_failover_provider_ids(providers: &[RoutingFailoverProvider]) -> Vec<String> {
     providers
         .iter()
@@ -792,6 +820,7 @@ fn eligible_failover_provider_ids(providers: &[RoutingFailoverProvider]) -> Vec<
         .collect()
 }
 
+// 当前 ID 已在队列时移到首位，其余相对顺序不变；缺失时不修改。
 fn prioritize_current_provider(provider_ids: &mut Vec<String>, current_id: Option<&str>) {
     let Some(current_id) = current_id else {
         return;
@@ -802,10 +831,12 @@ fn prioritize_current_provider(provider_ids: &mut Vec<String>, current_id: Optio
     }
 }
 
+// 仅在启用故障转移且原队列为空时决定填充初始队列。
 fn should_seed_failover_queue(enabled: bool, previous_ids: &[String]) -> bool {
     enabled && previous_ids.is_empty()
 }
 
+// 启用时要求已有接管和可用当前供应商，必要时初始化队列；配置保存失败后尽力恢复初始化前队列。
 pub(crate) async fn set_failover_enabled(
     app_type: &str,
     enabled: bool,
@@ -847,6 +878,7 @@ pub(crate) async fn set_failover_enabled(
     load_failover_state(&app_type).await
 }
 
+// 自动模式禁止空队列、手动模式仅允许一个供应商；保存后手动切换活动 Home，失败分支的队列恢复 future 未被等待。
 pub(crate) async fn set_failover_queue_and_load(
     app_type: &str,
     provider_ids: &[String],
@@ -878,6 +910,7 @@ pub(crate) async fn set_failover_queue_and_load(
     load_failover_state(&app_type).await
 }
 
+// 使用同一连接依次读取并校验服务配置与接管记录。
 pub(crate) async fn load_persisted_state() -> Result<RoutingPersistedState, String> {
     let mut connection = database::open_connection().await?;
     let service = load_service_config(&mut connection).await?;
@@ -885,6 +918,7 @@ pub(crate) async fn load_persisted_state() -> Result<RoutingPersistedState, Stri
     Ok(RoutingPersistedState { service, takeovers })
 }
 
+// 为指定应用的接管 Home 构造路由投影并委托全局热切换；没有接管目标时直接返回。
 pub(crate) async fn apply_hot_switch_for_active_homes(
     app_type: &str,
     next_provider_id: &str,
@@ -927,6 +961,7 @@ pub(crate) async fn apply_hot_switch_for_active_homes(
     .map(|_| ())
 }
 
+// 校验服务配置和代理回环风险后保存并重载客户端；重载失败时恢复旧设置，恢复失败返回修复提示。
 pub(crate) async fn save_service_config(config: &RoutingServiceConfig) -> Result<(), String> {
     validate_service_config(config)?;
     let mut connection = database::open_connection().await?;
@@ -960,6 +995,7 @@ pub(crate) async fn save_service_config(config: &RoutingServiceConfig) -> Result
     Ok(())
 }
 
+// 检查当前供应商已启用且存在启用的活动密钥记录；此处不读取密钥内容或验证运行配置。
 pub(crate) async fn ensure_current_provider_ready(app_type: &str) -> Result<(), String> {
     let app_type = normalize_routing_app_type(app_type)?;
     let mut connection = database::open_connection().await?;
@@ -996,6 +1032,7 @@ pub(crate) async fn ensure_current_provider_ready(app_type: &str) -> Result<(), 
     Ok(())
 }
 
+// 查询规范化应用类型的当前供应商 ID，缺失时返回未就绪错误。
 pub(crate) async fn current_provider_id(app_type: &str) -> Result<String, String> {
     let app_type = normalize_routing_app_type(app_type)?;
     let mut connection = database::open_connection().await?;
@@ -1009,14 +1046,17 @@ pub(crate) async fn current_provider_id(app_type: &str) -> Result<String, String
     .ok_or_else(|| "routing_provider_not_ready".to_string())
 }
 
+// 探测指定 WSL 发行版到回环地址端口的连通性。
 pub(crate) fn probe_wsl_mirrored(distro: &str, port: u16) -> Result<(), String> {
     probe_wsl_endpoint(distro, "127.0.0.1", port)
 }
 
+// 探测指定 WSL 发行版到 IPv4 网关端口的连通性。
 pub(crate) fn probe_wsl_gateway(distro: &str, gateway: Ipv4Addr, port: u16) -> Result<(), String> {
     probe_wsl_endpoint(distro, &gateway.to_string(), port)
 }
 
+// 复用一千五百毫秒内成功探测，否则按可用工具选择命令并限时五秒等待，只缓存成功结果。
 fn probe_wsl_endpoint(distro: &str, host: &str, port: u16) -> Result<(), String> {
     let cache = WSL_PROBE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
     if let Ok(mut entries) = cache.lock() {
@@ -1073,6 +1113,7 @@ pub(crate) struct WslNatGateway {
     pub prefix_length: u8,
 }
 
+// 读取 WSL 默认路由与接口地址，要求网关属于该网段且匹配本机 IPv4 单播地址。
 pub(crate) fn resolve_wsl_nat_gateway(distro: &str) -> Result<WslNatGateway, String> {
     let route_and_addresses = run_wsl_script_output(
         distro,
@@ -1111,6 +1152,7 @@ ip -4 addr show dev "$device" || exit 1
     })
 }
 
+// 在目标发行版运行 shell 脚本，限时等待并要求成功退出及有效 UTF-8 输出。
 fn run_wsl_script_output(distro: &str, script: &str) -> Result<String, String> {
     let exe =
         wsl::find_wsl_exe().ok_or_else(|| "routing_wsl_route_tool_unavailable".to_string())?;
@@ -1134,6 +1176,7 @@ fn run_wsl_script_output(distro: &str, script: &str) -> Result<String, String> {
     String::from_utf8(output.stdout).map_err(|_| "routing_wsl_route_failed".to_string())
 }
 
+// 从首个 default 行提取 IPv4 网关与合法接口名；该行无效即返回错误。
 fn parse_default_route(output: &str) -> Result<(Ipv4Addr, String), String> {
     for line in output.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -1162,6 +1205,7 @@ fn parse_default_route(output: &str) -> Result<(Ipv4Addr, String), String> {
     Err("routing_wsl_default_route_missing".to_string())
 }
 
+// 提取首个 inet 地址及零至三十二位前缀，返回计算后的网络地址。
 fn parse_interface_cidr(output: &str) -> Result<(Ipv4Addr, u8), String> {
     for line in output.lines() {
         let fields: Vec<&str> = line.split_whitespace().collect();
@@ -1187,6 +1231,7 @@ fn parse_interface_cidr(output: &str) -> Result<(Ipv4Addr, u8), String> {
     Err("routing_wsl_interface_cidr_missing".to_string())
 }
 
+// 按调用方提供的零至三十二位前缀生成掩码，计算 IPv4 网络地址。
 fn network_address(address: Ipv4Addr, prefix_length: u8) -> Ipv4Addr {
     let mask = if prefix_length == 0 {
         0
@@ -1196,10 +1241,12 @@ fn network_address(address: Ipv4Addr, prefix_length: u8) -> Ipv4Addr {
     Ipv4Addr::from(u32::from(address) & mask)
 }
 
+// 比较给定地址的网络部分与已规范化网络地址是否相同。
 fn ipv4_in_cidr(address: Ipv4Addr, network: Ipv4Addr, prefix_length: u8) -> bool {
     network_address(address, prefix_length) == network
 }
 
+// 解析 IPv4 并检查是否出现在本机接口单播地址列表中，枚举失败返回 false。
 pub(crate) fn is_local_unicast_address(address: &str) -> bool {
     let Ok(address) = address.parse::<Ipv4Addr>() else {
         return false;
@@ -1210,6 +1257,7 @@ pub(crate) fn is_local_unicast_address(address: &str) -> bool {
 }
 
 #[cfg(windows)]
+// 调用 Windows 网卡 API 枚举并去重 IPv4 单播地址，缓冲区不足时最多调整三次后再试。
 fn local_ipv4_unicast_addresses() -> Result<Vec<Ipv4Addr>, String> {
     let mut size = 15 * 1024u32;
     let mut resize_attempts = 0;
@@ -1262,10 +1310,12 @@ fn local_ipv4_unicast_addresses() -> Result<Vec<Ipv4Addr>, String> {
 }
 
 #[cfg(not(windows))]
+// 非 Windows 平台返回不支持 WSL 网关接口枚举的错误。
 fn local_ipv4_unicast_addresses() -> Result<Vec<Ipv4Addr>, String> {
     Err("routing_wsl_gateway_platform_unsupported".to_string())
 }
 
+// 规范化应用类型并校验 Home 身份，组合应用与身份字符串作为接管去重键。
 pub(crate) fn takeover_key(
     app_type: &str,
     home_identity: &HomeIdentity,
@@ -1278,6 +1328,7 @@ pub(crate) fn takeover_key(
     })
 }
 
+// 校验服务版本、回环监听地址以及首选和可选实际端口均非特权端口。
 pub(crate) fn validate_service_config(config: &RoutingServiceConfig) -> Result<(), String> {
     if config.schema_version != 1 {
         return Err("routing_schema_version_unsupported:routing.service.v1".to_string());
@@ -1299,6 +1350,7 @@ pub(crate) fn validate_service_config(config: &RoutingServiceConfig) -> Result<(
     Ok(())
 }
 
+// 仅接受本机或 WSL 环境及一致身份字符串，本机环境 ID 必须为 host。
 fn validate_home_identity(home_identity: &HomeIdentity) -> Result<(), String> {
     if !matches!(home_identity.environment_kind.as_str(), "local" | "wsl") {
         return Err("routing_home_invalid".to_string());
@@ -1319,6 +1371,7 @@ fn validate_home_identity(home_identity: &HomeIdentity) -> Result<(), String> {
     Ok(())
 }
 
+// 读取服务配置 JSON 并验证版本、监听地址和端口。
 async fn load_service_config(
     connection: &mut SqliteConnection,
 ) -> Result<RoutingServiceConfig, String> {
@@ -1329,6 +1382,7 @@ async fn load_service_config(
     Ok(config)
 }
 
+// 从经过校验的服务配置读取用量日志开关。
 pub(crate) async fn usage_logging_enabled() -> Result<bool, String> {
     let mut connection = database::open_connection().await?;
     Ok(load_service_config(&mut connection)
@@ -1336,6 +1390,7 @@ pub(crate) async fn usage_logging_enabled() -> Result<bool, String> {
         .usage_logging_enabled)
 }
 
+// 读取并校验接管文档版本、应用规范名、唯一 Home 键、端点模式、主机和端口。
 async fn load_takeovers(
     connection: &mut SqliteConnection,
 ) -> Result<Vec<RoutingTakeoverItem>, String> {
@@ -1369,6 +1424,7 @@ async fn load_takeovers(
     Ok(document.items)
 }
 
+// 校验接管集合及代理回环风险后保存并重载客户端；失败时尝试恢复原设置。
 pub(crate) async fn save_takeovers(items: &[RoutingTakeoverItem]) -> Result<(), String> {
     let mut keys = HashSet::with_capacity(items.len());
     for item in items {
@@ -1424,6 +1480,7 @@ pub(crate) async fn save_takeovers(items: &[RoutingTakeoverItem]) -> Result<(), 
     Ok(())
 }
 
+// 拒绝指定分隔符和通配地址；回环模式仅允许回环别名，其他模式仅检查 IPv4 语法。
 fn is_safe_advertised_host(endpoint_mode: &str, host: &str) -> bool {
     let host = host.trim();
     if host
@@ -1440,10 +1497,12 @@ fn is_safe_advertised_host(endpoint_mode: &str, host: &str) -> bool {
     }
 }
 
+// 规范化供应商应用类型，并统一映射路由应用类型错误。
 pub(crate) fn normalize_routing_app_type(app_type: &str) -> Result<String, String> {
     normalize_app_type(app_type).map_err(|_| "routing_app_type_invalid".to_string())
 }
 
+// 使用给定连接按键读取设置，区分查询失败与记录缺失。
 async fn load_setting(connection: &mut SqliteConnection, key: &str) -> Result<String, String> {
     sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?1")
         .bind(key)
@@ -1453,6 +1512,7 @@ async fn load_setting(connection: &mut SqliteConnection, key: &str) -> Result<St
         .ok_or_else(|| format!("routing_settings_missing:{key}"))
 }
 
+// 新建连接恢复指定设置原文，要求更新恰好一条已有记录。
 async fn restore_setting(key: &str, value: &str) -> Result<(), String> {
     let mut connection = database::open_connection().await?;
     let result = sqlx::query("UPDATE settings SET value = ?1 WHERE key = ?2")
@@ -1467,11 +1527,13 @@ async fn restore_setting(key: &str, value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 序列化设置为 JSON，失败时在错误码中附带设置键。
 fn serialize_json<T: Serialize>(value: &T, key: &str) -> Result<String, String> {
     serde_json::to_string(value).map_err(|_| format!("routing_settings_serialize_failed:{key}"))
 }
 
 #[allow(dead_code)]
+// 先删除三十天前的请求日志，再按时间及请求 ID 保留最新十万条；两次删除未在此层包裹事务。
 pub(crate) async fn cleanup_request_logs(
     connection: &mut SqliteConnection,
     now_ms: i64,
@@ -1501,6 +1563,7 @@ pub(crate) async fn cleanup_request_logs(
 }
 
 #[allow(dead_code)]
+// 返回 Unix 毫秒时间并限制到 i64 上界，系统时间早于纪元时返回零。
 pub(crate) fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1512,6 +1575,7 @@ pub(crate) fn now_millis() -> i64 {
 mod tests {
     use super::*;
 
+    // 构造关闭服务但启用用量日志的默认路由测试配置。
     fn service() -> RoutingServiceConfig {
         RoutingServiceConfig {
             schema_version: 1,
@@ -1525,6 +1589,7 @@ mod tests {
         }
     }
 
+    // 构造固定的本机 host 身份测试值。
     fn home() -> HomeIdentity {
         HomeIdentity {
             environment_kind: "local".to_string(),
@@ -1533,6 +1598,7 @@ mod tests {
         }
     }
 
+    // 构造服务和接管使用不同端口的测试状态，以覆盖代理端点匹配。
     fn persisted_state() -> RoutingPersistedState {
         let mut service = service();
         service.actual_port = Some(15_721);
@@ -1549,6 +1615,7 @@ mod tests {
     }
 
     #[test]
+    // 验证回环配置有效，通配监听与特权端口被拒绝。
     fn service_config_accepts_loopback_and_rejects_wildcard() {
         assert!(validate_service_config(&service()).is_ok());
         let mut wildcard = service();
@@ -1565,6 +1632,7 @@ mod tests {
         );
     }
 
+    // 构造版本及阈值均合法的故障转移测试配置。
     fn failover_config() -> RoutingFailoverConfig {
         RoutingFailoverConfig {
             schema_version: 1,
@@ -1581,6 +1649,7 @@ mod tests {
         }
     }
 
+    // 构造总开关和各规则均开启的整流测试配置。
     fn rectifier_config() -> RoutingRectifierConfig {
         RoutingRectifierConfig {
             schema_version: 1,
@@ -1593,6 +1662,7 @@ mod tests {
     }
 
     #[test]
+    // 验证整流配置只接受版本一。
     fn rectifier_config_requires_schema_one() {
         assert!(validate_rectifier_config(&rectifier_config()).is_ok());
         let mut invalid = rectifier_config();
@@ -1604,6 +1674,7 @@ mod tests {
     }
 
     #[test]
+    // 验证优化配置版本校验以及子开关的序列化保留。
     fn optimizer_config_requires_schema_one_and_preserves_switches() {
         let config = RoutingOptimizerConfig {
             schema_version: 1,
@@ -1624,6 +1695,7 @@ mod tests {
     }
 
     #[test]
+    // 验证每种整流规则最多使用一次且总开关关闭时不可重试。
     fn retry_context_allows_each_enabled_rule_once_and_respects_master_switch() {
         let config = rectifier_config();
         let mut context = RoutingRetryContext::default();
@@ -1643,11 +1715,13 @@ mod tests {
     }
 
     #[test]
+    // 验证预置故障转移参数处于合法范围。
     fn failover_config_accepts_seeded_ranges() {
         assert!(validate_failover_config(&failover_config()).is_ok());
     }
 
     #[test]
+    // 验证超界错误率与重试次数被拒绝。
     fn failover_config_rejects_invalid_ranges() {
         let mut invalid = failover_config();
         invalid.circuit_error_rate_threshold = 1.1;
@@ -1665,6 +1739,7 @@ mod tests {
     }
 
     #[test]
+    // 验证代理 URL 规范化及空输入处理，并拒绝不支持协议、缺端口和内嵌凭据。
     fn global_proxy_url_requires_supported_explicit_endpoint_without_credentials() {
         assert_eq!(
             normalize_global_proxy_url(Some(" http://proxy.example:8080 ")).unwrap(),
@@ -1688,6 +1763,7 @@ mod tests {
     }
 
     #[test]
+    // 验证代理状态只暴露密码存在性，不序列化密码或凭据账户。
     fn global_proxy_state_serializes_presence_only_not_password_or_account() {
         let state = RoutingGlobalProxyState {
             schema_version: 1,
@@ -1702,6 +1778,7 @@ mod tests {
     }
 
     #[test]
+    // 验证回环主机别名仅在端口相同时视为同一代理端点。
     fn global_proxy_self_loop_matches_loopback_aliases_only_at_the_same_port() {
         assert!(global_proxy_matches_endpoint(
             "localhost",
@@ -1730,6 +1807,7 @@ mod tests {
     }
 
     #[test]
+    // 验证系统代理 URL 缺端口时使用 HTTP 和 SOCKS 默认端口。
     fn proxy_endpoint_uses_scheme_defaults_for_system_proxy_values() {
         assert_eq!(
             proxy_endpoint("http://localhost"),
@@ -1742,6 +1820,7 @@ mod tests {
     }
 
     #[test]
+    // 验证服务实际端口与接管端口均参与代理回环匹配。
     fn proxy_state_matches_service_and_takeover_endpoints() {
         let persisted = persisted_state();
         assert!(proxy_matches_persisted_state(
@@ -1759,6 +1838,7 @@ mod tests {
     }
 
     #[test]
+    // 验证与接管端点重合的显式代理被拒绝，其他代理可通过。
     fn explicit_proxy_is_rejected_when_route_state_would_self_loop() {
         let persisted = persisted_state();
         assert_eq!(
@@ -1772,6 +1852,7 @@ mod tests {
     }
 
     #[test]
+    // 验证代理扫描端口集合固定且无重复，不执行实际扫描。
     fn global_proxy_scan_ports_are_fixed_and_unique() {
         let mut ports = GLOBAL_PROXY_SCAN_PORTS.to_vec();
         ports.sort_unstable();
@@ -1784,6 +1865,7 @@ mod tests {
     }
 
     #[test]
+    // 验证队列筛选跳过未就绪供应商并保持剩余顺序。
     fn failover_provider_selection_keeps_queue_order_and_ready_boundary() {
         let providers = vec![
             RoutingFailoverProvider {
@@ -1827,6 +1909,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前供应商移到队首，未知当前 ID 不改变队列。
     fn failover_provider_selection_remembers_current_provider() {
         let mut provider_ids = vec!["a".to_string(), "b".to_string(), "c".to_string()];
         prioritize_current_provider(&mut provider_ids, Some("c"));
@@ -1836,6 +1919,7 @@ mod tests {
     }
 
     #[test]
+    // 验证初始化队列的判定仅在启用且原队列为空时成立，不直接测试数据库写入。
     fn disabling_failover_does_not_rewrite_existing_queue() {
         let previous_ids = vec!["provider-a".to_string(), "provider-b".to_string()];
         assert!(!should_seed_failover_queue(false, &previous_ids));
@@ -1844,6 +1928,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Grok 别名规范化后与本机身份共同形成接管键。
     fn takeover_key_is_app_and_home_identity() {
         let key = takeover_key("grok", &home()).unwrap();
         assert_eq!(key.app_type, "grokbuild");
@@ -1851,6 +1936,7 @@ mod tests {
     }
 
     #[test]
+    // 验证身份字符串与环境字段不一致时拒绝接管。
     fn malformed_home_identity_is_rejected() {
         let mut invalid = home();
         invalid.identity = "local:other".to_string();
@@ -1861,6 +1947,7 @@ mod tests {
     }
 
     #[test]
+    // 验证回环模式拒绝非回环地址，网关模式接受示例 IPv4。
     fn advertised_host_rejects_wildcards_and_non_loopback_loopback_modes() {
         assert!(!is_safe_advertised_host("loopback", "0.0.0.0"));
         assert!(!is_safe_advertised_host("loopback", "192.168.1.4"));
@@ -1870,6 +1957,7 @@ mod tests {
     }
 
     #[test]
+    // 验证格式一致的 WSL Home 可用于接管键，不探测真实发行版。
     fn wsl_home_identity_is_valid_for_takeover_storage() {
         let home = HomeIdentity {
             environment_kind: "wsl".to_string(),
@@ -1880,6 +1968,7 @@ mod tests {
     }
 
     #[test]
+    // 验证固定路由与接口文本能解析出网关、设备、网段和成员关系。
     fn parses_wsl_default_route_and_interface_cidr() {
         let (gateway, device) =
             parse_default_route("default via 172.28.224.1 dev eth0 proto kernel\n").unwrap();
@@ -1896,6 +1985,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺失网关或 inet CIDR 的文本返回对应错误。
     fn rejects_wsl_default_route_without_gateway_or_interface_cidr() {
         assert_eq!(
             parse_default_route("default dev eth0\n").unwrap_err(),

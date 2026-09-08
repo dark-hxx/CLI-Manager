@@ -153,19 +153,23 @@ pub(crate) struct CcConnectPreparedUpdate {
 }
 
 impl CcConnectPreparedUpdate {
+    // 返回已准备更新所绑定的可执行文件路径。
     pub(crate) fn executable_path(&self) -> &Path {
         &self.executable
     }
 }
 
+// 判断版本是否落在 cc-connect 支持的兼容范围内。
 pub(crate) fn is_compatible_version(raw: &str) -> bool {
     parse_semver(raw).is_some_and(|version| compatible_version(&version))
 }
 
+// 按二进制摘要查询本地已验证发行版记录。
 pub(crate) fn trusted_version_for_sha256(sha256: &str) -> Result<Option<String>, String> {
     trusted_version_for_sha256_at(&trust_store_path()?, sha256)
 }
 
+// 获取指定通道的发行版及校验信息，不替换本地程序。
 pub(crate) async fn check_update(
     request: CcConnectCheckUpdateRequest,
 ) -> Result<CcConnectUpdateCheck, String> {
@@ -188,6 +192,7 @@ pub(crate) async fn check_update(
 // Downloading and verification intentionally happen before this value is handed to the
 // manager. The manager can keep cc-connect running during `prepare_update`, then stop it
 // only while calling `apply_prepared_update` under its operation lock.
+// 校验当前目标并下载、验证更新载荷，暂不替换可执行文件。
 pub(crate) async fn prepare_update(
     request: CcConnectInstallUpdateRequest,
 ) -> Result<CcConnectPreparedUpdate, String> {
@@ -251,6 +256,7 @@ pub(crate) async fn prepare_update(
     })
 }
 
+// 重新确认目标摘要后应用已准备更新，并报告元数据同步结果。
 pub(crate) fn apply_prepared_update(
     prepared: CcConnectPreparedUpdate,
 ) -> Result<CcConnectUpdateResult, String> {
@@ -311,19 +317,23 @@ pub(crate) fn apply_prepared_update(
     })
 }
 
+// 将摘要对应的可信记录解析为已安装版本。
 fn trusted_installed_version(sha256: &str) -> Option<Version> {
     super::trusted_binary_version(sha256).and_then(|version| parse_semver(&version))
 }
 
+// 限定支持版本为 1.4.1 起且低于 2.0.0。
 fn compatible_version(version: &Version) -> bool {
     version >= &Version::new(1, 4, 1) && version < &Version::new(2, 0, 0)
 }
 
+// 去除版本前缀后尝试解析语义化版本。
 fn parse_semver(raw: &str) -> Option<Version> {
     let value = raw.trim().trim_start_matches(['v', 'V']);
     Version::parse(value).ok()
 }
 
+// 解析版本并拒绝不在兼容范围内的版本。
 fn parse_semver_result(raw: &str) -> Result<Version, String> {
     let version =
         parse_semver(raw).ok_or_else(|| "cc_connect_update_version_invalid".to_string())?;
@@ -333,10 +343,12 @@ fn parse_semver_result(raw: &str) -> Result<Version, String> {
     Ok(version)
 }
 
+// 解析语义化版本，保留对当前旧版本的识别能力。
 fn parse_semver_any_result(raw: &str) -> Result<Version, String> {
     parse_semver(raw).ok_or_else(|| "cc_connect_update_version_invalid".to_string())
 }
 
+// 将发行计划与当前版本比较，组装更新检查结果。
 fn update_check_from_plan(
     channel: CcConnectUpdateChannel,
     current: Option<&Version>,
@@ -357,6 +369,7 @@ fn update_check_from_plan(
     }
 }
 
+// 创建带下载超时、重定向校验及显式代理策略的客户端。
 fn release_client(proxy_enabled: bool, proxy_url: Option<&str>) -> Result<Client, String> {
     let mut builder = Client::builder()
         .user_agent(format!(
@@ -389,6 +402,7 @@ fn release_client(proxy_enabled: bool, proxy_url: Option<&str>) -> Result<Client
         .map_err(|error| format!("cc_connect_update_client_failed:{error}"))
 }
 
+// 读取有大小上限的 GitHub 发行列表并选择目标版本。
 async fn fetch_release_plan(
     client: &Client,
     channel: CcConnectUpdateChannel,
@@ -408,6 +422,7 @@ async fn fetch_release_plan(
     select_release(releases, channel)
 }
 
+// 下载并验证校验清单，取出目标二进制的摘要。
 async fn fetch_binary_checksum(client: &Client, plan: &ReleasePlan) -> Result<String, String> {
     let bytes = download_asset(client, &plan.checksums, MAX_CHECKSUMS_BYTES).await?;
     verify_api_digest(&plan.checksums, &bytes)?;
@@ -415,6 +430,7 @@ async fn fetch_binary_checksum(client: &Client, plan: &ReleasePlan) -> Result<St
     named_checksum(&checksums, &plan.binary_name).cloned()
 }
 
+// 按更新通道筛选当前平台可用发行版并选取最高版本。
 fn select_release(
     releases: Vec<GithubRelease>,
     channel: CcConnectUpdateChannel,
@@ -432,6 +448,7 @@ fn select_release(
         .ok_or_else(|| "cc_connect_update_compatible_release_missing".to_string())
 }
 
+// 将兼容发行版转换为包含已校验资源地址的更新计划。
 fn release_plan(
     release: GithubRelease,
     channel: CcConnectUpdateChannel,
@@ -493,6 +510,7 @@ struct PlatformAssetSpec {
     binary_suffix: &'static str,
 }
 
+// 根据目标操作系统和架构确定归档与二进制命名规则。
 fn platform_asset_spec() -> Result<PlatformAssetSpec, String> {
     #[cfg(target_os = "windows")]
     let (os, archive_suffix, binary_suffix) = ("windows", ".zip", ".exe");
@@ -518,6 +536,7 @@ fn platform_asset_spec() -> Result<PlatformAssetSpec, String> {
     })
 }
 
+// 限制下载地址为无认证信息和片段的 GitHub HTTPS 地址。
 fn validate_github_url(url: &Url) -> Result<(), String> {
     if url.scheme() != "https"
         || !url.username().is_empty()
@@ -536,6 +555,7 @@ fn validate_github_url(url: &Url) -> Result<(), String> {
     Ok(())
 }
 
+// 要求发行页面精确匹配固定仓库与目标标签。
 fn validate_release_page_url(raw: &str, tag: &str) -> Result<(), String> {
     let url = Url::parse(raw).map_err(|_| "cc_connect_update_release_url_invalid".to_string())?;
     validate_github_url(&url)?;
@@ -548,6 +568,7 @@ fn validate_release_page_url(raw: &str, tag: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 校验资源大小、固定仓库下载路径及可选 SHA-256 摘要。
 fn validate_release_asset(asset: &GithubAsset, tag: &str, limit: usize) -> Result<(), String> {
     if asset.size == 0 || asset.size > limit as u64 {
         return Err("cc_connect_update_asset_size_invalid".to_string());
@@ -566,6 +587,7 @@ fn validate_release_asset(asset: &GithubAsset, tag: &str, limit: usize) -> Resul
     Ok(())
 }
 
+// 下载指定发行资源，并按调用方上限读取响应。
 async fn download_asset(
     client: &Client,
     asset: &GithubAsset,
@@ -579,6 +601,7 @@ async fn download_asset(
     read_bounded(response, limit).await
 }
 
+// 验证最终地址及响应状态，在流式读取时执行字节上限。
 async fn read_bounded(mut response: Response, limit: usize) -> Result<Vec<u8>, String> {
     validate_github_url(response.url())?;
     if !response.status().is_success() {
@@ -607,6 +630,7 @@ async fn read_bounded(mut response: Response, limit: usize) -> Result<Vec<u8>, S
     Ok(output)
 }
 
+// 规范化 SHA-256 字符串并检查长度和十六进制字符。
 fn parse_sha256_digest(raw: &str) -> Result<String, String> {
     let digest = raw
         .strip_prefix("sha256:")
@@ -619,10 +643,12 @@ fn parse_sha256_digest(raw: &str) -> Result<String, String> {
     Ok(digest)
 }
 
+// 计算载荷的十六进制 SHA-256 摘要。
 fn sha256_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
+// 存在 GitHub API 摘要时校验资源载荷的一致性。
 fn verify_api_digest(asset: &GithubAsset, bytes: &[u8]) -> Result<(), String> {
     let Some(expected) = asset.digest.as_deref() else {
         return Ok(());
@@ -636,6 +662,7 @@ fn verify_api_digest(asset: &GithubAsset, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// 解析摘要清单，拒绝重复名称、路径名称和无效摘要。
 fn parse_checksums(bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| "cc_connect_update_checksums_invalid".to_string())?;
@@ -668,6 +695,7 @@ fn parse_checksums(bytes: &[u8]) -> Result<Vec<(String, String)>, String> {
     Ok(parsed)
 }
 
+// 按资源名称核对清单摘要与实际载荷。
 fn verify_named_checksum(
     checksums: &[(String, String)],
     name: &str,
@@ -680,6 +708,7 @@ fn verify_named_checksum(
     Ok(())
 }
 
+// 从校验清单获取指定文件的摘要，缺失时报错。
 fn named_checksum<'a>(checksums: &'a [(String, String)], name: &str) -> Result<&'a String, String> {
     checksums
         .iter()
@@ -688,6 +717,7 @@ fn named_checksum<'a>(checksums: &'a [(String, String)], name: &str) -> Result<&
 }
 
 #[cfg(target_os = "windows")]
+// 从 ZIP 中读取唯一匹配的二进制条目并限制解压大小。
 fn extract_release_binary(
     archive: &[u8],
     _archive_name: &str,
@@ -726,6 +756,7 @@ fn extract_release_binary(
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
+// 在目标目录旁临时调用 tar 提取二进制，校验文件后清理临时目录。
 fn extract_release_binary(
     archive: &[u8],
     archive_name: &str,
@@ -771,6 +802,7 @@ fn extract_release_binary(
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+// 在不支持的操作系统上明确拒绝归档提取。
 fn extract_release_binary(
     _archive: &[u8],
     _archive_name: &str,
@@ -780,6 +812,7 @@ fn extract_release_binary(
     Err("cc_connect_update_platform_unsupported".to_string())
 }
 
+// 规范化更新目标并要求其为名称匹配的绝对文件路径。
 fn validate_update_target(raw: &str) -> Result<PathBuf, String> {
     let path = PathBuf::from(raw.trim());
     if !path.is_absolute() || !path.is_file() {
@@ -802,6 +835,7 @@ fn validate_update_target(raw: &str) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// 暂存并备份程序，替换后验证版本与配置，失败时回滚。
 fn replace_binary_transactionally(
     target: &Path,
     binary: &[u8],
@@ -862,6 +896,7 @@ fn replace_binary_transactionally(
     Ok(package_snapshot.is_some())
 }
 
+// 复制现有托管配置并用新程序检查，随后清理临时副本。
 fn validate_managed_config(executable: &Path) -> Result<(), String> {
     let config = super::config_path()?;
     if !config.is_file() {
@@ -881,6 +916,7 @@ fn validate_managed_config(executable: &Path) -> Result<(), String> {
     result.map_err(|error| format!("cc_connect_update_config_check_failed:{error}"))
 }
 
+// 恢复程序备份与 npm 元数据，并将回滚错误附加到原错误。
 fn rollback_binary(
     target: &Path,
     backup: &Path,
@@ -910,6 +946,7 @@ fn rollback_binary(
     }
 }
 
+// 限时执行目标程序的版本命令并解析兼容版本。
 fn probe_installed_version(path: &Path) -> Result<Version, String> {
     let mut command = super::silent_command(&super::path_string(path));
     command.arg("--version");
@@ -924,6 +961,7 @@ fn probe_installed_version(path: &Path) -> Result<Version, String> {
     parse_version_output(&super::output_text(&output.stdout, &output.stderr))
 }
 
+// 从版本命令输出中提取首个兼容语义化版本。
 fn parse_version_output(output: &str) -> Result<Version, String> {
     output
         .split_whitespace()
@@ -937,6 +975,7 @@ fn parse_version_output(output: &str) -> Result<Version, String> {
         .ok_or_else(|| "cc_connect_update_version_probe_invalid".to_string())
 }
 
+// 识别 npm 安装布局并保存有大小上限的原始包元数据。
 fn npm_package_snapshot(executable: &Path) -> Result<Option<NpmPackageSnapshot>, String> {
     let Some(bin_dir) = executable.parent() else {
         return Ok(None);
@@ -965,6 +1004,7 @@ fn npm_package_snapshot(executable: &Path) -> Result<Option<NpmPackageSnapshot>,
     Ok(Some(NpmPackageSnapshot { path, original }))
 }
 
+// 更新快照中的 npm 包版本，并原子写回元数据。
 fn sync_npm_package_version(
     snapshot: &NpmPackageSnapshot,
     version: &Version,
@@ -984,10 +1024,12 @@ fn sync_npm_package_version(
     super::write_file_atomically(&snapshot.path, &payload, "cc-connect npm package metadata")
 }
 
+// 返回远程管理目录内的可信发行版记录路径。
 fn trust_store_path() -> Result<PathBuf, String> {
     Ok(super::remote_manager_dir()?.join(TRUST_STORE_FILE_NAME))
 }
 
+// 有界读取可信记录，文件不存在时返回空的当前版本存储。
 fn read_trust_store(path: &Path) -> Result<TrustedReleaseStore, String> {
     let metadata = match fs::metadata(path) {
         Ok(metadata) => metadata,
@@ -1009,6 +1051,7 @@ fn read_trust_store(path: &Path) -> Result<TrustedReleaseStore, String> {
     Ok(store)
 }
 
+// 检查可信记录的模式版本、数量和各发行版字段。
 fn validate_trust_store(store: &TrustedReleaseStore) -> Result<(), String> {
     if store.schema_version != TRUST_STORE_SCHEMA_VERSION
         || store.releases.len() > MAX_TRUSTED_RELEASES
@@ -1034,6 +1077,7 @@ fn validate_trust_store(store: &TrustedReleaseStore) -> Result<(), String> {
     Ok(())
 }
 
+// 在指定可信记录中按规范化摘要逆序查找版本。
 fn trusted_version_for_sha256_at(path: &Path, sha256: &str) -> Result<Option<String>, String> {
     let sha256 = parse_sha256_digest(sha256)?;
     let store = read_trust_store(path)?;
@@ -1045,6 +1089,7 @@ fn trusted_version_for_sha256_at(path: &Path, sha256: &str) -> Result<Option<Str
         .map(|release| release.version.clone()))
 }
 
+// 创建可信存储父目录后写入已验证发行版记录。
 fn record_trusted_release(release: CcConnectTrustedRelease) -> Result<(), String> {
     let path = trust_store_path()?;
     fs::create_dir_all(
@@ -1055,6 +1100,7 @@ fn record_trusted_release(release: CcConnectTrustedRelease) -> Result<(), String
     record_trusted_release_at(&path, release)
 }
 
+// 规范化发行记录、去重并限制数量，然后原子保存。
 fn record_trusted_release_at(
     path: &Path,
     mut release: CcConnectTrustedRelease,
@@ -1087,10 +1133,12 @@ fn record_trusted_release_at(
     super::write_file_atomically(path, &payload, "cc-connect trusted release store")
 }
 
+// 以进程号和当前毫秒时间组成临时文件标识。
 fn unique_file_token() -> String {
     format!("{}-{}", std::process::id(), super::now_millis())
 }
 
+// 排他创建并同步写入暂存文件，写入失败时删除残留。
 fn write_new_synced_file(path: &Path, payload: &[u8]) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .write(true)
@@ -1110,6 +1158,7 @@ fn write_new_synced_file(path: &Path, payload: &[u8]) -> Result<(), String> {
     result
 }
 
+// 排他创建备份并同步复制内容，失败时清理不完整备份。
 fn copy_file_synced(source: &Path, destination: &Path) -> Result<(), String> {
     let mut input = File::open(source)
         .map_err(|error| format!("cc_connect_update_backup_open_failed:{error}"))?;
@@ -1133,6 +1182,7 @@ fn copy_file_synced(source: &Path, destination: &Path) -> Result<(), String> {
 }
 
 #[cfg(unix)]
+// 为 Unix 更新载荷设置 0755 可执行权限。
 fn set_executable_permissions(path: &Path) -> Result<(), String> {
     use std::os::unix::fs::PermissionsExt;
     let mut permissions = fs::metadata(path)
@@ -1143,6 +1193,7 @@ fn set_executable_permissions(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cc_connect_update_permissions_failed:{error}"))
 }
 
+// 最多读取上限加一个字节，拒绝空文件及超限内容。
 fn read_bounded_file(path: &Path, limit: usize, label: &str) -> Result<Vec<u8>, String> {
     let file = File::open(path)
         .map_err(|error| format!("cc_connect_update_{label}_read_failed:{error}"))?;
@@ -1160,6 +1211,7 @@ fn read_bounded_file(path: &Path, limit: usize, label: &str) -> Result<Vec<u8>, 
 mod tests {
     use super::*;
 
+    // 构造指向固定 GitHub 仓库的测试发行资源。
     fn asset(tag: &str, name: &str, size: u64) -> GithubAsset {
         GithubAsset {
             name: name.to_string(),
@@ -1172,6 +1224,7 @@ mod tests {
     }
 
     #[test]
+    // 验证稳定版与预发行版的兼容范围边界。
     fn compatibility_accepts_supported_stable_and_prerelease_versions() {
         assert!(is_compatible_version("1.4.1"));
         assert!(is_compatible_version("v1.5.0-beta.2"));
@@ -1181,6 +1234,7 @@ mod tests {
     }
 
     #[test]
+    // 验证校验清单拒绝不安全名称及重复文件项。
     fn checksums_require_unique_safe_file_names() {
         let bytes =
             b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  cc-connect.exe\n";
@@ -1192,6 +1246,7 @@ mod tests {
     }
 
     #[test]
+    // 验证发行通道筛选和语义化版本排序。
     fn release_selection_respects_channel_and_semver() {
         let spec = platform_asset_spec().unwrap();
         let release = |tag: &str, prerelease: bool| {
@@ -1219,6 +1274,7 @@ mod tests {
     }
 
     #[test]
+    // 验证可信记录写入后可按大小写不同的摘要查询。
     fn trust_store_round_trip_is_bounded_and_normalized() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("trust.json");
@@ -1243,6 +1299,7 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
+    // 验证 ZIP 提取仅返回指定二进制而忽略其他条目。
     fn zip_extraction_reads_only_the_expected_binary() {
         let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
         archive
@@ -1268,6 +1325,7 @@ mod tests {
     }
 
     #[test]
+    // 验证版本输出解析保留预发行后缀。
     fn version_probe_parser_preserves_prerelease() {
         assert_eq!(
             parse_version_output("cc-connect v1.5.0-beta.2 (commit abc)").unwrap(),

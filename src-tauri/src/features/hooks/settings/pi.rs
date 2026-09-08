@@ -8,6 +8,7 @@ use super::{
 };
 use std::path::{Path, PathBuf};
 
+// 选择显式或默认 Pi 目录，仅在允许时创建缺失目录。
 pub(super) fn resolve_pi_dir(
     selected_dir: Option<String>,
     create_if_missing: bool,
@@ -37,12 +38,14 @@ pub(super) fn resolve_pi_dir(
     }
 }
 
+// 拼接 Pi 自动加载扩展的托管文件路径。
 pub(super) fn pi_extension_path(pi_dir: &Path) -> PathBuf {
     pi_dir
         .join(PI_EXTENSION_DIR_NAME)
         .join(PI_EXTENSION_FILE_NAME)
 }
 
+// 返回所选 Pi 生命周期模块的源码标记。
 pub(super) fn pi_module_marker(module: PiHookModule) -> &'static str {
     match module {
         PiHookModule::SessionStart => PI_MODULE_SESSION_START,
@@ -51,6 +54,7 @@ pub(super) fn pi_module_marker(module: PiHookModule) -> &'static str {
     }
 }
 
+// 生成启用指定生命周期模块的 TypeScript 扩展及模块标记。
 pub(super) fn pi_extension_source(modules: &[PiHookModule]) -> String {
     let session_start = modules
         .iter()
@@ -62,6 +66,15 @@ pub(super) fn pi_extension_source(modules: &[PiHookModule]) -> String {
         .iter()
         .any(|module| matches!(module, PiHookModule::Stop));
 
+    // 内嵌 nonEmpty：修剪可选字符串，空值返回 null，不读写外部状态。
+    // 内嵌 postHookEvent：缺少回调环境即返回；携带令牌 POST 到本机 Hook，吞掉请求异常并在 finally 清理计时器。
+    // 内嵌 setTimeout 回调：一秒后中止该次 fetch，不启动重试；中止异常由 postHookEvent 捕获。
+    // 内嵌 titleFor：将三种通知事件映射为固定标题，无外部副作用。
+    // 内嵌 readSessionId：调用可选会话管理器取得 ID，调用异常或空 ID 返回 null。
+    // 内嵌默认扩展函数：仅为启用模块注册 Pi 监听器，不等待通知请求，也不捕获注册异常。
+    // 内嵌 session_start 回调：读取会话 ID，异步发送 SessionStart，不阻塞 Pi 生命周期。
+    // 内嵌 agent_start 回调：读取会话 ID，异步发送 UserPromptSubmit，由发送函数处理网络失败。
+    // 内嵌 agent_settled 回调：读取会话 ID，异步发送 Stop，由发送函数处理网络失败。
     let mut source = format!(
         r#"// {marker}
 // Managed by CLI-Manager. Do not edit manually; reinstall from Hook settings.
@@ -173,6 +186,7 @@ export default function (pi: ExtensionAPI) {{
     source
 }
 
+// 识别源码模块标记或启用字段，并兼容旧式全量托管扩展。
 pub(super) fn read_pi_modules(content: &str) -> Vec<PiHookModule> {
     let mut modules = Vec::new();
     if content.contains(PI_MODULE_SESSION_START) || content.contains("sessionStart: true") {
@@ -193,10 +207,12 @@ pub(super) fn read_pi_modules(content: &str) -> Vec<PiHookModule> {
     modules
 }
 
+// 安装全部 Pi 生命周期模块。
 pub(super) fn install_pi_hooks(pi_dir: &Path) -> Result<(), String> {
     install_pi_modules(pi_dir, &ALL_PI_HOOK_MODULES)
 }
 
+// 读取现有模块并补入所选模块，再经归属检查重写扩展。
 pub(super) fn install_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> Result<(), String> {
     let path = pi_extension_path(pi_dir);
     let mut modules = if live_is_file(&path) {
@@ -215,6 +231,7 @@ pub(super) fn install_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> Res
     install_pi_modules(pi_dir, &modules)
 }
 
+// 仅删除包含 Pi 托管标记的扩展文件。
 pub(super) fn uninstall_pi_hooks(pi_dir: &Path) -> Result<(), String> {
     let path = pi_extension_path(pi_dir);
     if live_is_file(&path) {
@@ -227,6 +244,7 @@ pub(super) fn uninstall_pi_hooks(pi_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 从托管扩展去除指定模块；无剩余模块时删除文件。
 pub(super) fn uninstall_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> Result<(), String> {
     let path = pi_extension_path(pi_dir);
     if !live_is_file(&path) {
@@ -248,6 +266,7 @@ pub(super) fn uninstall_pi_hook_module(pi_dir: &Path, module: PiHookModule) -> R
     install_pi_modules(pi_dir, &modules)
 }
 
+// 模块为空时卸载，否则创建扩展目录并在归属检查后写入源码。
 pub(super) fn install_pi_modules(pi_dir: &Path, modules: &[PiHookModule]) -> Result<(), String> {
     if modules.is_empty() {
         return uninstall_pi_hooks(pi_dir);
@@ -264,6 +283,7 @@ pub(super) fn install_pi_modules(pi_dir: &Path, modules: &[PiHookModule]) -> Res
     Ok(())
 }
 
+// 允许新建或改写托管扩展，拒绝覆盖无标记的已有内容。
 pub(super) fn ensure_pi_extension_writable(path: &Path) -> Result<(), String> {
     match read_text_if_exists(path)? {
         Some(content) if !content.contains(PI_EXTENSION_MARKER) => {
@@ -273,6 +293,7 @@ pub(super) fn ensure_pi_extension_writable(path: &Path) -> Result<(), String> {
     }
 }
 
+// 只从归属明确的扩展读取模块，并按 Pi 所需事件汇总安装状态。
 pub(super) fn build_pi_status(pi_dir: Option<PathBuf>) -> Result<ToolHookSettingsStatus, String> {
     let Some(pi_dir) = pi_dir else {
         return missing_status();

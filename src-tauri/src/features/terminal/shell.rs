@@ -37,6 +37,7 @@ pub struct TerminalShellProfile {
     detected: bool,
 }
 
+// 构造默认启用且已检测的已知 Shell 配置，以逻辑命令生成稳定 ID。
 fn profile(platform: &str, command: &str, label: &str) -> TerminalShellProfile {
     TerminalShellProfile {
         id: format!("known:{command}"),
@@ -49,6 +50,7 @@ fn profile(platform: &str, command: &str, label: &str) -> TerminalShellProfile {
     }
 }
 
+// 先检查传入路径，再按 PATH 顺序寻找存在的候选，不检查普通文件类型或执行权限。
 fn path_candidate(name: &str) -> Option<PathBuf> {
     let direct = PathBuf::from(name);
     if direct.exists() {
@@ -61,11 +63,13 @@ fn path_candidate(name: &str) -> Option<PathBuf> {
     })
 }
 
+// 以是否找到存在路径判断命令候选可用，不启动命令验证。
 fn command_exists(name: &str) -> bool {
     path_candidate(name).is_some()
 }
 
 #[cfg(target_os = "windows")]
+// 找到 wsl.exe 后限时五秒执行发行版列表命令，仅以成功退出判断可用，不检查列表是否非空。
 fn wsl_available() -> bool {
     let Some(wsl) = crate::wsl::find_wsl_exe() else {
         return false;
@@ -80,6 +84,7 @@ fn wsl_available() -> bool {
 }
 
 #[cfg(target_os = "windows")]
+// 依次检测 Windows 常见 Shell、Git Bash 和 WSL，返回可见候选配置。
 fn scan_windows() -> Vec<TerminalShellProfile> {
     let mut profiles = Vec::new();
     if command_exists("powershell.exe") {
@@ -101,6 +106,7 @@ fn scan_windows() -> Vec<TerminalShellProfile> {
 }
 
 #[cfg(target_os = "macos")]
+// 按 Zsh、Bash、Fish、Sh、PowerShell 顺序检查路径并返回 macOS 候选。
 fn scan_macos() -> Vec<TerminalShellProfile> {
     let mut profiles = Vec::new();
     if command_exists("zsh") {
@@ -122,6 +128,7 @@ fn scan_macos() -> Vec<TerminalShellProfile> {
 }
 
 #[cfg(target_os = "linux")]
+// 按 Bash、Zsh、Fish、Sh、PowerShell 顺序检查路径并返回 Linux 候选。
 fn scan_linux() -> Vec<TerminalShellProfile> {
     let mut profiles = Vec::new();
     if command_exists("bash") {
@@ -145,6 +152,7 @@ fn scan_linux() -> Vec<TerminalShellProfile> {
 // 同步 Tauri 命令会在主线程执行；shell 扫描包含子进程探测（wsl.exe），
 // 必须 async + spawn_blocking，否则探测卡住时整个窗口无响应。
 #[tauri::command]
+// 将可能包含 WSL 子进程探测的 Shell 扫描放入阻塞任务，任务连接失败时返回错误。
 pub async fn terminal_shell_scan() -> Result<Vec<TerminalShellProfile>, String> {
     tauri::async_runtime::spawn_blocking(scan_profiles)
         .await
@@ -156,6 +164,7 @@ pub async fn terminal_shell_scan() -> Result<Vec<TerminalShellProfile>, String> 
 /// Shell profile 的 command 可能是逻辑值（如 `powershell`、`gitbash`），也可能是
 /// 用户配置的带参数路径，因此解析和图标提取都放在后端完成，避免前端猜测 PATH。
 #[tauri::command]
+// 在阻塞任务中提取 Windows 原生图标，非 Windows 平台返回 None。
 pub async fn terminal_shell_icon(command: String) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "windows")]
@@ -173,6 +182,7 @@ pub async fn terminal_shell_icon(command: String) -> Result<Option<String>, Stri
 }
 
 #[cfg(target_os = "windows")]
+// 去除可选 PowerShell 调用符后提取首个引号路径或空白分词，不处理完整 shell 转义语法。
 fn command_token(command: &str) -> Option<String> {
     let trimmed = command
         .trim()
@@ -193,6 +203,7 @@ fn command_token(command: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 从 SystemRoot 下 System32 拼接指定路径并检查存在。
 fn system_executable(name: &str) -> Option<PathBuf> {
     env::var_os("SystemRoot")
         .map(PathBuf::from)
@@ -201,6 +212,7 @@ fn system_executable(name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
+// 解析命令首词并按已知 Shell 选择系统或 PATH 查找，未知名称可补 .exe 后缀重试。
 fn resolve_shell_executable(command: &str) -> Option<PathBuf> {
     let token = command_token(command)?;
     let key = token.to_ascii_lowercase();
@@ -220,6 +232,7 @@ fn resolve_shell_executable(command: &str) -> Option<PathBuf> {
 }
 
 #[cfg(target_os = "windows")]
+// 解析 Shell 路径并取得原生大图标，转换后释放图标句柄，返回 PNG Base64 数据 URL。
 fn windows_shell_icon(command: &str) -> Result<Option<String>, String> {
     let Some(path) = resolve_shell_executable(command) else {
         return Ok(None);
@@ -250,6 +263,7 @@ fn windows_shell_icon(command: &str) -> Result<Option<String>, String> {
 }
 
 #[cfg(target_os = "windows")]
+// 从调用方提供的有效图标句柄取得位图，转换像素后释放颜色和掩码位图，再编码 PNG；图标本身由调用方释放。
 unsafe fn icon_to_png(icon: HICON) -> Result<Vec<u8>, String> {
     let mut icon_info: ICONINFO = zeroed();
     if GetIconInfo(icon, &mut icon_info) == 0 {
@@ -274,6 +288,7 @@ unsafe fn icon_to_png(icon: HICON) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(target_os = "windows")]
+// 读取非空且尺寸不超过二百五十六的颜色位图，将 BGRA 转 RGBA；全零 alpha 时尝试掩码，否则使用不透明值。
 unsafe fn bitmap_to_rgba(
     color_bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
     mask_bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
@@ -343,6 +358,7 @@ unsafe fn bitmap_to_rgba(
 }
 
 #[cfg(target_os = "windows")]
+// 读取一位掩码位图并释放设备上下文，按位生成透明度；句柄无效或读取失败返回 None。
 unsafe fn read_mask_alpha(
     mask_bitmap: windows_sys::Win32::Graphics::Gdi::HBITMAP,
     width: u32,
@@ -398,6 +414,7 @@ mod tests {
     use super::{command_token, windows_shell_icon};
 
     #[test]
+    // 验证带调用符、空格路径及后续参数的命令能提取出可执行文件路径。
     fn command_token_supports_quoted_executable_paths() {
         assert_eq!(
             command_token(r#"& "C:\Program Files\nu\nu.exe" --login"#),
@@ -406,12 +423,14 @@ mod tests {
     }
 
     #[test]
+    // 只读提取系统 CMD 图标并验证 PNG 数据 URL 前缀，不启动 CMD 进程。
     fn extracts_native_cmd_icon() {
         let icon = windows_shell_icon("cmd").expect("cmd icon extraction should not fail");
         assert!(icon.is_some_and(|value| value.starts_with("data:image/png;base64,")));
     }
 }
 
+// 按编译目标分派平台扫描，未支持平台返回空列表。
 fn scan_profiles() -> Vec<TerminalShellProfile> {
     #[cfg(target_os = "windows")]
     {

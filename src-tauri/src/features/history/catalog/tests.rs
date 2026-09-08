@@ -1,5 +1,6 @@
 use super::*;
 
+// 构造旧版来源实例表及唯一索引，供迁移测试复用。
 async fn create_legacy_source_instances_schema(conn: &mut SqliteConnection) {
     sqlx::query(
         "CREATE TABLE history_source_instances (
@@ -34,6 +35,7 @@ async fn create_legacy_source_instances_schema(conn: &mut SqliteConnection) {
         .unwrap();
 }
 
+// 断言目录数据库已建立全部外键辅助索引。
 async fn assert_catalog_fk_support_indexes(conn: &mut SqliteConnection) {
     for index_name in [
         "idx_history_session_artifacts_session",
@@ -56,6 +58,7 @@ async fn assert_catalog_fk_support_indexes(conn: &mut SqliteConnection) {
     }
 }
 
+// 构造远程同步摘要与用量事实的固定测试数据，不发起远程请求。
 fn remote_sync_result() -> RemoteHistorySyncResult {
     serde_json::from_value(json!({
         "sourceInstanceId": "remote-instance",
@@ -123,6 +126,7 @@ fn remote_sync_result() -> RemoteHistorySyncResult {
 }
 
 #[test]
+// 验证目录锁竞争错误映射为稳定错误码且保留其他错误。
 fn remote_catalog_busy_errors_use_stable_code() {
     assert_eq!(
         map_remote_catalog_error(
@@ -137,6 +141,7 @@ fn remote_catalog_busy_errors_use_stable_code() {
 }
 
 #[tokio::test]
+// 验证不同历史根目录共用刷新锁并串行执行。
 async fn catalog_refresh_lock_serializes_all_roots() {
     let first_refresh = catalog_refresh_lock().lock().await;
     assert!(catalog_refresh_lock().try_lock().is_err());
@@ -145,11 +150,13 @@ async fn catalog_refresh_lock_serializes_all_roots() {
 }
 
 #[test]
+// 验证全文检索字面量正确转义双引号。
 fn fts_literal_escapes_quotes() {
     assert_eq!(fts_literal("foo \"bar\""), "\"foo \"\"bar\"\"\"");
 }
 
 #[test]
+// 验证中英文查询保留重叠三元字符检索项。
 fn fts_trigram_query_preserves_overlapping_literal_terms() {
     assert_eq!(
         fts_trigram_query("history"),
@@ -159,6 +166,7 @@ fn fts_trigram_query_preserves_overlapping_literal_terms() {
 }
 
 #[test]
+// 验证项目候选包含 Claude 编码路径及目录名。
 fn project_candidates_include_claude_key_and_basename() {
     let (_cwd, keys, basename) = project_candidates(r"D:\work\pythonProject\CLI-Manager");
     assert!(keys.iter().any(|key| key.contains("cli-manager")));
@@ -166,6 +174,7 @@ fn project_candidates_include_claude_key_and_basename() {
 }
 
 #[test]
+// 验证 WSL 根目录范围拒绝原生 Codex 会话路径。
 fn catalog_scope_rejects_native_codex_entry_for_wsl_roots() {
     let roots = HistoryRoots {
         claude_config_dir: None,
@@ -184,6 +193,7 @@ fn catalog_scope_rejects_native_codex_entry_for_wsl_roots() {
 }
 
 #[test]
+// 验证目录扫描纳入 Kimi 主会话 wire 文件并排除子代理。
 fn collect_catalog_files_includes_kimi_main_wire_and_skips_subagents() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let home = temp_dir.path().join(".kimi-code");
@@ -231,6 +241,7 @@ fn collect_catalog_files_includes_kimi_main_wire_and_skips_subagents() {
 }
 
 #[test]
+// 验证目录范围接受规范化后的原生会话路径。
 fn catalog_scope_accepts_canonical_native_entry() {
     let temp_dir = tempfile::TempDir::new().unwrap();
     let codex_dir = temp_dir.path().join(".codex");
@@ -252,6 +263,7 @@ fn catalog_scope_accepts_canonical_native_entry() {
 }
 
 #[tokio::test]
+// 验证消息写入触发器填充中英文三元字符全文索引。
 async fn schema_triggers_populate_trigram_search() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -286,6 +298,7 @@ async fn schema_triggers_populate_trigram_search() {
 }
 
 #[tokio::test]
+// 验证第五版迁移重建紧凑全文索引且保留消息与搜索结果。
 async fn schema_v5_upgrade_rebuilds_compact_fts_without_losing_messages() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -378,6 +391,7 @@ async fn schema_v5_upgrade_rebuilds_compact_fts_without_losing_messages() {
 }
 
 #[tokio::test]
+// 验证版本号已最新时仍修复旧式全文索引结构。
 async fn current_version_rebuilds_legacy_fts_schema() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -439,6 +453,7 @@ async fn current_version_rebuilds_legacy_fts_schema() {
 }
 
 #[tokio::test]
+// 验证旧来源表先补齐字段再创建作用域唯一索引且迁移幂等。
 async fn schema_upgrades_legacy_source_instances_before_creating_scoped_index() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_legacy_source_instances_schema(&mut conn).await;
@@ -498,6 +513,7 @@ async fn schema_upgrades_legacy_source_instances_before_creating_scoped_index() 
 }
 
 #[tokio::test]
+// 验证并发打开临时目录数据库时串行迁移旧结构。
 async fn concurrent_catalog_opens_serialize_legacy_schema_upgrade() {
     let temp_dir = tempfile::tempdir().unwrap();
     let path = temp_dir.path().join("history-catalog.db");
@@ -530,6 +546,7 @@ async fn concurrent_catalog_opens_serialize_legacy_schema_upgrade() {
 }
 
 #[tokio::test]
+// 验证元数据更新失败时不会提前提升数据库版本。
 async fn schema_version_does_not_advance_when_metadata_update_fails() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     create_legacy_source_instances_schema(&mut conn).await;
@@ -564,6 +581,7 @@ async fn schema_version_does_not_advance_when_metadata_update_fails() {
 }
 
 #[tokio::test]
+// 验证第二代历史索引表、全文索引及元数据完整创建。
 async fn schema_creates_v2_history_index_tables() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -636,6 +654,7 @@ async fn schema_creates_v2_history_index_tables() {
 }
 
 #[tokio::test]
+// 验证迁移为已有目录数据库补齐外键辅助索引。
 async fn schema_upgrade_adds_catalog_fk_support_indexes() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -674,6 +693,7 @@ async fn schema_upgrade_adds_catalog_fk_support_indexes() {
 }
 
 #[tokio::test]
+// 验证影子索引选择本地活动来源但排除 SSH 实例。
 async fn shadow_v2_source_selection_excludes_ssh_instances() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -712,6 +732,7 @@ async fn shadow_v2_source_selection_excludes_ssh_instances() {
 }
 
 #[tokio::test]
+// 验证本地与多个 SSH 来源可分别激活但同作用域不能重复激活。
 async fn source_activation_scope_allows_local_and_multiple_ssh_instances() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -761,6 +782,7 @@ async fn source_activation_scope_allows_local_and_multiple_ssh_instances() {
 }
 
 #[tokio::test]
+// 验证远程实例允许主机记录变更但拒绝机器身份变化。
 async fn remote_sync_rejects_existing_source_instance_identity_change() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -783,6 +805,7 @@ async fn remote_sync_rejects_existing_source_instance_identity_change() {
 }
 
 #[tokio::test]
+// 验证同一远程来源实例允许代理重装并更新安装身份。
 async fn remote_sync_accepts_agent_installation_rotation_for_same_source_instance() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -810,6 +833,7 @@ async fn remote_sync_accepts_agent_installation_rotation_for_same_source_instanc
 }
 
 #[tokio::test]
+// 验证远程同步忽略旧代次或旧游标且保留现有摘要。
 async fn remote_sync_ignores_older_generation_and_cursor() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -854,6 +878,7 @@ async fn remote_sync_ignores_older_generation_and_cursor() {
 }
 
 #[tokio::test]
+// 验证远程摘要同步清除消息与全文索引但保留用量事实。
 async fn remote_summary_sync_removes_persisted_message_and_fts_rows() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -898,6 +923,7 @@ async fn remote_summary_sync_removes_persisted_message_and_fts_rows() {
 }
 
 #[tokio::test]
+// 验证远程会话总数超过数据库整数范围时返回稳定错误。
 async fn remote_sync_rejects_total_session_count_overflow() {
     if usize::BITS <= 63 {
         return;
@@ -915,6 +941,7 @@ async fn remote_sync_rejects_total_session_count_overflow() {
 }
 
 #[tokio::test]
+// 验证当前数据库版本走初始化快路径且不重写元数据。
 async fn schema_initialization_uses_user_version_fast_path() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -934,6 +961,7 @@ async fn schema_initialization_uses_user_version_fast_path() {
 }
 
 #[tokio::test]
+// 验证列表合并优先采用第二代摘要并补充旧目录独有会话。
 async fn list_sessions_merges_v2_first_and_legacy_gaps() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1021,6 +1049,7 @@ async fn list_sessions_merges_v2_first_and_legacy_gaps() {
 }
 
 #[tokio::test]
+// 验证搜索合并保留第二代命中并补充旧目录结果。
 async fn search_sessions_merges_v2_first_and_legacy_gaps() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1119,6 +1148,7 @@ async fn search_sessions_merges_v2_first_and_legacy_gaps() {
 }
 
 #[tokio::test]
+// 验证统计读取各活动来源的用量事实并支持来源与实例筛选。
 async fn stats_session_facts_reads_all_active_v2_sources() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1298,6 +1328,7 @@ async fn stats_session_facts_reads_all_active_v2_sources() {
 }
 
 #[tokio::test]
+// 验证第二代详情还原消息片段、用量、工具关联及文件变更。
 async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1426,6 +1457,7 @@ async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
 }
 
 #[tokio::test]
+// 验证影子构建物化会话事实、更新解析版本并清理已删除会话。
 async fn shadow_build_v2_populates_sessions_messages_and_sync_run() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1597,6 +1629,7 @@ async fn shadow_build_v2_populates_sessions_messages_and_sync_run() {
 }
 
 #[tokio::test]
+// 验证 Codex 影子构建保留拆分用量与状态数据库原始指针。
 async fn shadow_build_v2_uses_codex_adapter_stats_and_raw_pointers() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1700,6 +1733,7 @@ async fn shadow_build_v2_uses_codex_adapter_stats_and_raw_pointers() {
 }
 
 #[tokio::test]
+// 验证影子构建纳入活动的 Gemini 等非核心来源。
 async fn shadow_build_v2_includes_active_non_core_sources() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1773,6 +1807,7 @@ async fn shadow_build_v2_includes_active_non_core_sources() {
 }
 
 #[tokio::test]
+// 验证重复记录索引失败时更新记录并累加重试次数。
 async fn record_v2_index_failure_upserts_retry_count() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     ensure_schema(&mut conn).await.unwrap();
@@ -1830,6 +1865,7 @@ async fn record_v2_index_failure_upserts_retry_count() {
 }
 
 #[test]
+// 验证来源实例校验拒绝未知存储类型及损坏的位置 JSON。
 fn validate_source_instance_rejects_invalid_storage_and_locations() {
     let mut input = HistoryIndexV2SourceInstanceInput {
         source_id: "claude".to_string(),

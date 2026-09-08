@@ -4,6 +4,7 @@ use std::path::Path;
 
 /// 把 git stderr 映射为稳定错误码 + 原始片段，供前端 toast 展示。
 /// 形如 "not_fast_forward: <git 原文>"。
+// 按 stderr 特征映射稳定 Git 错误码，并保留最多三百字符的原始片段。
 pub(super) fn map_git_cli_error(stderr: &str) -> String {
     let s = stderr.to_lowercase();
     let code = if s.contains("authentication failed")
@@ -43,6 +44,7 @@ pub(super) fn map_git_cli_error(stderr: &str) -> String {
     format!("{code}: {snippet}")
 }
 
+// 按本地或 WSL 路径执行参数数组，WSL 挂载 Windows 盘时回退本地 Git。
 pub(in crate::commands) fn git_command_output(
     project_path: &str,
     args: &[&str],
@@ -94,6 +96,7 @@ pub(in crate::commands) fn git_command_output(
 /// shell out 系统 `git` 执行网络操作，继承用户凭据管理器 / SSH / git config 代理。
 /// WSL UNC 路径改由 wsl.exe 内部执行 git，避免 Windows git 在 UNC/Plan 9 上失败。
 /// 用 args 数组（非 shell）避免注入；成功返回合并输出，失败返回映射错误码。
+// 执行系统 Git，成功合并标准输出与错误输出，失败映射稳定错误。
 pub(in crate::commands) fn run_git_cli(
     project_path: &str,
     args: &[&str],
@@ -110,6 +113,7 @@ pub(in crate::commands) fn run_git_cli(
 }
 
 /// 校验分支名安全：非空、不以 '-' 开头（防被当作 git flag）、无空白/控制字符。
+// 拒绝空名、选项前缀、空白控制字符及 Git 分支名危险结构。
 pub(super) fn validate_branch_name(branch: &str) -> Result<(), String> {
     if branch.is_empty() {
         return Err("empty_branch".into());
@@ -134,6 +138,7 @@ pub(super) fn validate_branch_name(branch: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 先检查分支名基础规则，再运行 Git check-ref-format 验证。
 pub(super) fn validate_branch_name_with_git(
     project_path: &str,
     branch: &str,
@@ -144,6 +149,7 @@ pub(super) fn validate_branch_name_with_git(
         .map_err(|_| "invalid_branch".to_string())
 }
 
+// 限制操作引用的长度并拒绝选项前缀、空白及控制字符。
 pub(in crate::commands) fn validate_operation_ref(value: &str) -> Result<(), String> {
     if value.is_empty()
         || value.len() > 256
@@ -157,6 +163,7 @@ pub(in crate::commands) fn validate_operation_ref(value: &str) -> Result<(), Str
     Ok(())
 }
 
+// 检查引用参数形状后通过 Git rev-parse 验证其存在。
 pub(in crate::commands) fn validate_commit_ref(
     project_path: &str,
     value: &str,
@@ -167,11 +174,13 @@ pub(in crate::commands) fn validate_commit_ref(
         .map_err(|_| "commit_not_found".to_string())
 }
 
+// 按首个斜杠拆分远程名和分支名，要求两部分均非空。
 pub(super) fn split_remote_branch(branch: &str) -> Option<(&str, &str)> {
     let (remote, name) = branch.split_once('/')?;
     (!remote.is_empty() && !name.is_empty()).then_some((remote, name))
 }
 
+// 普通切换本地分支，或验证远程名结构后创建跟踪分支。
 pub(super) fn run_checkout_branch(
     project_path: &str,
     branch: &str,
@@ -187,6 +196,7 @@ pub(super) fn run_checkout_branch(
     }
 }
 
+// 按英文输出识别 stash 没有保存本地变更的情况。
 pub(super) fn is_no_stash_created(output: &str) -> bool {
     let s = output.to_lowercase();
     s.contains("no local changes to save") || s.contains("no local changes")

@@ -11,6 +11,7 @@ pub(super) struct CredentialSnapshot {
 }
 
 impl CredentialSnapshot {
+    // 读取指定平台或全部平台的凭据作为内存快照。
     pub(super) fn capture(platform: Option<CcConnectPlatform>) -> Result<Self, String> {
         let accounts: Vec<&'static str> = match platform {
             Some(CcConnectPlatform::Telegram) => vec![TELEGRAM_TOKEN_ACCOUNT],
@@ -37,6 +38,7 @@ impl CredentialSnapshot {
         Ok(Self { entries })
     }
 
+    // 恢复每个凭据并汇总全部恢复失败信息。
     pub(super) fn restore(&self) -> Result<(), String> {
         let mut errors = Vec::new();
         for (account, value) in &self.entries {
@@ -52,6 +54,7 @@ impl CredentialSnapshot {
     }
 }
 
+// 恢复原有凭据值，原先不存在则删除当前凭据。
 pub(super) fn restore_credential(account: &str, value: Option<&str>) -> Result<(), String> {
     match value {
         Some(value) => set_credential(account, value),
@@ -66,6 +69,7 @@ pub(super) struct FileSnapshot {
 }
 
 impl FileSnapshot {
+    // 读取文件原始字节，区分不存在和其他读取错误。
     pub(super) fn capture(path: PathBuf, label: &'static str) -> Result<Self, String> {
         let contents = match fs::read(&path) {
             Ok(contents) => Some(contents),
@@ -79,6 +83,7 @@ impl FileSnapshot {
         })
     }
 
+    // 恢复原文件字节，原先不存在则删除新增文件。
     pub(super) fn restore(&self) -> Result<(), String> {
         if let Some(contents) = self.contents.as_deref() {
             write_file_atomically_if_changed(&self.path, contents, self.label)

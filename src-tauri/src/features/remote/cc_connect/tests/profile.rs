@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证连接配置脱离项目路径并幂等设置控制身份。
 fn control_profile_detaches_connection_settings_from_project_paths() {
     let control = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
@@ -18,6 +19,7 @@ fn control_profile_detaches_connection_settings_from_project_paths() {
 }
 
 #[test]
+// 验证兼容版本解析及内置可信摘要对应版本。
 fn parses_supported_and_unsupported_versions() {
     assert_eq!(
         parse_version("cc-connect v1.4.1 (commit abc)"),
@@ -50,6 +52,7 @@ fn parses_supported_and_unsupported_versions() {
 }
 
 #[test]
+// 验证旧配置缺失 YOLO 字段时采用安全模式。
 fn profile_without_yolo_field_defaults_to_safe_mode() {
     let project = tempfile::tempdir().unwrap();
     let mut value = serde_json::to_value(sample_profile(project.path())).unwrap();
@@ -59,6 +62,7 @@ fn profile_without_yolo_field_defaults_to_safe_mode() {
 }
 
 #[test]
+// 验证缺失单轮时间字段时使用默认十五分钟。
 fn profile_without_max_turn_time_defaults_to_fifteen_minutes() {
     let project = tempfile::tempdir().unwrap();
     let mut value = serde_json::to_value(sample_profile(project.path())).unwrap();
@@ -70,6 +74,7 @@ fn profile_without_max_turn_time_defaults_to_fifteen_minutes() {
 }
 
 #[test]
+// 验证超出单轮时间上限在控制配置 I/O 前被拒绝。
 fn profile_rejects_turn_time_above_maximum_before_io() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -84,6 +89,7 @@ fn profile_rejects_turn_time_above_maximum_before_io() {
 }
 
 #[test]
+// 验证旧配置缺失平台和开关字段仍能补齐默认值。
 fn legacy_profile_without_switch_fields_remains_compatible() {
     let project_dir = tempfile::tempdir().unwrap();
     let mut value = serde_json::to_value(sample_profile(project_dir.path())).unwrap();
@@ -106,6 +112,7 @@ fn legacy_profile_without_switch_fields_remains_compatible() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 验证 Windows 扩展路径前缀与 UNC 路径的配置表示。
 fn config_paths_strip_windows_extended_prefixes() {
     assert_eq!(
         user_path_string(Path::new(r"\\?\D:\npm\cc-connect.exe")),
@@ -130,6 +137,7 @@ fn config_paths_strip_windows_extended_prefixes() {
 }
 
 #[test]
+// 验证日志秘密脱敏、容量淘汰及游标分页。
 fn log_redaction_and_cursor_work() {
     assert_eq!(
         redact_log_line("connected with abcdefgh", &["abcdefgh".to_string()]),

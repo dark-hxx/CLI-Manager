@@ -31,6 +31,7 @@ pub struct LiveReloadWatcher {
 }
 
 impl LiveReloadWatcher {
+    // 递归登记非生成目录的非递归监听，再启动去抖事件处理线程。
     pub fn start(root: &Path, version: Arc<AtomicU64>) -> Result<Self, String> {
         let watched_root = root.to_path_buf();
         let (event_tx, event_rx) = mpsc::channel::<EventResult>();
@@ -70,6 +71,7 @@ impl LiveReloadWatcher {
 }
 
 impl Drop for LiveReloadWatcher {
+    // 发送停止信号并等待监听线程退出，线程异常时记录警告。
     fn drop(&mut self) {
         if let Some(shutdown_tx) = self.shutdown_tx.take() {
             let _ = shutdown_tx.send(());
@@ -82,6 +84,7 @@ impl Drop for LiveReloadWatcher {
     }
 }
 
+// 枚举并登记根内普通目录，跳过链接和忽略目录，子目录失败可降级。
 fn watch_directory_tree(
     watcher: &mut RecommendedWatcher,
     root: &Path,
@@ -130,6 +133,7 @@ fn watch_directory_tree(
     Ok(())
 }
 
+// 合并事件至安静窗口结束，有相关变化时递增刷新版本并响应关闭信号。
 fn run_event_loop(
     mut watcher: RecommendedWatcher,
     event_rx: mpsc::Receiver<EventResult>,
@@ -179,6 +183,7 @@ fn run_event_loop(
     }
 }
 
+// 以短周期等待监听事件，关闭信号或事件通道断开时结束。
 fn receive_event(
     event_rx: &mpsc::Receiver<EventResult>,
     shutdown_rx: &mpsc::Receiver<()>,
@@ -195,6 +200,7 @@ fn receive_event(
     }
 }
 
+// 过滤事件路径，标记刷新需求并登记新目录或清理已删除目录记录。
 fn process_event(
     result: EventResult,
     root: &Path,
@@ -226,6 +232,7 @@ fn process_event(
     }
 }
 
+// 要求目录相关且非链接，并验证规范路径仍位于项目根内。
 fn is_watchable_directory(root: &Path, path: &Path) -> bool {
     if !is_relevant(root, path) || !is_plain_directory(path) {
         return false;
@@ -235,6 +242,7 @@ fn is_watchable_directory(root: &Path, path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// 通过链接元数据检查普通目录，Windows 同时排除重解析点。
 fn is_plain_directory(path: &Path) -> bool {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return false;
@@ -253,6 +261,7 @@ fn is_plain_directory(path: &Path) -> bool {
     metadata.is_dir()
 }
 
+// 要求路径位于根下且不含忽略目录段或无法表示的文本段。
 fn is_relevant(root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(root) else {
         return false;
@@ -266,6 +275,7 @@ fn is_relevant(root: &Path, path: &Path) -> bool {
     })
 }
 
+// 按平台大小写规则匹配预定义生成目录名称。
 fn is_ignored_segment(segment: &str) -> bool {
     IGNORED_SEGMENTS.iter().any(|ignored| {
         #[cfg(windows)]
@@ -289,6 +299,7 @@ mod tests {
     use super::{is_relevant, is_watchable_directory};
 
     #[test]
+    // 验证普通根内文件保留，而生成目录和根外路径被忽略。
     fn filters_generated_and_outside_paths() {
         let root = Path::new("C:/project");
         assert!(is_relevant(root, Path::new("C:/project/src/app.js")));
@@ -301,6 +312,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 验证 Windows 忽略目录名称匹配不区分 ASCII 大小写。
     fn ignored_directory_names_are_case_insensitive_on_windows() {
         let root = Path::new(r"C:\project");
         assert!(!is_relevant(
@@ -310,6 +322,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时目录验证正常子目录可监听、node_modules 不可监听。
     fn registration_skips_ignored_directories() {
         let temp = tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
@@ -321,6 +334,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // 验证 Unix 临时目录中的外部目录符号链接不会被登记监听。
     fn registration_skips_symlinked_directories() {
         use std::os::unix::fs::symlink;
 

@@ -10,6 +10,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+// 逐个检查候选文件，优先返回可信兼容版本并保留首个不兼容结果。
 pub(super) fn detect_binary_uncached(
     explicit_path: Option<&str>,
 ) -> Result<DetectedBinary, String> {
@@ -40,6 +41,7 @@ pub(super) fn detect_binary_uncached(
     }
 }
 
+// 从显式路径或环境收集原生候选，按小写路径去重。
 pub(super) fn executable_candidates(explicit_path: Option<&str>) -> Result<Vec<PathBuf>, String> {
     let mut raw = Vec::new();
     if let Some(explicit) = explicit_path {
@@ -76,6 +78,7 @@ pub(super) fn executable_candidates(explicit_path: Option<&str>) -> Result<Vec<P
         .collect())
 }
 
+// 在 Windows 展开原生 exe 和 npm 包路径，其他平台保留原路径。
 pub(super) fn expand_native_candidate(path: &Path) -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -104,6 +107,7 @@ pub(super) fn expand_native_candidate(path: &Path) -> Vec<PathBuf> {
     }
 }
 
+// 规范化并检查文件权限，摘要受信任后才执行版本探测。
 pub(super) fn inspect_binary(path: &Path) -> Result<DetectedBinary, String> {
     if !path.is_file() {
         return Err("not a file".to_string());
@@ -157,6 +161,7 @@ pub(super) fn inspect_binary(path: &Path) -> Result<DetectedBinary, String> {
     })
 }
 
+// 查找内置固定摘要或更新信任记录对应的版本。
 pub(super) fn trusted_binary_version(sha256: &str) -> Option<String> {
     if VERIFIED_V1_4_1_BINARY_SHA256
         .iter()
@@ -167,6 +172,7 @@ pub(super) fn trusted_binary_version(sha256: &str) -> Option<String> {
     update::trusted_version_for_sha256(sha256).ok().flatten()
 }
 
+// 按共享编码检测解码输出，优先返回非空 stdout。
 pub(super) fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
     let decode = |bytes: &[u8]| {
         crate::text_encoding::decode_text(bytes)
@@ -184,6 +190,7 @@ pub(super) fn output_text(stdout: &[u8], stderr: &[u8]) -> String {
     }
 }
 
+// 检查帮助文本同时声明 app-server、listen 和 stdio 支持。
 pub(super) fn codex_app_server_help_supported(output: &str) -> bool {
     let normalized = output.to_ascii_lowercase();
     normalized.contains("codex app-server")
@@ -191,6 +198,7 @@ pub(super) fn codex_app_server_help_supported(output: &str) -> bool {
         && normalized.contains("stdio://")
 }
 
+// 限时运行本机 Codex 帮助以检查 app-server stdio 能力。
 pub(super) fn probe_codex_app_server() -> Result<(), String> {
     #[cfg(target_os = "windows")]
     let command = {
@@ -219,6 +227,7 @@ pub(super) fn probe_codex_app_server() -> Result<(), String> {
     Ok(())
 }
 
+// 从输出中解析首个语义版本并判断兼容性。
 pub(super) fn parse_version(output: &str) -> Option<(String, bool)> {
     let version = output.split_whitespace().find_map(|token| {
         let clean = token
@@ -231,6 +240,7 @@ pub(super) fn parse_version(output: &str) -> Option<(String, bool)> {
     Some((version, compatible))
 }
 
+// 流式读取文件并计算大写 SHA-256 摘要。
 pub(super) fn sha256_file(path: &Path) -> Result<String, String> {
     let mut file = File::open(path).map_err(|err| format!("open executable failed: {err}"))?;
     let mut hasher = Sha256::new();

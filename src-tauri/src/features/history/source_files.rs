@@ -22,6 +22,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
+// 收集 Claude JSONL 并附项目目录键，可解析 WSL 根目录时改用 WSL 扫描。
 pub(super) fn collect_claude_session_files(root: &Path) -> Vec<SessionFileRef> {
     let root_str = root.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&root_str) {
@@ -63,6 +64,7 @@ pub(super) fn collect_claude_session_files(root: &Path) -> Vec<SessionFileRef> {
     results
 }
 
+// 收集 Codex rollout JSONL，本地解析项目 cwd，WSL 使用专用目录扫描。
 pub(super) fn collect_codex_session_files(root: &Path) -> Vec<SessionFileRef> {
     let root_str = root.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&root_str) {
@@ -103,6 +105,7 @@ pub(super) fn collect_codex_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 递归收集符合 Gemini 会话结构及名称的 JSON 文件并附项目键。
 pub(super) fn collect_gemini_session_files(root: &Path) -> Vec<SessionFileRef> {
     if !root.exists() {
         return Vec::new();
@@ -126,6 +129,7 @@ pub(super) fn collect_gemini_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 递归收集 Copilot events 文件并解析对应项目键。
 pub(super) fn collect_copilot_session_files(root: &Path) -> Vec<SessionFileRef> {
     if !root.exists() {
         return Vec::new();
@@ -142,6 +146,7 @@ pub(super) fn collect_copilot_session_files(root: &Path) -> Vec<SessionFileRef> 
         .collect()
 }
 
+// 扫描 brain 下的 Antigravity transcript，并由工作区映射补项目键。
 pub(super) fn collect_antigravity_session_files(root: &Path) -> Vec<SessionFileRef> {
     let brain = root.join("brain");
     if !brain.exists() {
@@ -167,6 +172,7 @@ pub(super) fn collect_antigravity_session_files(root: &Path) -> Vec<SessionFileR
         .collect()
 }
 
+// 收集 Grok updates 文件，WSL 路径解析失败时不回退宿主递归。
 pub(super) fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
     let root_str = root.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&root_str) {
@@ -191,6 +197,7 @@ pub(super) fn collect_grok_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 通过 WSL find 收集 Grok updates 文件，转换为 UNC 引用并缓存指纹。
 pub(super) fn collect_wsl_grok_session_files(
     linux_root: &str,
     distro: &str,
@@ -213,6 +220,7 @@ pub(super) fn collect_wsl_grok_session_files(
     .collect()
 }
 
+// 按文件名及父级组件检查 Linux Grok updates 路径形状。
 pub(super) fn looks_like_grok_linux_updates(linux_path: &str) -> bool {
     let normalized = linux_path.trim_end_matches('/');
     let Some((parent, name)) = normalized.rsplit_once('/') else {
@@ -226,6 +234,7 @@ pub(super) fn looks_like_grok_linux_updates(linux_path: &str) -> bool {
         .is_some_and(|(workspace, session_id)| !workspace.is_empty() && !session_id.is_empty())
 }
 
+// 以 updates 文件父目录的会话名作为 Linux Grok 路径回退键。
 pub(super) fn grok_project_key_from_linux_path(linux_path: &str) -> String {
     linux_path
         .trim_end_matches('/')
@@ -236,6 +245,7 @@ pub(super) fn grok_project_key_from_linux_path(linux_path: &str) -> String {
         .unwrap_or_else(|| "grok".to_string())
 }
 
+// 通过 WSL find 按会话目录模式定位首个符合形状的 updates 路径。
 pub(super) fn wsl_find_exact_grok_updates(
     linux_root: &str,
     distro: &str,
@@ -264,10 +274,12 @@ pub(super) fn wsl_find_exact_grok_updates(
         .map(|linux_path| PathBuf::from(crate::wsl::linux_to_unc_wsl_path(linux_path, distro)))
 }
 
+// 对符合 Grok updates 识别条件的路径返回父会话目录。
 pub(super) fn grok_session_dir_from_updates(path: &Path) -> Option<PathBuf> {
     looks_like_grok_updates_file(path).then(|| path.parent().map(Path::to_path_buf))?
 }
 
+// 校验修剪后的 Grok 会话 ID 长度及字母数字、下划线和连字符字符集。
 pub(super) fn is_valid_grok_session_id(session_id: &str) -> bool {
     let session_id = session_id.trim();
     if session_id.is_empty() || session_id.len() > 128 {
@@ -281,6 +293,7 @@ pub(super) fn is_valid_grok_session_id(session_id: &str) -> bool {
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
 }
 
+// 解析默认备份根目录后委托 Grok 会话目录备份删除流程。
 pub(super) fn delete_grok_session_tree(
     file_ref: &SessionFileRef,
     home: &Path,
@@ -289,6 +302,7 @@ pub(super) fn delete_grok_session_tree(
     delete_grok_session_tree_with_backup_root(file_ref, home, &backups_dir)
 }
 
+// 验证 Grok 会话范围并备份已知文件后删除目录，失败尝试恢复并必要时锁定来源。
 pub(super) fn delete_grok_session_tree_with_backup_root(
     file_ref: &SessionFileRef,
     home: &Path,
@@ -351,6 +365,7 @@ pub(super) fn delete_grok_session_tree_with_backup_root(
     }
 }
 
+// 验证 UUID 后定向定位 Grok 会话，匹配项目范围与解析身份后返回摘要。
 pub(super) fn find_exact_grok_session_in_root(
     root: &Path,
     session_id: &str,
@@ -422,6 +437,7 @@ pub(super) fn find_exact_grok_session_in_root(
     None
 }
 
+// 扫描 Pi 根目录的 sessions 子树并为有效会话附项目键。
 pub(super) fn collect_pi_session_files(root: &Path) -> Vec<SessionFileRef> {
     let sessions = root.join("sessions");
     if !sessions.exists() {
@@ -439,6 +455,7 @@ pub(super) fn collect_pi_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 递归收集符合 Kiro 内容结构的 JSON 会话，排除 sessions.json 索引。
 pub(super) fn collect_kiro_session_files(root: &Path) -> Vec<SessionFileRef> {
     if !root.exists() {
         return Vec::new();
@@ -461,6 +478,7 @@ pub(super) fn collect_kiro_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 优先扫描 Cline tasks 候选目录，按规范路径去重并附项目键。
 pub(super) fn collect_cline_session_files(root: &Path) -> Vec<SessionFileRef> {
     if !root.exists() {
         return Vec::new();
@@ -493,6 +511,7 @@ pub(super) fn collect_cline_session_files(root: &Path) -> Vec<SessionFileRef> {
         .collect()
 }
 
+// 递归收集 Cursor agent transcript 并附项目目录键。
 pub(super) fn collect_cursor_session_files(root: &Path) -> Vec<SessionFileRef> {
     if !root.exists() {
         return Vec::new();

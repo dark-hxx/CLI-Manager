@@ -47,12 +47,15 @@ pub struct FileWatcherBridge {
 }
 
 impl FileWatcherBridge {
+    // 创建尚未监听任何目录的桥接状态；实际 watcher 在 start 时建立。
     pub fn new() -> Self {
         Self {
             state: Mutex::new(None),
         }
     }
 
+    // 同路径订阅复用并计数；切换路径先释放旧监听，再建立递归监听，去抖后发送去重排序的相对路径。
+    // 拒绝 WSL UNC 以让前端降级轮询；切换后的初始化失败不会恢复旧监听。
     pub fn start(&self, app_handle: AppHandle, project_path: String) -> Result<(), String> {
         let root = Path::new(&project_path);
         if project_path.is_empty() {
@@ -126,6 +129,7 @@ impl FileWatcherBridge {
         Ok(())
     }
 
+    // 仅释放匹配路径的一个订阅，最后一个订阅移除时销毁 watcher；无监听或路径不符时无操作。
     pub fn stop(&self, project_path: String) -> Result<(), String> {
         let mut guard = self.state.lock().map_err(|_| "lock_poisoned".to_string())?;
         let Some(state) = guard.as_mut() else {
@@ -148,6 +152,7 @@ impl FileWatcherBridge {
     }
 }
 
+// 过滤根外路径、生成目录和锁文件；根级 .git 仅保留 index/HEAD 变化以刷新文件状态。
 fn is_relevant(root: &str, path: &Path) -> bool {
     let Some(rel) = project_relative_path(root, path) else {
         return false;
@@ -170,6 +175,7 @@ fn is_relevant(root: &str, path: &Path) -> bool {
     !rel.ends_with(".lock")
 }
 
+// 统一分隔符后按区分大小写的文本前缀提取相对路径，根自身返回空串；不是安全路径校验器。
 fn project_relative_path(root: &str, path: &Path) -> Option<String> {
     let path_str = path.to_string_lossy().replace('\\', "/");
     let root_norm = root.replace('\\', "/").trim_end_matches('/').to_string();
@@ -189,18 +195,21 @@ mod tests {
     const ROOT: &str = "F:/proj";
 
     #[test]
+    // 验证普通工作区文件在正反斜杠路径表示下均触发刷新。
     fn worktree_file_is_relevant() {
         assert!(is_relevant(ROOT, Path::new("F:/proj/src/main.rs")));
         assert!(is_relevant(ROOT, Path::new("F:\\proj\\src\\main.rs")));
     }
 
     #[test]
+    // 验证暂存索引和 HEAD 变化保留为有效文件状态事件。
     fn git_index_and_head_relevant() {
         assert!(is_relevant(ROOT, Path::new("F:/proj/.git/index")));
         assert!(is_relevant(ROOT, Path::new("F:/proj/.git/HEAD")));
     }
 
     #[test]
+    // 验证 .git 根、锁、对象与日志变化不会产生文件浏览器刷新事件。
     fn git_noise_ignored() {
         assert!(!is_relevant(ROOT, Path::new("F:/proj/.git/index.lock")));
         assert!(!is_relevant(ROOT, Path::new("F:/proj/.git/objects/ab/cd")));
@@ -209,11 +218,13 @@ mod tests {
     }
 
     #[test]
+    // 验证构建目录中的锁文件不会触发刷新。
     fn worktree_lock_ignored() {
         assert!(!is_relevant(ROOT, Path::new("F:/proj/build/cache.lock")));
     }
 
     #[test]
+    // 验证依赖、编译输出和代码索引目录中的变化被过滤。
     fn generated_directories_ignored() {
         assert!(!is_relevant(
             ROOT,

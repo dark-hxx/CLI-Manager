@@ -2,6 +2,7 @@ use super::{normalize_path, GitFileChange, WSL_GIT_COMMAND_TIMEOUT};
 use crate::shell_resolver::{output_with_timeout, silent_command};
 use std::path::Path;
 
+// 通过限时 WSL Git 执行器读取输出，区分超时、非仓库及其他失败。
 pub(in crate::commands) fn run_wsl_git(
     distro: &str,
     linux_path: &str,
@@ -45,6 +46,7 @@ pub(in crate::commands) fn run_wsl_git(
     ))
 }
 
+// 识别 Git 英文或中文非仓库错误片段。
 pub(super) fn is_not_git_repository_output(output: &str) -> bool {
     let normalized = output.to_ascii_lowercase();
     normalized.contains("not a git repository")
@@ -52,6 +54,7 @@ pub(super) fn is_not_git_repository_output(output: &str) -> bool {
         || normalized.contains("不是 git 仓库")
 }
 
+// 解析 WSL 实路径并转换挂载盘路径，仅返回本地存在的 Windows 路径。
 pub(in crate::commands) fn resolve_wsl_mnt_git_project_path(
     distro: &str,
     linux_path: &str,
@@ -72,12 +75,14 @@ pub(in crate::commands) fn resolve_wsl_mnt_git_project_path(
     }
 }
 
+// 将可映射至 Windows 盘的 WSL 项目转为本地路径，否则保留原路径。
 pub(super) fn effective_git_project_path(project_path: &str) -> String {
     crate::wsl::parse_wsl_unc_path(project_path)
         .and_then(|(distro, linux_path)| resolve_wsl_mnt_git_project_path(&distro, &linux_path))
         .unwrap_or_else(|| project_path.to_string())
 }
 
+// 限时执行指定发行版的 readlink -f，失败或空输出返回 None。
 pub(super) fn resolve_wsl_linux_realpath(distro: &str, linux_path: &str) -> Option<String> {
     let program = crate::wsl::find_wsl_exe()
         .as_deref()
@@ -97,6 +102,7 @@ pub(super) fn resolve_wsl_linux_realpath(distro: &str, linux_path: &str) -> Opti
     }
 }
 
+// 构造指定发行版、safe.directory 和工作目录的 WSL Git 参数数组。
 pub(super) fn build_wsl_git_command_args(
     distro: &str,
     linux_path: &str,
@@ -116,6 +122,7 @@ pub(super) fn build_wsl_git_command_args(
     args
 }
 
+// 解析 NUL 分隔 porcelain 状态，归一化路径并跳过暂存重命名的旧路径。
 pub(super) fn parse_wsl_git_status(stdout: &[u8]) -> Vec<GitFileChange> {
     let records: Vec<&[u8]> = stdout
         .split(|byte| *byte == 0)
@@ -162,6 +169,7 @@ pub(super) fn parse_wsl_git_status(stdout: &[u8]) -> Vec<GitFileChange> {
     changes
 }
 
+// 优先判定冲突和未跟踪，再按索引列或工作区列映射状态与暂存标志。
 pub(super) fn parse_porcelain_status(x: u8, y: u8) -> (&'static str, bool) {
     if is_porcelain_conflict(x, y) {
         return ("C", false);
@@ -178,10 +186,12 @@ pub(super) fn parse_porcelain_status(x: u8, y: u8) -> (&'static str, bool) {
     ("M", false)
 }
 
+// 识别包含 U 及双方新增、双方删除的 porcelain 冲突组合。
 pub(super) fn is_porcelain_conflict(x: u8, y: u8) -> bool {
     x == b'U' || y == b'U' || (x == b'A' && y == b'A') || (x == b'D' && y == b'D')
 }
 
+// 将新增、删除、重命名字节映射为状态码，其余按修改处理。
 pub(super) fn map_porcelain_status_byte(status: u8) -> &'static str {
     match status {
         b'A' => "A",

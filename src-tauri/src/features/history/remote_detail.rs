@@ -3,6 +3,7 @@ use cli_manager_history_core::RemoteHistorySessionDetail;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+// 将远程详情转换为只读前端载荷，按路径汇总变更并映射消息及用量。
 pub(super) fn remote_detail_value(detail: RemoteHistorySessionDetail) -> Value {
     let summary = detail.summary;
     let mut grouped = BTreeMap::<String, Vec<_>>::new();

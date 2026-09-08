@@ -88,6 +88,7 @@ pub struct NotificationError {
 }
 
 impl NotificationError {
+    // 组合静态错误码及调用方消息，不进行脱敏、截断或错误分类推断。
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
@@ -110,6 +111,7 @@ pub struct TestSendResult {
     pub error_code: Option<String>,
 }
 
+// 按六种已支持 Hook 事件进行大小写敏感匹配，未知事件返回 false。
 pub fn is_supported_event(event: &str) -> bool {
     SUPPORTED_EVENTS.contains(&event)
 }

@@ -1,5 +1,6 @@
 use super::*;
 
+// 按认证模式构造 SSH 传输测试数据，填入虚拟密钥路径或凭据引用。
 fn ssh_transport(auth_mode: &str) -> SshTransportSpec {
     SshTransportSpec {
         host: "example.com".to_string(),
@@ -29,6 +30,7 @@ fn ssh_transport(auth_mode: &str) -> SshTransportSpec {
     }
 }
 
+// 构造含空格路径、HOME 简写和初始化命令的 SSH Codex 启动测试数据。
 fn ssh_codex_launch(auth_mode: &str) -> SshCodexLaunch {
     SshCodexLaunch {
         transport: ssh_transport(auth_mode),
@@ -47,6 +49,7 @@ fn ssh_codex_launch(auth_mode: &str) -> SshCodexLaunch {
 }
 
 #[test]
+// 验证 app-server 之前展开 profile 并追加完整供应商覆盖参数。
 fn app_server_provider_overrides_expand_complete_profile_before_subcommand() {
     let args = build_codex_child_args(
         &[
@@ -108,6 +111,7 @@ fn app_server_provider_overrides_expand_complete_profile_before_subcommand() {
 }
 
 #[test]
+// 用临时日志验证仅记录协议阶段，不包含请求正文、回答或线程标识。
 fn protocol_trace_records_stages_without_message_content() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("cc-connect.log");
@@ -149,6 +153,7 @@ fn protocol_trace_records_stages_without_message_content() {
 }
 
 #[test]
+// 验证普通 Codex 命令保留生成的 profile，而不展开其配置项。
 fn runtime_provider_overrides_keep_the_generated_profile() {
     let args = build_codex_child_args(
         &["resume".to_string(), "thread-original".to_string()],
@@ -191,6 +196,7 @@ fn runtime_provider_overrides_keep_the_generated_profile() {
 }
 
 #[test]
+// 验证没有供应商覆盖时 app-server 参数保持原样。
 fn app_server_arguments_pass_through_without_provider_overrides() {
     let original = vec![
         "app-server".to_string(),
@@ -204,6 +210,7 @@ fn app_server_arguments_pass_through_without_provider_overrides() {
 }
 
 #[test]
+// 验证嵌套 TOML 表展开为配置覆盖，包含点号的键保留引号。
 fn complete_profile_is_flattened_into_codex_config_overrides() {
     let profile = r#"
 model_provider = "custom"
@@ -230,6 +237,7 @@ wire_api = "responses"
 }
 
 #[test]
+// 验证超出 Windows 命令行预算的 app-server 配置在构造参数阶段失败。
 fn oversized_app_server_profile_fails_before_process_spawn() {
     let error = build_codex_child_args(
         &[
@@ -262,6 +270,7 @@ fn oversized_app_server_profile_fails_before_process_spawn() {
 }
 
 #[test]
+// 验证启动器参数只接受结构化字符串数组，并拒绝换行参数。
 fn registered_codex_launcher_args_are_decoded_as_structured_argv() {
     assert_eq!(
         parse_codex_launcher_args(r#"["-c","model_reasoning_effort=high"]"#).unwrap(),
@@ -272,6 +281,7 @@ fn registered_codex_launcher_args_are_decoded_as_structured_argv() {
 }
 
 #[test]
+// 验证只有首个参数为 app-server 才选择代理模式。
 fn only_the_first_argument_selects_app_server_proxying() {
     assert!(is_app_server_command(&["app-server".to_string()]));
     assert!(!is_app_server_command(&[
@@ -283,6 +293,7 @@ fn only_the_first_argument_selects_app_server_proxying() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 验证 Windows 脚本路径移除扩展路径前缀并保留 UNC 形式。
 fn windows_script_launch_paths_drop_verbatim_prefixes() {
     assert_eq!(
         windows_shell_path(Path::new(r"\\?\D:\Code Space\codex.cmd")),
@@ -296,6 +307,7 @@ fn windows_script_launch_paths_drop_verbatim_prefixes() {
 
 #[cfg(target_os = "windows")]
 #[test]
+// 验证脚本边界字符被拒绝，而带空格及中文的普通路径可通过字符检查。
 fn windows_script_launch_rejects_command_boundary_characters() {
     for unsafe_value in [
         r"D:\codex&more.cmd",
@@ -310,6 +322,7 @@ fn windows_script_launch_rejects_command_boundary_characters() {
 }
 
 #[test]
+// 验证不完整的供应商覆盖返回缺少环境键错误。
 fn partial_provider_overrides_are_rejected() {
     let error = CodexProviderOverrides {
         profile_name: Some("cli-manager-project-provider-123".into()),
@@ -324,6 +337,7 @@ fn partial_provider_overrides_are_rejected() {
 }
 
 #[test]
+// 验证供应商覆盖缺少受管模型目录时被拒绝。
 fn provider_overrides_require_the_managed_model_catalog() {
     let error = CodexProviderOverrides {
         profile_name: Some("cli-manager-project-provider-123".into()),
@@ -340,6 +354,7 @@ fn provider_overrides_require_the_managed_model_catalog() {
 }
 
 #[test]
+// 验证超过 cc-connect 行限制的恢复历史被压缩，必要元数据保留且待请求被消费。
 fn compacts_a_resume_response_larger_than_cc_connects_limit() {
     let huge_history = "x".repeat(11 * 1024 * 1024);
     let source = json_line(&json!({
@@ -380,6 +395,7 @@ fn compacts_a_resume_response_larger_than_cc_connects_limit() {
 }
 
 #[test]
+// 验证恢复结果的有效供应商不匹配时返回错误，并消费待请求。
 fn resume_response_rejects_a_provider_mismatch_before_the_first_turn() {
     let source = json_line(&json!({
         "jsonrpc": "2.0",
@@ -413,6 +429,7 @@ fn resume_response_rejects_a_provider_mismatch_before_the_first_turn() {
 }
 
 #[test]
+// 验证恢复响应优先使用有效供应商，而非线程中的陈旧供应商元数据。
 fn resume_response_uses_the_effective_provider_over_stale_thread_metadata() {
     let source = json_line(&json!({
         "jsonrpc": "2.0",
@@ -444,6 +461,7 @@ fn resume_response_uses_the_effective_provider_over_stale_thread_metadata() {
 }
 
 #[test]
+// 验证严格接管拒绝恢复到其他会话，以及新建线程的回退请求。
 fn strict_handoff_rejects_session_drift_and_fresh_thread_fallback() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = false;
@@ -484,6 +502,7 @@ fn strict_handoff_rejects_session_drift_and_fresh_thread_fallback() {
 }
 
 #[test]
+// 验证匹配会话的恢复请求被转发，并按 RPC ID 登记待响应状态。
 fn matching_resume_is_forwarded_and_tracked() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = false;
@@ -509,6 +528,7 @@ fn matching_resume_is_forwarded_and_tracked() {
 }
 
 #[test]
+// 验证本机受管恢复请求注入供应商标识并保持线程标识。
 fn local_handoff_resume_injects_registered_provider() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = false;
@@ -531,6 +551,7 @@ fn local_handoff_resume_injects_registered_provider() {
 }
 
 #[test]
+// 验证 SSH 恢复将本机占位 cwd 改为注册的远程目录。
 fn ssh_resume_rewrites_placeholder_cwd_to_remote_directory() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = false;
@@ -552,6 +573,7 @@ fn ssh_resume_rewrites_placeholder_cwd_to_remote_directory() {
 }
 
 #[test]
+// 验证本机首次文本回合注入交付上下文，保留已有上下文及用户输入，后续回合不重复。
 fn local_managed_turn_injects_delivery_context_without_changing_user_text() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = true;
@@ -600,6 +622,7 @@ fn local_managed_turn_injects_delivery_context_without_changing_user_text() {
 }
 
 #[test]
+// 验证 SSH 与未受管回合不注入本机交付说明，也不消耗待注入标记。
 fn delivery_instruction_ignores_ssh_and_unmanaged_turns() {
     let request = br#"{"jsonrpc":"2.0","id":11,"method":"turn/start","params":{"threadId":"thread-original","input":[{"type":"text","text":"Create a file"}]}}
 "#;
@@ -634,6 +657,7 @@ fn delivery_instruction_ignores_ssh_and_unmanaged_turns() {
 }
 
 #[test]
+// 验证只有图像的回合保留待注入状态，直到后续出现文本输入。
 fn delivery_instruction_waits_for_the_first_text_input() {
     let mut pending = HashMap::new();
     let mut delivery_instruction_pending = true;
@@ -674,6 +698,7 @@ fn delivery_instruction_waits_for_the_first_text_input() {
 }
 
 #[test]
+// 验证 SSH 命令包含登录 shell、路径和环境引用，并将启动输出与协议 stdout 分离。
 fn ssh_codex_command_quotes_paths_environment_and_arguments() {
     let launch = ssh_codex_launch("identity_file");
     let args = vec![
@@ -711,6 +736,7 @@ fn ssh_codex_command_quotes_paths_environment_and_arguments() {
 }
 
 #[test]
+// 验证 SSH 接管拒绝密码提示和交互认证模式。
 fn ssh_codex_launch_rejects_interactive_authentication() {
     for auth_mode in ["password_prompt", "interactive"] {
         assert_eq!(
@@ -721,6 +747,7 @@ fn ssh_codex_launch_rejects_interactive_authentication() {
 }
 
 #[test]
+// 验证序列化测试计划包含凭据引用，但没有 transport 或顶层 password 字段。
 fn ssh_codex_launch_serialization_contains_only_the_credential_reference() {
     let launch = ssh_codex_launch("credential_ref");
     let encoded = launch.encode().unwrap();
@@ -736,6 +763,7 @@ fn ssh_codex_launch_serialization_contains_only_the_credential_reference() {
 }
 
 #[test]
+// 验证 SSH 服务器开始、审批和失败完成事件映射到对应 Hook。
 fn ssh_app_server_events_drive_handoff_notifications() {
     let started = json_line(&json!({
         "jsonrpc": "2.0",
@@ -780,6 +808,7 @@ fn ssh_app_server_events_drive_handoff_notifications() {
 }
 
 #[test]
+// 验证会重试的错误和其他会话的活动不产生接管 Hook。
 fn ssh_handoff_notifications_ignore_retrying_errors_and_session_drift() {
     let retrying = json_line(&json!({
         "jsonrpc": "2.0",

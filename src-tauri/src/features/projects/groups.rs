@@ -22,6 +22,7 @@ struct ProjectRecord {
     path_mode: String,
 }
 
+// 返回 Unix 毫秒时间戳文本，系统时间早于纪元时回退为 0。
 fn now_millis() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -29,12 +30,14 @@ fn now_millis() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+// 生成指定数量的 SQL 参数占位符，不拼接参数值。
 fn placeholders(count: usize) -> String {
     std::iter::repeat_n("?", count)
         .collect::<Vec<_>>()
         .join(", ")
 }
 
+// 修剪文本并拒绝 NUL，错误码携带字段名。
 fn validate_text(value: &str, field: &str) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.contains('\0') {
@@ -43,6 +46,7 @@ fn validate_text(value: &str, field: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
+// 打开现有应用数据库，启用 WAL、外键和繁忙等待，不自动创建数据库。
 async fn open_database() -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(app_paths::db_path()?)
@@ -56,6 +60,7 @@ async fn open_database() -> Result<SqliteConnection, String> {
         .map_err(|error| format!("project_group_database_open_failed: {error}"))
 }
 
+// 在当前事务中加载分组记录，将空绑定路径统一为修剪后的空字符串。
 async fn load_groups(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<Vec<GroupRecord>, String> {
@@ -83,6 +88,7 @@ async fn load_groups(
         .collect()
 }
 
+// 在当前事务中读取项目的分组、路径及路径继承模式。
 async fn load_projects(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
 ) -> Result<Vec<ProjectRecord>, String> {
@@ -111,6 +117,7 @@ async fn load_projects(
         .collect()
 }
 
+// 复制分组记录并按 ID 建立查找表。
 fn group_map(groups: &[GroupRecord]) -> HashMap<String, GroupRecord> {
     groups
         .iter()
@@ -119,6 +126,7 @@ fn group_map(groups: &[GroupRecord]) -> HashMap<String, GroupRecord> {
         .collect()
 }
 
+// 按父分组 ID 建立子节点索引，无父节点归入空键。
 fn child_map(groups: &[GroupRecord]) -> HashMap<String, Vec<String>> {
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
     for group in groups {
@@ -130,6 +138,7 @@ fn child_map(groups: &[GroupRecord]) -> HashMap<String, Vec<String>> {
     children
 }
 
+// 遍历指定分组及后代 ID，使用已访问集合避免环导致重复遍历。
 fn collect_subtree_ids(group_id: &str, groups: &[GroupRecord]) -> Vec<String> {
     let children = child_map(groups);
     let mut result = Vec::new();
@@ -147,6 +156,7 @@ fn collect_subtree_ids(group_id: &str, groups: &[GroupRecord]) -> Vec<String> {
     result
 }
 
+// 沿祖先链查找最近的非空绑定路径，遇到缺失节点或环时结束。
 fn resolve_effective_path(
     group_id: &str,
     groups_by_id: &HashMap<String, GroupRecord>,
@@ -166,6 +176,7 @@ fn resolve_effective_path(
     None
 }
 
+// 收集根分组及未自行绑定路径的继承后代，独立绑定的分支不再下探。
 fn collect_inherited_group_ids(group_id: &str, groups: &[GroupRecord]) -> Vec<String> {
     let groups_by_id = group_map(groups);
     let children = child_map(groups);
@@ -191,6 +202,7 @@ fn collect_inherited_group_ids(group_id: &str, groups: &[GroupRecord]) -> Vec<St
     result
 }
 
+// 计算子树各分组的有效路径，子节点独立绑定优先，否则继承父路径。
 fn effective_paths_for_subtree(
     group_id: &str,
     groups: &[GroupRecord],
@@ -231,6 +243,7 @@ fn effective_paths_for_subtree(
     result
 }
 
+// 有指定 shell 和项目 ID 时，在当前事务内分批更新 shell 与更新时间。
 async fn update_project_shells(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     project_ids: &[String],
@@ -261,6 +274,7 @@ async fn update_project_shells(
     Ok(())
 }
 
+// 在当前事务中保存路径绑定；清空绑定时固化继承路径，shell 更新限于选中的子树项目。
 async fn save_group_binding_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     group_id: &str,
@@ -352,6 +366,7 @@ async fn save_group_binding_in_transaction(
     update_project_shells(transaction, &scoped_shell_project_ids, normalized_shell).await
 }
 
+// 在当前事务中固化继承项目的有效路径、解除项目分组，再分批删除整个分组子树。
 async fn delete_group_in_transaction(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     group_id: &str,
@@ -439,6 +454,7 @@ async fn delete_group_in_transaction(
 }
 
 #[tauri::command]
+// 校验绑定输入并开启事务，将路径与选中项目 shell 的变更一并提交。
 pub async fn project_group_save_binding(
     group_id: String,
     bound_path: String,
@@ -485,6 +501,7 @@ pub async fn project_group_save_binding(
 }
 
 #[tauri::command]
+// 校验分组 ID，在同一事务中解除项目关联并删除分组子树。
 pub async fn project_group_delete(group_id: String) -> Result<(), String> {
     let group_id = validate_text(&group_id, "group_id")?;
     if group_id.is_empty() {
@@ -508,6 +525,7 @@ mod tests {
     use super::{delete_group_in_transaction, save_group_binding_in_transaction};
     use sqlx::{Connection, Row, SqliteConnection};
 
+    // 创建启用外键的内存数据库，并建立分组和项目测试表。
     async fn test_connection() -> SqliteConnection {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::query("PRAGMA foreign_keys = ON")
@@ -540,6 +558,7 @@ mod tests {
         connection
     }
 
+    // 向测试连接插入具有指定父节点及绑定路径的分组。
     async fn insert_group(
         connection: &mut SqliteConnection,
         id: &str,
@@ -555,6 +574,7 @@ mod tests {
             .unwrap();
     }
 
+    // 向测试连接插入项目路径模式，并使用固定 shell 与更新时间。
     async fn insert_project(
         connection: &mut SqliteConnection,
         id: &str,
@@ -576,6 +596,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证清空绑定只固化继承分支，并将 shell 更新限制在指定子树项目。
     async fn clearing_binding_materializes_direct_and_inherited_descendants() {
         let mut connection = test_connection().await;
         insert_group(&mut connection, "root", None, "D:/root").await;
@@ -705,6 +726,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证删除分组前固化有效路径，保留项目并解除分组关联。
     async fn deleting_group_materializes_paths_before_detaching_projects() {
         let mut connection = test_connection().await;
         insert_group(&mut connection, "root", None, "D:/root").await;

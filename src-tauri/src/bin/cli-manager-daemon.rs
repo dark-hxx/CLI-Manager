@@ -8,6 +8,8 @@ use cli_manager_lib::daemon::discovery::daemon_info_path;
 use cli_manager_lib::daemon::server::{DaemonServer, DaemonServerConfig};
 use cli_manager_lib::daemon::setup_process_governance;
 
+// 优先分流 SSH proxy/askpass helper；普通启动再安装日志与进程治理，按构建类型选择发现文件运行 daemon。
+// 数据目录获取或服务运行失败时输出错误并以状态码 1 退出，不执行自动重试。
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if cli_manager_lib::ssh_proxy::is_helper_request(&args) {
@@ -47,19 +49,23 @@ mod simple_stderr_logger {
     struct StderrLogger;
 
     impl log::Log for StderrLogger {
+        // 接受 Info 及更严重级别，排除 Debug 和 Trace。
         fn enabled(&self, metadata: &Metadata) -> bool {
             metadata.level() <= Level::Info
         }
+        // 对允许级别直接输出级别与消息到 stderr；不在此脱敏或写入日志文件。
         fn log(&self, record: &Record) {
             if self.enabled(record.metadata()) {
                 eprintln!("[{}] {}", record.level(), record.args());
             }
         }
+        // 没有额外缓冲需要提交，因此刷新回调为空操作。
         fn flush(&self) {}
     }
 
     static LOGGER: StderrLogger = StderrLogger;
 
+    // 注册静态全局日志器，成功后设置 Info 上限；已有日志器时返回注册错误。
     pub fn init() -> Result<(), log::SetLoggerError> {
         log::set_logger(&LOGGER).map(|_| log::set_max_level(log::LevelFilter::Info))
     }

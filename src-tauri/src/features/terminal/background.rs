@@ -24,6 +24,7 @@ pub struct SavedBackground {
 // -----------------------------------------------------------------------------
 
 /// 校验文件扩展名（大小写不敏感），返回归一化的小写扩展名。
+// 按大小写不敏感的扩展名白名单返回规范名，不读取或解码图片内容。
 pub(crate) fn validate_extension(file_name: &str) -> Result<String, &'static str> {
     let ext = Path::new(file_name)
         .extension()
@@ -38,6 +39,7 @@ pub(crate) fn validate_extension(file_name: &str) -> Result<String, &'static str
 }
 
 /// 根据字节计算 SHA-256，取前 16 hex 字符作为文件名 stem，拼上扩展名。
+// 取内容 SHA-256 的前八字节生成十六位十六进制文件名主体，扩展名按传入值拼接。
 pub(crate) fn compute_filename(bytes: &[u8], ext: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
@@ -51,6 +53,7 @@ pub(crate) fn compute_filename(bytes: &[u8], ext: &str) -> String {
 }
 
 /// 文件大小超过阈值时返回 warning 标记。
+// 文件严格超过五 MiB 时返回警告标记，此辅助函数不执行硬限制。
 pub(crate) fn check_size_warning(bytes: u64) -> Option<&'static str> {
     if bytes > SIZE_WARN_THRESHOLD {
         Some("file_too_large")
@@ -64,6 +67,7 @@ pub(crate) fn check_size_warning(bytes: u64) -> Option<&'static str> {
 /// - 不含反斜杠（Windows 风格分隔符）
 /// - 不以 `/` 开头（避免被当作绝对路径）
 /// - 必须以 `backgrounds/` 开头（锁定到背景目录）
+// 仅做路径字符串校验，拒绝空串、双点、反斜杠、绝对前缀和非 backgrounds 前缀。
 pub(crate) fn validate_relative_path(p: &str) -> Result<(), &'static str> {
     if p.is_empty() {
         return Err("empty_path");
@@ -84,6 +88,7 @@ pub(crate) fn validate_relative_path(p: &str) -> Result<(), &'static str> {
 }
 
 /// 解析 backgrounds 目录的绝对路径，并确保目录存在。
+// 解析应用本地数据目录下的 backgrounds 路径，缺失时创建目录。
 fn resolve_backgrounds_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let base = app
         .path()
@@ -101,6 +106,7 @@ fn resolve_backgrounds_dir(app: &AppHandle) -> Result<PathBuf, String> {
 // -----------------------------------------------------------------------------
 
 #[tauri::command]
+// 校验绝对源路径、扩展名及读取前后大小，按内容摘要命名保存；目标已存在则复用，超过五 MiB 附警告、超过二十 MiB 拒绝。
 pub async fn save_background_image(
     app: AppHandle,
     source_path: String,
@@ -174,6 +180,7 @@ pub async fn save_background_image(
 }
 
 #[tauri::command]
+// 校验相对路径字符串后检查拼接路径是否存在，不要求是普通文件或可解码图片。
 pub async fn background_image_exists(
     app: AppHandle,
     relative_path: String,
@@ -187,6 +194,7 @@ pub async fn background_image_exists(
 }
 
 #[tauri::command]
+// 将保留路径归约为文件名集合，在阻塞任务中清理背景目录其余文件。
 pub async fn cleanup_unused_backgrounds(
     app: AppHandle,
     keep_relative_paths: Vec<String>,
@@ -209,6 +217,7 @@ pub async fn cleanup_unused_backgrounds(
         .map_err(|e| format!("join_error: {e}"))?
 }
 
+// 遍历目录顶层，删除不在保留名单且 is_file 为真的条目；缺目录返回零，首个错误中止且不恢复已删项。
 fn cleanup_dir(dir: &Path, keep_names: &std::collections::HashSet<String>) -> Result<u32, String> {
     let mut deleted: u32 = 0;
     let read_dir = match std::fs::read_dir(dir) {
@@ -251,6 +260,7 @@ mod tests {
     // ---------- validate_extension ----------
 
     #[test]
+    // 验证允许的图片扩展名大小写均可接受并归一为小写。
     fn accepts_jpg_jpeg_png_gif_case_insensitive() {
         assert_eq!(validate_extension("a.jpg").unwrap(), "jpg");
         assert_eq!(validate_extension("a.JPG").unwrap(), "jpg");
@@ -263,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    // 验证不支持扩展名及无扩展名分别返回对应错误。
     fn rejects_webp_bmp_exe_and_missing_ext() {
         assert_eq!(
             validate_extension("a.webp").unwrap_err(),
@@ -289,6 +300,7 @@ mod tests {
     // ---------- compute_filename ----------
 
     #[test]
+    // 验证相同内容和扩展名生成相同文件名。
     fn compute_filename_is_deterministic() {
         let bytes = b"hello world";
         let n1 = compute_filename(bytes, "jpg");
@@ -297,6 +309,7 @@ mod tests {
     }
 
     #[test]
+    // 验证两份不同测试内容生成不同摘要文件名，不据此证明不存在哈希碰撞。
     fn compute_filename_differs_on_different_bytes() {
         let n1 = compute_filename(b"hello world", "jpg");
         let n2 = compute_filename(b"hello world!", "jpg");
@@ -304,6 +317,7 @@ mod tests {
     }
 
     #[test]
+    // 验证生成的文件名主体为十六个十六进制字符。
     fn compute_filename_stem_is_16_hex_chars() {
         let name = compute_filename(b"x", "png");
         let stem = name.trim_end_matches(".png");
@@ -312,6 +326,7 @@ mod tests {
     }
 
     #[test]
+    // 验证传入小写 gif 扩展名时输出包含对应后缀，不测试自动小写转换。
     fn compute_filename_appends_ext_lowercase() {
         let name = compute_filename(b"x", "gif");
         assert!(name.ends_with(".gif"));
@@ -320,6 +335,7 @@ mod tests {
     // ---------- check_size_warning ----------
 
     #[test]
+    // 验证零字节、阈值以下及恰好五 MiB 均无大小警告。
     fn size_warning_below_threshold_is_none() {
         assert_eq!(check_size_warning(0), None);
         assert_eq!(check_size_warning(SIZE_WARN_THRESHOLD - 1), None);
@@ -327,6 +343,7 @@ mod tests {
     }
 
     #[test]
+    // 验证严格超过五 MiB 的大小触发警告。
     fn size_warning_above_threshold_is_some() {
         assert_eq!(
             check_size_warning(SIZE_WARN_THRESHOLD + 1),
@@ -337,11 +354,13 @@ mod tests {
 
     // ---------- cleanup_dir ----------
 
+    // 向临时测试路径写入单字节占位文件。
     fn touch(p: &Path) {
         fs::write(p, b"x").unwrap();
     }
 
     #[test]
+    // 在临时目录验证名单内文件保留，其余文件被删除并计数。
     fn cleanup_keeps_files_in_keep_list() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
@@ -361,6 +380,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时目录验证空保留名单删除全部测试文件。
     fn cleanup_deletes_all_when_keep_empty() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
@@ -375,6 +395,7 @@ mod tests {
     }
 
     #[test]
+    // 验证不存在的临时子目录清理返回零。
     fn cleanup_missing_dir_returns_zero() {
         let tmp = TempDir::new().unwrap();
         let missing = tmp.path().join("does_not_exist");
@@ -384,6 +405,7 @@ mod tests {
     }
 
     #[test]
+    // 验证顶层文件被清理而普通子目录保留，不递归删除。
     fn cleanup_ignores_subdirectories() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path();
@@ -400,6 +422,7 @@ mod tests {
     // ---------- validate_relative_path ----------
 
     #[test]
+    // 验证常规 backgrounds 相对路径通过字符串校验。
     fn validate_accepts_normal_backgrounds_path() {
         assert!(validate_relative_path("backgrounds/abc.jpg").is_ok());
         assert!(validate_relative_path("backgrounds/1234567890abcdef.png").is_ok());
@@ -407,11 +430,13 @@ mod tests {
     }
 
     #[test]
+    // 验证空路径返回专用错误。
     fn validate_rejects_empty() {
         assert_eq!(validate_relative_path("").unwrap_err(), "empty_path");
     }
 
     #[test]
+    // 验证含父目录跳转写法的路径被双点规则拒绝。
     fn validate_rejects_parent_traversal() {
         assert_eq!(
             validate_relative_path("backgrounds/../secret.txt").unwrap_err(),
@@ -424,6 +449,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Windows 风格反斜杠路径被拒绝。
     fn validate_rejects_backslash() {
         assert_eq!(
             validate_relative_path("backgrounds\\abc.jpg").unwrap_err(),
@@ -432,6 +458,7 @@ mod tests {
     }
 
     #[test]
+    // 验证以斜杠开头的绝对路径被拒绝。
     fn validate_rejects_leading_slash() {
         assert_eq!(
             validate_relative_path("/etc/passwd").unwrap_err(),
@@ -440,6 +467,7 @@ mod tests {
     }
 
     #[test]
+    // 验证非 backgrounds 前缀的路径被拒绝。
     fn validate_rejects_outside_backgrounds_dir() {
         assert_eq!(
             validate_relative_path("other/abc.jpg").unwrap_err(),

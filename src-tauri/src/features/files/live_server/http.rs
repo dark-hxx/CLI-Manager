@@ -36,6 +36,7 @@ pub struct LiveServerHttpContext {
 }
 
 impl LiveServerHttpContext {
+    // 打开根目录能力句柄并保存刷新版本及精确回环 Host。
     pub fn new(root: &std::path::Path, version: Arc<AtomicU64>, port: u16) -> Result<Self, String> {
         Ok(Self {
             root: Arc::new(open_root_dir(root)?),
@@ -45,6 +46,7 @@ impl LiveServerHttpContext {
     }
 }
 
+// 将标准监听器交给 Tokio，循环接收连接直到收到关闭信号。
 pub async fn serve(
     listener: TcpListener,
     context: LiveServerHttpContext,
@@ -63,6 +65,7 @@ pub async fn serve(
     }
 }
 
+// 为成功连接启动关闭 keep-alive 的 HTTP/1 任务，接收失败仅记日志。
 fn handle_accept(
     accepted: std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)>,
     context: LiveServerHttpContext,
@@ -84,6 +87,7 @@ fn handle_accept(
     });
 }
 
+// 先验证 Host 及 GET/HEAD 方法，再返回版本端点或静态资源。
 async fn handle_request(
     request: Request<Incoming>,
     context: LiveServerHttpContext,
@@ -105,6 +109,7 @@ async fn handle_request(
     Ok(serve_asset(context, request_path, head_only).await)
 }
 
+// 在阻塞任务中加载能力根内文件，用读取前版本构造防遗漏刷新的响应。
 async fn serve_asset(
     context: LiveServerHttpContext,
     request_path: String,
@@ -146,6 +151,7 @@ enum AssetContents {
     Empty,
 }
 
+// 通过能力句柄打开根内文件，HTML 限量读取，其他文件按 HEAD 或流式响应准备。
 fn load_asset(root: &Dir, request_path: &str, head_only: bool) -> Result<LoadedAsset, String> {
     let relative = resolve_request_path(request_path)?;
     let path = if root.is_dir(&relative) {
@@ -190,6 +196,7 @@ fn load_asset(root: &Dir, request_path: &str, head_only: bool) -> Result<LoadedA
     })
 }
 
+// 将文件缺失和权限错误映射为稳定请求错误，其余保留读取失败原因。
 fn map_open_error(error: io::Error) -> String {
     match error.kind() {
         io::ErrorKind::NotFound => "request_file_not_found".to_string(),
@@ -198,6 +205,7 @@ fn map_open_error(error: io::Error) -> String {
     }
 }
 
+// 按 HTML、流式文件或空体类型生成响应，HEAD 保留长度但不发送正文。
 fn asset_response(asset: LoadedAsset, version: u64, head_only: bool) -> Response<LiveServerBody> {
     let LoadedAsset {
         contents,
@@ -243,17 +251,20 @@ fn asset_response(asset: LoadedAsset, version: u64, head_only: bool) -> Response
     }
 }
 
+// 将内存字节包装为统一 HTTP 响应体类型。
 fn full_body(body: Vec<u8>) -> LiveServerBody {
     Full::new(Bytes::from(body))
         .map_err(|never| match never {})
         .boxed()
 }
 
+// 将文件转换为 Tokio 读取流并包装成 HTTP 数据帧。
 fn stream_file_body(file: std::fs::File) -> LiveServerBody {
     let stream = ReaderStream::new(tokio::fs::File::from_std(file)).map_ok(Frame::data);
     StreamBody::new(stream).boxed()
 }
 
+// 设置状态、禁缓存、禁止 MIME 嗅探及可选内容长度的公共响应头。
 fn response_with_body(
     status: StatusCode,
     content_type: &str,
@@ -279,6 +290,7 @@ fn response_with_body(
     response
 }
 
+// 构造 UTF-8 纯文本响应，HEAD 使用空体及原消息长度。
 fn text_response(status: StatusCode, message: &str, head_only: bool) -> Response<LiveServerBody> {
     let body = message.as_bytes().to_vec();
     response_with_body(
@@ -293,6 +305,7 @@ fn text_response(status: StatusCode, message: &str, head_only: bool) -> Response
     )
 }
 
+// 返回 405 响应并声明只允许 GET 与 HEAD。
 fn method_not_allowed() -> Response<LiveServerBody> {
     let mut response = text_response(StatusCode::METHOD_NOT_ALLOWED, "method_not_allowed", false);
     response
@@ -301,6 +314,7 @@ fn method_not_allowed() -> Response<LiveServerBody> {
     response
 }
 
+// 将路径和资源错误映射到 400、403、404、413 或 500 响应。
 fn path_error_response(error: &str, head_only: bool) -> Response<LiveServerBody> {
     let status = match error {
         "path_outside_root" => StatusCode::FORBIDDEN,
@@ -312,6 +326,7 @@ fn path_error_response(error: &str, head_only: bool) -> Response<LiveServerBody>
     text_response(status, error, head_only)
 }
 
+// 要求 Host 头可解码且与绑定的回环主机端口大小写无关地相等。
 fn has_expected_host(request: &Request<Incoming>, expected: &str) -> bool {
     request
         .headers()
@@ -321,6 +336,7 @@ fn has_expected_host(request: &Request<Incoming>, expected: &str) -> bool {
         .unwrap_or(false)
 }
 
+// 读取期间版本变化时保留读取前版本，否则使用相同的完成版本。
 fn reload_version_for_asset(before: u64, after: u64) -> u64 {
     if before == after {
         after
@@ -329,6 +345,7 @@ fn reload_version_for_asset(before: u64, after: u64) -> u64 {
     }
 }
 
+// 在首个不区分大小写的 body 结束标签前注入刷新脚本，缺失时追加。
 fn inject_reload_script(mut html: Vec<u8>, version: u64) -> Vec<u8> {
     let script = reload_script(version);
     let position = find_ascii_case_insensitive(&html, b"</body>").unwrap_or(html.len());
@@ -336,7 +353,11 @@ fn inject_reload_script(mut html: Vec<u8>, version: u64) -> Vec<u8> {
     html
 }
 
+// 生成定时轮询刷新版本的内嵌脚本，版本变化时重载页面。
 fn reload_script(version: u64) -> Vec<u8> {
+    // 内嵌 IIFE：保存初始版本与报错标记并注册轮询计时器，加载脚本时不立即发请求。
+    // 内嵌 poll：无缓存读取刷新版本，变化时重载页面；HTTP 或网络错误只在连续失败的首次记录，成功后重置报错标记。
+    // 内嵌 setInterval 回调：定期发起 poll 而不等待完成，因此慢请求可以重叠；请求失败由 poll 内部捕获。
     format!(
         concat!(
             r#"<script data-cli-manager-live-server>(()=>{{const endpoint="{endpoint}";"#,
@@ -354,6 +375,7 @@ fn reload_script(version: u64) -> Vec<u8> {
     .into_bytes()
 }
 
+// 逐字节窗口查找 ASCII 大小写不敏感的首个匹配位置。
 fn find_ascii_case_insensitive(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack.windows(needle.len()).position(|window| {
         window

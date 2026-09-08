@@ -736,6 +736,7 @@ pub(crate) const MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION: &str =
     "add_attachment_root_to_ssh_hosts";
 pub(crate) const MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL: &str =
     "ALTER TABLE ssh_hosts ADD COLUMN attachment_root TEXT NOT NULL DEFAULT '';";
+// 按既定版本顺序返回向上迁移注册表，由 SQL 插件在初始化时应用；此函数本身不执行 SQL。
 pub(crate) fn migrations() -> Vec<Migration> {
     vec![
         Migration {

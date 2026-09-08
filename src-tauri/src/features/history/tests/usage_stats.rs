@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证路由完成时间与总上下文匹配缓存拆分不同的会话事实。
 fn route_usage_matches_cache_split_session_fact_at_completion_time() {
     let fact = request_log_dedup_fixture(
         "codex",
@@ -37,6 +38,7 @@ fn route_usage_matches_cache_split_session_fact_at_completion_time() {
 }
 
 #[test]
+// 验证来源或用量不同的会话事实不会被路由记录替代。
 fn route_usage_does_not_replace_another_source_or_token_event() {
     let fact = request_log_dedup_fixture(
         "claude",
@@ -73,6 +75,7 @@ fn route_usage_does_not_replace_another_source_or_token_event() {
 }
 
 #[test]
+// 验证统计接受三百六十六天范围并拒绝更大区间。
 fn resolve_stats_time_bounds_accepts_full_year_range() {
     let start_at = DAY_MS;
     let full_year_end_at = start_at + 366 * DAY_MS - 1;
@@ -90,6 +93,7 @@ fn resolve_stats_time_bounds_accepts_full_year_range() {
 }
 
 #[test]
+// 验证显式日期范围锚点决定本地小时分桶。
 fn hour_of_day_for_stats_uses_explicit_range_anchor() {
     let local_day_start_at_utc_plus_8 = 16 * HOUR_MS;
     let local_10_am = local_day_start_at_utc_plus_8 + 10 * HOUR_MS;
@@ -106,6 +110,7 @@ fn hour_of_day_for_stats_uses_explicit_range_anchor() {
 }
 
 #[test]
+// 验证项目路径排序去重及尾斜杠规范化产生稳定缓存键。
 fn history_stats_project_paths_are_normalized_for_stable_cache_keys() {
     let paths = normalize_history_stats_project_paths(
         None,
@@ -132,6 +137,7 @@ fn history_stats_project_paths_are_normalized_for_stable_cache_keys() {
 }
 
 #[test]
+// 验证 OpenCode WAL 代次变化影响统计缓存键。
 fn history_stats_aggregation_cache_key_tracks_opencode_generation() {
     let roots = history_roots(None, None, None);
     let bounds = StatsTimeBounds {
@@ -169,6 +175,7 @@ fn history_stats_aggregation_cache_key_tracks_opencode_generation() {
 }
 
 #[test]
+// 验证用量按事件日期分桶，跨日同会话只累计一次会话数。
 fn history_stats_buckets_usage_by_event_timestamp() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -214,6 +221,7 @@ fn history_stats_buckets_usage_by_event_timestamp() {
 }
 
 #[test]
+// 验证重叠项目路径不会重复累计同一会话。
 fn history_stats_multi_path_filter_counts_overlapping_session_once() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("nested-worktree-session.jsonl");
@@ -257,6 +265,7 @@ fn history_stats_multi_path_filter_counts_overlapping_session_once() {
 }
 
 #[test]
+// 验证模型分布保留 Codex 推理强度限定。
 fn history_stats_model_distribution_preserves_codex_reasoning_effort() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -299,6 +308,7 @@ fn history_stats_model_distribution_preserves_codex_reasoning_effort() {
 }
 
 #[test]
+// 验证缓存用量按当前进程模型价格重新计费并清除未定价计数。
 fn history_stats_reprices_cached_usage_events_with_current_model_prices() {
     crate::commands::model_pricing::model_prices_set_cache(vec![
         crate::commands::model_pricing::ModelPriceEntry {
@@ -405,6 +415,7 @@ fn history_stats_reprices_cached_usage_events_with_current_model_prices() {
 }
 
 #[test]
+// 验证重复 Claude 流式行只统计一次用量和趋势点。
 fn scan_session_combined_dedups_streamed_usage_lines() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -427,6 +438,7 @@ fn scan_session_combined_dedups_streamed_usage_lines() {
 }
 
 #[test]
+// 验证 Codex 累计用量差分、缓存拆分及重复事件忽略。
 fn scan_session_combined_diffs_codex_cumulative_token_count() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -467,6 +479,7 @@ fn scan_session_combined_diffs_codex_cumulative_token_count() {
 }
 
 #[test]
+// 验证 Codex 差分用量按事件日期与小时归档。
 fn history_stats_buckets_codex_usage_by_event_day() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -513,6 +526,7 @@ fn history_stats_buckets_codex_usage_by_event_day() {
 }
 
 #[test]
+// 验证过期或倒退的 Codex 累计快照不会虚增用量。
 fn scan_session_combined_ignores_codex_cumulative_stale_snapshots() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -538,6 +552,7 @@ fn scan_session_combined_ignores_codex_cumulative_stale_snapshots() {
 }
 
 #[test]
+// 验证提取 Codex 上下文窗口及最近一次请求总上下文。
 fn scan_session_combined_extracts_codex_context_window() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -559,6 +574,7 @@ fn scan_session_combined_extracts_codex_context_window() {
 }
 
 #[test]
+// 验证 Claude 显式上下文窗口采用最新值。
 fn scan_session_combined_extracts_claude_explicit_context_window() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("claude-session.jsonl");
@@ -579,6 +595,7 @@ fn scan_session_combined_extracts_claude_explicit_context_window() {
 }
 
 #[test]
+// 验证当前模型独立于最常用模型，趋势保留每次模型归属。
 fn scan_session_combined_tracks_current_model_separately_from_dominant_model() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("claude-session.jsonl");
@@ -607,6 +624,7 @@ fn scan_session_combined_tracks_current_model_separately_from_dominant_model() {
 }
 
 #[test]
+// 验证 Codex 推理强度采用最新回合上下文。
 fn scan_session_combined_extracts_codex_reasoning_effort() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -626,6 +644,7 @@ fn scan_session_combined_extracts_codex_reasoning_effort() {
 }
 
 #[test]
+// 验证 Codex 用量模型带推理强度，而 Spark 模型不追加限定。
 fn scan_session_combined_qualifies_codex_model_with_reasoning_effort() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("rollout-session.jsonl");
@@ -667,6 +686,7 @@ fn scan_session_combined_qualifies_codex_model_with_reasoning_effort() {
 }
 
 #[test]
+// 验证模型已有强度后缀规范化及 Spark 后缀移除。
 fn qualify_model_normalizes_embedded_reasoning_effort_suffix() {
     assert_eq!(
         qualify_model_with_reasoning_effort("gpt-5.6-xhigh".to_string(), None),
@@ -695,6 +715,7 @@ fn qualify_model_normalizes_embedded_reasoning_effort_suffix() {
 }
 
 #[test]
+// 验证 Claude 最近上下文为输入与两类缓存之和。
 fn scan_session_combined_tracks_claude_last_context_tokens() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("claude-session.jsonl");
@@ -717,6 +738,7 @@ fn scan_session_combined_tracks_claude_last_context_tokens() {
 }
 
 #[test]
+// 验证内置、MCP、技能和斜杠命令计数及调用标识去重。
 fn scan_session_combined_counts_tool_mcp_and_skill_calls() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("claude-session.jsonl");
@@ -765,6 +787,7 @@ fn scan_session_combined_counts_tool_mcp_and_skill_calls() {
 }
 
 #[test]
+// 验证 Codex 累计用量缩小时各差分计数归零。
 fn codex_usage_delta_ignores_cumulative_shrinks() {
     let previous = CodexCumulativeUsage {
         input_tokens: 5000,
@@ -787,6 +810,7 @@ fn codex_usage_delta_ignores_cumulative_shrinks() {
 }
 
 #[test]
+// 验证合成模型标记不进入模型归属统计。
 fn scan_session_combined_ignores_synthetic_model() {
     let temp_dir = TempDir::new().unwrap();
     let file = temp_dir.path().join("session.jsonl");
@@ -802,6 +826,7 @@ fn scan_session_combined_ignores_synthetic_model() {
 }
 
 #[test]
+// 验证顶层显式费用可与嵌套消息 Token 合并提取。
 fn extract_usage_tokens_merges_top_level_cost_with_nested_tokens() {
     let value: Value = serde_json::from_str(
         r#"{"costUSD":0.5,"message":{"usage":{"input_tokens":100,"output_tokens":50}}}"#,

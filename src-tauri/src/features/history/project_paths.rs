@@ -14,6 +14,7 @@ use std::fs::{self, File};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
+// 优先从会话 cwd 提取项目名，缺失时使用相对历史目录键。
 pub(super) fn codex_project_key_from_session(path: &Path, root: &Path) -> String {
     get_or_scan_session_project(path)
         .cwd
@@ -22,6 +23,7 @@ pub(super) fn codex_project_key_from_session(path: &Path, root: &Path) -> String
         .unwrap_or_else(|| codex_project_key_from_path(path, root))
 }
 
+// 从 Gemini 会话上两级目录相对根目录的首个组件取项目键。
 pub(super) fn gemini_project_key_from_path(path: &Path, root: &Path) -> String {
     path.parent()
         .and_then(Path::parent)
@@ -32,6 +34,7 @@ pub(super) fn gemini_project_key_from_path(path: &Path, root: &Path) -> String {
         .unwrap_or_else(|| "gemini".to_string())
 }
 
+// 优先从 Copilot 会话 cwd 取项目键，再回退父目录名或来源名。
 pub(super) fn copilot_project_key_from_path(path: &Path) -> String {
     get_or_scan_session_project(path)
         .cwd
@@ -46,6 +49,7 @@ pub(super) fn copilot_project_key_from_path(path: &Path) -> String {
         .unwrap_or_else(|| "copilot".to_string())
 }
 
+// 优先从 Kiro 会话 cwd 取项目键，再回退父目录名或来源名。
 pub(super) fn kiro_project_key_from_path(path: &Path) -> String {
     get_or_scan_session_project(path)
         .cwd
@@ -60,6 +64,7 @@ pub(super) fn kiro_project_key_from_path(path: &Path) -> String {
         .unwrap_or_else(|| "kiro".to_string())
 }
 
+// 取工作目录最后一个有效非盘符组件作为项目名。
 pub(super) fn project_key_from_cwd(cwd: &str) -> Option<String> {
     let normalized = cwd.trim().replace('\\', "/");
     let trimmed = normalized.trim_end_matches('/');
@@ -72,6 +77,7 @@ pub(super) fn project_key_from_cwd(cwd: &str) -> Option<String> {
         .map(|segment| segment.trim().to_string())
 }
 
+// 将会话父目录相对历史根目录的路径转为项目键，空值回退 sessions。
 pub(super) fn codex_project_key_from_path(path: &Path, root: &Path) -> String {
     path.parent()
         .and_then(|parent| parent.strip_prefix(root).ok())
@@ -80,6 +86,7 @@ pub(super) fn codex_project_key_from_path(path: &Path, root: &Path) -> String {
         .unwrap_or_else(|| "sessions".to_string())
 }
 
+// 递归遍历目录并收集满足谓词的非目录路径。
 pub(super) fn collect_files_recursive(
     dir: &Path,
     output: &mut Vec<PathBuf>,
@@ -95,6 +102,7 @@ pub(super) fn collect_files_recursive(
     }
 }
 
+// 收集成功读取的目录项，目录打开失败时记录警告并返回空列表。
 pub(super) fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
     match fs::read_dir(dir) {
         Ok(iter) => iter.filter_map(Result::ok).collect(),
@@ -108,18 +116,21 @@ pub(super) fn read_dir_entries(dir: &Path) -> Vec<fs::DirEntry> {
     }
 }
 
+// 按不区分 ASCII 大小写的扩展名判断 JSONL 路径。
 pub(super) fn is_jsonl(path: &Path) -> bool {
     path.extension()
         .map(|v| v.to_string_lossy().eq_ignore_ascii_case("jsonl"))
         .unwrap_or(false)
 }
 
+// 按不区分 ASCII 大小写的扩展名判断 JSON 路径。
 pub(super) fn is_json(path: &Path) -> bool {
     path.extension()
         .map(|v| v.to_string_lossy().eq_ignore_ascii_case("json"))
         .unwrap_or(false)
 }
 
+// 按平台优先级从非空 USERPROFILE 或 HOME 环境变量解析用户目录。
 pub(super) fn detect_home_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -145,10 +156,12 @@ pub(super) fn detect_home_dir() -> Option<PathBuf> {
     }
 }
 
+// 将路径转换为损失容忍的字符串并统一使用正斜杠。
 pub(super) fn path_to_key(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+// 修剪路径并统一分隔符，Windows 上额外转为小写以便比较。
 pub(super) fn normalize_history_path(path: &str) -> String {
     let normalized = path.trim().replace('\\', "/");
     let normalized = normalized.trim_end_matches('/').to_string();
@@ -159,6 +172,7 @@ pub(super) fn normalize_history_path(path: &str) -> String {
     }
 }
 
+// 把项目路径编码为小写的 Claude 目录键。
 pub(super) fn claude_project_key_from_path(path: &str) -> String {
     path.trim()
         .replace(':', "-")
@@ -167,6 +181,7 @@ pub(super) fn claude_project_key_from_path(path: &str) -> String {
         .to_lowercase()
 }
 
+// 匹配来源目录键或扫描 cwd，同时考虑 Windows 与 WSL 路径候选及子目录。
 pub(super) fn session_matches_project_path(
     file_ref: &SessionFileRef,
     target_project_path: &str,
@@ -271,10 +286,12 @@ pub(super) fn session_matches_project_path(
     matched
 }
 
+// 判断已规范化工作目录等于目标或位于目标的子目录。
 pub(super) fn cwd_matches_target(cwd: &str, target: &str) -> bool {
     cwd == target || cwd.starts_with(&format!("{target}/"))
 }
 
+// 按文件指纹复用项目元数据缓存，未命中时扫描并更新缓存。
 pub(super) fn get_or_scan_session_project(path: &Path) -> SessionProjectScan {
     let fingerprint = session_file_fingerprint(path);
     let key = path_to_key(path);
@@ -300,6 +317,7 @@ pub(super) fn get_or_scan_session_project(path: &Path) -> SessionProjectScan {
     scan
 }
 
+// 按来源读取项目元数据，普通 JSONL 从首个包含 cwd 的可解析记录取工作目录。
 pub(super) fn scan_session_project(path: &Path) -> SessionProjectScan {
     if looks_like_antigravity_transcript_file(path) {
         return SessionProjectScan {
@@ -371,6 +389,7 @@ pub(super) fn scan_session_project(path: &Path) -> SessionProjectScan {
     SessionProjectScan::default()
 }
 
+// 从兼容工作目录字段或指定嵌套对象递归提取首个非空字符串。
 pub(super) fn extract_cwd(value: &Value) -> Option<String> {
     let candidates = [
         value.get("cwd"),
@@ -405,6 +424,7 @@ pub(super) fn extract_cwd(value: &Value) -> Option<String> {
     None
 }
 
+// 按 rollout- 前缀和 .jsonl 后缀识别 Codex rollout 文件名。
 pub(super) fn is_codex_rollout_session_path(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -412,6 +432,7 @@ pub(super) fn is_codex_rollout_session_path(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+// 从 session_meta 记录的 payload.id 提取非空会话标识。
 pub(super) fn extract_session_meta_id(value: &Value) -> Option<String> {
     if value.get("type").and_then(Value::as_str) != Some("session_meta") {
         return None;

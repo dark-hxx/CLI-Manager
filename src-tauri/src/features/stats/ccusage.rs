@@ -64,6 +64,7 @@ struct DefaultWslContext {
     home: String,
 }
 
+// 返回当前 Unix 毫秒时间，时钟早于纪元时回退零。
 fn now_millis() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -71,6 +72,7 @@ fn now_millis() -> i64 {
         .unwrap_or(0)
 }
 
+// 优先提取标准错误文本，空时使用标准输出。
 fn output_text(output: &Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
     if !stderr.is_empty() {
@@ -79,6 +81,7 @@ fn output_text(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
+// 按 Unicode 字符数截断日志文本并追加省略标记。
 fn truncate_for_log(value: &str, max_chars: usize) -> String {
     let trimmed = value.trim();
     let mut result = String::new();
@@ -92,6 +95,7 @@ fn truncate_for_log(value: &str, max_chars: usize) -> String {
     result
 }
 
+// 生成主机或指定 WSL 发行版的日志标签。
 fn target_label(target: &RuntimeTarget) -> String {
     match target {
         RuntimeTarget::Host => "host".to_string(),
@@ -99,6 +103,7 @@ fn target_label(target: &RuntimeTarget) -> String {
     }
 }
 
+// 拼接程序与参数作为可读日志，不用于执行。
 fn format_command_for_log(program: &str, args: &[&str]) -> String {
     if args.is_empty() {
         program.to_string()
@@ -107,6 +112,7 @@ fn format_command_for_log(program: &str, args: &[&str]) -> String {
     }
 }
 
+// 仅输出经过截断的 Claude/Codex 配置目录环境值。
 fn ccusage_envs_for_log(envs: &[(&str, String)]) -> String {
     let items = envs
         .iter()
@@ -124,10 +130,12 @@ fn ccusage_envs_for_log(envs: &[(&str, String)]) -> String {
     }
 }
 
+// 判断是否需要记录 WSL 运行路径诊断日志。
 fn should_log_wsl_flow(use_wsl: bool, target: &RuntimeTarget) -> bool {
     use_wsl || matches!(target, RuntimeTarget::Wsl { .. })
 }
 
+// 生成供安装和报告使用的 npm 镜像环境变量。
 fn base_envs() -> Vec<(&'static str, String)> {
     vec![
         ("NPM_CONFIG_REGISTRY", REGISTRY_MIRROR.to_string()),
@@ -135,6 +143,7 @@ fn base_envs() -> Vec<(&'static str, String)> {
     ]
 }
 
+// 判断可选配置值是否含非空白内容。
 fn config_value_present(value: Option<&String>) -> bool {
     value.map(|item| !item.trim().is_empty()).unwrap_or(false)
 }
@@ -147,6 +156,7 @@ const WSL_DETECT_TIMEOUT: Duration = Duration::from_secs(15);
 const REPORT_TIMEOUT: Duration = Duration::from_secs(180);
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(600);
 
+// 在主机限时执行命令，Windows 通过 cmd 兼容工具入口。
 fn host_command_output(
     program: &str,
     args: &[&str],
@@ -169,6 +179,7 @@ fn host_command_output(
     output_with_timeout(command, timeout).map_err(|err| format!("执行 {program} 失败: {err}"))
 }
 
+// 通过指定 WSL 发行版传递环境和参数并限时执行。
 fn wsl_command_output(
     distro: &str,
     program: &str,
@@ -212,6 +223,7 @@ fn wsl_command_output(
     Ok(output)
 }
 
+// 限时查询默认 WSL 发行版名称与用户主目录。
 fn detect_default_wsl_context() -> Result<Option<DefaultWslContext>, String> {
     let wsl_exe = crate::wsl::find_wsl_exe().unwrap_or_else(|| PathBuf::from("wsl.exe"));
     let mut command = silent_command(&wsl_exe.to_string_lossy());
@@ -266,6 +278,7 @@ fn detect_default_wsl_context() -> Result<Option<DefaultWslContext>, String> {
     }))
 }
 
+// 将默认 WSL 主目录和配置叶目录拼成运行配置。
 fn default_wsl_config_dir(context: &DefaultWslContext, leaf: &str) -> ConfigDir {
     let home = context.home.trim_end_matches('/');
     let leaf = leaf.trim_start_matches('/');
@@ -277,6 +290,7 @@ fn default_wsl_config_dir(context: &DefaultWslContext, leaf: &str) -> ConfigDir 
     }
 }
 
+// 仅在开启 WSL 且两个配置目录均未设置时探测默认发行版。
 fn fallback_default_wsl_context(
     claude_config_dir: Option<&String>,
     codex_config_dir: Option<&String>,
@@ -293,10 +307,12 @@ fn fallback_default_wsl_context(
     detect_default_wsl_context()
 }
 
+// 将单个参数转义为 POSIX shell 单引号字面量。
 fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
+// 补齐 WSL Bun 安装路径后通过 shell 执行转义命令。
 fn wsl_command_with_bun_path_output(
     distro: &str,
     program: &str,
@@ -329,6 +345,7 @@ fn wsl_command_with_bun_path_output(
     wsl_command_output(distro, "sh", &["-lc", &script], &[], timeout)
 }
 
+// 按主机或 WSL 目标分派执行，Bun 额外补齐用户 PATH。
 fn command_output(
     target: &RuntimeTarget,
     program: &str,
@@ -345,6 +362,7 @@ fn command_output(
     }
 }
 
+// 限时读取工具版本，执行失败或输出为空时返回无版本。
 fn version_of(target: &RuntimeTarget, program: &str) -> Option<String> {
     let output = command_output(target, program, &["--version"], &[], PROBE_TIMEOUT).ok()?;
     if !output.status.success() {
@@ -358,6 +376,7 @@ fn version_of(target: &RuntimeTarget, program: &str) -> Option<String> {
     }
 }
 
+// 分别探测目标环境中的 bun 与 bunx 可用性。
 fn runtime_status(target: &RuntimeTarget) -> CcusageRuntimeStatus {
     let bun_version = version_of(target, "bun");
     let bunx_version = version_of(target, "bunx");
@@ -369,6 +388,7 @@ fn runtime_status(target: &RuntimeTarget) -> CcusageRuntimeStatus {
     }
 }
 
+// 将指定发行版的工具探测结果转换为 WSL 状态。
 fn wsl_tool_status(distro: String) -> CcusageWslToolStatus {
     let status = runtime_status(&RuntimeTarget::Wsl {
         distro: distro.clone(),
@@ -382,6 +402,7 @@ fn wsl_tool_status(distro: String) -> CcusageWslToolStatus {
     }
 }
 
+// 探测主机和唯一可识别 WSL 环境的工具状态。
 fn tool_status(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -409,6 +430,7 @@ fn tool_status(
     Ok(CcusageToolStatus { host, wsl })
 }
 
+// 规范化并限定 ccusage 来源为 all、claude 或 codex。
 fn normalize_source(source: String) -> Result<String, String> {
     match source.trim().to_lowercase().as_str() {
         "all" => Ok("all".to_string()),
@@ -418,6 +440,7 @@ fn normalize_source(source: String) -> Result<String, String> {
     }
 }
 
+// 将非空配置值解析为已存在的目录，否则报错。
 fn existing_dir(value: Option<String>, label: &str) -> Result<Option<PathBuf>, String> {
     let Some(value) = value else {
         return Ok(None);
@@ -433,6 +456,7 @@ fn existing_dir(value: Option<String>, label: &str) -> Result<Option<PathBuf>, S
     Ok(Some(path))
 }
 
+// 识别配置目录的主机或 WSL 来源并转换 WSL Linux 路径。
 fn resolve_config_dir(value: Option<String>, label: &str) -> Result<Option<ConfigDir>, String> {
     let Some(path) = existing_dir(value, label)? else {
         return Ok(None);
@@ -452,6 +476,7 @@ fn resolve_config_dir(value: Option<String>, label: &str) -> Result<Option<Confi
     }))
 }
 
+// 仅在显式开启 WSL 时转换 UNC 路径，否则保留主机目录值。
 fn resolve_config_dir_for_runtime(
     value: Option<String>,
     label: &str,
@@ -491,6 +516,7 @@ fn resolve_config_dir_for_runtime(
     }))
 }
 
+// 按来源和 WSL 开关选择运行目标与环境，拒绝混合目标及多发行版。
 fn resolve_runtime_for_source(
     source: &str,
     claude_config_dir: Option<String>,
@@ -596,6 +622,7 @@ fn resolve_runtime_for_source(
     Ok((target, envs))
 }
 
+// 限时执行一种 ccusage 报告并解析标准输出 JSON。
 fn ccusage_report_payload(
     target: &RuntimeTarget,
     source: &str,
@@ -660,10 +687,12 @@ fn ccusage_report_payload(
     })
 }
 
+// 排除 Codex 不支持的 blocks 报告。
 fn source_supports_blocks_report(source: &str) -> bool {
     source != "codex"
 }
 
+// 构造 bun x ccusage 的离线 JSON 报告参数。
 fn ccusage_command(
     source: &str,
     report_kind: &str,
@@ -685,6 +714,7 @@ fn ccusage_command(
 }
 
 #[tauri::command]
+// 在阻塞任务中探测主机与 WSL 工具状态。
 pub async fn ccusage_get_status(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -695,6 +725,7 @@ pub async fn ccusage_get_status(
 }
 
 #[tauri::command]
+// 仅支持通过主机 npm 全局安装 Bun，WSL 返回手动安装提示。
 pub async fn ccusage_install_tools(
     target: String,
     _distro: Option<String>,
@@ -728,6 +759,7 @@ pub async fn ccusage_install_tools(
 }
 
 #[tauri::command]
+// 按显式运行环境依次获取日报、会话报告及适用的 blocks 报告。
 pub async fn ccusage_refresh_report(
     source: String,
     claude_config_dir: Option<String>,
@@ -800,6 +832,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证配置存在性判断忽略空白文本。
     fn config_value_present_only_accepts_non_empty_text() {
         assert!(!config_value_present(None));
         assert!(!config_value_present(Some(&"   ".to_string())));
@@ -807,6 +840,7 @@ mod tests {
     }
 
     #[test]
+    // 验证默认 WSL 配置路径拼接及发行版归属。
     fn default_wsl_config_dir_joins_home_and_leaf() {
         let context = DefaultWslContext {
             distro: "Ubuntu".to_string(),
@@ -827,6 +861,7 @@ mod tests {
     }
 
     #[test]
+    // 验证报告使用 bun x 并正确包含来源和 breakdown 参数。
     fn ccusage_command_uses_bun_x_with_optional_source_and_breakdown() {
         let (program, args) = ccusage_command("codex", DAILY_REPORT_KIND, true);
 
@@ -846,6 +881,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 跳过 blocks 而 Claude 和全部来源保留该报告。
     fn codex_source_does_not_request_blocks_report() {
         assert!(!source_supports_blocks_report("codex"));
         assert!(source_supports_blocks_report("claude"));

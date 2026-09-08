@@ -9,6 +9,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
+// 读取 Cursor JSONL 消息并去重统计工具调用，再生成摘要与用量结果。
 pub(super) fn scan_cursor_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -56,6 +57,7 @@ pub(super) fn scan_cursor_jsonl_session(
     (summary, stats, output_messages)
 }
 
+// 从 Antigravity 已完成事件提取用户和模型消息及工具调用计数。
 pub(super) fn scan_antigravity_jsonl_session(
     path: &Path,
     collect_messages: bool,
@@ -142,6 +144,7 @@ pub(super) fn scan_antigravity_jsonl_session(
     (summary, stats, output_messages)
 }
 
+// 提取完整 USER_REQUEST 标签内容；标签不完整时保留修剪后的原文。
 pub(super) fn extract_antigravity_user_request(content: &str) -> String {
     let Some(start) = content.find("<USER_REQUEST>") else {
         return content.trim().to_string();
@@ -155,6 +158,7 @@ pub(super) fn extract_antigravity_user_request(content: &str) -> String {
         .to_string()
 }
 
+// 构造无消息、无身份与默认统计值的扫描结果。
 pub(super) fn empty_session_scan() -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
     (
         SessionSummaryScan {

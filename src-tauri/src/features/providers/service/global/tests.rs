@@ -6,6 +6,7 @@ use serde_json::json;
 use toml_edit::DocumentMut;
 
 #[test]
+// 验证 Claude 配置生成保留 hooks、权限、未知字段和用户环境项，并替换供应商端点与认证值。
 fn claude_writer_preserves_user_owned_fields() {
     let before = br#"{
       "hooks": {"UserPromptSubmit": []},
@@ -31,6 +32,7 @@ fn claude_writer_preserves_user_owned_fields() {
 }
 
 #[test]
+// 验证同时存在两个认证键时，空 AUTH_TOKEN 标记优先接收新凭据并移除另一键。
 fn claude_writer_prefers_explicit_auth_field_marker() {
     let effective = json!({
         "env": {
@@ -46,6 +48,7 @@ fn claude_writer_prefers_explicit_auth_field_marker() {
 }
 
 #[test]
+// 验证旧 AUTH_TOKEN 与空 API_KEY 并存时，新凭据写入 API_KEY 并移除旧认证键。
 fn claude_writer_honors_api_key_marker_when_token_is_legacy() {
     let effective = json!({
         "env": {
@@ -61,6 +64,7 @@ fn claude_writer_honors_api_key_marker_when_token_is_legacy() {
 }
 
 #[test]
+// 验证 Claude 本地路由投影替换端点与认证占位符，移除直连 token 并保留 hooks。
 fn local_route_projection_replaces_claude_endpoint_and_credential() {
     let mut plan = ProviderPlan {
         app_type: "claude".to_string(),
@@ -112,6 +116,7 @@ fn local_route_projection_replaces_claude_endpoint_and_credential() {
 }
 
 #[test]
+// 验证 Codex 路由投影更新认证与带 /v1 的端点，同时保留账户信息、模型及 MCP 配置。
 fn local_route_projection_updates_codex_auth_and_config_without_losing_unowned_data() {
     let mut plan = ProviderPlan {
         app_type: "codex".to_string(),
@@ -166,6 +171,7 @@ command = "demo"
 }
 
 #[test]
+// 验证 Grok 样例路由投影更新所选模型的端点和凭据并保留 MCP 段；样例未包含其他模型配置。
 fn local_route_projection_updates_grok_selected_model_only() {
     let mut plan = ProviderPlan {
         app_type: "grokbuild".to_string(),
@@ -210,6 +216,7 @@ command = "demo"
 }
 
 #[test]
+// 验证无投影与显式本地路由投影分别映射为直连和本地路由模式。
 fn global_writer_has_explicit_direct_and_local_route_modes() {
     let projection = LocalRouteProjection {
         endpoint: "http://127.0.0.1:15721".to_string(),
@@ -222,12 +229,14 @@ fn global_writer_has_explicit_direct_and_local_route_modes() {
 }
 
 #[test]
+// 验证路由端点拒绝样例通配地址 0.0.0.0，不代表拒绝全部非回环地址。
 fn local_route_projection_rejects_non_loopback_endpoint() {
     let result = route_endpoint_with_suffix("http://0.0.0.0:15721", "");
     assert_eq!(result.unwrap_err(), "routing_endpoint_invalid");
 }
 
 #[test]
+// 验证样例 WSL 网关端点被接受；本测试只处理字符串，不探测真实网关。
 fn local_route_projection_accepts_validated_wsl_gateway_endpoint() {
     assert_eq!(
         route_endpoint_with_suffix("http://172.28.224.1:15721", ""),
@@ -236,6 +245,7 @@ fn local_route_projection_accepts_validated_wsl_gateway_endpoint() {
 }
 
 #[test]
+// 验证 Codex auth 生成移除整个旧 auth 节点及旧密钥，保留未知顶层字段并写入新密钥。
 fn codex_auth_writer_removes_legacy_top_level_credentials() {
     let before = br#"{
       "OPENAI_API_KEY": "old-root-secret",
@@ -254,6 +264,7 @@ fn codex_auth_writer_removes_legacy_top_level_credentials() {
 }
 
 #[test]
+// 验证 Codex 配置生成保留已有注释与 MCP 段，复制来源模型配置并移除样例认证字段。
 fn codex_writer_preserves_unowned_toml_sections() {
     let before = br#"# keep
 [mcp_servers.demo]
@@ -276,6 +287,7 @@ model = "old"
 }
 
 #[test]
+// 验证敏感字段清理访问表数组中的两个元素，不在首个命中后短路。
 fn codex_secret_cleanup_visits_every_array_of_tables_entry() {
     let mut document =
         "[[profiles]]\napi_key = \"first-secret\"\n\n[[profiles]]\napi_key = \"second-secret\"\n"
@@ -288,6 +300,7 @@ fn codex_secret_cleanup_visits_every_array_of_tables_entry() {
 }
 
 #[test]
+// 验证显式端点与模型生成默认 Codex 供应商映射，输出不含 env_key。
 fn codex_writer_projects_typed_endpoint_and_model() {
     let effective = json!({
         "base_url": "https://codex.test",
@@ -302,6 +315,7 @@ fn codex_writer_projects_typed_endpoint_and_model() {
 }
 
 #[test]
+// 验证生成配置清除旧顶层连接字段，保留新端点对应的模型供应商表。
 fn codex_writer_removes_legacy_root_endpoint_fields() {
     let before = br#"base_url = "https://old.example"
 wire_api = "responses"
@@ -320,6 +334,7 @@ wire_api = "responses"
 }
 
 #[test]
+// 验证 Grok 全局配置将给定凭据内联写入所选模型，输出不含 env_key。
 fn grok_global_writer_writes_selected_inline_key() {
     let effective = json!({
         "config": "[models]\ndefault = \"proxy\"\n[model.proxy]\nmodel = \"grok-test\"\nbase_url = \"https://grok.test\"\nname = \"Grok\"\n"
@@ -331,6 +346,7 @@ fn grok_global_writer_writes_selected_inline_key() {
 }
 
 #[test]
+// 验证相同键值以不同插入顺序构建 BTreeMap 后产生相同聚合指纹。
 fn aggregate_fingerprint_is_order_stable() {
     let mut left = BTreeMap::new();
     left.insert("a".to_string(), "1".to_string());
@@ -342,6 +358,7 @@ fn aggregate_fingerprint_is_order_stable() {
 }
 
 #[test]
+// 验证批量读取帧正确处理缺失文件、非 UTF-8 字节及负载中的换行，不运行 WSL。
 fn parses_wsl_batch_reads_with_binary_payloads_and_missing_files() {
     let stdout = b"1 5\nhello\n0 0\n1 4\n\x00\xff\n\n\n";
     assert_eq!(
@@ -355,6 +372,7 @@ fn parses_wsl_batch_reads_with_binary_payloads_and_missing_files() {
 }
 
 #[test]
+// 验证同类型与 Home 的第二次加锁被拒绝，释放首个守卫后可重新获取。
 fn apply_lock_serializes_same_home_and_app_type() {
     let first = acquire_apply_lock("claude", "test:recovery-lock").unwrap();
     assert!(matches!(
@@ -366,6 +384,7 @@ fn apply_lock_serializes_same_home_and_app_type() {
 }
 
 #[test]
+// 验证暂存目标按类型要求 JSON 对象或有效 TOML，拒绝样例非法内容。
 fn staged_target_parser_validates_json_and_toml_by_target() {
     let json_target = PlannedTarget {
         target: "codex.auth".to_string(),
@@ -389,6 +408,7 @@ fn staged_target_parser_validates_json_and_toml_by_target() {
 }
 
 #[test]
+// 验证计划中所有 before 与 desired 相同才判定匹配，增加一个变化目标后判定为不匹配。
 fn plan_matches_live_requires_every_target_to_match() {
     let matching = PlannedTarget {
         target: "codex.config".to_string(),
@@ -417,6 +437,7 @@ fn plan_matches_live_requires_every_target_to_match() {
     assert!(!plan_matches_live(&plan));
 }
 
+// 构造纯内存本机自动 Home，目录字段留空，供不依赖真实路径的计划测试复用。
 fn matching_home() -> ProviderHomeState {
     ProviderHomeState {
         identity: HomeIdentity {
@@ -441,6 +462,7 @@ fn matching_home() -> ProviderHomeState {
 
 #[cfg(windows)]
 #[test]
+// 在 Windows 验证本机和 WSL UNC 暂存路径位于目标同目录，并符合日志 ID 与索引命名。
 fn stage_path_stays_beside_local_and_wsl_targets() {
     let local = stage_path_for_target(r"C:\Users\tester\.codex\config.toml", "journal", 1).unwrap();
     assert_eq!(
@@ -464,6 +486,7 @@ fn stage_path_stays_beside_local_and_wsl_targets() {
 }
 
 #[test]
+// 在独立临时目录验证暂存文件替换现有目标，成功后暂存路径消失。
 fn local_stage_replacement_overwrites_existing_target() {
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("config.toml");
@@ -483,6 +506,7 @@ fn local_stage_replacement_overwrites_existing_target() {
 
 #[cfg(target_os = "macos")]
 #[test]
+// macOS 专用临时文件测试：检查暂存与目标同目录及替换结果，不模拟并发读取验证原子可见性。
 fn macos_local_stage_replace_keeps_atomic_same_directory_contract() {
     let directory = tempfile::tempdir().unwrap();
     let target = directory.path().join("settings.json");
@@ -501,6 +525,7 @@ fn macos_local_stage_replace_keeps_atomic_same_directory_contract() {
 }
 
 #[test]
+// 在临时目录验证补偿恢复旧目标、移除本次新建目标，并拒绝覆盖随后发生的外部修改。
 fn compensation_restores_existing_and_removes_created_targets() {
     let directory = tempfile::tempdir().unwrap();
     let existing_path = directory.path().join("existing.json");
@@ -599,6 +624,7 @@ fn compensation_restores_existing_and_removes_created_targets() {
 }
 
 #[test]
+// 在临时文件设置只读属性，验证可写检查返回 false，再恢复属性以便清理。
 fn existing_readonly_file_is_not_writable() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("settings.json");
@@ -615,6 +641,7 @@ fn existing_readonly_file_is_not_writable() {
 }
 
 #[test]
+// 在临时目录验证备份清理移除备份文件及清空后的日志目录。
 fn cleanup_backup_files_removes_stale_stage_failure_backups_and_directory() {
     let directory = tempfile::tempdir().unwrap();
     let backup_directory = directory.path().join("journal");
@@ -635,6 +662,7 @@ fn cleanup_backup_files_removes_stale_stage_failure_backups_and_directory() {
 }
 
 #[test]
+// 验证备份路径清理保留普通、外部和越界目标；本测试会在临时根的父目录写固定 escaped.backup，运行需隔离该父目录。
 fn cleanup_persisted_backup_paths_stays_inside_provider_backup_root() {
     let directory = tempfile::tempdir().unwrap();
     let outside_directory = tempfile::tempdir().unwrap();

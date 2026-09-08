@@ -19,6 +19,8 @@ mod ssh_agent_bridge;
 /// 自动进入同一 Job，daemon 无论正常退出还是被强杀，系统都会回收整棵
 /// 子进程树，物理杜绝 PTY 孤儿。非 Windows 平台为 no-op（PTY 子进程随
 /// 会话关闭由平台 PTY 控制器回收；daemon 自身 detach 由拉起方处理）。
+// Windows 创建 kill-on-close Job 并挂入当前进程；失败只告警返回，非 Windows 无操作。
+// 创建成功后的句柄留到进程退出回收，包括后续配置或挂入失败的路径，此处没有显式关闭。
 pub fn setup_process_governance() {
     #[cfg(target_os = "windows")]
     unsafe {

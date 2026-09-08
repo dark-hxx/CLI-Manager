@@ -23,6 +23,7 @@ enum AttachmentProtocol {
 }
 
 impl AttachmentProtocol {
+    // 按附件协议返回旧图片或通用文件上传操作的 RPC 名称。
     fn kind(self, operation: &str) -> String {
         match self {
             Self::LegacyImage => format!("fileAttach{operation}"),
@@ -40,6 +41,7 @@ enum AttachmentSource {
 }
 
 impl AttachmentSource {
+    // 按附件来源选择 Base64 解码或受限本地文件读取。
     fn read(self) -> Result<(String, Vec<u8>), String> {
         match self {
             Self::Data {
@@ -51,6 +53,7 @@ impl AttachmentSource {
     }
 }
 
+// 要求远端文件操作具备非空主机、Agent 安装及客户端身份。
 fn validate_plan(plan: &SshLaunchPlan) -> Result<(), String> {
     if plan.host_id.trim().is_empty()
         || plan.agent_path.trim().is_empty()
@@ -63,6 +66,7 @@ fn validate_plan(plan: &SshLaunchPlan) -> Result<(), String> {
     Ok(())
 }
 
+// 验证 SSH 计划并在阻塞任务中通过 daemon 转发文件请求。
 async fn request(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -81,6 +85,7 @@ async fn request(
     .map_err(|err| err.to_string())?
 }
 
+// 限制附件名称长度，拒绝点目录、路径分隔符及指定控制字符。
 fn validate_attachment_name(file_name: &str) -> Result<(), String> {
     if file_name.is_empty()
         || file_name.len() > 255
@@ -92,6 +97,7 @@ fn validate_attachment_name(file_name: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 按扩展名判断是否属于旧版图片附件支持类型。
 fn is_legacy_image_name(file_name: &str) -> bool {
     Path::new(file_name)
         .extension()
@@ -100,6 +106,7 @@ fn is_legacy_image_name(file_name: &str) -> bool {
         .is_some_and(|extension| LEGACY_IMAGE_EXTENSIONS.contains(&extension.as_str()))
 }
 
+// 仅在图片类型、字节数及实际像素数均满足旧协议时允许回退。
 fn can_fallback_to_legacy_image(file_name: &str, data: &[u8]) -> bool {
     if data.len() > LEGACY_IMAGE_ATTACHMENT_BYTES || !is_legacy_image_name(file_name) {
         return false;
@@ -115,6 +122,7 @@ fn can_fallback_to_legacy_image(file_name: &str, data: &[u8]) -> bool {
         })
 }
 
+// 检查文件名和 Base64 长度，解码后再次校验非空字节及上限。
 fn decode_attachment(file_name: String, data_base64: String) -> Result<(String, Vec<u8>), String> {
     validate_attachment_name(&file_name)?;
     if data_base64.is_empty() || data_base64.len() > MAX_ATTACHMENT_BASE64_BYTES {
@@ -127,6 +135,7 @@ fn decode_attachment(file_name: String, data_base64: String) -> Result<(String, 
     Ok((file_name, data))
 }
 
+// 拒绝非绝对路径和文件链接，检查大小后受限读取并复验附件数据。
 fn read_attachment(path: String) -> Result<(String, Vec<u8>), String> {
     if path.is_empty() || path.contains(['\0', '\r', '\n']) || !Path::new(&path).is_absolute() {
         return Err("attachment_local_path_invalid".to_string());
@@ -162,6 +171,7 @@ fn read_attachment(path: String) -> Result<(String, Vec<u8>), String> {
     Ok((file_name, data))
 }
 
+// 拒绝空附件以及超过通用上传大小上限的数据。
 fn validate_attachment_bytes(data: &[u8]) -> Result<(), String> {
     if data.is_empty() {
         return Err("attachment_empty".to_string());
@@ -172,6 +182,7 @@ fn validate_attachment_bytes(data: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
+// 要求返回路径为绝对 POSIX 形式且含附件缓存片段，拒绝父级跳转。
 fn validate_remote_attachment_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.len() > 4096
@@ -185,6 +196,7 @@ fn validate_remote_attachment_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 限制远端文件路径长度及字符，并要求绝对路径且无父级段。
 fn validate_remote_file_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.len() > MAX_ATTACHMENT_ROOT_LENGTH
@@ -197,6 +209,7 @@ fn validate_remote_file_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 检查远端相对路径非空、长度及字符规则，拒绝绝对路径和父级段。
 fn validate_remote_relative_path(path: &str) -> Result<(), String> {
     if path.is_empty()
         || path.len() > MAX_ATTACHMENT_ROOT_LENGTH
@@ -209,6 +222,7 @@ fn validate_remote_relative_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 检查绝对下载目标与单文件名，拒绝直接父目录或目标链接及目录目标。
 fn validate_local_download_path(path: &str) -> Result<PathBuf, String> {
     if path.is_empty() || path.chars().any(char::is_control) || !Path::new(path).is_absolute() {
         return Err("attachment_local_path_invalid".to_string());
@@ -236,6 +250,7 @@ fn validate_local_download_path(path: &str) -> Result<PathBuf, String> {
     Ok(target.to_path_buf())
 }
 
+// 校验下载 Base64 与声明大小一致后，将解码内容写入本地目标。
 fn write_download(
     local_path: PathBuf,
     data_base64: String,
@@ -257,6 +272,7 @@ fn write_download(
     Ok(data.len() as u64)
 }
 
+// 裁剪可选远端附件根目录，验证主目录语法并拒绝控制字符和父级跳转。
 fn normalize_attachment_root(value: Option<String>) -> Result<String, String> {
     let value = value.unwrap_or_default();
     if value.len() > MAX_ATTACHMENT_ROOT_LENGTH || value.chars().any(char::is_control) {
@@ -278,6 +294,7 @@ fn normalize_attachment_root(value: Option<String>) -> Result<String, String> {
     Ok(root)
 }
 
+// 协商通用附件或合格旧图片协议，分块校验进度及完成路径，失败尽力中止。
 fn upload_attachment(
     client: &crate::daemon::client::DaemonClient,
     consumer_id: String,
@@ -377,6 +394,7 @@ fn upload_attachment(
     result
 }
 
+// 向指定远端目录分块上传文件，校验回执大小及路径，失败尽力中止。
 fn upload_file_to_remote_directory(
     client: &crate::daemon::client::DaemonClient,
     consumer_id: String,
@@ -459,6 +477,7 @@ fn upload_file_to_remote_directory(
     result
 }
 
+// 解析附件根并取得 daemon，在阻塞任务中读取附件并上传。
 async fn attach(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -488,6 +507,7 @@ async fn attach(
 }
 
 #[tauri::command]
+// 将 Base64 附件和文件名交给共用上传流程。
 pub async fn ssh_remote_file_attach_data(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -512,6 +532,7 @@ pub async fn ssh_remote_file_attach_data(
 }
 
 #[tauri::command]
+// 将本地文件路径交给共用附件读取与上传流程。
 pub async fn ssh_remote_file_attach_path(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -532,6 +553,7 @@ pub async fn ssh_remote_file_attach_path(
 }
 
 #[tauri::command]
+// 校验非空远端目录后，在阻塞任务中读取本地文件并上传。
 pub async fn ssh_remote_file_put_path(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -562,6 +584,7 @@ pub async fn ssh_remote_file_put_path(
 }
 
 #[tauri::command]
+// 校验远端和本地路径，请求文件数据并验证后写入下载目标。
 pub async fn ssh_remote_file_download(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -602,6 +625,7 @@ pub async fn ssh_remote_file_download(
 }
 
 #[tauri::command]
+// 校验非空远端根及相对路径，再转发远端删除请求。
 pub async fn ssh_remote_file_delete(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -625,6 +649,7 @@ pub async fn ssh_remote_file_delete(
 }
 
 #[tauri::command]
+// 规范化附件根设置并向 Agent 查询解析后的附件根信息。
 pub async fn ssh_remote_file_attachment_root(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -643,6 +668,7 @@ pub async fn ssh_remote_file_attachment_root(
 }
 
 #[tauri::command]
+// 将远端根及相对路径转发给 Agent 文件列表接口。
 pub async fn ssh_remote_file_list(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -661,6 +687,7 @@ pub async fn ssh_remote_file_list(
 }
 
 #[tauri::command]
+// 将远端根及相对路径转发给 Agent 文件读取接口。
 pub async fn ssh_remote_file_read(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -679,6 +706,7 @@ pub async fn ssh_remote_file_read(
 }
 
 #[tauri::command]
+// 将查询与名称或内容模式转发给 Agent 文件搜索接口。
 pub async fn ssh_remote_file_search(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     consumer_id: String,
@@ -708,6 +736,7 @@ mod tests {
     use std::fs;
 
     #[test]
+    // 验证附件名称规则、旧图片扩展识别及无效图片不可回退。
     fn attachment_names_accept_safe_regular_file_names() {
         assert!(validate_attachment_name("shot.PNG").is_ok());
         assert!(validate_attachment_name("notes.txt").is_ok());
@@ -722,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    // 验证附件返回路径要求缓存片段，并拒绝父级跳转及非附件目录。
     fn remote_attachment_paths_are_absolute_and_cache_scoped() {
         assert!(validate_remote_attachment_path(
             "/home/dev/.cache/cli-manager-ssh-agent/attachments/session/id.png"
@@ -741,6 +771,7 @@ mod tests {
     }
 
     #[test]
+    // 验证远端上传结果路径必须绝对且无父级跳转和反斜杠。
     fn remote_file_put_paths_are_absolute_without_traversal() {
         assert!(validate_remote_file_path("/data/file.txt").is_ok());
         assert!(validate_remote_file_path("/data/../etc/passwd").is_err());
@@ -749,6 +780,7 @@ mod tests {
     }
 
     #[test]
+    // 验证附件根允许主目录语法和空默认值，拒绝变量展开及路径逃逸。
     fn attachment_roots_allow_home_paths_but_reject_escape_inputs() {
         assert_eq!(
             normalize_attachment_root(Some(" ~/attachments ".to_string())).unwrap(),
@@ -765,6 +797,7 @@ mod tests {
     }
 
     #[test]
+    // 用临时图片、文本和超限文件验证附件读取、解码及旧图片回退边界。
     fn attachment_data_and_local_paths_are_bounded_files() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("pixel.png");

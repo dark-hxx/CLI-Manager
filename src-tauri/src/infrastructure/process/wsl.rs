@@ -5,6 +5,7 @@
 
 /// `D:\a\b` -> `/mnt/d/a/b`（盘符小写、反斜杠转正斜杠）。
 /// 仅当输入形如 `<盘符>:\...` 或 `<盘符>:/...` 时返回 Some，否则 None（已是 Linux 路径/UNC 等不转）。
+// 仅将带分隔符的绝对盘符文本映射到默认 /mnt 挂载点，不探测发行版挂载设置或解析父级跳转。
 pub fn windows_path_to_wsl(path: &str) -> Option<String> {
     let path = path.trim();
     let bytes = path.as_bytes();
@@ -28,6 +29,7 @@ pub fn windows_path_to_wsl(path: &str) -> Option<String> {
 
 /// `/mnt/d/a/b` -> `D:\a\b`（盘符大写、正斜杠转反斜杠）。
 /// 仅处理 WSL 默认挂载的 Windows 盘路径，Linux 原生路径返回 None。
+// 只接受 /mnt/ 后的单个 ASCII 盘符并转换分隔符，盘根补反斜杠；不检查 Windows 路径是否存在。
 pub fn wsl_mnt_path_to_windows(path: &str) -> Option<String> {
     let path = path.trim();
     let rest = path.strip_prefix("/mnt/")?;
@@ -46,6 +48,7 @@ pub fn wsl_mnt_path_to_windows(path: &str) -> Option<String> {
 }
 
 /// 将 Windows verbatim WSL UNC 归一化为标准 UNC。
+// 裁剪首尾空白并统一反斜杠，仅 WSL verbatim UNC 去掉特殊前缀；不做文件系统 canonicalize。
 pub fn normalize_wsl_unc_path(path: &str) -> String {
     let normalized = path.trim().replace('/', "\\");
     let lower = normalized.to_ascii_lowercase();
@@ -63,6 +66,7 @@ pub fn normalize_wsl_unc_path(path: &str) -> String {
 }
 
 /// 判断一个配置目录路径是否指向 WSL（`\\wsl.localhost\...` 或 `\\wsl$\...`，大小写不敏感）。
+// 规范化后按大小写不敏感的 WSL UNC 前缀分类，不验证发行版名、路径存在性或访问范围。
 pub fn is_wsl_config_dir(path: &str) -> bool {
     let normalized = normalize_wsl_unc_path(path).to_ascii_lowercase();
     normalized.starts_with("\\\\wsl.localhost\\") || normalized.starts_with("\\\\wsl$\\")
@@ -70,6 +74,7 @@ pub fn is_wsl_config_dir(path: &str) -> bool {
 
 /// 解析 WSL UNC 路径为 `(distro, linux_path)`。
 /// `\\wsl.localhost\Ubuntu\home\venti\.claude` → `Some(("Ubuntu", "/home/venti/.claude"))`
+// 从标准化 UNC 拆出非空发行版和 Linux 路径，要求发行版后有分隔符；保留路径组件不做授权校验。
 pub fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
     let normalized = normalize_wsl_unc_path(path);
     if !is_wsl_config_dir(&normalized) {
@@ -97,12 +102,14 @@ pub fn parse_wsl_unc_path(path: &str) -> Option<(String, String)> {
 
 /// 将 WSL Linux 路径转回 UNC 形式。
 /// `("/home/venti/.claude", "Ubuntu")` → `\\wsl.localhost\Ubuntu\home\venti\.claude`
+// 将路径文本拼到 wsl.localhost 下，去掉开头斜杠但保留尾分隔符；输入路径与发行版安全性由调用方保证。
 pub fn linux_to_unc_wsl_path(linux_path: &str, distro: &str) -> String {
     let tail = linux_path.trim().trim_start_matches('/').replace('/', "\\");
     format!("\\\\wsl.localhost\\{distro}\\{tail}")
 }
 
 /// 定位 `wsl.exe`，通常位于 `%SystemRoot%\System32\wsl.exe`。
+// 只检查 SystemRoot/System32/wsl.exe 是否存在，不搜索 PATH，也不启动程序验证可用性。
 pub fn find_wsl_exe() -> Option<std::path::PathBuf> {
     std::env::var_os("SystemRoot")
         .map(std::path::PathBuf::from)
@@ -115,6 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证盘符大小写、正反斜杠和盘根到默认 /mnt 形式的转换。
     fn converts_drive_paths() {
         assert_eq!(
             windows_path_to_wsl(r"D:\work\pythonProject\CLI-Manager").as_deref(),
@@ -133,6 +141,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux、UNC、相对路径及盘符相对写法不会被当作绝对盘符路径转换。
     fn rejects_non_drive_paths() {
         assert_eq!(windows_path_to_wsl("/mnt/d/work"), None);
         assert_eq!(windows_path_to_wsl(r"\\wsl.localhost\Ubuntu\home"), None);
@@ -141,6 +150,7 @@ mod tests {
     }
 
     #[test]
+    // 验证默认挂载目录和挂载盘根反向转换为 Windows 绝对路径。
     fn converts_wsl_mnt_paths_to_windows_paths() {
         assert_eq!(
             wsl_mnt_path_to_windows("/mnt/d/work/pythonProject/acGo").as_deref(),
@@ -150,6 +160,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux 原生目录、多字母挂载名和已是 Windows 的路径被反向转换器拒绝。
     fn rejects_non_wsl_mnt_paths_for_windows_conversion() {
         assert_eq!(wsl_mnt_path_to_windows("/home/me/project"), None);
         assert_eq!(wsl_mnt_path_to_windows("/mnt/dd/project"), None);
@@ -157,6 +168,7 @@ mod tests {
     }
 
     #[test]
+    // 验证两种 WSL UNC 主机别名、verbatim 及大小写变体，排除本地盘和普通网络共享。
     fn detects_wsl_config_dir() {
         assert!(is_wsl_config_dir(
             r"\\wsl.localhost\Ubuntu-22.04\home\me\.claude"
@@ -172,6 +184,7 @@ mod tests {
     }
 
     #[test]
+    // 验证标准 WSL UNC 被拆为发行版名称与 Linux 绝对路径文本。
     fn parse_wsl_unc_extracts_distro_and_linux_path() {
         let result = parse_wsl_unc_path(r"\\wsl.localhost\Ubuntu\home\venti\.claude");
         assert!(result.is_some());
@@ -181,6 +194,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 wsl$ 别名可提取发行版及 root 用户目录。
     fn parse_wsl_unc_handles_wsl_dollar() {
         let result = parse_wsl_unc_path(r"\\wsl$\Debian\root\projects");
         assert!(result.is_some());
@@ -190,6 +204,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Windows verbatim WSL 前缀不妨碍 Codex 会话目录的路径解析。
     fn parse_wsl_unc_handles_verbatim_unc() {
         let result = parse_wsl_unc_path(r"\\?\UNC\wsl.localhost\Ubuntu\home\venti\.codex\sessions");
         assert_eq!(
@@ -202,12 +217,14 @@ mod tests {
     }
 
     #[test]
+    // 验证本地盘符与普通 UNC 共享无法解析为 WSL 发行版路径。
     fn parse_wsl_unc_rejects_non_wsl_unc() {
         assert!(parse_wsl_unc_path(r"C:\Users\me\.claude").is_none());
         assert!(parse_wsl_unc_path(r"\\server\share\path").is_none());
     }
 
     #[test]
+    // 验证 Linux 路径生成预期的 wsl.localhost UNC 文本；此测试不调用反向解析器。
     fn linux_to_unc_roundtrip() {
         let linux = "/home/venti/.claude/projects";
         let unc = linux_to_unc_wsl_path(linux, "Ubuntu");
@@ -218,6 +235,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Linux 路径的尾斜杠在 UNC 输出中保留为尾反斜杠。
     fn linux_to_unc_handles_trailing_slash() {
         let unc = linux_to_unc_wsl_path("/home/venti/", "Ubuntu");
         assert_eq!(unc, "\\\\wsl.localhost\\Ubuntu\\home\\venti\\");

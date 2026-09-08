@@ -14,6 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+// 依次选择显式路径、KIMI_CODE_HOME 或默认 .kimi-code，不创建目录。
 pub(super) fn resolve_kimi_dir(selected_dir: Option<String>) -> Result<Option<PathBuf>, String> {
     let explicit = selected_dir.and_then(|value| normalize_selected_dir(&value));
     let default = env::var_os("KIMI_CODE_HOME")
@@ -26,6 +27,7 @@ pub(super) fn resolve_kimi_dir(selected_dir: Option<String>) -> Result<Option<Pa
     Ok(Some(dir))
 }
 
+// 按目标目录的运行环境生成所有 Kimi 桥接事件命令。
 pub(super) fn build_kimi_commands(kimi_dir: &Path) -> Result<BTreeMap<String, String>, String> {
     let executable = hook_exe_for_dir(kimi_dir)?;
     Ok(kimi::DEFINITIONS
@@ -39,6 +41,7 @@ pub(super) fn build_kimi_commands(kimi_dir: &Path) -> Result<BTreeMap<String, St
         .collect())
 }
 
+// 按 Windows 或 POSIX 引号规则构造含精确本地 owner 的 Kimi 命令。
 pub(super) fn build_kimi_command(executable: &str, event: &str) -> String {
     if is_windows_native_exe_path(executable) {
         let executable = escape_powershell_single_quoted(executable);
@@ -54,6 +57,7 @@ pub(super) fn build_kimi_command(executable: &str, event: &str) -> String {
     )
 }
 
+// 以 TOML 规划器检查各成对事件，存在过期或冲突项时报告部分安装。
 pub(super) fn build_kimi_status(
     kimi_dir: Option<PathBuf>,
 ) -> Result<ToolHookSettingsStatus, String> {
@@ -93,6 +97,7 @@ pub(super) fn build_kimi_status(
     Ok(status)
 }
 
+// 必要时创建 Kimi 配置目录，再安装所选模块。
 pub(super) fn install_kimi_hooks(
     kimi_dir: &Path,
     modules: &[KimiHookModule],
@@ -103,6 +108,7 @@ pub(super) fn install_kimi_hooks(
     change_kimi_hooks(kimi_dir, modules, KimiPlanAction::Install)
 }
 
+// 通过共用变更流程卸载所选 Kimi 模块。
 pub(super) fn uninstall_kimi_hooks(
     kimi_dir: &Path,
     modules: &[KimiHookModule],
@@ -110,6 +116,7 @@ pub(super) fn uninstall_kimi_hooks(
     change_kimi_hooks(kimi_dir, modules, KimiPlanAction::Uninstall)
 }
 
+// 拒绝配置符号链接，按原文规划变更，仅在内容变化时暂存替换。
 pub(super) fn change_kimi_hooks(
     kimi_dir: &Path,
     modules: &[KimiHookModule],
@@ -131,6 +138,7 @@ pub(super) fn change_kimi_hooks(
     replace_kimi_config(&config_path, original, &plan.content)
 }
 
+// 本地用链接元数据、WSL 用限时 test -L 检查并拒绝配置符号链接。
 pub(super) fn reject_kimi_config_symlink(config_path: &Path) -> Result<(), String> {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&path_to_string(config_path))
     {
@@ -160,6 +168,7 @@ pub(super) fn reject_kimi_config_symlink(config_path: &Path) -> Result<(), Strin
     }
 }
 
+// 使用无附加阶段动作的暂存流程替换 Kimi 配置。
 pub(super) fn replace_kimi_config(
     config_path: &Path,
     original: Option<String>,
@@ -168,6 +177,7 @@ pub(super) fn replace_kimi_config(
     replace_kimi_config_with_stage_hook(config_path, original, content, || Ok(()))
 }
 
+// 写入同目录候选，执行阶段回调并复核原文，再替换或清理候选。
 pub(super) fn replace_kimi_config_with_stage_hook(
     config_path: &Path,
     original: Option<String>,

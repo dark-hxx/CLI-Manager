@@ -13,6 +13,7 @@ const CODEX_AUTH_DOCUMENT: &str = "codex.auth";
 const CODEX_CONFIG_DOCUMENT: &str = "codex.config";
 const GROK_CONFIG_DOCUMENT: &str = "grokbuild.config";
 
+// 按 CLI 类型生成带格式、敏感标记和有效性状态的配置文档；委托各格式脱敏器，未知类型返回空列表。
 pub(crate) fn documents_from_settings(app_type: &str, raw: &str) -> Vec<ProviderDocument> {
     match app_type {
         "claude" => {
@@ -79,6 +80,7 @@ pub(crate) fn documents_from_settings(app_type: &str, raw: &str) -> Vec<Provider
     }
 }
 
+// 用固定占位符代替无效文档原文，敏感标记仅由文本关键词推断。
 fn invalid_document(kind: &str, format: &str, raw: &str) -> ProviderDocument {
     let has_secret = [
         "token",
@@ -99,11 +101,13 @@ fn invalid_document(kind: &str, format: &str, raw: &str) -> ProviderDocument {
     }
 }
 
+// 对拥有所有权的 JSON 值调用共享脱敏器，返回处理后的值及敏感字段命中标记。
 fn redact_json_value(mut value: JsonValue) -> (JsonValue, bool) {
     let has_secret = redact_json(&mut value);
     (value, has_secret)
 }
 
+// 解析并按字段名脱敏 TOML；空白有效，解析失败时仅在命中敏感关键词后隐藏全文，否则保留原文。
 pub(crate) fn redact_toml_document(raw: &str) -> (String, bool, bool) {
     if raw.trim().is_empty() {
         return (String::new(), false, true);
@@ -134,6 +138,7 @@ pub(crate) fn redact_toml_document(raw: &str) -> (String, bool, bool) {
     (document.to_string(), has_secret, true)
 }
 
+// 递归合并双方均为对象的节点，其他类型由供应商值整体替换，包括数组。
 fn merge_json_values(common: &mut JsonValue, provider: JsonValue) {
     if let (Some(common_object), Some(provider_object)) =
         (common.as_object_mut(), provider.as_object())
@@ -151,6 +156,7 @@ fn merge_json_values(common: &mut JsonValue, provider: JsonValue) {
 }
 
 #[cfg(test)]
+// 测试专用 JSON 文本合并入口，解析后按供应商优先规则合并并格式化输出。
 pub(crate) fn merge_json_documents(common: &str, provider: &str) -> Result<String, String> {
     let mut common = serde_json::from_str::<JsonValue>(common)
         .map_err(|_| error("provider_common_config_invalid_json", "common"))?;
@@ -160,6 +166,7 @@ pub(crate) fn merge_json_documents(common: &str, provider: &str) -> Result<Strin
     serde_json::to_string_pretty(&common).map_err(|_| error("provider_config_merge_failed", ""))
 }
 
+// 递归合并普通 TOML 表，其他结构由供应商项整体替换，不逐项合并数组或内联表。
 fn merge_toml_items(common: &mut Item, provider: Item) {
     if let (Some(common_table), Some(provider_table)) = (common.as_table_mut(), provider.as_table())
     {
@@ -179,6 +186,7 @@ fn merge_toml_items(common: &mut Item, provider: Item) {
     }
 }
 
+// 将空白解析为空文档，其他内容按 TOML 语法解析并附上调用方提供的错误位置。
 fn parse_toml_document(raw: &str, kind: &str) -> Result<DocumentMut, String> {
     if raw.trim().is_empty() {
         return Ok(DocumentMut::new());
@@ -187,10 +195,12 @@ fn parse_toml_document(raw: &str, kind: &str) -> Result<DocumentMut, String> {
         .map_err(|_| error("provider_common_config_invalid_toml", kind))
 }
 
+// 判断 TOML 语法解析是否成功，接受空白文档，不校验 CLI 字段语义。
 pub(crate) fn is_valid_toml_document(raw: &str) -> bool {
     parse_toml_document(raw, "value").is_ok()
 }
 
+// 要求供应商设置为 JSON 对象；Claude 直接深合并，其余类型合并内嵌 TOML 配置，供应商值优先。
 pub(crate) fn merge_common_into_settings(
     app_type: &str,
     common: &str,
@@ -225,6 +235,7 @@ pub(crate) fn merge_common_into_settings(
         .map_err(|_| error("provider_config_merge_failed", app_type))
 }
 
+// 按项类型分派脱敏；表数组使用 any，首个返回 true 的表之后不会继续遍历。
 fn redact_toml_item(item: &mut Item) -> bool {
     match item {
         Item::Table(table) => redact_toml_table(table),
@@ -234,6 +245,7 @@ fn redact_toml_item(item: &mut Item) -> bool {
     }
 }
 
+// 遍历普通表，将敏感键对应整项替换为占位符，其他字段递归处理并累计命中状态。
 fn redact_toml_table(table: &mut Table) -> bool {
     let mut found_secret = false;
     for (key, item) in table.iter_mut() {
@@ -247,6 +259,7 @@ fn redact_toml_table(table: &mut Table) -> bool {
     found_secret
 }
 
+// 遍历内联表和普通数组清理敏感字段，标量值不按内容扫描。
 fn redact_toml_value(value: &mut TomlValue) -> bool {
     let mut found_secret = false;
     if let Some(table) = value.as_inline_table_mut() {
@@ -269,6 +282,7 @@ fn redact_toml_value(value: &mut TomlValue) -> bool {
     found_secret
 }
 
+// 把空字符串、固定星号/脱敏占位符及含省略号字符的字符串视为遮罩值。
 fn is_masked_secret(value: &JsonValue) -> bool {
     value
         .as_str()
@@ -278,6 +292,7 @@ fn is_masked_secret(value: &JsonValue) -> bool {
         .unwrap_or(false)
 }
 
+// 按对象键和数组位置递归检查新增敏感字段是否已有对应键；已有敏感键的值由后续保留逻辑处理。
 fn reject_new_json_secrets(
     existing: Option<&JsonValue>,
     incoming: &JsonValue,
@@ -318,6 +333,7 @@ fn reject_new_json_secrets(
     Ok(())
 }
 
+// 递归处理双方均为对象的节点，恢复缺失或遮罩敏感值并拒绝修改；不遍历数组或恢复整个缺失的非敏感父节点。
 fn preserve_json_secrets(existing: &JsonValue, incoming: &mut JsonValue) -> Result<(), String> {
     let (Some(existing_object), Some(incoming_object)) =
         (existing.as_object(), incoming.as_object_mut())
@@ -348,6 +364,7 @@ fn preserve_json_secrets(existing: &JsonValue, incoming: &mut JsonValue) -> Resu
     Ok(())
 }
 
+// 解析对象形式的文档替换值，先拒绝新增敏感键，再按对象递归规则保留已有凭据。
 fn patch_json_document(
     existing: &JsonValue,
     value: &str,
@@ -363,6 +380,7 @@ fn patch_json_document(
     Ok(incoming)
 }
 
+// 拒绝新增已识别的字符串敏感路径，并覆盖仍存在路径的值以保留旧凭据；缺失路径不补回，遍历范围由路径收集器决定。
 pub(crate) fn preserve_toml_secrets(
     existing: &str,
     incoming: &mut DocumentMut,
@@ -398,6 +416,7 @@ pub(crate) fn preserve_toml_secrets(
     Ok(())
 }
 
+// 收集普通表递归路径及内联表直接字符串敏感键；忽略表数组、普通数组和内联表非敏感键下的嵌套结构。
 fn collect_toml_edit_secret_paths(item: &Item, parent: &[String]) -> Vec<(Vec<String>, String)> {
     match item {
         Item::Table(table) => table
@@ -436,6 +455,7 @@ fn collect_toml_edit_secret_paths(item: &Item, parent: &[String]) -> Vec<(Vec<St
     }
 }
 
+// 沿非空字符串路径逐级查找可变 TOML 项，路径缺失即返回 None，不创建节点。
 fn get_toml_item_mut<'a>(item: &'a mut Item, path: &[String]) -> Option<&'a mut Item> {
     let (head, tail) = path.split_first()?;
     let next = item.get_mut(head)?;
@@ -446,6 +466,7 @@ fn get_toml_item_mut<'a>(item: &'a mut Item, path: &[String]) -> Option<&'a mut 
     }
 }
 
+// 按类型与文档种类替换 JSON 设置/auth 或内嵌 TOML，调用各自凭据保留逻辑后序列化，不写数据库。
 fn patch_settings_document(
     app_type: &str,
     raw_settings: &str,
@@ -492,6 +513,7 @@ fn patch_settings_document(
     serde_json::to_string(&settings).map_err(|_| error("provider_config_serialize_failed", kind))
 }
 
+// 读取供应商并生成更新配置后写库，再另读详情；无跨读取与更新的事务或版本检查，不直接写 CLI Home。
 pub(crate) async fn update_provider_document(
     input: ProviderDocumentUpdateInput,
 ) -> Result<ProviderDetail, String> {
@@ -524,6 +546,7 @@ mod tests {
     use serde_json::Value;
 
     #[test]
+    // 验证样例 TOML 脱敏保留注释与端点、移除密钥，并返回有效和敏感命中标记。
     fn redacts_toml_secret_without_dropping_comments() {
         let raw = "# keep this comment\n[provider]\nbase_url = \"https://example.test\"\napi_key = \"sk-secret\"\n";
         let (redacted, has_secret, valid) = redact_toml_document(raw);
@@ -535,6 +558,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex auth 与 TOML 中的遮罩被还原为原凭据，同时允许模型字段更新。
     fn codex_document_patch_preserves_redacted_credentials() {
         let existing = r##"{
             "auth": {"OPENAI_API_KEY": "sk-secret"},
@@ -569,6 +593,7 @@ mod tests {
     }
 
     #[test]
+    // 验证向 Claude JSON 和 Codex TOML 样例新增敏感字段时要求使用密钥管理入口。
     fn document_patch_rejects_new_secret_fields() {
         let json_error = patch_settings_document(
             "claude",
@@ -590,6 +615,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Codex 文档列表按 auth/config 顺序输出，并标记样例认证敏感值及配置有效性。
     fn document_listing_exposes_type_specific_documents() {
         let documents = documents_from_settings(
             "codex",
@@ -607,6 +633,7 @@ mod tests {
     }
 
     #[test]
+    // 验证样例损坏 JSON 的文档展示只返回固定占位符，不包含原始凭据文本。
     fn invalid_provider_document_never_returns_raw_content() {
         let documents = documents_from_settings(
             "codex",

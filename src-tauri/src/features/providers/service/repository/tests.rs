@@ -13,6 +13,7 @@ use sqlx::{Connection, SqliteConnection};
 use tempfile::tempdir;
 
 #[test]
+// 验证两个公开 Grok 别名规范化为 grokbuild，未支持的 Gemini 类型被拒绝。
 fn normalizes_public_grok_aliases() {
     assert_eq!(normalize_app_type("grok").unwrap(), "grokbuild");
     assert_eq!(normalize_app_type("grok-build").unwrap(), "grokbuild");
@@ -20,6 +21,7 @@ fn normalizes_public_grok_aliases() {
 }
 
 #[test]
+// 验证样例嵌套认证值被脱敏，端点保留，并返回包含敏感值且配置有效的标记。
 fn redacts_nested_secret_values_without_changing_non_secrets() {
     let raw = r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"secret-token","ANTHROPIC_BASE_URL":"https://example.test"}}"#;
     let (redacted, has_secret, valid) = redact_settings_config(raw);
@@ -30,6 +32,7 @@ fn redacts_nested_secret_values_without_changing_non_secrets() {
 }
 
 #[test]
+// 验证复制配置时移除样例投影凭据，保留端点和模型。
 fn duplicate_config_drops_projected_credentials() {
     let duplicate = duplicate_settings_config(
         r#"{"env":{"ANTHROPIC_AUTH_TOKEN":"secret-token","ANTHROPIC_BASE_URL":"https://example.test"},"model":"x"}"#,
@@ -40,6 +43,7 @@ fn duplicate_config_drops_projected_credentials() {
 }
 
 #[test]
+// 验证三种 CLI 的密钥投影输出包含各自预期认证字段，不验证真实服务鉴权。
 fn projects_active_key_into_app_specific_json_fields() {
     let claude = project_key_into_settings("claude", r#"{"env":{}}"#, "sk-claude").unwrap();
     assert!(claude.contains("ANTHROPIC_AUTH_TOKEN"));
@@ -50,6 +54,7 @@ fn projects_active_key_into_app_specific_json_fields() {
 }
 
 #[test]
+// 验证选用 ANTHROPIC_API_KEY 时写入新凭据并移除旧 AUTH_TOKEN 字段。
 fn projects_claude_key_into_selected_auth_field() {
     let projected = project_key_into_settings(
         "claude",
@@ -63,6 +68,7 @@ fn projects_claude_key_into_selected_auth_field() {
 }
 
 #[test]
+// 验证更新可见端点、模型及协议字段时保留既有凭据和其他环境项。
 fn applies_visible_config_fields_without_overwriting_credentials() {
     let updated = apply_config_fields(
         "claude",
@@ -84,6 +90,7 @@ fn applies_visible_config_fields_without_overwriting_credentials() {
 }
 
 #[test]
+// 验证 Claude 高级配置在 settings 与 meta 间往返，切换认证字段时保留凭据并移除旧字段。
 fn claude_advanced_fields_round_trip_to_settings_and_meta() {
     let input = ClaudeConfigInput {
         api_format: Some("openai_chat".to_string()),
@@ -120,6 +127,7 @@ fn claude_advanced_fields_round_trip_to_settings_and_meta() {
 }
 
 #[test]
+// 验证 Claude 高级字段拒绝未知 API 格式并给出稳定错误。
 fn claude_advanced_fields_reject_unknown_api_format() {
     let input = ClaudeConfigInput {
         api_format: Some("unknown".to_string()),
@@ -133,6 +141,7 @@ fn claude_advanced_fields_reject_unknown_api_format() {
 }
 
 #[test]
+// 验证嵌套公共配置合并时供应商值优先，同时保留未被覆盖的公共环境项。
 fn common_config_merge_keeps_provider_override() {
     let merged = merge_json_documents(
         r#"{"env":{"A":"common","B":"common"},"timeout":1}"#,
@@ -146,6 +155,7 @@ fn common_config_merge_keeps_provider_override() {
 }
 
 #[test]
+// 验证配置摘要能从内嵌 TOML 提取端点和模型。
 fn config_summary_reads_nested_toml_document_fields() {
     let summary = config_summary(
         "codex",
@@ -156,6 +166,7 @@ fn config_summary_reads_nested_toml_document_fields() {
 }
 
 #[tokio::test]
+// 在内存数据库验证引用统计只计匹配类型与 ID 的项目及活动 Worktree，排除旧格式、损坏值和缺失 Worktree。
 async fn lifecycle_reference_count_uses_project_and_active_worktree_overrides() {
     let mut connection = SqliteConnection::connect("sqlite::memory:").await.unwrap();
     sqlx::query("CREATE TABLE projects (provider_overrides TEXT NOT NULL)")
@@ -211,6 +222,7 @@ async fn lifecycle_reference_count_uses_project_and_active_worktree_overrides() 
 }
 
 #[tokio::test]
+// 在临时独立数据库激活 Claude 测试密钥，验证供应商配置投影和列表摘要遮罩，不访问 CCS。
 async fn catalog_and_key_projection_round_trip_without_ccs() {
     let temp = tempdir().unwrap();
     let path = temp.path().join("providers.db");
@@ -259,6 +271,7 @@ async fn catalog_and_key_projection_round_trip_without_ccs() {
 }
 
 #[tokio::test]
+// 在临时数据库同一事务内替换并删除活动密钥，验证成功提交后仅剩新活动项且凭据重投影；不注入失败验证回滚。
 async fn replacing_active_key_is_atomic_and_reprojects_credentials() {
     let temp = tempdir().unwrap();
     let path = temp.path().join("providers.db");

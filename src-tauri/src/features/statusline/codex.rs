@@ -14,6 +14,7 @@ pub struct CodexStatuslineConfig {
     pub items: Vec<String>,
 }
 
+// 从用户环境变量解析主目录，缺失时返回错误。
 fn home_dir() -> Result<PathBuf, String> {
     std::env::var_os("USERPROFILE")
         .or_else(|| std::env::var_os("HOME"))
@@ -22,6 +23,7 @@ fn home_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "home_dir_unavailable".to_string())
 }
 
+// 优先使用显式配置目录，否则解析 Codex 默认配置根。
 fn resolve_config_dir(config_dir: Option<String>) -> Result<PathBuf, String> {
     match config_dir
         .map(|value| value.trim().to_string())
@@ -34,6 +36,7 @@ fn resolve_config_dir(config_dir: Option<String>) -> Result<PathBuf, String> {
     }
 }
 
+// 识别简单 TOML 表头，排除数组表头。
 fn table_name(line: &str) -> Option<&str> {
     let trimmed = line.trim();
     if trimmed.starts_with('[') && trimmed.ends_with(']') && !trimmed.starts_with("[[") {
@@ -43,6 +46,7 @@ fn table_name(line: &str) -> Option<&str> {
     }
 }
 
+// 从非空、非注释行中拆出 TOML 赋值键值。
 fn assignment(line: &str) -> Option<(&str, &str)> {
     let trimmed = line.trim();
     if trimmed.is_empty() || trimmed.starts_with('#') || trimmed.starts_with('[') {
@@ -52,6 +56,7 @@ fn assignment(line: &str) -> Option<(&str, &str)> {
     Some((key.trim(), value.trim()))
 }
 
+// 按当前单行解析规则提取双引号字符串数组。
 fn parse_string_array(raw: &str) -> Option<Vec<String>> {
     let value = raw.split('#').next()?.trim();
     if !value.starts_with('[') || !value.ends_with(']') {
@@ -90,6 +95,7 @@ fn parse_string_array(raw: &str) -> Option<Vec<String>> {
     Some(items)
 }
 
+// 扫描 tui 表中的状态栏赋值，缺失时返回空列表。
 fn parse_status_line(content: &str) -> Result<Vec<String>, String> {
     let mut current_table = "";
     for line in content.lines() {
@@ -109,10 +115,12 @@ fn parse_status_line(content: &str) -> Result<Vec<String>, String> {
     Ok(Vec::new())
 }
 
+// 转义反斜杠和双引号后生成 TOML 字符串字面量。
 fn toml_string(value: &str) -> String {
     format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
+// 按传入顺序生成 status_line 数组赋值。
 fn status_line_assignment(items: &[String]) -> String {
     format!(
         "{STATUS_LINE_KEY} = [{}]",
@@ -124,6 +132,7 @@ fn status_line_assignment(items: &[String]) -> String {
     )
 }
 
+// 替换或插入 tui 状态栏赋值，保留其余配置行内容。
 fn set_status_line(content: &str, items: &[String]) -> String {
     let mut lines: Vec<String> = content.lines().map(str::to_string).collect();
     let mut tui_start = None;
@@ -165,6 +174,7 @@ fn set_status_line(content: &str, items: &[String]) -> String {
     finish_lines(lines, content)
 }
 
+// 使用换行符拼回配置，并按原文末尾状态补齐尾换行。
 fn finish_lines(lines: Vec<String>, original: &str) -> String {
     let mut next = lines.join("\n");
     if original.ends_with('\n') || next.is_empty() {
@@ -173,10 +183,12 @@ fn finish_lines(lines: Vec<String>, original: &str) -> String {
     next
 }
 
+// 判断配置路径是否指向 WSL 配置目录。
 fn is_wsl_path(path: &Path) -> bool {
     crate::wsl::is_wsl_config_dir(&path.to_string_lossy())
 }
 
+// 按主机或 WSL 读取配置文本，不存在时返回空内容。
 fn read_config(path: &Path) -> Result<String, String> {
     if is_wsl_path(path) {
         let bytes = crate::provider::global::read_live(&path.to_string_lossy())
@@ -197,6 +209,7 @@ fn read_config(path: &Path) -> Result<String, String> {
     }
 }
 
+// 同目录暂存并备份现有配置后替换文件，WSL 路径交给专用写入流程。
 fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     if is_wsl_path(path) {
         return atomic_write_wsl(path, content);
@@ -233,6 +246,7 @@ fn atomic_write(path: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 通过 WSL 文件接口暂存、备份并替换配置，失败清理暂存文件。
 fn atomic_write_wsl(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -277,6 +291,7 @@ fn atomic_write_wsl(path: &Path, content: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 读取 Codex 原生状态栏配置并规范化已知旧项目别名。
 pub fn codex_statusline_load(config_dir: Option<String>) -> Result<CodexStatuslineConfig, String> {
     let dir = resolve_config_dir(config_dir)?;
     let path = dir.join(CONFIG_FILE);
@@ -290,6 +305,7 @@ pub fn codex_statusline_load(config_dir: Option<String>) -> Result<CodexStatusli
 }
 
 #[tauri::command]
+// 严格验证项目标识后写入状态栏配置并重新读取结果。
 pub fn codex_statusline_save(
     config_dir: Option<String>,
     items: Vec<String>,
@@ -303,6 +319,7 @@ pub fn codex_statusline_save(
     codex_statusline_load(Some(dir.to_string_lossy().to_string()))
 }
 
+// 拒绝不属于当前目录或兼容别名的状态栏项目标识。
 pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
     if items.iter().any(|item| canonical_item_id(item).is_none()) {
         return Err("codex_statusline_unknown_item".to_string());
@@ -310,6 +327,7 @@ pub(crate) fn validate_items(items: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+// 返回支持的 Codex 原生状态栏项目标识目录。
 fn statusline_item_ids() -> &'static [&'static str] {
     &[
         "model",
@@ -344,6 +362,7 @@ fn statusline_item_ids() -> &'static [&'static str] {
     ]
 }
 
+// 将已知项目标识及旧别名映射到规范标识。
 fn canonical_item_id(item: &str) -> Option<&'static str> {
     if let Some(&id) = statusline_item_ids().iter().find(|id| **id == item) {
         return Some(id);
@@ -359,6 +378,7 @@ fn canonical_item_id(item: &str) -> Option<&'static str> {
     }
 }
 
+// 规范化已知项目别名，同时保留未知项目供编辑器展示。
 pub(crate) fn canonicalize_items(items: Vec<String>) -> Vec<String> {
     items
         .into_iter()
@@ -374,12 +394,14 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证从 tui 表中解析有序状态栏项目。
     fn parses_tui_status_line() {
         let raw = "model = \"gpt\"\n\n[tui]\nstatus_line = [\"model\", \"git-branch\"]\n";
         assert_eq!(parse_status_line(raw).unwrap(), vec!["model", "git-branch"]);
     }
 
     #[test]
+    // 验证插入状态栏配置时保留其他 tui 键和表。
     fn updates_tui_without_touching_other_tables() {
         let raw = "model = \"gpt\"\n\n[tui]\nnotifications = true\n\n[features]\nhooks = true\n";
         let next = set_status_line(raw, &["model".to_string(), "context-used".to_string()]);
@@ -389,6 +411,7 @@ mod tests {
     }
 
     #[test]
+    // 验证没有 tui 表时追加状态栏表与赋值。
     fn creates_tui_table_when_missing() {
         let next = set_status_line("model = \"gpt\"\n", &["model".to_string()]);
         assert_eq!(
@@ -398,6 +421,7 @@ mod tests {
     }
 
     #[test]
+    // 验证当前状态栏项目目录均通过校验。
     fn accepts_all_current_codex_statusline_item_ids() {
         let items = statusline_item_ids()
             .iter()
@@ -407,6 +431,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧别名均被接受并转换为规范标识。
     fn accepts_official_legacy_aliases_and_canonicalizes_them() {
         let aliases = vec![
             "model-name".to_string(),
@@ -431,6 +456,7 @@ mod tests {
     }
 
     #[test]
+    // 验证拒绝非官方的 thread-name 项目。
     fn rejects_non_official_thread_name_item() {
         assert_eq!(
             validate_items(&["thread-name".to_string()]).unwrap_err(),

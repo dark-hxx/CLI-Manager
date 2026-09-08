@@ -22,22 +22,27 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, OnceLock, RwLock};
 
+// 惰性初始化并返回会话项目元数据缓存锁。
 pub(super) fn get_project_cache() -> &'static Mutex<SessionProjectCache> {
     SESSION_PROJECT_CACHE.get_or_init(|| Mutex::new(SessionProjectCache::default()))
 }
 
+// 惰性初始化并返回会话目录清单缓存锁。
 pub(super) fn get_files_cache() -> &'static Mutex<SessionFilesCache> {
     SESSION_FILES_CACHE.get_or_init(|| Mutex::new(SessionFilesCache::default()))
 }
 
+// 惰性初始化并返回 WSL 文件指纹缓存锁。
 pub(super) fn get_wsl_session_fingerprint_cache() -> &'static Mutex<WslSessionFingerprintCache> {
     WSL_SESSION_FINGERPRINT_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// 惰性初始化并返回全局历史索引读写锁。
 pub(super) fn get_history_index() -> &'static RwLock<HistorySessionIndex> {
     HISTORY_SESSION_INDEX.get_or_init(|| RwLock::new(HistorySessionIndex::default()))
 }
 
+// 标记目录 catalog 脏，并尽力清除各类内存缓存及持久化旧索引。
 pub(crate) fn invalidate_history_caches() {
     catalog::mark_dirty();
     if let Ok(mut cache) = get_files_cache().lock() {
@@ -56,6 +61,7 @@ pub(crate) fn invalidate_history_caches() {
     clear_persisted_history_index();
 }
 
+// 尽力清除聚合统计与每日事实缓存。
 pub(crate) fn invalidate_history_stats_caches() {
     if let Ok(mut cache) = get_stats_aggregation_cache().lock() {
         cache.entries.clear();
@@ -87,24 +93,29 @@ pub(super) struct PersistedHistoryIndex {
 }
 
 /// App 启动时注入 appLocalData 目录（见 lib.rs setup）。未设置时持久化静默关闭。
+// 仅首次设置历史索引持久化目录，后续设置被忽略。
 pub fn set_history_index_cache_dir(dir: PathBuf) {
     let _ = HISTORY_INDEX_CACHE_DIR.set(dir);
 }
 
+// 惰性初始化并返回持久化历史索引的磁盘访问互斥锁。
 pub(super) fn history_index_disk_lock() -> &'static Mutex<()> {
     HISTORY_INDEX_DISK_LOCK.get_or_init(|| Mutex::new(()))
 }
 
+// 惰性初始化并返回已落盘 generation 映射锁。
 pub(super) fn history_index_persisted_gen() -> &'static Mutex<HashMap<String, u64>> {
     HISTORY_INDEX_PERSISTED_GEN.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+// 在已配置缓存目录下构造历史索引文件路径。
 pub(super) fn history_index_cache_file() -> Option<PathBuf> {
     HISTORY_INDEX_CACHE_DIR
         .get()
         .map(|dir| dir.join(HISTORY_INDEX_CACHE_FILE))
 }
 
+// 读取指定根目录键已落盘的 generation，锁失败返回空值。
 pub(super) fn persisted_generation(roots_key: &str) -> Option<u64> {
     history_index_persisted_gen()
         .lock()
@@ -112,12 +123,14 @@ pub(super) fn persisted_generation(roots_key: &str) -> Option<u64> {
         .and_then(|map| map.get(roots_key).copied())
 }
 
+// 尽力记录指定根目录键的已落盘 generation。
 pub(super) fn set_persisted_generation(roots_key: &str, generation: u64) {
     if let Ok(mut map) = history_index_persisted_gen().lock() {
         map.insert(roots_key.to_string(), generation);
     }
 }
 
+// 读取并校验持久化索引版本与根目录键，返回标为过期的可复用快照。
 pub(super) fn load_persisted_history_index(roots: &HistoryRoots) -> Option<HistorySessionIndex> {
     let path = history_index_cache_file()?;
     let bytes = {
@@ -143,6 +156,7 @@ pub(super) fn load_persisted_history_index(roots: &HistoryRoots) -> Option<Histo
     })
 }
 
+// generation 未变时跳过，否则以临时文件写入并重命名发布派生索引。
 pub(super) fn save_persisted_history_index(index: &HistorySessionIndex) {
     let Some(path) = history_index_cache_file() else {
         return;
@@ -176,6 +190,7 @@ pub(super) fn save_persisted_history_index(index: &HistorySessionIndex) {
     }
 }
 
+// 清空落盘代次记录并尽力删除已配置的派生索引文件。
 pub(super) fn clear_persisted_history_index() {
     if let Ok(mut map) = history_index_persisted_gen().lock() {
         map.clear();
@@ -186,10 +201,12 @@ pub(super) fn clear_persisted_history_index() {
     }
 }
 
+// 按非强制刷新规则取得历史索引并返回条目。
 pub(super) fn refresh_history_index(roots: &HistoryRoots) -> Vec<HistoryIndexEntry> {
     refresh_history_index_snapshot(roots, false).entries
 }
 
+// 复用有效内存索引，或结合旧内存及磁盘快照重建、发布并持久化索引。
 pub(super) fn refresh_history_index_snapshot(
     roots: &HistoryRoots,
     force: bool,
@@ -226,6 +243,7 @@ pub(super) fn refresh_history_index_snapshot(
     next
 }
 
+// 非强制统计优先复用同范围内存或磁盘快照，缺失时才刷新。
 pub(super) fn history_index_snapshot_for_stats(
     roots: &HistoryRoots,
     force: bool,
@@ -244,6 +262,7 @@ pub(super) fn history_index_snapshot_for_stats(
     refresh_history_index_snapshot(roots, false)
 }
 
+// 按文件指纹复用旧扫描，并行解析未命中条目，再按身份指纹变化更新代次。
 pub(super) fn build_history_index(
     now: i64,
     roots: &HistoryRoots,
@@ -360,6 +379,7 @@ pub(super) fn build_history_index(
     }
 }
 
+// 比较两组条目的路径、来源、项目键和指纹，不比较解析内容或顺序。
 pub(super) fn history_index_entries_match(
     previous: &[HistoryIndexEntry],
     next: &[HistoryIndexEntry],
@@ -395,6 +415,7 @@ pub(super) fn history_index_entries_match(
     })
 }
 
+// 仅比较修改时间与大小判断扫描结果是否可复用。
 pub(super) fn can_reuse_session_scan(
     previous: SessionFileFingerprint,
     current: SessionFileFingerprint,
@@ -402,6 +423,7 @@ pub(super) fn can_reuse_session_scan(
     previous.updated_at == current.updated_at && previous.size == current.size
 }
 
+// WSL 优先使用有效缓存或 stat，本地读取文件大小及创建修改时间。
 pub(crate) fn session_file_fingerprint(path: &Path) -> SessionFileFingerprint {
     let path_str = path.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&path_str) {
@@ -444,6 +466,7 @@ pub(crate) fn session_file_fingerprint(path: &Path) -> SessionFileFingerprint {
     }
 }
 
+// 组合扫描结果与来源路径为会话摘要，并补充缓存或扫描得到的 cwd。
 pub(super) fn summary_from_computation(
     file_ref: &SessionFileRef,
     computed: &CachedSessionComputation,
@@ -463,6 +486,7 @@ pub(super) fn summary_from_computation(
     }
 }
 
+// 扫描摘要与统计并整理为可缓存的会话计算结果。
 pub(super) fn scan_session_computation(
     path: &Path,
     created_at: i64,
@@ -473,6 +497,7 @@ pub(super) fn scan_session_computation(
 }
 
 /// 单遍同时取得 computation 与完整消息列表，供 detail 复用同一次读取与解析。
+// 扫描摘要、统计及消息，返回计算结果并保留同次读取的消息列表。
 pub(super) fn scan_session_computation_with_messages(
     path: &Path,
     created_at: i64,
@@ -485,6 +510,7 @@ pub(super) fn scan_session_computation_with_messages(
     )
 }
 
+// 按来源确定会话身份与标题时间回退，并补充 Cursor、Grok 或 Kimi 元数据。
 pub(super) fn build_session_computation(
     path: &Path,
     created_at: i64,
@@ -551,6 +577,7 @@ pub(super) fn build_session_computation(
 
 /// Enrich list/detail summary fields from Grok `summary.json` so the history list
 /// shows title, message count, timestamps, and branch instead of sparse parser-only data.
+// 用 Grok 摘要覆盖有效标题、扩展计数和时间，并填补缺失模型。
 pub(super) fn apply_grok_summary_metadata(path: &Path, computed: &mut CachedSessionComputation) {
     let Some(summary) = grok_summary_value(path) else {
         return;
@@ -617,6 +644,7 @@ pub(super) fn apply_grok_summary_metadata(path: &Path, computed: &mut CachedSess
     }
 }
 
+// 按键顺序读取正整数毫秒时间或 RFC3339 字符串。
 pub(super) fn grok_summary_timestamp_ms(summary: &Value, keys: &[&str]) -> Option<i64> {
     for key in keys {
         if let Some(value) = summary.get(*key) {

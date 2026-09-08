@@ -300,11 +300,13 @@ const SOURCES: &[SourceSpec] = &[
 ];
 
 #[tauri::command]
+// 将静态来源注册表转换为前端可读的位置及能力描述列表。
 pub fn history_sources_list_descriptors() -> Vec<HistorySourceDescriptor> {
     SOURCES.iter().map(descriptor_from_spec).collect()
 }
 
 #[tauri::command]
+// 按可选来源检查默认历史位置，返回存在的候选及环境标识。
 pub fn history_sources_detect(
     source_id: Option<String>,
 ) -> Result<Vec<HistorySourceCandidate>, String> {
@@ -341,6 +343,7 @@ pub fn history_sources_detect(
     Ok(candidates)
 }
 
+// 优先使用 Provider Home 和 Windows 特定存储位置，否则从用户目录构造候选。
 fn default_candidate_path(spec: &SourceSpec, home: &Path) -> PathBuf {
     if let Some(path) = match spec.id {
         "claude" => crate::provider::home::default_config_root("claude"),
@@ -376,6 +379,7 @@ fn default_candidate_path(spec: &SourceSpec, home: &Path) -> PathBuf {
     default_candidate_path_from_home(spec, home)
 }
 
+// 按来源默认路径拼接用户目录，并为 Grok 追加 sessions。
 fn default_candidate_path_from_home(spec: &SourceSpec, home: &Path) -> PathBuf {
     let path = spec
         .default_leaf
@@ -389,6 +393,7 @@ fn default_candidate_path_from_home(spec: &SourceSpec, home: &Path) -> PathBuf {
 }
 
 #[tauri::command]
+// 校验来源及必需位置，返回规范位置字符串、形状警告和错误。
 pub fn history_sources_validate(
     request: HistorySourceValidateRequest,
 ) -> Result<HistorySourceValidateResult, String> {
@@ -427,6 +432,7 @@ pub fn history_sources_validate(
     })
 }
 
+// 将内部来源规格映射为公开能力描述及必填位置槽。
 fn descriptor_from_spec(spec: &SourceSpec) -> HistorySourceDescriptor {
     let location = HistoryLocationSlotDescriptor {
         id: spec.location.id,
@@ -457,6 +463,7 @@ fn descriptor_from_spec(spec: &SourceSpec) -> HistorySourceDescriptor {
     }
 }
 
+// 按位置类型检查候选存在性并追加相应错误代码。
 fn validate_location(path: &Path, kind: &str, location_id: &str, errors: &mut Vec<String>) {
     if !candidate_exists(path, kind) {
         if kind == "directory" {
@@ -467,6 +474,7 @@ fn validate_location(path: &Path, kind: &str, location_id: &str, errors: &mut Ve
     }
 }
 
+// 检查已存在来源目录的典型历史子项，缺失时追加警告。
 fn validate_source_shape(spec: &SourceSpec, path: &Path, warnings: &mut Vec<String>) {
     if !candidate_exists(path, spec.location.kind) {
         return;
@@ -492,6 +500,7 @@ fn validate_source_shape(spec: &SourceSpec, path: &Path, warnings: &mut Vec<Stri
     }
 }
 
+// database 类型检查文件，其他类型检查目录；WSL 通过带五秒超时的 test 判断。
 fn candidate_exists(path: &Path, kind: &str) -> bool {
     if let Some((distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&path.to_string_lossy()) {
         let Some(executable) = crate::wsl::find_wsl_exe() else {
@@ -511,10 +520,12 @@ fn candidate_exists(path: &Path, kind: &str) -> bool {
     }
 }
 
+// 将路径转为损失容忍的拥有字符串。
 fn path_to_string(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
+// 按平台优先级从非空用户目录环境变量取得路径。
 fn home_dir() -> Option<PathBuf> {
     #[cfg(target_os = "windows")]
     {
@@ -532,6 +543,7 @@ fn home_dir() -> Option<PathBuf> {
     }
 }
 
+// 按编译目标返回本机 Windows、macOS 或 Linux 环境标识。
 fn current_environment() -> HistorySourceEnvironment {
     #[cfg(target_os = "windows")]
     {
@@ -547,6 +559,7 @@ fn current_environment() -> HistorySourceEnvironment {
     }
 }
 
+// WSL UNC 路径返回发行版环境，否则使用本机平台标识。
 fn environment_for_path(path: &Path) -> HistorySourceEnvironment {
     crate::wsl::parse_wsl_unc_path(&path.to_string_lossy())
         .map(|(distro, _)| HistorySourceEnvironment::Wsl { distro })
@@ -558,6 +571,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证来源注册表数量与 Kiro 位置类型保持约定。
     fn descriptors_keep_source_registry_size() {
         let descriptors = history_sources_list_descriptors();
         assert_eq!(descriptors.len(), 12);
@@ -569,6 +583,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺失必需 Claude 配置位置时返回校验错误。
     fn validate_rejects_missing_required_location() {
         let result = history_sources_validate(HistorySourceValidateRequest {
             source_id: "claude".to_string(),
@@ -581,6 +596,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 WSL UNC 路径提取正确发行版环境，无需启动 WSL。
     fn detects_wsl_candidate_environment_from_unc_path() {
         assert!(matches!(
             environment_for_path(Path::new(r"\\wsl.localhost\Ubuntu\home\tester\.claude")),
@@ -590,6 +606,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 验证 Grok 描述声明删除、恢复及实时统计能力。
     fn grok_history_capabilities_include_delete_resume_and_realtime_stats() {
         let grok = SOURCES.iter().find(|spec| spec.id == "grok").unwrap();
         assert_eq!(grok.capabilities.delete, "supported");
@@ -599,6 +616,7 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    // 验证 Grok 默认候选指向用户目录下的 sessions 子目录。
     fn grok_default_candidate_is_the_session_root() {
         let grok = SOURCES.iter().find(|spec| spec.id == "grok").unwrap();
         let candidate = default_candidate_path_from_home(grok, Path::new(r"C:\Users\tester"));
@@ -606,6 +624,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Kimi 默认配置根及删除、恢复和实时统计能力。
     fn kimi_default_candidate_is_the_config_root() {
         let kimi = SOURCES.iter().find(|spec| spec.id == "kimi").unwrap();
         let candidate = default_candidate_path_from_home(kimi, Path::new(r"C:\Users\tester"));

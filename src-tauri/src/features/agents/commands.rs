@@ -33,6 +33,7 @@ pub struct AgentCapabilityCommandRequest {
     ssh_launch: Option<SshLaunchPlan>,
 }
 
+// 校验文本非空、字节长度以及 NUL 和换行字符，失败返回指定错误码。
 fn validate_plain(value: &str, max: usize, code: &'static str) -> Result<(), String> {
     if value.is_empty() || value.len() > max || value.contains(['\0', '\r', '\n']) {
         return Err(code.to_string());
@@ -40,6 +41,7 @@ fn validate_plain(value: &str, max: usize, code: &'static str) -> Result<(), Str
     Ok(())
 }
 
+// 校验会话标识、路径和启动参数，并要求 SSH 环境携带结构化上下文。
 fn validate_request(request: &AgentCapabilityCommandRequest) -> Result<(), String> {
     validate_plain(
         &request.core.terminal_session_id,
@@ -89,6 +91,7 @@ fn validate_request(request: &AgentCapabilityCommandRequest) -> Result<(), Strin
     Ok(())
 }
 
+// 从 HOME 或 USERPROFILE 获取绝对用户目录，否则返回不可用错误。
 fn local_home() -> Result<PathBuf, String> {
     env::var_os("HOME")
         .or_else(|| env::var_os("USERPROFILE"))
@@ -97,6 +100,7 @@ fn local_home() -> Result<PathBuf, String> {
         .ok_or_else(|| "agent_capability_home_unavailable".to_string())
 }
 
+// 要求路径为绝对且可规范化的现有目录。
 fn canonical_existing_dir(path: &Path, code: &'static str) -> Result<PathBuf, String> {
     if !path.is_absolute() {
         return Err(code.to_string());
@@ -107,6 +111,7 @@ fn canonical_existing_dir(path: &Path, code: &'static str) -> Result<PathBuf, St
         .ok_or_else(|| code.to_string())
 }
 
+// 规范化本地用户、项目及配置目录，按发现布局收集并组装能力快照。
 fn inspect_local(core: InspectRequest) -> Result<AgentCapabilitySnapshot, String> {
     let home = canonical_existing_dir(&local_home()?, "agent_capability_home_unavailable")?;
     let cwd = canonical_existing_dir(Path::new(&core.cwd), "agent_capability_cwd_unavailable")?;
@@ -121,6 +126,7 @@ fn inspect_local(core: InspectRequest) -> Result<AgentCapabilitySnapshot, String
     Ok(assemble_snapshot(core, collect_local_bundle(&layout)))
 }
 
+// 为支持的 Agent 返回固定 MCP 列表参数，Pi 不执行原生探测。
 fn probe_args(agent: AgentKind) -> Option<&'static [&'static str]> {
     match agent {
         AgentKind::Claude => Some(&["mcp", "list"]),
@@ -131,6 +137,7 @@ fn probe_args(agent: AgentKind) -> Option<&'static [&'static str]> {
     }
 }
 
+// 按 Agent 类型设置 Claude 或 Codex 的配置根环境变量。
 fn set_config_root_env(
     command: &mut std::process::Command,
     agent: AgentKind,
@@ -150,6 +157,7 @@ fn set_config_root_env(
     }
 }
 
+// 以固定命令、十秒超时和输出上限探测本地 MCP 状态，失败仅追加诊断。
 fn probe_local(
     mut snapshot: AgentCapabilitySnapshot,
     core: &InspectRequest,
@@ -187,6 +195,7 @@ fn probe_local(
 }
 
 #[cfg(target_os = "windows")]
+// 校验发行版名并定位 wsl.exe，构造绑定发行版的隐藏命令。
 fn wsl_command(distro: &str) -> Result<std::process::Command, String> {
     validate_plain(distro, 128, "agent_capability_wsl_distro_invalid")?;
     let executable =
@@ -197,6 +206,7 @@ fn wsl_command(distro: &str) -> Result<std::process::Command, String> {
 }
 
 #[cfg(target_os = "windows")]
+// 执行有超时及输出上限的 WSL 命令，将超时与启动失败归一化。
 fn wsl_output(distro: &str, args: &[&str], timeout: Duration) -> Result<BoundedOutput, String> {
     let mut command = wsl_command(distro)?;
     command.args(args);
@@ -210,6 +220,7 @@ fn wsl_output(distro: &str, args: &[&str], timeout: Duration) -> Result<BoundedO
 }
 
 #[cfg(target_os = "windows")]
+// 使用 WSL head 限量读取 UTF-8 文本，失败或超限时返回空值。
 fn wsl_read_bounded(distro: &str, path: &str, max_bytes: usize) -> Option<String> {
     let limit = (max_bytes + 1).to_string();
     let output = wsl_output(
@@ -225,6 +236,7 @@ fn wsl_read_bounded(distro: &str, path: &str, max_bytes: usize) -> Option<String
 }
 
 #[cfg(target_os = "windows")]
+// 修剪边界斜杠并拼接 POSIX 根路径与相对路径。
 fn posix_join(root: &str, relative: &str) -> String {
     format!(
         "{}/{}",
@@ -234,6 +246,7 @@ fn posix_join(root: &str, relative: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
+// 返回 POSIX 路径父目录，并保留根目录表示。
 fn posix_parent(path: &str) -> Option<String> {
     let trimmed = path.trim_end_matches('/');
     let index = trimmed.rfind('/')?;
@@ -245,6 +258,7 @@ fn posix_parent(path: &str) -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 最多向上收集 32 层项目路径，再按根到工作目录的顺序返回。
 fn posix_project_roots(root: &str, cwd: &str) -> Vec<String> {
     let normalized_root = root.trim_end_matches('/');
     let mut current = cwd.trim_end_matches('/').to_string();
@@ -267,6 +281,7 @@ fn posix_project_roots(root: &str, cwd: &str) -> Vec<String> {
 }
 
 #[cfg(target_os = "windows")]
+// 通过 WSL Git 查询仓库根，查询失败或输出无效时回退工作目录。
 fn wsl_git_root(distro: &str, cwd: &str) -> String {
     let output = wsl_output(
         distro,
@@ -283,6 +298,7 @@ fn wsl_git_root(distro: &str, cwd: &str) -> String {
 }
 
 #[cfg(target_os = "windows")]
+// 限量读取 WSL 配置文件，成功后附带显示标签加入发现集合。
 fn push_wsl_config(
     bundle: &mut DiscoveryBundle,
     distro: &str,
@@ -304,6 +320,7 @@ fn push_wsl_config(
 }
 
 #[cfg(target_os = "windows")]
+// 限深查找 WSL 技能清单并限量读取，保留不可读候选的稳定错误标记。
 fn push_wsl_skills(
     bundle: &mut DiscoveryBundle,
     distro: &str,
@@ -362,6 +379,7 @@ fn push_wsl_skills(
 }
 
 #[cfg(target_os = "windows")]
+// 校验 WSL 工作目录环境，按 Agent 优先级收集用户与项目配置和技能并组装快照。
 fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnapshot, String> {
     let cwd = if let Some((path_distro, linux_path)) = crate::wsl::parse_wsl_unc_path(&core.cwd) {
         if !path_distro.eq_ignore_ascii_case(distro) {
@@ -631,11 +649,13 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台明确拒绝 WSL 能力检查。
 fn inspect_wsl(_core: InspectRequest, _distro: &str) -> Result<AgentCapabilitySnapshot, String> {
     Err("agent_capability_wsl_unsupported".to_string())
 }
 
 #[cfg(target_os = "windows")]
+// 在 WSL 工作目录运行固定 Agent 探测，限制时间和输出并追加安全诊断。
 fn probe_wsl(
     mut snapshot: AgentCapabilitySnapshot,
     core: &InspectRequest,
@@ -685,6 +705,7 @@ fn probe_wsl(
 }
 
 #[cfg(not(target_os = "windows"))]
+// 在非 Windows 平台保持原有能力快照，不执行 WSL 探测。
 fn probe_wsl(
     snapshot: AgentCapabilitySnapshot,
     _core: &InspectRequest,
@@ -693,6 +714,7 @@ fn probe_wsl(
     snapshot
 }
 
+// 组装空发现快照并标记 SSH Agent 需要升级。
 fn upgrade_required_snapshot(core: InspectRequest) -> AgentCapabilitySnapshot {
     let mut snapshot = assemble_snapshot(core, DiscoveryBundle::default());
     snapshot.bridge_status = BridgeStatus::UpgradeRequired;
@@ -703,6 +725,7 @@ fn upgrade_required_snapshot(core: InspectRequest) -> AgentCapabilitySnapshot {
     snapshot
 }
 
+// 仅经 daemon SSH Agent RPC 执行检查或探测，将能力缺失映射为升级快照。
 fn inspect_ssh(
     daemon_bridge: &DaemonBridge,
     request: AgentCapabilityCommandRequest,
@@ -735,6 +758,7 @@ fn inspect_ssh(
     }
 }
 
+// 校验请求后按本地、WSL 或 SSH 环境路由检查，并按请求追加原生探测。
 async fn execute(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     request: AgentCapabilityCommandRequest,
@@ -771,6 +795,7 @@ async fn execute(
 }
 
 #[tauri::command]
+// 执行静态 Agent 能力检查，不主动运行原生 MCP 探测命令。
 pub async fn agent_capabilities_inspect(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     request: AgentCapabilityCommandRequest,
@@ -779,6 +804,7 @@ pub async fn agent_capabilities_inspect(
 }
 
 #[tauri::command]
+// 检查 Agent 能力后运行该环境支持的固定原生探测。
 pub async fn agent_capabilities_probe(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     request: AgentCapabilityCommandRequest,
@@ -790,6 +816,7 @@ pub async fn agent_capabilities_probe(
 mod tests {
     use super::*;
 
+    // 构造仅含测试标识与路径文本的有效本地能力请求。
     fn valid_request() -> AgentCapabilityCommandRequest {
         AgentCapabilityCommandRequest {
             core: InspectRequest {
@@ -814,6 +841,7 @@ mod tests {
     }
 
     #[test]
+    // 验证请求边界拒绝工作目录中的 NUL 字符。
     fn rejects_control_characters_at_the_boundary() {
         let mut request = valid_request();
         request.core.cwd.push('\0');
@@ -824,6 +852,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 环境缺少结构化启动上下文时拒绝请求。
     fn ssh_requires_structured_launch_context() {
         let mut request = valid_request();
         request.core.environment = EnvironmentKind::Ssh;

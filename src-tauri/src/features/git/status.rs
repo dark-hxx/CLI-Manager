@@ -7,6 +7,7 @@ use super::{
 use git2::StatusOptions;
 use std::path::Path;
 
+// 用 libgit2 收集递归状态并过滤嵌套仓库，条目过多时跳过行数统计。
 pub(super) fn git_get_changes_native(
     project_path: &str,
     started_at: std::time::Instant,
@@ -109,6 +110,7 @@ pub(super) fn git_get_changes_native(
     Ok(changes)
 }
 
+// 通过 WSL porcelain 收集状态，过滤可确认的嵌套仓库并按需合并行数统计。
 pub(super) fn git_get_changes_wsl(
     project_path: &str,
     distro: &str,

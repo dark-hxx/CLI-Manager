@@ -41,6 +41,7 @@ struct ExistingIntegration {
     history_source_instance_id: String,
 }
 
+// 返回 Unix 毫秒时间戳字符串，时钟早于纪元时使用零。
 fn timestamp_millis() -> String {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -48,6 +49,7 @@ fn timestamp_millis() -> String {
         .unwrap_or_else(|_| "0".to_string())
 }
 
+// 识别 SQLite 忙碌、锁定及对应扩展错误码。
 fn is_sqlite_busy_code(code: &str) -> bool {
     matches!(code, "SQLITE_BUSY" | "SQLITE_LOCKED")
         || code
@@ -55,6 +57,7 @@ fn is_sqlite_busy_code(code: &str) -> bool {
             .is_ok_and(|value| matches!(value & 0xff, 5 | 6))
 }
 
+// 将锁竞争映射为稳定提示，其余错误携带持久化阶段。
 fn map_db_error(stage: &str, error: sqlx::Error) -> String {
     let busy = error
         .as_database_error()
@@ -67,6 +70,7 @@ fn map_db_error(stage: &str, error: sqlx::Error) -> String {
     }
 }
 
+// 校验 Hook 持久化请求身份、根目录、历史候选及序列化大小。
 fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), String> {
     Uuid::parse_str(request.host_id.trim()).map_err(|_| "ssh_host_id_invalid".to_string())?;
     if request
@@ -155,6 +159,7 @@ fn validate_request(request: &SshHookReportPersistenceRequest) -> Result<(), Str
     Ok(())
 }
 
+// 允许空偏好根目录，否则限制长度并校验远程路径语法。
 fn validate_preference_root(root: &str) -> Result<(), String> {
     let root = root.trim();
     if root.is_empty() {
@@ -171,6 +176,7 @@ fn validate_preference_root(root: &str) -> Result<(), String> {
     })
 }
 
+// 在单个立即事务中写入四种 CLI 根偏好并删除空值。
 async fn persist_host_preferences(
     connection: &mut SqliteConnection,
     request: SshHostPreferencesPersistenceRequest,
@@ -223,6 +229,7 @@ async fn persist_host_preferences(
         .map_err(|error| map_db_error("commit", error))
 }
 
+// 将查询行转换为保留根目录和历史身份的现有集成记录。
 fn existing_from_row(row: SqliteRow) -> ExistingIntegration {
     ExistingIntegration {
         integration_id: row.get("integration_id"),
@@ -233,6 +240,7 @@ fn existing_from_row(row: SqliteRow) -> ExistingIntegration {
     }
 }
 
+// 事务内更新 Hook 报告、保留旧根和安装记录并同步同根镜像。
 async fn persist_hook_report(
     connection: &mut SqliteConnection,
     request: SshHookReportPersistenceRequest,
@@ -487,6 +495,7 @@ async fn persist_hook_report(
 }
 
 #[tauri::command]
+// 打开主库连接并持久化 Hook 报告，锁等待限制为五秒。
 pub async fn ssh_agent_record_hook_report(
     request: SshHookReportPersistenceRequest,
 ) -> Result<(), String> {
@@ -501,6 +510,7 @@ pub async fn ssh_agent_record_hook_report(
 }
 
 #[tauri::command]
+// 打开主库连接并原子保存主机 CLI 根偏好。
 pub async fn ssh_agent_save_host_preferences(
     request: SshHostPreferencesPersistenceRequest,
 ) -> Result<(), String> {
@@ -526,6 +536,7 @@ mod tests {
     const HOST_ID: &str = "00000000-0000-4000-8000-000000000001";
     const INSTALLATION_ID: &str = "00000000-0000-4000-8000-000000000002";
 
+    // 建立只在内存运行的集成及偏好测试数据库。
     async fn database() -> SqliteConnection {
         let mut connection = SqliteConnection::connect(":memory:").await.unwrap();
         sqlx::raw_sql(
@@ -563,6 +574,7 @@ mod tests {
         connection
     }
 
+    // 构造指定根目录和管理条目数的内存 Hook 报告。
     fn report(
         configured_root: &str,
         canonical_root: &str,
@@ -587,6 +599,7 @@ mod tests {
         }
     }
 
+    // 为报告构造固定主机的主作用域持久化请求。
     fn request(report: HookConfigReport) -> SshHookReportPersistenceRequest {
         SshHookReportPersistenceRequest {
             host_id: HOST_ID.to_string(),
@@ -598,6 +611,7 @@ mod tests {
         }
     }
 
+    // 构造四种 CLI 根目录的主机偏好测试请求。
     fn preferences(
         claude_root: &str,
         codex_root: &str,
@@ -614,6 +628,7 @@ mod tests {
     }
 
     #[test]
+    // 验证忙碌及锁定基本码、扩展码和符号码识别。
     fn recognizes_sqlite_busy_and_locked_extended_codes() {
         for code in [
             "5",
@@ -630,6 +645,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证偏好保存与空值删除后仅保留更新的 Codex 根。
     async fn saves_and_deletes_host_preferences_in_one_transaction() {
         let mut connection = database().await;
         persist_host_preferences(
@@ -654,6 +670,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证一个偏好写入失败时先前写入也回滚。
     async fn rolls_back_all_host_preferences_when_one_write_fails() {
         let mut connection = database().await;
         persist_host_preferences(
@@ -690,6 +707,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证同规范根目录镜像共享报告且保留各自配置根。
     async fn persists_same_root_mirrors_in_one_transaction() {
         let mut connection = database().await;
         let initial = report("~/.codex", "/root/.codex", 1);
@@ -742,6 +760,7 @@ mod tests {
     }
 
     #[tokio::test]
+    // 验证新集成插入失败会撤销旧根转为保留作用域的更新。
     async fn rolls_back_retained_root_when_insert_fails() {
         let mut connection = database().await;
         let initial = report("~/.codex", "/root/.codex", 1);

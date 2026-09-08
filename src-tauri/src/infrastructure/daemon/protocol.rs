@@ -32,6 +32,7 @@ pub const ROUTING_ERROR_FEATURE_NOT_SUPPORTED: &str = "routing_feature_not_suppo
 pub const ROUTING_ERROR_PROTOCOL_UNSUPPORTED: &str = "routing_protocol_unsupported";
 pub const ROUTING_ERROR_SERVICE_UNAVAILABLE: &str = "routing_service_unavailable";
 
+// 返回本版本声明支持的能力列表；具体连接是否可用仍由握手和调用方判断。
 pub fn supported_features() -> Vec<String> {
     [
         FEATURE_WS_BINARY_OUTPUT,
@@ -179,6 +180,7 @@ pub enum ClientFrame {
     },
 }
 
+// 仅提取五类路由控制帧的请求编号，供传输门禁和应答关联使用。
 pub fn routing_control_id(frame: &ClientFrame) -> Option<u64> {
     match frame {
         ClientFrame::RoutingReload { id, .. }
@@ -190,6 +192,7 @@ pub fn routing_control_id(frame: &ClientFrame) -> Option<u64> {
     }
 }
 
+// 检查握手能力列表是否包含本地路由标识；缺失时返回重启提示，不发送请求。
 pub fn ensure_local_routing_capability(features: &[String]) -> Result<(), RoutingError> {
     if features
         .iter()
@@ -211,6 +214,7 @@ pub struct RoutingError {
 }
 
 impl RoutingError {
+    // 构造能力缺失错误，参数仅包含固定能力名，提示调用方重启 daemon。
     pub fn feature_not_supported() -> Self {
         Self {
             code: ROUTING_ERROR_FEATURE_NOT_SUPPORTED.to_string(),
@@ -219,6 +223,7 @@ impl RoutingError {
         }
     }
 
+    // 将传输名称限制为白名单值；未知输入不回显，并提示改用路由 Tauri 命令。
     pub fn protocol_unsupported(transport: &str) -> Self {
         let transport = match transport {
             "websocket" => "websocket",
@@ -232,6 +237,7 @@ impl RoutingError {
         }
     }
 
+    // 构造无动态参数的服务不可用错误，提供重试或重启提示。
     pub fn service_unavailable() -> Self {
         Self {
             code: ROUTING_ERROR_SERVICE_UNAVAILABLE.to_string(),
@@ -240,6 +246,7 @@ impl RoutingError {
         }
     }
 
+    // 只保留已知地址/端口错误码，其余归为不可用；端口耗尽提示换端口，其余提示修正输入。
     pub fn runtime_failure(code: &str) -> Self {
         let code = match code {
             "routing_listen_address_invalid"
@@ -295,6 +302,7 @@ pub struct RoutingStatus {
 }
 
 impl RoutingEvent {
+    // 将错误绑定到请求编号，生成不携带状态快照的错误事件。
     pub fn error(request_id: u64, error: RoutingError) -> Self {
         Self {
             request_id: Some(request_id),
@@ -304,6 +312,7 @@ impl RoutingEvent {
         }
     }
 
+    // 将状态快照绑定到请求编号，并以快照中的状态字符串作为事件种类。
     pub fn status(request_id: u64, status: RoutingStatus) -> Self {
         Self {
             request_id: Some(request_id),
@@ -339,6 +348,7 @@ pub struct ProcessTraits {
 }
 
 impl ProcessTraits {
+    // 按编译平台生成进程特征；Windows 附带构建号与调用方提供的 DLL 使用标记。
     pub fn current_platform(uses_conpty_dll: bool) -> Self {
         #[cfg(target_os = "windows")]
         {
@@ -371,6 +381,7 @@ impl ProcessTraits {
 }
 
 #[cfg(target_os = "windows")]
+// 从系统版本描述中取首个至少五位的数字作为构建号候选，无法取得时返回 None。
 fn windows_build_number() -> Option<u32> {
     sysinfo::System::long_os_version().and_then(|version| {
         version
@@ -541,6 +552,7 @@ pub enum ProtocolError {
     UnknownType(String),
 }
 
+// 将可序列化值编码为单行 JSON 并追加换行；不检查帧大小，序列化失败会 panic。
 pub fn encode_frame<T: Serialize>(frame: &T) -> String {
     // 帧内不会出现裸换行：serde_json 序列化的字符串会转义 \n。
     let mut line = serde_json::to_string(frame).expect("frame serialization cannot fail");
@@ -549,6 +561,7 @@ pub fn encode_frame<T: Serialize>(frame: &T) -> String {
 }
 
 /// WebSocket 二进制终端帧：version/kind/sessionLen/sequence/cols/rows/dataLen + payload。
+// 校验种类、字段长度和总帧上限后写入大端头部，再原样拼接会话 ID 与负载字节。
 pub fn encode_binary_terminal_frame(
     kind: u8,
     session_id: &str,
@@ -589,6 +602,7 @@ pub fn encode_binary_terminal_frame(
     Ok(frame)
 }
 
+// 仅接受客户端输入/检查点帧，校验版本、精确长度和 ID 的 UTF-8；负载保持原始字节。
 pub fn decode_binary_terminal_frame(frame: &[u8]) -> Result<BinaryTerminalFrame, String> {
     if frame.len() < BINARY_HEADER_BYTES {
         return Err("binary frame too short".to_string());
@@ -635,10 +649,13 @@ pub fn decode_binary_terminal_frame(frame: &[u8]) -> Result<BinaryTerminalFrame,
     })
 }
 
+// 仅提取字符串类型的 type 字段；缺失或其他 JSON 类型均返回 None。
 fn frame_type_of(value: &serde_json::Value) -> Option<String> {
     value.get("type").and_then(|v| v.as_str()).map(String::from)
 }
 
+// 先检查字节上限，再解析 JSON 和帧类型；未知类型与畸形帧分开报告，连接策略由调用方负责。
+// 错误仍含原始类型或解析原因，调用方必须避免直接写入生产日志或回显。
 fn decode_with_known_types<T: for<'de> Deserialize<'de>>(
     line: &str,
     known_types: &[&str],
@@ -702,10 +719,12 @@ const DAEMON_FRAME_TYPES: &[&str] = &[
     "checkpoint_rejected",
 ];
 
+// 按客户端类型白名单解析控制帧；字段反序列化不替代后续鉴权及业务范围校验。
 pub fn decode_client_frame(line: &str) -> Result<ClientFrame, ProtocolError> {
     decode_with_known_types(line, CLIENT_FRAME_TYPES)
 }
 
+// 按 daemon 类型白名单解析应答或推送帧，保留未知类型与畸形数据的错误区分。
 pub fn decode_daemon_frame(line: &str) -> Result<DaemonFrame, ProtocolError> {
     decode_with_known_types(line, DAEMON_FRAME_TYPES)
 }
@@ -715,6 +734,7 @@ mod tests {
     use super::*;
 
     #[test]
+    // 验证含字符与像素尺寸的 resize 请求往返不丢字段，编码末尾带换行。
     fn client_frame_roundtrip() {
         let frame = ClientFrame::Resize {
             id: 7,
@@ -731,6 +751,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 创建参数与终端颜色可往返，旧创建帧省略这两项时默认 None。
     fn ssh_create_frame_roundtrip_and_legacy_create_compatibility() {
         let frame = ClientFrame::Create {
             id: 9,
@@ -794,6 +815,7 @@ mod tests {
     }
 
     #[test]
+    // 验证输出帧的会话、序号、尺寸和 base64 文本在 JSON 往返后保持一致。
     fn daemon_frame_roundtrip() {
         let frame = DaemonFrame::Output {
             session_id: "abc".into(),
@@ -807,6 +829,7 @@ mod tests {
     }
 
     #[test]
+    // 验证路由重置帧保留身份与编号，但丢弃未知密钥字段，重编码不会带回这些值。
     fn routing_frames_roundtrip_and_drop_unknown_secret_fields() {
         let decoded = decode_client_frame(
             r#"{"type":"routing_reset_circuit","id":11,"app_type":"codex","provider_id":"provider-1","api_key":"sk-secret","proxy_password":"pw-secret","provider":{"key":"nested-secret"}}"#,
@@ -828,6 +851,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未知传输输入归一化为 unknown，错误事件不泄露输入中的用户或密码片段。
     fn routing_error_dto_is_stable_and_sanitizes_transport_params() {
         let event = DaemonFrame::RoutingEvent {
             event: RoutingEvent::error(
@@ -845,6 +869,7 @@ mod tests {
     }
 
     #[test]
+    // 验证控制协议仍为版本 3、能力列表声明路由支持，旧能力列表返回固定重启提示。
     fn local_routing_capability_is_advertised_without_protocol_bump() {
         assert_eq!(CONTROL_PROTOCOL_VERSION, 3);
         assert!(ensure_local_routing_capability(&supported_features()).is_ok());
@@ -859,6 +884,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未知客户端类型被分类为 UnknownType，并在内部错误中保留类型名。
     fn unknown_type_is_forward_compatible_error() {
         let result = decode_client_frame(r#"{"type":"future_op","id":1}"#);
         assert_eq!(
@@ -868,6 +894,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未知 daemon 类型也使用 UnknownType，而非归为 JSON 畸形错误。
     fn unknown_daemon_type_is_forward_compatible_error() {
         let result = decode_daemon_frame(r#"{"type":"future_daemon_event"}"#);
         assert_eq!(
@@ -877,12 +904,14 @@ mod tests {
     }
 
     #[test]
+    // 验证 ping 帧新增未知字段不妨碍读取已有请求编号。
     fn unknown_fields_are_ignored() {
         let decoded = decode_client_frame(r#"{"type":"ping","id":3,"futureField":"x"}"#).unwrap();
         assert_eq!(decoded, ClientFrame::Ping { id: 3 });
     }
 
     #[test]
+    // 验证无效 JSON 和缺失 type 的对象均被拒绝为 Malformed。
     fn malformed_json_is_rejected() {
         assert!(matches!(
             decode_client_frame("{not json"),
@@ -895,6 +924,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超过字节上限的控制帧在反序列化前返回固定超长原因。
     fn oversized_control_frame_is_rejected_before_deserialization() {
         let oversized = format!(
             r#"{{"type":"routing_reload","id":1,"padding":"{}"}}"#,
@@ -907,6 +937,7 @@ mod tests {
     }
 
     #[test]
+    // 逐字段断言二进制输出头的大端布局以及会话 ID、负载的准确偏移。
     fn binary_terminal_frame_has_stable_header_and_payload() {
         let frame =
             encode_binary_terminal_frame(BINARY_KIND_OUTPUT, "session-1", 42, 120, 30, b"hello")

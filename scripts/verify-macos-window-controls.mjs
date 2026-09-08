@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 const macosConfig = JSON.parse(await readFile("src-tauri/tauri.macos.conf.json", "utf8"));
 const cargoManifest = await readFile("src-tauri/Cargo.toml", "utf8");
 const macosWindows = macosConfig?.app?.windows ?? [];
+// 从 macOS 窗口配置中定位主窗口。
 const mainWindow = macosWindows.find((window) => window.label === "main");
+// 从 macOS 窗口配置中定位桌宠窗口。
 const desktopPetWindow = macosWindows.find((window) => window.label === "desktop-pet");
 
 assert.equal(

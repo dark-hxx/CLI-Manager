@@ -10,6 +10,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
+// 生成 Tauri 前端构建和开发服务配置，包含插件、别名、分包及固定端口。
 export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   resolve: {
@@ -23,6 +24,7 @@ export default defineConfig(async () => ({
     chunkSizeWarningLimit: 4000,
     rollupOptions: {
       output: {
+        // 将 React 运行时和 xterm 依赖分别归入独立 vendor 分包。
         manualChunks(id) {
           const normalizedId = id.replace(/\\\\/g, "/");
           if (normalizedId.includes("/node_modules/")) {

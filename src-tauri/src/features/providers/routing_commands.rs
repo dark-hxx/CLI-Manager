@@ -70,6 +70,7 @@ pub struct RoutingState {
     pub daemon: RoutingDaemonState,
 }
 
+// 构造带错误码、空参数表和操作提示的路由命令错误。
 fn command_error(code: &str, hint: &str) -> RoutingError {
     RoutingError {
         code: code.to_string(),
@@ -78,11 +79,13 @@ fn command_error(code: &str, hint: &str) -> RoutingError {
     }
 }
 
+// 取原始错误首个冒号前的部分作为错误码，并统一提示修正输入。
 fn map_input_error(error: String) -> RoutingError {
     let code = error.split(':').next().unwrap_or("routing_input_invalid");
     command_error(code, "fix_input")
 }
 
+// 提取错误码并统一提示重试或重启守护进程，不保留原始错误详情。
 fn map_persistence_error(error: String) -> RoutingError {
     let code = error
         .split(':')
@@ -91,6 +94,7 @@ fn map_persistence_error(error: String) -> RoutingError {
     command_error(code, "retry_or_restart_daemon")
 }
 
+// 仅保留四种已知运行状态，其余守护进程事件类型映射为 unknown。
 fn sanitize_runtime_status(kind: &str) -> String {
     match kind {
         "running" | "stopped" | "degraded" | "recovering" => kind.to_string(),
@@ -98,6 +102,7 @@ fn sanitize_runtime_status(kind: &str) -> String {
     }
 }
 
+// 查询守护进程路由状态，并分别表达未连接、不支持能力、请求失败和响应类型异常。
 fn daemon_state(client: Option<Arc<DaemonClient>>) -> RoutingDaemonState {
     let Some(client) = client else {
         return RoutingDaemonState {
@@ -149,6 +154,7 @@ fn daemon_state(client: Option<Arc<DaemonClient>>) -> RoutingDaemonState {
     }
 }
 
+// 将路由事件转换为界面状态；事件含错误时标记不可用，并提取可选监听地址与端口。
 fn routing_event_state(event: RoutingEvent) -> RoutingDaemonState {
     let status = event
         .error
@@ -170,12 +176,14 @@ fn routing_event_state(event: RoutingEvent) -> RoutingDaemonState {
     }
 }
 
+// 提取事件中的状态载荷，缺失时返回响应无效错误；此处不单独检查事件错误字段。
 fn routing_status(event: RoutingEvent) -> Result<RoutingStatus, RoutingError> {
     event
         .status
         .ok_or_else(|| command_error("routing_daemon_response_invalid", "restart_daemon"))
 }
 
+// 仅接受三种回环主机写法及非特权端口，正确加括号后构造 IPv6 HTTP 地址。
 fn local_route_endpoint(address: &str, port: u16) -> Result<String, RoutingError> {
     let host = match address.trim() {
         "127.0.0.1" | "localhost" => address.trim().to_string(),
@@ -188,6 +196,7 @@ fn local_route_endpoint(address: &str, port: u16) -> Result<String, RoutingError
     Ok(format!("http://{host}:{port}"))
 }
 
+// 按端点模式校验网关 IPv4 或回环地址；网关模式拒绝未指定地址、回环地址和特权端口。
 fn route_endpoint(address: &str, endpoint_mode: &str, port: u16) -> Result<String, RoutingError> {
     if endpoint_mode == "wsl_gateway" {
         let host = address
@@ -201,12 +210,14 @@ fn route_endpoint(address: &str, endpoint_mode: &str, port: u16) -> Result<Strin
     local_route_endpoint(address, port)
 }
 
+// 按字符串完全相等去重后追加监听地址，保留原有顺序。
 fn add_listener_address(addresses: &mut Vec<String>, address: String) {
     if !addresses.iter().any(|item| item == &address) {
         addresses.push(address);
     }
 }
 
+// 从服务与 WSL 接管记录收集监听地址；网关模式重新解析网关并拒绝与持久化主机不一致的结果。
 fn persisted_listener_addresses(
     persisted: &RoutingPersistedState,
 ) -> Result<Vec<String>, RoutingError> {
@@ -234,6 +245,7 @@ fn persisted_listener_addresses(
     Ok(addresses)
 }
 
+// 发送监听地址重载请求，沿用当前首选端口和实际端口，并要求响应包含状态。
 fn reload_routing_listeners(
     client: Arc<DaemonClient>,
     status: &RoutingStatus,
@@ -251,6 +263,7 @@ fn reload_routing_listeners(
     )?)
 }
 
+// 仅在监听集合已变化时尝试恢复旧集合，忽略恢复失败。
 fn restore_routing_listeners(
     client: Arc<DaemonClient>,
     status: &RoutingStatus,
@@ -262,10 +275,12 @@ fn restore_routing_listeners(
     }
 }
 
+// 同步等待返回字符串错误的异步操作，并映射为路由持久化类错误。
 fn block_on<T>(future: impl Future<Output = Result<T, String>>) -> Result<T, RoutingError> {
     tauri::async_runtime::block_on(future).map_err(map_persistence_error)
 }
 
+// 加载持久化路由配置，再查询可用守护进程的运行状态组成返回值。
 fn state(client: Option<Arc<DaemonClient>>) -> Result<RoutingState, RoutingError> {
     let persisted = block_on(routing::load_persisted_state())?;
     Ok(RoutingState {
@@ -281,6 +296,7 @@ enum RoutingServiceRuntimeAction {
     Stop,
 }
 
+// 比较目标启用状态与守护进程是否 running，决定启动、停止或不操作。
 fn routing_service_runtime_action(
     service_enabled: bool,
     daemon_status: &str,
@@ -292,6 +308,7 @@ fn routing_service_runtime_action(
     }
 }
 
+// 持久化开关不一致或运行状态尚未满足目标时，判定需要更新。
 fn routing_service_needs_update(
     persisted_enabled: bool,
     requested_enabled: bool,
@@ -302,6 +319,7 @@ fn routing_service_needs_update(
             != RoutingServiceRuntimeAction::None
 }
 
+// 根据目标开关构造启动或停止帧；启动帧携带监听地址与已记录端口。
 fn routing_service_control_frame(
     id: u64,
     enabled: bool,
@@ -321,6 +339,7 @@ fn routing_service_control_frame(
     }
 }
 
+// 协调目标开关、运行状态和配置保存；运行变更后的保存失败会尝试发送反向控制帧，回滚错误被忽略。
 fn set_service_enabled_with_client(
     client: Option<Arc<DaemonClient>>,
     mut persisted: RoutingPersistedState,
@@ -389,6 +408,7 @@ fn set_service_enabled_with_client(
     })
 }
 
+// 以持久化服务开关为目标协调新连接守护进程的路由运行状态。
 pub(crate) fn reconcile_persisted_service(
     client: Arc<DaemonClient>,
 ) -> Result<RoutingState, RoutingError> {
@@ -397,6 +417,7 @@ pub(crate) fn reconcile_persisted_service(
     set_service_enabled_with_client(Some(client), persisted, service_enabled)
 }
 
+// 校验路由能力与控制帧请求编号，发送请求并仅接受无错误的路由事件。
 fn request_control(
     client: Option<Arc<DaemonClient>>,
     frame: ClientFrame,
@@ -423,6 +444,7 @@ fn request_control(
     }
 }
 
+// 通过空供应商 ID 请求重置指定应用的全部熔断器，并验证响应状态存在。
 fn reset_all_daemon_circuits(
     client: Arc<DaemonClient>,
     app_type: &str,
@@ -439,6 +461,7 @@ fn reset_all_daemon_circuits(
     Ok(())
 }
 
+// 尽力将指定应用的守护进程熔断状态合入队列视图；查询失败保留原状态，当前供应商匹配时更新其摘要。
 fn merge_daemon_circuits(
     mut state: RoutingFailoverState,
     client: Option<Arc<DaemonClient>>,
@@ -481,6 +504,7 @@ fn merge_daemon_circuits(
     state
 }
 
+// 将守护进程熔断条目的供应商、状态、失败数和成功探测数投影为前端数据。
 fn circuit_state_from_daemon(
     circuit: RoutingCircuitStatus,
 ) -> crate::provider::routing::RoutingCircuitState {
@@ -493,6 +517,7 @@ fn circuit_state_from_daemon(
 }
 
 #[tauri::command]
+// 通过 IPC 返回持久化配置与当前守护进程路由状态。
 pub fn routing_get_state(
     daemon_bridge: State<'_, DaemonBridge>,
 ) -> Result<RoutingState, RoutingError> {
@@ -500,6 +525,7 @@ pub fn routing_get_state(
 }
 
 #[tauri::command]
+// 加载应用故障转移队列，并尽力合入守护进程熔断状态。
 pub fn routing_get_failover_queue(
     daemon_bridge: State<'_, DaemonBridge>,
     app_type: String,
@@ -509,6 +535,7 @@ pub fn routing_get_failover_queue(
 }
 
 #[tauri::command]
+// 规范化应用类型；存在守护进程连接时先重置全部熔断器，再保存故障转移开关并合入运行状态。
 pub fn routing_set_failover_enabled(
     daemon_bridge: State<'_, DaemonBridge>,
     app_type: String,
@@ -524,6 +551,7 @@ pub fn routing_set_failover_enabled(
 }
 
 #[tauri::command]
+// 保存指定应用的供应商队列并返回重新加载的故障转移状态。
 pub fn routing_set_failover_queue(
     input: RoutingFailoverQueueInput,
 ) -> Result<RoutingFailoverState, RoutingError> {
@@ -534,6 +562,7 @@ pub fn routing_set_failover_queue(
 }
 
 #[tauri::command]
+// 禁止通过参数更新接口改变自动故障转移开关，保存其他配置后重新加载状态。
 pub fn routing_update_failover_config(
     input: RoutingFailoverConfigInput,
 ) -> Result<RoutingFailoverState, RoutingError> {
@@ -548,11 +577,13 @@ pub fn routing_update_failover_config(
 }
 
 #[tauri::command]
+// 读取已保存的全局代理状态并映射加载错误。
 pub fn routing_get_global_proxy() -> Result<RoutingGlobalProxyState, RoutingError> {
     block_on(routing::load_global_proxy())
 }
 
 #[tauri::command]
+// 委托服务层校验并保存全局代理输入，返回保存后的状态。
 pub fn routing_set_global_proxy(
     input: RoutingGlobalProxyInput,
 ) -> Result<RoutingGlobalProxyState, RoutingError> {
@@ -560,11 +591,13 @@ pub fn routing_set_global_proxy(
 }
 
 #[tauri::command]
+// 扫描全局代理候选项，并将扫描错误转换为路由命令错误。
 pub fn routing_scan_global_proxy() -> Result<Vec<RoutingProxyScanCandidate>, RoutingError> {
     routing::scan_global_proxy().map_err(map_persistence_error)
 }
 
 #[tauri::command]
+// 同步等待服务层代理连通性测试并返回测试结果。
 pub fn routing_test_global_proxy(
     input: RoutingGlobalProxyTestInput,
 ) -> Result<RoutingGlobalProxyTestResult, RoutingError> {
@@ -572,11 +605,13 @@ pub fn routing_test_global_proxy(
 }
 
 #[tauri::command]
+// 加载请求整流配置，通过统一适配层返回持久化错误。
 pub fn routing_get_rectifier_config() -> Result<RoutingRectifierConfig, RoutingError> {
     block_on(routing::load_rectifier_config())
 }
 
 #[tauri::command]
+// 保存请求整流配置后重新读取并返回。
 pub fn routing_set_rectifier_config(
     config: RoutingRectifierConfig,
 ) -> Result<RoutingRectifierConfig, RoutingError> {
@@ -587,11 +622,13 @@ pub fn routing_set_rectifier_config(
 }
 
 #[tauri::command]
+// 加载请求优化配置，通过统一适配层返回持久化错误。
 pub fn routing_get_optimizer_config() -> Result<RoutingOptimizerConfig, RoutingError> {
     block_on(routing::load_optimizer_config())
 }
 
 #[tauri::command]
+// 保存请求优化配置后重新读取并返回。
 pub fn routing_set_optimizer_config(
     config: RoutingOptimizerConfig,
 ) -> Result<RoutingOptimizerConfig, RoutingError> {
@@ -602,6 +639,7 @@ pub fn routing_set_optimizer_config(
 }
 
 #[tauri::command]
+// 重置应用全部熔断器，必要时热切换至队列首个就绪供应商；返回原先加载的队列视图并合入新熔断状态。
 pub fn routing_reset_circuit(
     daemon_bridge: State<'_, DaemonBridge>,
     app_type: String,
@@ -631,6 +669,7 @@ pub fn routing_reset_circuit(
 }
 
 #[tauri::command]
+// 加载当前配置，并协调路由服务运行状态与用户指定的启用开关。
 pub fn routing_set_service_enabled(
     daemon_bridge: State<'_, DaemonBridge>,
     enabled: bool,
@@ -641,6 +680,7 @@ pub fn routing_set_service_enabled(
 }
 
 #[tauri::command]
+// 端口未变时直接返回；否则要求服务与全部接管均已关闭，校验端口后保存配置。
 pub fn routing_set_preferred_port(
     daemon_bridge: State<'_, DaemonBridge>,
     port: u16,
@@ -678,6 +718,7 @@ pub fn routing_set_preferred_port(
 }
 
 #[tauri::command]
+// 保存本地路由、故障转移快捷入口及用量日志开关，再查询守护进程状态。
 pub fn routing_set_quick_controls(
     daemon_bridge: State<'_, DaemonBridge>,
     input: RoutingQuickControlsInput,
@@ -695,6 +736,7 @@ pub fn routing_set_quick_controls(
 }
 
 #[tauri::command]
+// 校验 Home 与供应商，处理本地或 WSL 路由端点后预览并应用配置，再保存接管记录；失败路径尽力恢复监听或反向投影。
 pub fn routing_set_takeover(
     daemon_bridge: State<'_, DaemonBridge>,
     input: RoutingTakeoverInput,
@@ -982,6 +1024,7 @@ mod tests {
     use crate::daemon::protocol::ClientFrame;
     use crate::provider::routing::RoutingServiceConfig;
 
+    // 构造测试用路由服务配置，刻意让首选端口与实际端口不同。
     fn service_config() -> RoutingServiceConfig {
         RoutingServiceConfig {
             schema_version: 1,
@@ -996,6 +1039,7 @@ mod tests {
     }
 
     #[test]
+    // 验证服务目标开关决定运行协调动作，且配置差异与运行差异均可触发更新。
     fn persisted_service_intent_drives_runtime_reconciliation() {
         assert_eq!(
             routing_service_runtime_action(true, "stopped"),
@@ -1021,6 +1065,7 @@ mod tests {
     }
 
     #[test]
+    // 验证启动控制帧保留请求编号、完整监听集合以及首选和实际端口。
     fn routing_start_frame_preserves_listener_and_port_state() {
         let listeners = vec!["127.0.0.1".to_string(), "172.20.0.1".to_string()];
         let frame = routing_service_control_frame(7, true, &service_config(), listeners.clone());

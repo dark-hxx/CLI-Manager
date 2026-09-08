@@ -11,6 +11,7 @@ pub struct OscColorFilterResult {
     pub reply: Vec<u8>,
 }
 
+// 严格解析带 # 的六位 ASCII 十六进制颜色，不接受缩写、透明度或首尾空白。
 pub fn parse_hex_rgb(value: &str) -> Option<[u8; 3]> {
     let hex = value.strip_prefix('#')?;
     if hex.len() != 6 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
@@ -23,6 +24,8 @@ pub fn parse_hex_rgb(value: &str) -> Option<[u8; 3]> {
     ])
 }
 
+// 移除完整 OSC 10/11 查询，并按输入顺序构造可选回复；无匹配返回 None，避免无谓复制输出。
+// 本身不跨调用缓冲或写 PTY，调用方先保证安全分帧；禁用回复或缺失颜色仍会移除查询。
 pub fn filter_color_queries(
     data: &[u8],
     colors: Option<TerminalColors>,
@@ -68,6 +71,7 @@ pub fn filter_color_queries(
     })
 }
 
+// 从指定位置寻找首个 BEL 或 ESC+反斜杠，返回终结位置和长度；未完成序列返回 None。
 fn find_osc_terminator(data: &[u8], from: usize) -> Option<(usize, usize)> {
     let mut index = from;
     while index < data.len() {
@@ -80,6 +84,7 @@ fn find_osc_terminator(data: &[u8], from: usize) -> Option<(usize, usize)> {
     None
 }
 
+// 为内部 10/11 查询追加 ST 结尾的大写 RGB 回复，8 位分量重复为 16 位；10 取前景，其余取背景。
 fn append_color_reply(reply: &mut Vec<u8>, query_id: u8, colors: TerminalColors) {
     let rgb = if query_id == 10 {
         colors.foreground
@@ -106,6 +111,7 @@ mod tests {
     };
 
     #[test]
+    // 验证标准六位颜色可解析，缺 #、三位缩写和非十六进制内容被拒绝。
     fn parses_strict_hex_rgb() {
         assert_eq!(parse_hex_rgb("#D3D7CF"), Some([0xd3, 0xd7, 0xcf]));
         assert_eq!(parse_hex_rgb("D3D7CF"), None);
@@ -114,6 +120,7 @@ mod tests {
     }
 
     #[test]
+    // 验证连续 ST/BEL 查询从显示输出移除，回复按原查询顺序合并。
     fn removes_queries_and_builds_one_ordered_reply() {
         let data = b"before\x1b]10;?\x1b\\\x1b]11;?\x07after";
         let result = filter_color_queries(data, Some(COLORS), true).unwrap();
@@ -125,6 +132,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 使用的禁回复模式仍过滤查询并保留后续提示文本。
     fn ssh_mode_consumes_queries_without_replying() {
         let result = filter_color_queries(b"\x1b]11;?\x1b\\prompt", Some(COLORS), false).unwrap();
         assert_eq!(result.output, b"prompt");
@@ -132,6 +140,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未收到主题颜色时也消费查询，但不构造猜测颜色回复。
     fn missing_colors_consumes_queries_without_replying() {
         let result = filter_color_queries(b"\x1b]10;?\x07", None, true).unwrap();
         assert!(result.output.is_empty());
@@ -139,6 +148,7 @@ mod tests {
     }
 
     #[test]
+    // 验证超链接、未完成查询和颜色设置序列不被本过滤器改写。
     fn leaves_other_and_incomplete_osc_sequences_unchanged() {
         assert!(
             filter_color_queries(b"\x1b]8;;https://example.com\x1b\\link", Some(COLORS), true)
@@ -151,6 +161,7 @@ mod tests {
     }
 
     #[test]
+    // 穷举查询切点并结合安全边界缓冲，验证显示文本完整且每条查询只回复一次。
     fn boundary_buffering_handles_every_query_split_point() {
         let original = b"before\x1b]10;?\x1b\\after";
         for split_at in 0..=original.len() {

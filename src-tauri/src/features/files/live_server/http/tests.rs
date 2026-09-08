@@ -9,6 +9,7 @@ use super::{
 use crate::live_server::paths::open_root_dir;
 
 #[test]
+// 验证刷新脚本插在大小写混合的 body 结束标签之前并含指定版本。
 fn injects_reload_script_before_case_insensitive_body_close() {
     let html = b"<HTML><BODY>Hello</BoDy></HTML>".to_vec();
     let injected = String::from_utf8(inject_reload_script(html, 7)).unwrap();
@@ -20,24 +21,28 @@ fn injects_reload_script_before_case_insensitive_body_close() {
 }
 
 #[test]
+// 验证没有 body 结束标签时在 HTML 末尾追加刷新脚本。
 fn appends_reload_script_when_body_close_is_missing() {
     let injected = inject_reload_script(b"<main>Hello</main>".to_vec(), 3);
     assert!(injected.ends_with(&reload_script(3)));
 }
 
 #[test]
+// 验证 ASCII 大小写不敏感搜索的位置及无匹配结果。
 fn finds_ascii_without_case_sensitivity() {
     assert_eq!(find_ascii_case_insensitive(b"abcDEF", b"CdE"), Some(2));
     assert_eq!(find_ascii_case_insensitive(b"abc", b"xyz"), None);
 }
 
 #[test]
+// 验证加载期间版本变化仍返回读取前版本。
 fn keeps_the_pre_read_version_when_a_change_overlaps_loading() {
     assert_eq!(reload_version_for_asset(7, 7), 7);
     assert_eq!(reload_version_for_asset(7, 8), 7);
 }
 
 #[test]
+// 用临时文件验证非 HTML 使用文件流，超限 HTML 拒绝缓冲返回。
 fn streams_non_html_assets_and_limits_html_buffering() {
     let temp = tempdir().unwrap();
     fs::write(temp.path().join("asset.bin"), vec![0x5a; 1024 * 1024]).unwrap();

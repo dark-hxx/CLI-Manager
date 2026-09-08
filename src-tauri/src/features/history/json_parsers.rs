@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+// 读取完整 JSON 文件并按 Cline、Kiro 或 Gemini 结构选择解析器，失败返回空扫描。
 pub(super) fn scan_json_session(
     path: &Path,
     collect_messages: bool,
@@ -39,6 +40,7 @@ pub(super) fn scan_json_session(
     empty_session_scan()
 }
 
+// 转换 Gemini 消息及 token 字段，构造带事件时间和模型的用量事实。
 pub(super) fn scan_gemini_json_session(
     value: &Value,
     collect_messages: bool,
@@ -97,6 +99,7 @@ pub(super) fn scan_gemini_json_session(
     (summary, stats, output_messages)
 }
 
+// 规范化 Gemini token 用量，从输入扣除缓存并将思考用量计入输出。
 pub(super) fn gemini_usage_token_scan(value: &Value) -> UsageTokenScan {
     let Some(tokens) = value.get("tokens").and_then(Value::as_object) else {
         return UsageTokenScan::default();
@@ -123,6 +126,7 @@ pub(super) fn gemini_usage_token_scan(value: &Value) -> UsageTokenScan {
     }
 }
 
+// 以消息标识或数组索引生成 Gemini 用量事件键。
 pub(super) fn gemini_usage_event_key(value: &Value, index: usize) -> String {
     let identity = value
         .get("id")
@@ -136,6 +140,7 @@ pub(super) fn gemini_usage_event_key(value: &Value, index: usize) -> String {
     format!("gemini:{identity}")
 }
 
+// 转换 Kiro 历史消息，缺失模型时使用选定模型并汇总扫描结果。
 pub(super) fn scan_kiro_json_session(
     value: &Value,
     collect_messages: bool,
@@ -173,6 +178,7 @@ pub(super) fn scan_kiro_json_session(
     )
 }
 
+// 解析 Cline API 消息并补充 UI 时间与模型，汇总去重后的工具调用。
 pub(super) fn scan_cline_json_session(
     path: &Path,
     value: &Value,
@@ -229,6 +235,7 @@ pub(super) fn scan_cline_json_session(
     (summary, stats, output_messages)
 }
 
+// 根据消息计算时间范围、标题候选及用量，按需保留消息列表。
 pub(super) fn json_session_scan_result(
     session_id: Option<&str>,
     fallback_title: Option<&str>,
@@ -299,6 +306,7 @@ pub(super) fn json_session_scan_result(
     )
 }
 
+// 按消息累计 token、模型计数与本地定价成本，并记录最近模型及上下文用量。
 pub(super) fn session_stats_from_messages(
     messages: &[HistoryMessage],
     fallback_model: Option<String>,
@@ -392,6 +400,7 @@ pub(super) fn session_stats_from_messages(
     stats
 }
 
+// 构造默认不可编辑的历史消息及内容分块，过滤合成模型占位符。
 pub(super) fn json_history_message(
     role: String,
     content: String,
@@ -415,12 +424,14 @@ pub(super) fn json_history_message(
     }
 }
 
+// 提取 JSON 中的文本并规范空白，空文本返回空值。
 pub(super) fn json_content_text(value: &Value) -> Option<String> {
     extract_text_from_value(value)
         .map(|text| normalize_text(&text))
         .filter(|text| !text.is_empty())
 }
 
+// 按角色名包含的关键词映射用户、系统或工具，其他值归为助手。
 pub(super) fn normalize_json_role(value: Option<&Value>) -> String {
     let role = value.and_then(Value::as_str).unwrap_or_default();
     let lower = role.to_lowercase();

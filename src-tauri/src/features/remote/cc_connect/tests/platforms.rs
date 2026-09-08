@@ -1,6 +1,7 @@
 use super::*;
 
 #[test]
+// 验证旧会话及微信状态复制到控制身份路径。
 fn legacy_platform_state_is_copied_to_the_control_identity() {
     let root = tempfile::tempdir().unwrap();
     let project = tempfile::tempdir().unwrap();
@@ -52,6 +53,7 @@ fn legacy_platform_state_is_copied_to_the_control_identity() {
 }
 
 #[test]
+// 验证各平台用户白名单去重及无效、通配符拒绝。
 fn allowlist_is_fail_closed_and_normalized() {
     assert_eq!(
         normalize_allow_from(
@@ -80,6 +82,7 @@ fn allowlist_is_fail_closed_and_normalized() {
 }
 
 #[test]
+// 验证旧单平台配置迁移后仅原平台启用。
 fn legacy_profile_migrates_to_a_single_enabled_platform() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -99,6 +102,7 @@ fn legacy_profile_migrates_to_a_single_enabled_platform() {
 }
 
 #[test]
+// 验证微信授权不被其他平台未完成草稿阻塞。
 fn weixin_authorization_ignores_incomplete_unrelated_platform_drafts() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -138,6 +142,7 @@ fn weixin_authorization_ignores_incomplete_unrelated_platform_drafts() {
 }
 
 #[test]
+// 验证微信授权保留合法旧用户及其他已配置平台。
 fn weixin_authorization_preserves_valid_existing_allowlist() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -166,6 +171,7 @@ fn weixin_authorization_preserves_valid_existing_allowlist() {
 }
 
 #[test]
+// 验证常规保存仍拒绝未完成的启用平台白名单。
 fn regular_profile_validation_still_rejects_incomplete_enabled_platforms() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -190,6 +196,7 @@ fn regular_profile_validation_still_rejects_incomplete_enabled_platforms() {
 }
 
 #[test]
+// 验证每种平台的白名单错误包含原因及平台代码。
 fn profile_allowlist_errors_identify_every_platform_and_reason() {
     let invalid_values = [
         (CcConnectPlatform::Telegram, "telegram-name"),
@@ -218,6 +225,7 @@ fn profile_allowlist_errors_identify_every_platform_and_reason() {
 }
 
 #[test]
+// 验证常规保存忽略禁用平台的无效草稿。
 fn regular_profile_validation_ignores_disabled_platform_drafts() {
     let project = tempfile::tempdir().unwrap();
     let valid_values = [
@@ -251,6 +259,7 @@ fn regular_profile_validation_ignores_disabled_platform_drafts() {
 }
 
 #[test]
+// 验证生成配置同时保留多个启用平台及合并管理员。
 fn managed_config_keeps_multiple_enabled_platforms_online() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -285,6 +294,7 @@ fn managed_config_keeps_multiple_enabled_platforms_online() {
 }
 
 #[test]
+// 验证微信与企业微信使用原生平台选项及凭据占位符。
 fn managed_config_uses_cc_connect_native_weixin_and_wecom_platforms() {
     let project = tempfile::tempdir().unwrap();
     let render = |profile: &CcConnectProfile| {
@@ -334,6 +344,7 @@ fn managed_config_uses_cc_connect_native_weixin_and_wecom_platforms() {
 }
 
 #[test]
+// 验证微信授权配置清空令牌和白名单而不写入凭据。
 fn weixin_authorization_config_is_native_and_contains_no_credential() {
     let project = tempfile::tempdir().unwrap();
     let mut profile = sample_profile(project.path());
@@ -353,6 +364,7 @@ fn weixin_authorization_config_is_native_and_contains_no_credential() {
 }
 
 #[test]
+// 验证扫码结果令牌和白名单解析、合并及错误脱敏。
 fn weixin_authorization_result_is_parsed_and_allowlist_is_merged() {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("setup.toml");

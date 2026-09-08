@@ -6,6 +6,7 @@ struct PowerlineThemePalettes {
     truecolor: PowerlinePalette,
 }
 
+// 按主题名称和色彩级别返回 Powerline 前景与背景调色板。
 pub(super) fn powerline_theme(name: &str, color_level: u8) -> Option<PowerlinePalette> {
     let palettes = match name {
         "nord" => PowerlineThemePalettes {

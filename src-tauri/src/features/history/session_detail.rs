@@ -15,6 +15,7 @@ use super::{
 use std::collections::HashMap;
 use std::path::Path;
 
+// 扫描会话消息和统计并应用 Codex 索引标题，另行收集工具、变更和 cwd。
 pub(super) fn scan_session_detail_parts_with_thread_names(
     file_ref: &SessionFileRef,
     codex_thread_names: &CodexThreadNameIndex,
@@ -38,6 +39,7 @@ pub(super) fn scan_session_detail_parts_with_thread_names(
     }
 }
 
+// 组合详情分项为统一响应，并禁用子代理 transcript 消息编辑。
 pub(super) fn finalize_session_detail(
     file_ref: &SessionFileRef,
     parts: SessionDetailParts,
@@ -91,6 +93,7 @@ pub(super) fn finalize_session_detail(
     }
 }
 
+// 将修改时间、创建时间和大小编码为 V2 文件指纹字符串。
 pub(super) fn v2_fingerprint_value(fingerprint: SessionFileFingerprint) -> String {
     format!(
         "mtime_ms={};ctime_ms={};size={}",
@@ -98,6 +101,7 @@ pub(super) fn v2_fingerprint_value(fingerprint: SessionFileFingerprint) -> Strin
     )
 }
 
+// 构造带角色、类型及路径的 V2 原始文件指针。
 pub(super) fn v2_path_pointer(role: &str, kind: &str, path: &Path) -> HistoryIndexV2RawPointer {
     HistoryIndexV2RawPointer {
         role: role.to_string(),
@@ -108,6 +112,7 @@ pub(super) fn v2_path_pointer(role: &str, kind: &str, path: &Path) -> HistoryInd
     }
 }
 
+// 按来源与 JSONL 扩展名组合会话存储类型标签。
 pub(super) fn session_file_kind(source: &str, path: &Path) -> String {
     if is_jsonl(path) {
         format!("{source}-jsonl")
@@ -116,6 +121,7 @@ pub(super) fn session_file_kind(source: &str, path: &Path) -> String {
     }
 }
 
+// 仅在消息具有原始行号时生成对应文件行指针。
 pub(super) fn v2_message_raw_pointers(
     file_ref: &SessionFileRef,
     message: &HistoryMessage,
@@ -136,6 +142,7 @@ pub(super) fn v2_message_raw_pointers(
         .collect()
 }
 
+// 生成主文件指针，并为 Codex 加入共享索引和状态库行定位信息。
 pub(super) fn v2_session_raw_pointers(
     file_ref: &SessionFileRef,
     roots: &HistoryRoots,
@@ -185,6 +192,7 @@ pub(super) fn v2_session_raw_pointers(
     (Some(primary_path), database_path, pointers)
 }
 
+// 读取指纹及带标题的会话详情，再构造 V2 适配模型。
 pub(super) fn build_v2_adapter_session(
     file_ref: &SessionFileRef,
     roots: &HistoryRoots,
@@ -195,6 +203,7 @@ pub(super) fn build_v2_adapter_session(
     build_v2_adapter_session_from_parts(file_ref, roots, fingerprint, &parts)
 }
 
+// 将已有详情转换为版本化 V2 会话与消息引用，保留原始定位和分块。
 pub(super) fn build_v2_adapter_session_from_parts(
     file_ref: &SessionFileRef,
     roots: &HistoryRoots,
@@ -260,6 +269,7 @@ pub(super) fn build_v2_adapter_session_from_parts(
     }
 }
 
+// 使用默认历史根目录构建单文件或子任务聚合详情。
 pub(crate) fn build_session_detail(
     file_ref: &SessionFileRef,
     aggregate_subtasks: bool,
@@ -267,6 +277,7 @@ pub(crate) fn build_session_detail(
     build_session_detail_with_roots(file_ref, aggregate_subtasks, &HistoryRoots::default())
 }
 
+// 读取父会话详情，仅在请求聚合且存在子任务时扫描并合并子任务。
 pub(super) fn build_session_detail_with_roots(
     file_ref: &SessionFileRef,
     aggregate_subtasks: bool,
@@ -298,6 +309,7 @@ pub(super) fn build_session_detail_with_roots(
     ))
 }
 
+// 保留父身份并合并消息、工具和变更，按事件重新累计模型用量及趋势。
 pub(super) fn merge_session_detail_parts(
     file_ref: &SessionFileRef,
     parts: Vec<SessionDetailParts>,
@@ -556,6 +568,7 @@ pub(super) fn merge_session_detail_parts(
     }
 }
 
+// 为非子代理输入枚举父目录的 subagents 文件，并按路径排序构造同来源引用。
 pub(super) fn collect_subtask_session_file_refs(
     parent_file_ref: &SessionFileRef,
 ) -> Vec<SessionFileRef> {

@@ -206,6 +206,7 @@ struct SourceSnapshot {
     legacy_scopes: Vec<LegacyScope>,
 }
 
+// 优先使用显式路径，否则定位默认 CC Switch 数据库；仅接受扩展名恰为 db 的路径。
 fn source_path(input: Option<String>) -> Result<PathBuf, String> {
     let path = input
         .as_deref()
@@ -224,6 +225,7 @@ fn source_path(input: Option<String>) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// 尝试读取字符串列并去除首尾空白，缺列、类型不符或空值均返回 None。
 fn row_string(row: &SqliteRow, column: &str) -> Option<String> {
     row.try_get::<String, _>(column)
         .ok()
@@ -231,16 +233,19 @@ fn row_string(row: &SqliteRow, column: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+// 尝试读取整数列，读取失败返回 None。
 fn row_i64(row: &SqliteRow, column: &str) -> Option<i64> {
     row.try_get::<i64, _>(column).ok()
 }
 
+// 将可读整数的非零值视为 true，读取失败使用调用方默认值。
 fn row_bool(row: &SqliteRow, column: &str, default: bool) -> bool {
     row_i64(row, column)
         .map(|value| value != 0)
         .unwrap_or(default)
 }
 
+// 读取并解析 JSON 对象列，缺失或格式不符时返回空对象。
 fn row_json_object(row: &SqliteRow, column: &str) -> Map<String, Value> {
     row_string(row, column)
         .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
@@ -248,6 +253,7 @@ fn row_json_object(row: &SqliteRow, column: &str) -> Map<String, Value> {
         .unwrap_or_default()
 }
 
+// 将支持的源应用别名映射为原生类型，不支持时返回 None。
 fn normalize_source_app_type(value: &str) -> Option<String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "claude" | "claude-code" => Some("claude".to_string()),
@@ -257,6 +263,7 @@ fn normalize_source_app_type(value: &str) -> Option<String> {
     }
 }
 
+// 按应用识别可导入 API 凭据字段，明确排除 OAuth、访问令牌及刷新令牌相关字段。
 fn is_credential_key(app_type: &str, key: &str) -> bool {
     let normalized = key.trim().to_ascii_lowercase().replace(['-', '.'], "_");
     if normalized.contains("access_token")
@@ -283,6 +290,7 @@ fn is_credential_key(app_type: &str, key: &str) -> bool {
     }
 }
 
+// 结合应用凭据字段、固定敏感名称和敏感后缀判断应清理的键，不检查普通字段的值内容。
 fn is_sensitive_key(app_type: &str, key: &str) -> bool {
     let normalized = key.trim().to_ascii_lowercase().replace(['-', '.'], "_");
     is_credential_key(app_type, key)
@@ -313,6 +321,7 @@ fn is_sensitive_key(app_type: &str, key: &str) -> bool {
         || normalized.ends_with("apikey")
 }
 
+// 过滤空值、环境变量占位前缀及指定 OAuth/placeholder 标记，不验证凭据实际有效性。
 fn usable_secret(value: &str) -> bool {
     let value = value.trim();
     !value.is_empty()
@@ -322,6 +331,7 @@ fn usable_secret(value: &str) -> bool {
         && !value.eq_ignore_ascii_case("placeholder")
 }
 
+// 短密钥完全掩码，超过十二个字符时仅保留前后各四个字符。
 fn mask_secret(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() <= 12 {
@@ -334,6 +344,7 @@ fn mask_secret(value: &str) -> String {
     )
 }
 
+// 遍历 JSON 对象和数组收集可用凭据字段，并对含等号的字符串进行逐行 TOML 风格候选提取。
 fn secret_candidates_from_json(value: &Value, app_type: &str, output: &mut Vec<(String, String)>) {
     match value {
         Value::Object(object) => {
@@ -358,6 +369,7 @@ fn secret_candidates_from_json(value: &Value, app_type: &str, output: &mut Vec<(
     }
 }
 
+// 按行拆分等号并截去井号后的文本来提取凭据候选；这是启发式扫描，不是完整 TOML 解析。
 fn toml_secret_candidates(text: &str, app_type: &str) -> Vec<(String, String)> {
     text.lines()
         .filter_map(|line| {
@@ -378,6 +390,7 @@ fn toml_secret_candidates(text: &str, app_type: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+// 仅从可解析 JSON 中收集凭据候选，按字段名与值组合去重。
 fn secret_candidates(raw: &str, app_type: &str) -> Vec<(String, String)> {
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return Vec::new();
@@ -389,6 +402,7 @@ fn secret_candidates(raw: &str, app_type: &str) -> Vec<(String, String)> {
     candidates
 }
 
+// 解析 TOML 并递归替换敏感字段，解析失败返回固定无效文档标记。
 fn sanitize_toml(text: &str, app_type: &str) -> String {
     let Ok(mut document) = text.parse::<DocumentMut>() else {
         return "[INVALID TOML DOCUMENT]".to_string();
@@ -397,6 +411,7 @@ fn sanitize_toml(text: &str, app_type: &str) -> String {
     document.to_string()
 }
 
+// 按 TOML 条目类型递归清理敏感字段，完整遍历表数组并汇总是否命中。
 fn sanitize_toml_item(item: &mut Item, app_type: &str) -> bool {
     match item {
         Item::Table(table) => sanitize_toml_table(table, app_type),
@@ -412,6 +427,7 @@ fn sanitize_toml_item(item: &mut Item, app_type: &str) -> bool {
     }
 }
 
+// 将敏感键对应条目替换为固定脱敏字符串，其他条目递归处理。
 fn sanitize_toml_table(table: &mut Table, app_type: &str) -> bool {
     let mut found_secret = false;
     for (key, item) in table.iter_mut() {
@@ -425,6 +441,7 @@ fn sanitize_toml_table(table: &mut Table, app_type: &str) -> bool {
     found_secret
 }
 
+// 完整遍历内联表和数组，将敏感键值替换为脱敏标记并汇总命中情况。
 fn sanitize_toml_value(value: &mut TomlValue, app_type: &str) -> bool {
     let mut found_secret = false;
     if let Some(table) = value.as_inline_table_mut() {
@@ -447,6 +464,7 @@ fn sanitize_toml_value(value: &mut TomlValue, app_type: &str) -> bool {
     found_secret
 }
 
+// 删除敏感 JSON 键并完整遍历容器；名为 config 的字符串按 TOML 清理，返回是否发生清理或文本变化。
 fn sanitize_json(value: &mut Value, app_type: &str) -> bool {
     match value {
         Value::Object(object) => {
@@ -482,6 +500,7 @@ fn sanitize_json(value: &mut Value, app_type: &str) -> bool {
     }
 }
 
+// 仅接受 JSON 对象，清理后返回序列化结果、变化标记和外层格式有效性；不验证具体 CLI 配置契约。
 fn sanitized_settings(raw: &str, app_type: &str) -> (String, bool, bool) {
     let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
         return ("{}".to_string(), false, false);
@@ -497,6 +516,7 @@ fn sanitized_settings(raw: &str, app_type: &str) -> (String, bool, bool) {
     )
 }
 
+// Grok 委托专用摘要解析，其余应用从 JSON 与内嵌逐行配置中寻找地址、模型和协议摘要。
 fn config_summary(
     raw: &str,
     app_type: Option<&str>,
@@ -512,6 +532,7 @@ fn config_summary(
     let Ok(value) = serde_json::from_str::<Value>(raw) else {
         return (None, None, None);
     };
+    // 优先检查当前对象的候选键，再递归容器；含等号的字符串采用逐行键值查找。
     fn find(value: &Value, keys: &[&str]) -> Option<String> {
         match value {
             Value::Object(object) => {
@@ -569,6 +590,7 @@ fn config_summary(
     )
 }
 
+// 以只读方式打开源 SQLite 数据库并设置十五秒忙等待，失败映射为源数据库无效。
 async fn open_source_connection(path: &Path) -> Result<SqliteConnection, String> {
     let options = SqliteConnectOptions::new()
         .filename(path)
@@ -579,6 +601,7 @@ async fn open_source_connection(path: &Path) -> Result<SqliteConnection, String>
         .map_err(|_| "provider_import_source_invalid:corrupt_database".to_string())
 }
 
+// 通过 sqlite_master 参数化查询判断指定表是否存在。
 async fn table_exists(connection: &mut SqliteConnection, name: &str) -> Result<bool, String> {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
@@ -590,6 +613,7 @@ async fn table_exists(connection: &mut SqliteConnection, name: &str) -> Result<b
     .map_err(|_| "provider_import_source_invalid:corrupt_database".to_string())
 }
 
+// 转义表名单引号后查询 PRAGMA table_info，收集可读的列名。
 async fn table_columns(
     connection: &mut SqliteConnection,
     table: &str,
@@ -605,6 +629,7 @@ async fn table_columns(
         .collect())
 }
 
+// 存在多密钥表时读取并按源应用和供应商分组，过滤不可用凭据并保留标签、排序及状态。
 async fn read_source_keys(
     connection: &mut SqliteConnection,
     has_key_table: bool,
@@ -655,6 +680,7 @@ async fn read_source_keys(
     Ok(result)
 }
 
+// 从支持应用的覆盖项中提取非原生 v2 引用，兼容 Grok 别名。
 fn legacy_provider_ids(raw: &str) -> Vec<(String, String)> {
     let Ok(Value::Object(root)) = serde_json::from_str::<Value>(raw) else {
         return Vec::new();
@@ -677,6 +703,7 @@ fn legacy_provider_ids(raw: &str) -> Vec<(String, String)> {
         .collect()
 }
 
+// 只读扫描主数据库项目和 Worktree 覆盖，收集旧供应商引用；主库缺失时返回空集合。
 async fn read_legacy_scopes() -> Result<Vec<LegacyScope>, String> {
     let path = app_paths::db_path()?;
     if !path.is_file() {
@@ -719,6 +746,7 @@ async fn read_legacy_scopes() -> Result<Vec<LegacyScope>, String> {
     Ok(scopes)
 }
 
+// 优先使用多密钥表，表记录为空才从配置补提取；按排序、标签、摘要排序去重，再消除标签冲突。
 fn source_keys_for(
     raw_settings: &str,
     app_type: &str,
@@ -773,12 +801,14 @@ fn source_keys_for(
     keys
 }
 
+// 对存在的密钥文本计算 SHA-256，用于排序和去重，不输出原密钥。
 fn source_key_digest(key: &SourceKey) -> Option<String> {
     key.api_key
         .as_deref()
         .map(|value| format!("{:x}", Sha256::digest(value.as_bytes())))
 }
 
+// 检查源路径并准备可读数据库，计算主文件指纹后扫描供应商、公共配置和本机旧作用域；WSL 使用临时快照。
 async fn scan_source(input: ImportSourceInput) -> Result<SourceSnapshot, String> {
     let source_path = source_path(input.source_path)?;
     let exists = if wsl::is_wsl_config_dir(&source_path.to_string_lossy()) {
@@ -898,6 +928,7 @@ async fn scan_source(input: ImportSourceInput) -> Result<SourceSnapshot, String>
     })
 }
 
+// 按来源、路径身份、应用与源供应商 ID 查询已有原生映射及源指纹。
 async fn existing_import_ref(
     connection: &mut SqliteConnection,
     source_identity: &str,
@@ -927,6 +958,7 @@ async fn existing_import_ref(
     .transpose()
 }
 
+// 扫描源并结合现有映射生成创建、更新或不变预览，清理配置和掩码密钥；作用域动作依据已有映射判断。
 async fn preview_inner(input: ImportSourceInput) -> Result<ImportPreview, String> {
     let snapshot = scan_source(input).await?;
     let source_identity = snapshot.source_path.to_string_lossy().into_owned();
@@ -1075,10 +1107,12 @@ async fn preview_inner(input: ImportSourceInput) -> Result<ImportPreview, String
     })
 }
 
+// 委托内部流程生成导入预览，不执行供应商导入写入。
 pub(crate) async fn preview(input: ImportSourceInput) -> Result<ImportPreview, String> {
     preview_inner(input).await
 }
 
+// 清理源元数据敏感字段，补默认启用与公共配置开关，并写入导入来源标记。
 fn source_meta(raw: &str, app_type: &str) -> Map<String, Value> {
     let mut value = serde_json::from_str::<Value>(raw)
         .ok()
@@ -1097,10 +1131,12 @@ fn source_meta(raw: &str, app_type: &str) -> Map<String, Value> {
     meta
 }
 
+// 将密钥标签数组序列化为 JSON，异常时退回空数组文本。
 fn source_key_json(tags: &[String]) -> String {
     serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
 }
 
+// 仅在允许导入秘密且密钥可用时，在现有事务中按供应商、应用与标签插入或更新密钥。
 async fn import_key(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     provider: &SourceProvider,
@@ -1151,6 +1187,7 @@ async fn import_key(
     Ok(true)
 }
 
+// 优先选择启用且有密钥的源活动项，否则使用首个启用且有密钥的项。
 fn selected_import_key(provider: &SourceProvider) -> Option<&SourceKey> {
     provider
         .keys
@@ -1165,6 +1202,7 @@ fn selected_import_key(provider: &SourceProvider) -> Option<&SourceKey> {
         })
 }
 
+// 优先选取获准导入的源密钥，否则复用原有可用活动密钥；存在密钥时投影到供应商配置。
 async fn project_imported_active_key(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     provider: &SourceProvider,
@@ -1196,6 +1234,7 @@ async fn project_imported_active_key(
         .map(|projected| (projected, true))
 }
 
+// 获准导入且选到密钥时，在事务中清除旧活动标记并按标签激活目标；不核验更新行数。
 async fn set_imported_active_key(
     transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     provider: &SourceProvider,
@@ -1241,6 +1280,7 @@ struct LegacyIssue {
     reason: String,
 }
 
+// 优先选择应用规范键，GrokBuild 缺规范键时兼容 grok 键。
 fn legacy_key(app_type: &str, root: &Map<String, Value>) -> Option<String> {
     if root.get(app_type).is_some() {
         return Some(app_type.to_string());
@@ -1248,6 +1288,7 @@ fn legacy_key(app_type: &str, root: &Map<String, Value>) -> Option<String> {
     (app_type == "grokbuild" && root.get("grok").is_some()).then(|| "grok".to_string())
 }
 
+// 在主库独立事务中重新核对旧引用并替换为原生引用；无映射项保留并收集修复问题。
 async fn migrate_legacy_scopes(
     scopes: &[LegacyScope],
     mapping: &HashMap<(String, String), (String, String)>,
@@ -1338,6 +1379,7 @@ async fn migrate_legacy_scopes(
     Ok((migrated, issues))
 }
 
+// 在供应商库事务中按旧载荷摘要插入或重新打开问题，再按已映射作用域标记问题已解决。
 async fn persist_migration_issues(
     issues: &[LegacyIssue],
     resolved_scopes: &[LegacyScope],
@@ -1394,6 +1436,7 @@ async fn persist_migration_issues(
         .map_err(|_| "provider_import_database_error".to_string())
 }
 
+// 复扫并核对预览指纹及更新许可，事务写入供应商、密钥和公共配置；提交后另行迁移作用域及记录问题，不自动切换全局 current。
 async fn commit_inner(input: ImportCommitInput) -> Result<ImportResult, String> {
     let expected_fingerprint = input.expected_fingerprint.trim().to_string();
     if expected_fingerprint.is_empty() {
@@ -1628,10 +1671,12 @@ async fn commit_inner(input: ImportCommitInput) -> Result<ImportResult, String> 
     })
 }
 
+// 委托内部导入流程，返回分阶段处理统计与警告。
 pub(crate) async fn commit(input: ImportCommitInput) -> Result<ImportResult, String> {
     commit_inner(input).await
 }
 
+// 按创建时间和作用域列出未解决问题，仅从旧载荷提取源供应商 ID，不返回完整载荷。
 pub(crate) async fn list_issues() -> Result<Vec<ImportIssue>, String> {
     let mut connection = database::open_connection().await?;
     let rows = sqlx::query(
@@ -1681,6 +1726,7 @@ pub(crate) async fn list_issues() -> Result<Vec<ImportIssue>, String> {
         .collect()
 }
 
+// 校验问题与同应用供应商，先更新主库作用域为原生引用，再在供应商库标记问题解决；两次写入不共用事务。
 pub(crate) async fn resolve_issue(input: ImportIssueResolveInput) -> Result<(), String> {
     let issue_id = input.issue_id.trim();
     let provider_id = input.provider_id.trim();

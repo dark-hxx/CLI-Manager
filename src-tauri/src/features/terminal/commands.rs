@@ -18,6 +18,7 @@ const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 static DAEMON_UPGRADE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+// SSH 启动丢弃全部本机供应商快照配置，本机启动则原样保留各应用配置。
 fn provider_launch_configs(
     is_ssh: bool,
     claude: Option<ProviderLaunchConfig>,
@@ -35,6 +36,7 @@ fn provider_launch_configs(
     }
 }
 
+// 最多查询六十次守护进程桥接，每次未就绪且仍有重试机会时等待一百毫秒。
 async fn wait_for_daemon(daemon_bridge: &DaemonBridge) -> Option<Arc<DaemonClient>> {
     for attempt in 0..DAEMON_READY_WAIT_ATTEMPTS {
         if let Some(client) = daemon_bridge.get() {
@@ -47,6 +49,7 @@ async fn wait_for_daemon(daemon_bridge: &DaemonBridge) -> Option<Arc<DaemonClien
     None
 }
 
+// 仅当守护进程版本与应用完全相同且支持二进制 WebSocket 输出时判定契约符合当前要求。
 fn daemon_contract_is_current(version: &str, features: &[String]) -> bool {
     version == env!("CARGO_PKG_VERSION")
         && features
@@ -54,10 +57,12 @@ fn daemon_contract_is_current(version: &str, features: &[String]) -> bool {
             .any(|feature| feature == FEATURE_WS_BINARY_OUTPUT)
 }
 
+// 使用客户端握手信息检查版本与二进制输出能力。
 fn daemon_is_current(client: &DaemonClient) -> bool {
     daemon_contract_is_current(&client.info().version, &client.info().features)
 }
 
+// 串行检查升级需求；存在存活会话时不升级，否则请求空闲关闭并重新连接或启动，验证后替换桥接客户端。
 async fn upgrade_daemon_if_idle(
     app_handle: &AppHandle,
     daemon_bridge: &DaemonBridge,
@@ -87,6 +92,7 @@ async fn upgrade_daemon_if_idle(
 }
 
 #[tauri::command]
+// 分配会话 ID、准备本机供应商及 Hook 环境并重建 SSH 身份字段；必要时升级空闲守护进程，返回启动参数但不创建 PTY。
 pub async fn pty_prepare_create(
     app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
@@ -213,6 +219,7 @@ pub struct PreparedPtyCreate {
 }
 
 #[tauri::command]
+// 将前端活动会话列表交给守护进程协调孤儿会话，并解析其清理摘要；保护和关闭策略由守护进程负责。
 pub async fn pty_reconcile_active_sessions(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     active_session_ids: Vec<String>,
@@ -230,6 +237,7 @@ pub async fn pty_reconcile_active_sessions(
 }
 
 #[tauri::command]
+// 从已连接守护进程获取全部 PTY 进程状态，桥接不可用时报错。
 pub async fn pty_status(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<HashMap<String, PtyProcessStatus>, String> {
@@ -242,6 +250,7 @@ pub async fn pty_status(
 
 /// daemon 是否可用（前端"转入后台=真退出"分支判定）。
 #[tauri::command]
+// 仅检查桥接中是否持有客户端，不额外发送存活探测。
 pub async fn pty_daemon_active(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<bool, String> {
@@ -249,6 +258,7 @@ pub async fn pty_daemon_active(
 }
 
 #[tauri::command]
+// 路由状态为运行中时保留守护进程，否则请求其按空闲条件关闭；返回 true 表示请求成功，不独立确认进程退出。
 pub async fn pty_daemon_shutdown_if_idle(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<bool, String> {
@@ -289,6 +299,7 @@ pub struct PtyHostEndpoint {
 
 /// WebView 只通过低频 Tauri command 获取本机 PtyHost 地址与短期鉴权信息。
 #[tauri::command]
+// 等待客户端后根据端口、协议版本与二进制能力返回 WebSocket 地址和令牌，缺能力时返回 legacy 模式。
 pub async fn pty_host_get_endpoint(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Option<PtyHostEndpoint>, String> {
@@ -317,6 +328,7 @@ pub async fn pty_host_get_endpoint(
     }))
 }
 
+// 提取除鉴权帧之外所有控制帧的请求编号。
 fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
     match frame {
         ClientFrame::Auth { .. } => None,
@@ -344,6 +356,7 @@ fn client_frame_id(frame: &ClientFrame) -> Option<u64> {
     }
 }
 
+// 旧传输拒绝路由控制和鉴权帧，其余帧返回请求编号。
 fn legacy_client_frame_id(frame: &ClientFrame) -> Result<u64, &'static str> {
     if routing_control_id(frame).is_some() {
         return Err(ROUTING_ERROR_PROTOCOL_UNSUPPORTED);
@@ -354,6 +367,7 @@ fn legacy_client_frame_id(frame: &ClientFrame) -> Result<u64, &'static str> {
 /// 旧 daemon 的兼容 transport。只复用已鉴权的主进程 NDJSON 连接，
 /// WebView 不接触 daemon token，也不能绕过 daemon 自身的参数校验。
 #[tauri::command]
+// 解析并校验旧传输请求，等待已鉴权客户端后转发控制帧并序列化响应。
 pub async fn pty_legacy_request(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     frame: serde_json::Value,
@@ -369,6 +383,7 @@ pub async fn pty_legacy_request(
 }
 
 #[tauri::command]
+// 桥接不可用返回 false；委托升级检查，已满足当前契约也返回 true，不表示一定重启。
 pub async fn pty_daemon_upgrade_if_idle(
     app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
@@ -383,6 +398,7 @@ pub async fn pty_daemon_upgrade_if_idle(
 
 /// daemon 中的会话列表（启动恢复时优先 attach 的依据）。
 #[tauri::command]
+// 等待守护进程后返回会话元数据，日志仅记录总量和存活数量。
 pub async fn pty_daemon_sessions(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Vec<SessionMeta>, String> {
@@ -409,6 +425,7 @@ mod tests {
         ClientFrame, FEATURE_WS_BINARY_OUTPUT, ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
     };
 
+    // 构造三种供应商启动配置测试值，仅用于检查 SSH 分支是否保留输入。
     fn configs() -> (
         Option<ProviderLaunchConfig>,
         Option<ProviderLaunchConfig>,
@@ -443,6 +460,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 SSH 分支丢弃全部本机供应商配置，而非 SSH 分支保留。
     fn ssh_launch_discards_provider_configs() {
         let (claude, codex, grok) = configs();
         let (claude, codex, grok) = provider_launch_configs(true, claude, codex, grok);
@@ -458,6 +476,7 @@ mod tests {
     }
 
     #[test]
+    // 验证守护进程契约同时要求版本匹配与二进制传输能力。
     fn daemon_contract_requires_matching_version_and_binary_transport() {
         let features = vec![FEATURE_WS_BINARY_OUTPUT.to_string()];
         assert!(daemon_contract_is_current(
@@ -469,6 +488,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧传输拒绝路由重载帧，同时允许普通 Ping 请求编号。
     fn legacy_transport_rejects_routing_control_frames() {
         assert_eq!(
             legacy_client_frame_id(&ClientFrame::RoutingReload {

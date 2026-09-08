@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const CONTROLLED_HEADERS: &[&str] = &["host", "content-length", "transfer-encoding", "connection"];
 
+// 应用当前代理配置并创建禁用重定向、连接超时三秒及总超时五秒的通知客户端。
 pub fn build_client() -> Result<Client, NotificationError> {
     network_client::configure_builder(Client::builder())
         .map_err(|error| NotificationError::new("http_client_failed", error))?
@@ -19,6 +20,7 @@ pub fn build_client() -> Result<Client, NotificationError> {
         .map_err(|err| NotificationError::new("http_client_failed", err.to_string()))
 }
 
+// 校验 HTTP/HTTPS、主机和无内嵌凭据；不限制私网/回环目标，也不移除查询或片段。
 pub fn validate_url(raw: &str) -> Result<Url, NotificationError> {
     let url =
         Url::parse(raw.trim()).map_err(|_| NotificationError::new("invalid_url", "invalid url"))?;
@@ -43,6 +45,7 @@ pub fn validate_url(raw: &str) -> Result<Url, NotificationError> {
     Ok(url)
 }
 
+// 仅允许非空 ASCII 字母数字及连字符头名，并拒绝传输受控头；值的合法性留给请求库。
 pub fn ensure_safe_header_name(name: &str) -> Result<(), NotificationError> {
     let normalized = name.trim().to_ascii_lowercase();
     if normalized.is_empty()
@@ -59,6 +62,7 @@ pub fn ensure_safe_header_name(name: &str) -> Result<(), NotificationError> {
     Ok(())
 }
 
+// 校验 URL/头名后发送 GET 或 POST，完整读取再检查 64 KiB 上限；返回所有 HTTP 状态供适配器判定。
 pub async fn execute(
     client: &Client,
     spec: HttpRequestSpec,
@@ -103,6 +107,7 @@ pub async fn execute(
     })
 }
 
+// 按 URL 编码规则追加查询对，保留已有参数及重复键，不在此校验参数内容。
 pub fn append_query(mut url: Url, pairs: &[(String, String)]) -> String {
     {
         let mut query = url.query_pairs_mut();
@@ -113,6 +118,7 @@ pub fn append_query(mut url: Url, pairs: &[(String, String)]) -> String {
     url.to_string()
 }
 
+// 仅返回通过 URL 校验的主机名供日志使用，失败时返回固定占位符，不带路径或查询。
 pub fn host_for_log(raw: &str) -> String {
     validate_url(raw)
         .ok()

@@ -22,6 +22,7 @@ pub(crate) struct FetchModelsInput {
 // 手写 Debug:`api_key` 是明文密钥,不能随 `{:?}` 进日志
 // (`CLI_MANAGER_DEBUG=1` 会把 Debug 级日志写进 cli-manager.log)。
 impl fmt::Debug for FetchModelsInput {
+    // 自定义 Debug 隐去 api_key 的具体值并保留是否存在；其他字段包括 base_url 原样输出。
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("FetchModelsInput")
             .field("app_type", &self.app_type)
@@ -41,6 +42,8 @@ pub(crate) struct FetchModelsResult {
     pub models: Vec<String>,
 }
 
+// 优先使用表单密钥，否则读取已存启用激活密钥，构造 15 秒请求并返回模型列表；不缓存列表。
+// 有 provider_id 时先查详情；正文完整读取且无本地容量上限，失败日志只截断响应，不保证脱敏。
 pub(crate) async fn fetch(input: FetchModelsInput) -> Result<FetchModelsResult, String> {
     let app_type = repository::normalize_app_type(&input.app_type)?;
     let provider_id = input
@@ -177,6 +180,7 @@ pub(crate) async fn fetch(input: FetchModelsInput) -> Result<FetchModelsResult, 
 
 /// 密钥指纹：只保留首尾各 4 个字符，够用来比对「两次请求用的是不是同一把密钥」，
 /// 但不足以还原密钥本身。太短的密钥一律全部隐去，避免变相泄露。
+// 超过 12 字符时显示首尾各四字符，中间替换为星号；这是部分掩码而非哈希，短密钥全部隐藏。
 fn fingerprint_key(api_key: &str) -> String {
     let chars: Vec<char> = api_key.chars().collect();
     if chars.len() <= 12 {
@@ -188,6 +192,7 @@ fn fingerprint_key(api_key: &str) -> String {
 }
 
 /// 截断响应体用于日志：保留足够看清供应商的报错，又不至于把整页 HTML 灌进日志文件。
+// 替换回车换行并裁剪空白，超过 300 字符时截断并加标记；不清除秘密或其他控制字符。
 fn truncate_for_log(body: &str) -> String {
     const LIMIT: usize = 300;
     let cleaned = body.replace(['\n', '\r'], " ");
@@ -199,6 +204,7 @@ fn truncate_for_log(body: &str) -> String {
     format!("{kept}…<truncated>")
 }
 
+// 完整 URL 模式保留裁剪后的输入，否则按后缀补 /models 或 /v1/models；不验证 URL 语法。
 fn build_models_url(base_url: &str, is_full_url: bool) -> Result<String, String> {
     let base = base_url.trim();
     if base.is_empty() {
@@ -217,6 +223,7 @@ fn build_models_url(base_url: &str, is_full_url: bool) -> Result<String, String>
     }
 }
 
+// 从数组或 data/models 数组提取字符串及 id/name，裁剪空值、忽略 ASCII 大小写排序，再对相邻完全相同项去重。
 fn parse_model_ids(value: &Value) -> Vec<String> {
     let candidates = match value {
         Value::Array(items) => Some(items),
@@ -255,6 +262,7 @@ mod tests {
     };
     use serde_json::json;
 
+    // 构造使用测试域名及可选虚构供应商/密钥的模型查询输入，不发起查询。
     fn input(provider_id: Option<&str>, api_key: Option<&str>) -> FetchModelsInput {
         FetchModelsInput {
             app_type: "claude".to_string(),
@@ -268,6 +276,7 @@ mod tests {
     }
 
     #[test]
+    // 验证完整 URL 模式不追加 models 路径。
     fn full_url_is_not_extended() {
         assert_eq!(
             build_models_url("https://example.test/v1/messages", true).unwrap(),
@@ -275,6 +284,7 @@ mod tests {
         );
     }
     #[test]
+    // 验证带末尾斜杠的 /v1 基础地址补成 /v1/models。
     fn base_url_gets_models_endpoint() {
         assert_eq!(
             build_models_url("https://example.test/v1/", false).unwrap(),
@@ -283,6 +293,7 @@ mod tests {
     }
 
     #[test]
+    // 验证根地址补成版本化模型列表端点。
     fn root_base_url_gets_v1_models_endpoint() {
         assert_eq!(
             build_models_url("https://example.test", false).unwrap(),
@@ -290,6 +301,7 @@ mod tests {
         );
     }
     #[test]
+    // 验证 data 对象数组及 models 字符串数组的解析、排序和重复项处理。
     fn parses_common_model_shapes() {
         assert_eq!(
             parse_model_ids(&json!({"data": [{"id": "b"}, {"id": "a"}, {"id": "a"}]})),
@@ -303,6 +315,7 @@ mod tests {
 
     /// `api_key` 是明文密钥,Debug 输出必须脱敏,否则 `CLI_MANAGER_DEBUG=1` 会把它写进日志文件。
     #[test]
+    // 用虚构密钥验证 Debug 不输出 api_key 明文，同时保留供应商标识和脱敏占位符。
     fn debug_output_redacts_api_key() {
         let rendered = format!("{:?}", input(Some("provider-1"), Some("sk-super-secret")));
         assert!(!rendered.contains("sk-super-secret"), "{rendered}");
@@ -312,6 +325,7 @@ mod tests {
     }
 
     #[test]
+    // 验证未提供密钥时 Debug 保留 None，而非混同于已提供但隐藏的密钥。
     fn debug_output_keeps_absent_api_key_distinguishable() {
         let rendered = format!("{:?}", input(Some("provider-1"), None));
         assert!(rendered.contains("api_key: None"), "{rendered}");
@@ -319,6 +333,7 @@ mod tests {
 
     /// provider_id 与 api_key 皆缺失时必须在触库/发网络请求之前就拒绝。
     #[tokio::test]
+    // 验证供应商与密钥都缺失时，在数据库和网络访问前拒绝。
     async fn missing_provider_and_key_is_rejected() {
         let error = fetch(input(None, None)).await.unwrap_err();
         assert_eq!(error, "provider_models_active_key_required");
@@ -326,6 +341,7 @@ mod tests {
 
     /// 空白串等同于未提供,不能被当成有效密钥送去请求。
     #[tokio::test]
+    // 验证纯空白供应商及密钥按缺失处理，避免触发数据库或网络访问。
     async fn blank_values_are_treated_as_absent() {
         let error = fetch(input(Some("   "), Some("  "))).await.unwrap_err();
         assert_eq!(error, "provider_models_active_key_required");
@@ -333,6 +349,7 @@ mod tests {
 
     /// 指纹用于比对「两次请求是不是同一把密钥」,不能足以还原密钥。
     #[test]
+    // 用固定测试字符串验证长密钥保留边缘字符，短密钥及空值完全隐藏。
     fn key_fingerprint_keeps_only_edges() {
         let key = "sk-kWbezyoMpusEbvUIppI4oulFGVCAkvtsbDGic";
         let printed = fingerprint_key(key);
@@ -344,6 +361,7 @@ mod tests {
     }
 
     #[test]
+    // 验证日志正文去除换行并截断超长内容；不验证秘密脱敏。
     fn log_body_is_truncated_and_single_line() {
         let long = "x".repeat(400);
         let printed = truncate_for_log(&format!("line1\nline2\n{long}"));

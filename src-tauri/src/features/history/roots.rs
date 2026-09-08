@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 
+// 枚举子代理 transcript，WSL 使用 find 并保存指纹，本地检查目录内文件名。
 pub(super) fn list_subagent_transcript_files(subagents_dir: &Path) -> Vec<PathBuf> {
     let dir_str = subagents_dir.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&dir_str) {
@@ -38,6 +39,7 @@ pub(super) fn list_subagent_transcript_files(subagents_dir: &Path) -> Vec<PathBu
         .collect()
 }
 
+// 按父目录名 subagents 及 agent-*.jsonl 文件名识别子代理路径。
 pub(crate) fn is_subagent_transcript_path(path: &Path) -> bool {
     let is_subagents_dir = path
         .parent()
@@ -53,6 +55,7 @@ pub(crate) fn is_subagent_transcript_path(path: &Path) -> bool {
     is_subagents_dir && is_agent_file
 }
 
+// 规范化显式 Claude、Codex 和 Grok 根目录，初始化历史范围配置。
 pub(crate) fn history_roots(
     claude_config_dir: Option<String>,
     codex_config_dir: Option<String>,
@@ -66,6 +69,7 @@ pub(crate) fn history_roots(
     }
 }
 
+// 将可选非空配置目录字符串修剪并转换为路径。
 pub(super) fn normalize_config_dir(value: Option<String>) -> Option<PathBuf> {
     value
         .map(|value| value.trim().to_string())
@@ -73,6 +77,7 @@ pub(super) fn normalize_config_dir(value: Option<String>) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+// 优先使用显式 Claude 配置，再按 Provider Home 或默认用户目录定位 projects。
 pub(super) fn resolve_claude_history_root(roots: &HistoryRoots) -> PathBuf {
     if let Some(dir) = roots.claude_config_dir.clone() {
         return dir.join("projects");
@@ -82,6 +87,7 @@ pub(super) fn resolve_claude_history_root(roots: &HistoryRoots) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".claude").join("projects"))
 }
 
+// 按显式配置、Provider Home 和默认用户目录顺序定位 Codex 配置根。
 pub(super) fn resolve_codex_config_root(roots: &HistoryRoots) -> PathBuf {
     roots
         .codex_config_dir
@@ -91,6 +97,7 @@ pub(super) fn resolve_codex_config_root(roots: &HistoryRoots) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".codex"))
 }
 
+// 读取本地或 WSL 的 Codex 标题索引并生成指纹，大小检查失败时回退空映射。
 pub(super) fn codex_thread_name_index(roots: &HistoryRoots) -> CodexThreadNameIndex {
     let path = resolve_codex_config_root(roots).join("session_index.jsonl");
     let path_text = path.to_string_lossy();
@@ -167,6 +174,7 @@ pub(super) fn codex_thread_name_index(roots: &HistoryRoots) -> CodexThreadNameIn
     CodexThreadNameIndex { names, fingerprint }
 }
 
+// 逐行读取有效会话名记录并截短标题，同一 ID 最后一个有效值生效。
 pub(super) fn parse_codex_thread_name_index(text: &str) -> HashMap<String, String> {
     let mut names = HashMap::new();
     for line in text.lines() {
@@ -196,6 +204,7 @@ pub(super) fn parse_codex_thread_name_index(text: &str) -> HashMap<String, Strin
     names
 }
 
+// 仅对 Codex 会话用匹配的索引标题覆盖扫描标题。
 pub(super) fn apply_codex_thread_name(
     file_ref: &SessionFileRef,
     index: &CodexThreadNameIndex,
@@ -209,6 +218,7 @@ pub(super) fn apply_codex_thread_name(
     }
 }
 
+// 组合单会话消息、统计、工作目录、工具事件与文件变更扫描结果。
 pub(super) fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDetailParts {
     let fingerprint = session_file_fingerprint(&file_ref.path);
     let (computed, messages) = scan_session_computation_with_messages(
@@ -227,6 +237,7 @@ pub(super) fn scan_session_detail_parts(file_ref: &SessionFileRef) -> SessionDet
     }
 }
 
+// 委托带 Codex 标题映射的会话详情扫描入口。
 pub(super) fn scan_session_detail_parts_for_roots(
     file_ref: &SessionFileRef,
     codex_thread_names: &CodexThreadNameIndex,
@@ -234,6 +245,7 @@ pub(super) fn scan_session_detail_parts_for_roots(
     scan_session_detail_parts_with_thread_names(file_ref, codex_thread_names)
 }
 
+// 优先从显式 Codex 配置定位 sessions，否则使用 Provider Home 或默认目录。
 pub(super) fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
     if roots.codex_config_dir.is_some() {
         return resolve_codex_config_root(roots).join("sessions");
@@ -243,6 +255,7 @@ pub(super) fn resolve_codex_history_root(roots: &HistoryRoots) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".codex").join("sessions"))
 }
 
+// 优先使用 sqlite_home 配置，再选择现有默认或嵌套 Codex 状态库路径。
 pub(super) fn resolve_codex_state_db_path(roots: &HistoryRoots) -> PathBuf {
     let root = resolve_codex_config_root(roots);
     if let Some(sqlite_home) = codex_config_string(roots, "sqlite_home") {
@@ -260,18 +273,21 @@ pub(super) fn resolve_codex_state_db_path(roots: &HistoryRoots) -> PathBuf {
     default_path
 }
 
+// 定位用户目录下的 Gemini tmp 历史根，缺失用户目录时使用相对路径。
 pub(super) fn resolve_gemini_history_root() -> PathBuf {
     detect_home_dir()
         .map(|home| home.join(".gemini").join("tmp"))
         .unwrap_or_else(|| PathBuf::from(".gemini").join("tmp"))
 }
 
+// 定位用户目录下的 Copilot session-state 根目录。
 pub(super) fn resolve_copilot_history_root() -> PathBuf {
     detect_home_dir()
         .map(|home| home.join(".copilot").join("session-state"))
         .unwrap_or_else(|| PathBuf::from(".copilot").join("session-state"))
 }
 
+// 依据 brain 子目录存在性选择 Antigravity 新版或旧版根目录。
 pub(super) fn resolve_antigravity_history_root() -> PathBuf {
     let home = detect_home_dir().unwrap_or_default();
     let primary = home.join(".gemini").join("antigravity-cli");
@@ -285,6 +301,7 @@ pub(super) fn resolve_antigravity_history_root() -> PathBuf {
     }
 }
 
+// 按显式配置、Provider Home 和默认用户目录选择 Grok 会话根。
 pub(super) fn resolve_grok_history_root(roots: &HistoryRoots) -> PathBuf {
     roots.grok_session_root.clone().unwrap_or_else(|| {
         crate::provider::home::default_history_root("grok")
@@ -293,12 +310,14 @@ pub(super) fn resolve_grok_history_root(roots: &HistoryRoots) -> PathBuf {
     })
 }
 
+// 定位用户目录下的 Pi agent 根目录。
 pub(super) fn resolve_pi_history_root() -> PathBuf {
     detect_home_dir()
         .map(|home| home.join(".pi").join("agent"))
         .unwrap_or_else(|| PathBuf::from(".pi").join("agent"))
 }
 
+// 按平台构造 Code、Cursor 扩展存储与独立 Cline 的候选历史根目录。
 pub(super) fn resolve_cline_history_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
 
@@ -356,12 +375,14 @@ pub(super) fn resolve_cline_history_roots() -> Vec<PathBuf> {
     roots
 }
 
+// 定位用户目录下的 Cursor projects 根目录。
 pub(super) fn resolve_cursor_history_root() -> PathBuf {
     detect_home_dir()
         .map(|home| home.join(".cursor").join("projects"))
         .unwrap_or_else(|| PathBuf::from(".cursor").join("projects"))
 }
 
+// 按平台用户配置目录定位 Cursor globalStorage，无法解析时使用相对路径。
 pub(super) fn resolve_cursor_global_storage_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -392,6 +413,7 @@ pub(super) fn resolve_cursor_global_storage_root() -> PathBuf {
     PathBuf::from("Cursor").join("User").join("globalStorage")
 }
 
+// Windows 优先使用 APPDATA 的 Kiro 工作区会话目录，否则回退用户目录。
 pub(super) fn resolve_kiro_history_root() -> PathBuf {
     #[cfg(target_os = "windows")]
     {

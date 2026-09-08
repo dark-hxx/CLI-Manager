@@ -5,6 +5,7 @@ use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+// 读取已配置且非 SSH 的活动第二代来源实例。
 pub(super) async fn active_v2_source_instances(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<V2SourceInstance>, String> {
@@ -32,6 +33,7 @@ pub(super) async fn active_v2_source_instances(
         .collect()
 }
 
+// 按根目录及来源读取旧目录会话与文件指纹。
 pub(super) async fn legacy_sessions_for_v2(
     conn: &mut SqliteConnection,
     roots_key: &str,
@@ -77,6 +79,7 @@ pub(super) async fn legacy_sessions_for_v2(
         .collect()
 }
 
+// 读取匹配当前解析器和模型版本的会话指纹映射。
 pub(super) async fn existing_v2_session_fingerprints(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
@@ -107,6 +110,7 @@ pub(super) async fn existing_v2_session_fingerprints(
         .collect()
 }
 
+// 重新解析原会话，并在事务中替换第二代会话及消息、用量和工具数据。
 pub(super) async fn replace_v2_session(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -354,6 +358,7 @@ pub(super) async fn replace_v2_session(
     Ok(())
 }
 
+// 删除指定来源实例与发现键的索引失败记录。
 pub(super) async fn clear_v2_index_failure(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
@@ -371,6 +376,7 @@ pub(super) async fn clear_v2_index_failure(
     Ok(())
 }
 
+// 记录会话索引错误、指纹及时间，重复失败时递增重试计数。
 pub(super) async fn record_v2_index_failure(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
@@ -415,6 +421,7 @@ pub(super) async fn record_v2_index_failure(
     Ok(())
 }
 
+// 删除已有集合中未在当前发现集合出现的会话。
 pub(super) async fn delete_stale_v2_sessions(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
@@ -439,6 +446,7 @@ pub(super) async fn delete_stale_v2_sessions(
     Ok(stale.len())
 }
 
+// 统计指定来源实例的会话数与消息行数。
 pub(super) async fn v2_count_sessions_messages(
     conn: &mut SqliteConnection,
     source_instance_id: &str,
@@ -462,6 +470,7 @@ pub(super) async fn v2_count_sessions_messages(
     Ok((sessions, messages))
 }
 
+// 汇总指定旧目录来源的会话消息计数。
 pub(super) async fn legacy_count_messages(
     conn: &mut SqliteConnection,
     roots_key: &str,
@@ -479,6 +488,7 @@ pub(super) async fn legacy_count_messages(
     .map_err(|err| err.to_string())
 }
 
+// 按指纹增量构建单实例第二代索引，记录失败、数量差异和同步状态。
 pub(super) async fn shadow_build_v2_for_instance(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
@@ -647,6 +657,7 @@ pub(super) async fn shadow_build_v2_for_instance(
     Ok(())
 }
 
+// 依次为活动本地来源实例执行第二代影子索引构建。
 pub(super) async fn shadow_build_v2(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,

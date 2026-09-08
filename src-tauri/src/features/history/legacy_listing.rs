@@ -5,6 +5,7 @@ use super::{
 };
 use log::debug;
 
+// 在阻塞线程中从旧索引按来源、项目及摘要文本过滤并分页返回会话。
 pub(super) async fn history_list_sessions_legacy(
     source: Option<String>,
     claude_config_dir: Option<String>,

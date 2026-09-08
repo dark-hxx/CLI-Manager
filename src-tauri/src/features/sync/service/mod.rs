@@ -53,6 +53,7 @@ pub struct ConflictInfo {
     pub remote_templates: usize,
 }
 
+// 汇总两份旧版同步数据的修改时间及项目等数量，仅构造冲突信息，不判断是否存在冲突。
 pub fn detect_conflict(local: &SyncData, remote: &SyncData) -> ConflictInfo {
     ConflictInfo {
         local_modified: local.last_modified.clone(),
@@ -66,11 +67,13 @@ pub fn detect_conflict(local: &SyncData, remote: &SyncData) -> ConflictInfo {
     }
 }
 
+// 委派 WebDAV OPTIONS 探测，将结构化错误转换为消息文本。
 pub async fn test_connection(config: WebDavConfig) -> Result<bool, String> {
     let client = WebDavClient::new(config);
     client.test_connection().await.map_err(|e| e.message)
 }
 
+// 按规整后的设备名确保 devices 目录并上传旧版 JSON；同名设备路径会被再次写入。
 pub async fn upload(
     config: WebDavConfig,
     data: SyncData,
@@ -103,6 +106,7 @@ pub async fn upload(
     Ok(())
 }
 
+// 下载设备文件或旧共享文件，显式允许且设备请求返回 404/409 时回退 sync.json，再反序列化旧数据。
 pub async fn download(
     config: WebDavConfig,
     device_name: Option<String>,
@@ -138,6 +142,7 @@ pub async fn download(
     Ok(sync_data)
 }
 
+// 按输入设备名逐个下载并统计旧快照，跳过空名称及 404/409，其他错误中止整个查询。
 pub async fn list_device_snapshots(
     config: WebDavConfig,
     device_names: Vec<String>,
@@ -176,6 +181,7 @@ pub async fn list_device_snapshots(
     Ok(snapshots)
 }
 
+// 优先读取 COMPUTERNAME，再尝试 HOSTNAME 并清理名称；不可用或清理为空时使用默认名称。
 pub fn default_device_name() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
@@ -185,6 +191,7 @@ pub fn default_device_name() -> String {
         .unwrap_or_else(|| "当前设备".to_string())
 }
 
+// 清理设备名后拼接 devices 下 JSON 路径，名称为空则拒绝；基础目录由调用方提供。
 fn device_sync_file_path(base_dir: &str, device_name: &str) -> Result<String, String> {
     let safe_name = sanitize_device_name(device_name);
     if safe_name.is_empty() {
@@ -193,12 +200,14 @@ fn device_sync_file_path(base_dir: &str, device_name: &str) -> Result<String, St
     Ok(format!("{}/devices/{}.json", base_dir, safe_name))
 }
 
+// 在给定基础目录下拼接旧版共享 sync.json 路径。
 fn legacy_sync_file_path(base_dir: &str) -> String {
     format!("{}/sync.json", base_dir)
 }
 
 /// 规整用户自定义的远程目录片段。用户输入，按安全清单做字符串层校验：
 /// 拒绝父目录跳出 (`..`)、反斜杠分隔符，去除前后 `/`，空值回退默认 `cli-manager`。
+// 实际将反斜杠转为斜杠并移除空、点和双点段，不返回拒绝错误；无剩余段时使用默认目录。
 fn sanitize_remote_dir(remote_dir: Option<&str>) -> String {
     let raw = remote_dir.unwrap_or("").trim();
     if raw.is_empty() {
@@ -217,6 +226,7 @@ fn sanitize_remote_dir(remote_dir: Option<&str>) -> String {
     cleaned.join("/")
 }
 
+// 保留字母、数字、常见汉字及连字符下划线，将空格和点转为连字符，最多取 64 个字符。
 fn sanitize_device_name(device_name: &str) -> String {
     device_name
         .trim()
@@ -231,6 +241,7 @@ fn sanitize_device_name(device_name: &str) -> String {
         .collect::<String>()
 }
 
+// 创建目标目录并以本地秒级时间命名 ZIP，写入 sync.json；同名文件会截断，失败不清理残留。
 pub fn local_export(dir: &str, data: &SyncData) -> Result<String, String> {
     let dir_path = Path::new(dir);
     if !dir_path.exists() {
@@ -263,6 +274,7 @@ pub fn local_export(dir: &str, data: &SyncData) -> Result<String, String> {
     Ok(zip_path.to_string_lossy().into_owned())
 }
 
+// 读取指定 ZIP 的 sync.json，先检查条目声明大小再反序列化；不解压到磁盘或恢复数据库。
 pub fn local_import(zip_path: &str) -> Result<SyncData, String> {
     let path = Path::new(zip_path);
     if !path.exists() || !path.is_file() {
@@ -310,6 +322,7 @@ pub struct BackupSnapshotInfo {
     pub manifest: BackupManifest,
 }
 
+// 校验 V3、UUID、可解析时间、十六进制哈希格式及对象数据；不重算哈希或验证各数据域。
 fn validate_snapshot(snapshot: &BackupSnapshotV3) -> Result<(), String> {
     if snapshot.version != 3 {
         return Err("backup_snapshot_unsupported_version".to_string());
@@ -341,6 +354,7 @@ fn validate_snapshot(snapshot: &BackupSnapshotV3) -> Result<(), String> {
     Ok(())
 }
 
+// 先校验快照，再提取创建时间前 17 个数字构造文件名；清理设备名，不将时间重新格式化为 UTC。
 fn backup_file_name(snapshot: &BackupSnapshotV3) -> Result<String, String> {
     validate_snapshot(snapshot)?;
     let timestamp = snapshot
@@ -365,12 +379,14 @@ fn backup_file_name(snapshot: &BackupSnapshotV3) -> Result<String, String> {
     ))
 }
 
+// 去除查询和片段后提取末尾路径段，百分号解码并保留 .json 名称；不验证完整 URL 来源。
 fn href_file_name(href: &str) -> Option<String> {
     let path = href.split(['?', '#']).next()?;
     let name = path.trim_end_matches('/').rsplit('/').next()?;
     percent_decode(name).filter(|name| name.ends_with(".json"))
 }
 
+// 逐字节解析百分号十六进制编码并要求结果为 UTF-8，错误或不完整转义返回空值。
 fn percent_decode(value: &str) -> Option<String> {
     let bytes = value.as_bytes();
     let mut result = Vec::with_capacity(bytes.len());
@@ -389,6 +405,7 @@ fn percent_decode(value: &str) -> Option<String> {
     String::from_utf8(result).ok()
 }
 
+// 检查 .json、四段分隔、17 位数字及两个 UUID；不验证日期有效性或设备名段的内容。
 fn is_backup_file_name(name: &str) -> bool {
     let stem = match name.strip_suffix(".json") {
         Some(stem) => stem,
@@ -402,6 +419,7 @@ fn is_backup_file_name(name: &str) -> bool {
         && uuid::Uuid::parse_str(parts[3]).is_ok()
 }
 
+// 先确保远端备份目录，再校验命名并上传快照；上传后清理失败只记录警告，不改变上传成功结果。
 pub async fn upload_backup(
     config: WebDavConfig,
     snapshot: BackupSnapshotV3,
@@ -434,6 +452,7 @@ pub async fn upload_backup(
     Ok(remote_path)
 }
 
+// 枚举 href 并从匹配的文件名重建备份路径后排序去重，404/409 按空目录处理。
 async fn backup_paths(client: &WebDavClient, backups_dir: &str) -> Result<Vec<String>, String> {
     let hrefs = match client.list(backups_dir).await {
         Ok(hrefs) => hrefs,
@@ -453,6 +472,7 @@ async fn backup_paths(client: &WebDavClient, backups_dir: &str) -> Result<Vec<St
     Ok(paths)
 }
 
+// 逐个下载并校验备份元信息，任一失败中止列表；按 createdAt 字符串降序排序而非解析时间比较。
 pub async fn list_backups(
     config: WebDavConfig,
     remote_dir: Option<String>,
@@ -477,6 +497,7 @@ pub async fn list_backups(
     Ok(snapshots)
 }
 
+// 校验路径为备份目录的直接文件名后下载并检查快照结构，不核对文件名与 manifest 是否一致。
 pub async fn download_backup(
     config: WebDavConfig,
     remote_path: String,
@@ -498,6 +519,7 @@ pub async fn download_backup(
     Ok(snapshot)
 }
 
+// 校验备份目录前缀及直接子文件名后发送 DELETE，不下载快照内容确认身份。
 pub async fn delete_backup(
     config: WebDavConfig,
     remote_path: String,
@@ -514,6 +536,7 @@ pub async fn delete_backup(
         .map_err(|error| error.message)
 }
 
+// 按字符串前缀及无斜杠文件名检查直接子路径，再调用文件名格式检查；不做 URL 解码。
 fn valid_backup_remote_path(remote_path: &str, backups_dir: &str) -> bool {
     let Some(file_name) = remote_path.strip_prefix(backups_dir) else {
         return false;
@@ -521,6 +544,7 @@ fn valid_backup_remote_path(remote_path: &str, backups_dir: &str) -> bool {
     !file_name.contains('/') && !file_name.contains('\\') && is_backup_file_name(file_name)
 }
 
+// 按路径中设备标记字符串筛选并字典序倒排，删除保留数量之外的条目；失败中止且不恢复已删文件。
 async fn prune_backups(
     client: &WebDavClient,
     backups_dir: &str,
@@ -540,6 +564,7 @@ async fn prune_backups(
     Ok(())
 }
 
+// 创建父目录并直接创建或截断目标 ZIP，写入 snapshot.json；不是临时文件替换，也不校验快照。
 fn write_snapshot_zip(path: &Path, snapshot: &serde_json::Value) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {error}"))?;
@@ -560,6 +585,7 @@ fn write_snapshot_zip(path: &Path, snapshot: &serde_json::Value) -> Result<(), S
     Ok(())
 }
 
+// 校验 V3 快照后以本地时间及快照 ID 命名 ZIP，保留原 JSON 内容并返回路径。
 pub fn backup_local_export(dir: &str, snapshot: serde_json::Value) -> Result<String, String> {
     let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
         .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
@@ -578,6 +604,7 @@ pub fn backup_local_export(dir: &str, snapshot: serde_json::Value) -> Result<Str
     Ok(path.to_string_lossy().into_owned())
 }
 
+// 优先读取 snapshot.json，否则读取 sync.json；检查条目声明大小后返回 JSON，不验证版本或哈希。
 pub fn backup_local_import(zip_path: &str) -> Result<serde_json::Value, String> {
     let file = File::open(zip_path).map_err(|error| format!("打开 zip 失败: {error}"))?;
     let mut archive =
@@ -596,10 +623,12 @@ pub fn backup_local_import(zip_path: &str) -> Result<serde_json::Value, String> 
     serde_json::from_reader(&mut entry).map_err(|error| format!("解析数据失败: {error}"))
 }
 
+// 在当前应用数据目录下派生 backups 路径，不在此创建目录。
 fn backup_data_dir() -> Result<PathBuf, String> {
     Ok(crate::app_paths::cli_manager_data_dir()?.join("backups"))
 }
 
+// 校验目标哈希和快照后，按原快照 ID 写入目标 outbox；直接写文件，非原子替换且无写入大小上限。
 pub fn save_outbox(target_hash: &str, snapshot: &serde_json::Value) -> Result<String, String> {
     validate_target_hash(target_hash)?;
     let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
@@ -624,6 +653,7 @@ pub fn save_outbox(target_hash: &str, snapshot: &serde_json::Value) -> Result<St
     Ok(path.to_string_lossy().into_owned())
 }
 
+// 枚举目标目录的 JSON 文件并限量读取、解析，缺目录返回空列表；不排序或验证快照 schema。
 pub fn list_outbox(target_hash: &str) -> Result<Vec<serde_json::Value>, String> {
     validate_target_hash(target_hash)?;
     let dir = backup_data_dir()?.join("outbox").join(target_hash);
@@ -655,6 +685,7 @@ pub fn list_outbox(target_hash: &str) -> Result<Vec<serde_json::Value>, String> 
     Ok(snapshots)
 }
 
+// 校验目标哈希及快照 UUID 后删除对应 JSON，文件不存在按成功处理。
 pub fn remove_outbox(target_hash: &str, snapshot_id: &str) -> Result<(), String> {
     validate_target_hash(target_hash)?;
     uuid::Uuid::parse_str(snapshot_id).map_err(|_| "backup_snapshot_invalid_id".to_string())?;
@@ -668,6 +699,7 @@ pub fn remove_outbox(target_hash: &str, snapshot_id: &str) -> Result<(), String>
     Ok(())
 }
 
+// 校验快照后直接写入固定 latest.zip，覆盖此前安全快照，不执行恢复。
 pub fn save_restore_safety(snapshot: &serde_json::Value) -> Result<String, String> {
     let typed: BackupSnapshotV3 = serde_json::from_value(snapshot.clone())
         .map_err(|error| format!("backup_snapshot_parse_failed: {error}"))?;
@@ -677,6 +709,7 @@ pub fn save_restore_safety(snapshot: &serde_json::Value) -> Result<String, Strin
     Ok(path.to_string_lossy().into_owned())
 }
 
+// 读取固定安全 ZIP 并返回 JSON，缺文件返回空值，不自动应用恢复。
 pub fn load_restore_safety() -> Result<Option<serde_json::Value>, String> {
     let path = backup_data_dir()?.join("restore-safety").join("latest.zip");
     if !path.exists() {
@@ -685,6 +718,7 @@ pub fn load_restore_safety() -> Result<Option<serde_json::Value>, String> {
     backup_local_import(path.to_string_lossy().as_ref()).map(Some)
 }
 
+// 仅删除固定 latest.zip，文件不存在时不执行操作。
 pub fn clear_restore_safety() -> Result<(), String> {
     let path = backup_data_dir()?.join("restore-safety").join("latest.zip");
     if path.exists() {
@@ -693,6 +727,7 @@ pub fn clear_restore_safety() -> Result<(), String> {
     Ok(())
 }
 
+// 只接受 64 字节 ASCII 十六进制目标标识，不验证它是否由实际 WebDAV 配置计算得到。
 fn validate_target_hash(target_hash: &str) -> Result<(), String> {
     if target_hash.len() == 64 && target_hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         Ok(())
@@ -705,6 +740,7 @@ fn validate_target_hash(target_hash: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    // 构造固定 UUID、毫秒时间及五域对象的 V3 测试快照，哈希为格式合法的占位文本。
     fn sample_backup() -> BackupSnapshotV3 {
         BackupSnapshotV3 {
             version: 3,
@@ -728,6 +764,7 @@ mod tests {
     }
 
     #[test]
+    // 验证固定快照生成预期文件名并清理设备名双连字符，同时拒绝简单穿越名称。
     fn backup_file_name_is_strict_and_removes_separator_from_device_name() {
         let name = backup_file_name(&sample_backup()).unwrap();
         assert_eq!(
@@ -739,6 +776,7 @@ mod tests {
     }
 
     #[test]
+    // 验证生成的备份文件可作为直接子项，而多一级目录的路径被拒绝。
     fn backup_remote_path_must_be_direct_child() {
         let name = backup_file_name(&sample_backup()).unwrap();
         assert!(valid_backup_remote_path(
@@ -752,6 +790,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 href 文件名中的空格转义可解码，不完整百分号转义被拒绝。
     fn percent_decode_handles_webdav_href_file_names() {
         assert_eq!(
             percent_decode("work%20laptop.json").as_deref(),
@@ -761,6 +800,7 @@ mod tests {
     }
 
     #[test]
+    // 验证缺省、空串及纯空白远端目录都回退默认值。
     fn sanitize_remote_dir_defaults_when_empty() {
         assert_eq!(sanitize_remote_dir(None), DEFAULT_REMOTE_DIR);
         assert_eq!(sanitize_remote_dir(Some("")), DEFAULT_REMOTE_DIR);
@@ -768,6 +808,7 @@ mod tests {
     }
 
     #[test]
+    // 验证普通单级及多级目录经过规整后保持不变。
     fn sanitize_remote_dir_keeps_valid_paths() {
         assert_eq!(sanitize_remote_dir(Some("cli-manager")), "cli-manager");
         assert_eq!(
@@ -777,6 +818,7 @@ mod tests {
     }
 
     #[test]
+    // 验证远端目录首尾斜杠被移除。
     fn sanitize_remote_dir_strips_surrounding_slashes() {
         assert_eq!(
             sanitize_remote_dir(Some("/backups/cli-mgr/")),
@@ -785,11 +827,13 @@ mod tests {
     }
 
     #[test]
+    // 验证反斜杠实际被转换为斜杠，而不是返回错误。
     fn sanitize_remote_dir_normalizes_backslashes() {
         assert_eq!(sanitize_remote_dir(Some("back\\slash")), "back/slash");
     }
 
     #[test]
+    // 验证双点段被剥离、剩余段保留；仅有点段时回退默认，不执行文件系统路径解析。
     fn sanitize_remote_dir_rejects_parent_escape() {
         // `..` 段被剥离，剩余安全段保留。
         assert_eq!(sanitize_remote_dir(Some("../etc")), "etc");
@@ -800,6 +844,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧版设备文件路径沿用传入的单级或多级基础目录。
     fn device_sync_file_path_uses_base_dir() {
         assert_eq!(
             device_sync_file_path("cli-manager", "laptop").unwrap(),
@@ -812,6 +857,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧版共享 sync.json 路径位于给定基础目录下。
     fn legacy_sync_file_path_uses_base_dir() {
         assert_eq!(
             legacy_sync_file_path("cli-manager"),
@@ -820,6 +866,7 @@ mod tests {
     }
 
     #[test]
+    // 验证旧 JSON 缺少 worktrees 和 model_prices 时两字段反序列化为空数组。
     fn sync_payload_defaults_missing_worktrees() {
         let json = r#"{
             "version": 1,

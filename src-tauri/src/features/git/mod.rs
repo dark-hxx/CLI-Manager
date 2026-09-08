@@ -55,6 +55,7 @@ static WORKTREE_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 // 某个仓库的兼容重试暂时关闭校验时影响并发的其它 Git 操作。
 static GIT_OWNER_VALIDATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+// 获取串行化工作区快照操作的全局锁，锁中毒时返回错误。
 fn acquire_worktree_operation_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
     WORKTREE_OPERATION_LOCK
         .get_or_init(|| Mutex::new(()))
@@ -62,6 +63,7 @@ fn acquire_worktree_operation_lock() -> Result<std::sync::MutexGuard<'static, ()
         .map_err(|_| "worktree_operation_lock_poisoned".to_string())
 }
 
+// 按补丁字节数和文件数量阈值记录工作区快照内存诊断。
 fn log_worktree_snapshot_oom_diagnostic(
     phase: &str,
     project_path: &str,
@@ -97,6 +99,7 @@ fn log_worktree_snapshot_oom_diagnostic(
 /// `NotFound` 表示路径存在但没有 Git 仓库，映射为稳定错误码前缀供上层统一识别；
 /// 其余错误（所有权误判、权限不足、仓库损坏等）保留原始描述，避免误判成「不是仓库」
 /// 而让面板显示空态、掩盖真实故障。
+// 仅将 libgit2 的 NotFound 映射为非仓库错误码，其余保留错误原因。
 fn format_open_repo_error(error: &git2::Error) -> String {
     if error.code() == git2::ErrorCode::NotFound {
         return format!("{NOT_GIT_REPOSITORY_CODE}: 打开 Git 仓库失败: {error}");
@@ -105,6 +108,7 @@ fn format_open_repo_error(error: &git2::Error) -> String {
 }
 
 /// 判定错误串是否表示「目录不是 Git 仓库」：稳定错误码或 shell-out Git 的原生文案。
+// 识别稳定非仓库错误码或 Git 命令输出中的非仓库提示。
 pub(super) fn is_not_git_repository_error(message: &str) -> bool {
     message.contains(NOT_GIT_REPOSITORY_CODE) || is_not_git_repository_output(message)
 }
@@ -114,6 +118,7 @@ pub(super) fn is_not_git_repository_error(message: &str) -> bool {
 /// libgit2 在 Windows 上会校验仓库路径所有权，WSL UNC 路径（`\\wsl.localhost\...`）
 /// 通过 Plan 9 协议暴露，所有权信息无法正确传递，导致 `Repository::open` 失败。
 /// 本函数检测到 WSL UNC 路径或本地仓库所有权误判时，临时关闭所有权验证后重试。
+// 持锁打开仓库，遇到所有权或 WSL 兼容问题时临时关闭校验重试并恢复开关。
 pub(super) fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, String> {
     let path = path.as_ref();
     let _owner_lock = GIT_OWNER_VALIDATION_LOCK
@@ -176,6 +181,7 @@ pub(super) fn open_git_repo<P: AsRef<Path>>(path: P) -> Result<Repository, Strin
 /// * `Ok(Some(branch))` - 普通分支
 /// * `Ok(None)` - 非 git 仓库、detached HEAD、路径无效，或查询失败
 #[tauri::command]
+// 在线程池读取当前 HEAD 的短引用名，WSL 路径改用 Git 命令查询。
 pub async fn get_current_git_branch(path: String) -> Result<Option<String>, String> {
     if path.is_empty() {
         return Ok(None);
@@ -210,6 +216,7 @@ pub async fn get_current_git_branch(path: String) -> Result<Option<String>, Stri
     .map_err(|e| format!("git 分支查询任务失败: {e}"))?
 }
 
+// 读取 WSL 当前分支，将空输出或查询失败降级为无分支。
 fn current_wsl_git_branch(distro: &str, linux_path: &str) -> Option<String> {
     match run_wsl_git(distro, linux_path, &["branch", "--show-current"]) {
         Ok(stdout) => {
@@ -254,6 +261,7 @@ pub struct GitWorktreeSnapshot {
 /// * `Ok(Vec<GitFileChange>)` - 变更文件列表
 /// * `Err(String)` - 错误信息
 #[tauri::command]
+// 在线程池按原生或 WSL 路径查询文件变更，挂载盘路径优先原生处理。
 pub async fn git_get_changes(project_path: String) -> Result<Vec<GitFileChange>, String> {
     log::debug!(
         "[git_get_changes] 开始查询 Git 变更, project_path: {}",
@@ -310,6 +318,7 @@ pub struct GitRepoInfo {
 ///
 /// 根自身是仓库时为首条（相对路径空串）；子仓库按相对路径排序。
 /// 找到 `.git` 的目录不再向其内部递归；深度按相对根计（一级子目录为 1）。
+// 收集根仓库及限深子仓库路径，保持根优先并对子仓库排序。
 fn scan_git_repository_paths(root: &Path, max_depth: usize) -> Vec<(String, std::path::PathBuf)> {
     let mut repos = Vec::new();
     if root.join(".git").exists() {
@@ -323,6 +332,7 @@ fn scan_git_repository_paths(root: &Path, max_depth: usize) -> Vec<(String, std:
     repos
 }
 
+// 限深扫描非排除目录，跳过符号链接并在发现子仓库后停止向内递归。
 fn scan_sub_repositories(
     dir: &Path,
     rel_prefix: &str,
@@ -370,6 +380,7 @@ fn scan_sub_repositories(
 ///
 /// 分支查询失败不报错（返回 None）；WSL UNC 路径经 Plan 9 访问较慢，限深 2 防卡顿。
 #[tauri::command]
+// 验证项目目录后扫描根仓库与子仓库，并尽力读取各仓库分支。
 pub async fn git_list_repositories(project_path: String) -> Result<Vec<GitRepoInfo>, String> {
     tokio::task::spawn_blocking(move || {
         if project_path.is_empty() {
@@ -407,6 +418,7 @@ pub async fn git_list_repositories(project_path: String) -> Result<Vec<GitRepoIn
     .map_err(|e| format!("Git 仓库扫描任务失败: {e}"))?
 }
 
+// 将 libgit2 状态映射为状态字母和暂存标记，冲突优先于暂存状态。
 fn parse_git2_status(status: git2::Status) -> (&'static str, bool) {
     // 冲突优先：合并/变基产生的冲突文件，独立标识 "C"，避免被当成普通修改而误提交。
     if status.is_conflicted() {
@@ -443,16 +455,19 @@ fn parse_git2_status(status: git2::Status) -> (&'static str, bool) {
 }
 
 /// 把 git 路径归一化为正斜杠分隔，统一统计表 key 与 status 条目路径（Windows 兼容）。
+// 将路径反斜杠转换为正斜杠以统一统计键。
 fn normalize_path(p: &str) -> String {
     p.replace('\\', "/")
 }
 
+// 读取 HEAD 目标对象 ID，缺少 HEAD 或目标时返回错误。
 fn repo_head_oid(repo: &Repository) -> Result<String, String> {
     let head = repo.head().map_err(|e| format!("head_failed: {e}"))?;
     let oid = head.target().ok_or("head_target_missing")?;
     Ok(oid.to_string())
 }
 
+// 尽力读取 HEAD 的短引用名，查询失败时返回空值。
 fn repo_branch_name(repo: &Repository) -> Option<String> {
     repo.head()
         .ok()
@@ -465,6 +480,7 @@ fn repo_branch_name(repo: &Repository) -> Option<String> {
 /// recurse_untracked_dirs(true) 已展开普通未跟踪目录，只有嵌套仓库才保留目录形式。
 /// submodule/worktree 的 .git 是文件，目录/文件均算命中。
 /// 跳过此类条目可避免前端把目录当普通文件请求 diff 导致原始 OS 错误（见 issue #85）。
+// 检查尾部带斜杠的状态路径是否为含 .git 的嵌套仓库目录。
 fn is_nested_repo_entry(repo: &Repository, file_path: &str) -> bool {
     if !file_path.ends_with('/') {
         return false;
@@ -474,6 +490,7 @@ fn is_nested_repo_entry(repo: &Repository, file_path: &str) -> bool {
         .unwrap_or(false)
 }
 
+// 收集工作区和暂存区变更，跳过嵌套仓库并按规模决定是否计算行数。
 fn collect_git_changes_from_repo(repo: &Repository) -> Result<Vec<GitFileChange>, String> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true);
@@ -527,6 +544,7 @@ struct BoundedPatch {
 /// * `Ok(String)` - unified diff 格式的文本
 /// * `Err(String)` - 错误信息
 #[tauri::command]
+// 校验差异选项后在线程池读取指定文件的差异载荷。
 pub async fn git_get_file_diff(
     project_path: String,
     file_path: String,
@@ -549,6 +567,7 @@ pub async fn git_get_file_diff(
 }
 
 #[tauri::command]
+// 持工作区操作锁生成快照，限制返回补丁大小并记录内存诊断。
 pub async fn git_get_worktree_snapshot(
     project_path: String,
 ) -> Result<GitWorktreeSnapshot, String> {
@@ -577,6 +596,7 @@ pub async fn git_get_worktree_snapshot(
     .map_err(|e| format!("task_failed: {e}"))?
 }
 
+// 校验路径规范化后仍在仓库内，仅删除文件并清理沿途空父目录。
 fn remove_untracked_snapshot_file(workdir: &Path, relative_path: &str) -> Result<(), String> {
     validate_repo_relative_path(relative_path)?;
     let full_path = workdir.join(relative_path);
@@ -614,6 +634,7 @@ fn remove_untracked_snapshot_file(workdir: &Path, relative_path: &str) -> Result
     Ok(())
 }
 
+// 校验快照分支名的空白、路径片段和非法字符。
 fn validate_snapshot_branch_name(branch_name: &str) -> Result<(), String> {
     let trimmed = branch_name.trim();
     if trimmed.is_empty() {
@@ -635,6 +656,7 @@ fn validate_snapshot_branch_name(branch_name: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
+// 核对 HEAD 与当前补丁后硬重置工作区，清理未跟踪文件并应用目标快照。
 pub async fn git_restore_worktree_snapshot(
     project_path: String,
     target_patch: String,
@@ -697,6 +719,7 @@ pub async fn git_restore_worktree_snapshot(
 }
 
 #[tauri::command]
+// 核对快照后创建并切换新分支，重置工作区并应用目标补丁。
 pub async fn git_fork_worktree_snapshot(
     project_path: String,
     target_patch: String,
@@ -768,6 +791,7 @@ pub async fn git_fork_worktree_snapshot(
     .map_err(|e| format!("task_failed: {e}"))?
 }
 
+// 识别 U 和 ?? 两种未跟踪状态标记。
 fn is_untracked_status(status: &str) -> bool {
     matches!(status, "U" | "??")
 }
@@ -782,6 +806,7 @@ fn is_untracked_status(status: &str) -> bool {
 /// * `A`（已暂存新增）：仅 `reset_default` 取消暂存（变为未跟踪），**不删物理文件**。
 /// * `U`/`??`（未跟踪）：拒绝（产品决策：不回滚未跟踪文件，避免误删新代码）。
 #[tauri::command]
+// 校验相对路径后丢弃已跟踪文件改动，暂存新增仅取消暂存且拒绝未跟踪状态。
 pub async fn git_discard_file(
     project_path: String,
     file_path: String,
@@ -849,6 +874,7 @@ pub async fn git_discard_file(
 ///
 /// 破坏性、不可逆操作。调用方必须二次确认。
 #[tauri::command]
+// 核对当前未跟踪状态后逐项删除仓库内文件，已缺失目标直接跳过。
 pub async fn git_delete_untracked_paths(
     project_path: String,
     paths: Vec<String>,
@@ -900,6 +926,7 @@ pub async fn git_delete_untracked_paths(
 /// 破坏性操作。前端传入打开时的完整 diff 文本与 hunk 序号；后端构造反向 patch，
 /// dry-run 校验后 apply 到工作区。
 #[tauri::command]
+// 生成指定 hunk 的反向补丁，在线程池校验并应用到工作区。
 pub async fn git_revert_hunk(
     project_path: String,
     diff_text: String,
@@ -928,6 +955,7 @@ pub struct SelectedLine {
 
 /// 回滚 diff 中选中的若干行（行级回滚入口）。破坏性操作，dry-run 兜底。
 #[tauri::command]
+// 要求选择非空变更行，生成反向行补丁后在线程池应用。
 pub async fn git_revert_lines(
     project_path: String,
     diff_text: String,
@@ -956,6 +984,7 @@ pub async fn git_revert_lines(
 
 /// 暂存单个文件：worktree 存在 → add_path（新增/修改/未跟踪）；已删除 → remove_path。
 #[tauri::command]
+// 校验路径后将现存文件加入索引，缺失文件从索引移除并持久化。
 pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(), String> {
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
@@ -987,6 +1016,7 @@ pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(
 
 /// 取消暂存单个文件：有 HEAD → reset 到 HEAD；unborn 分支 → 从 index 移除。
 #[tauri::command]
+// 校验路径后按 HEAD 取消暂存；无可用提交时直接移除索引条目。
 pub async fn git_unstage_file(project_path: String, file_path: String) -> Result<(), String> {
     validate_repo_relative_path(&file_path)?;
     tokio::task::spawn_blocking(move || {
@@ -1020,6 +1050,7 @@ pub async fn git_unstage_file(project_path: String, file_path: String) -> Result
 
 /// 全部暂存：add_all 收新增/修改/未跟踪，update_all 补已跟踪文件的删除。
 #[tauri::command]
+// 将新增、修改与删除批量同步到索引并一次写入。
 pub async fn git_stage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let effective_project_path = effective_git_project_path(&project_path);
@@ -1046,6 +1077,7 @@ pub async fn git_stage_all(project_path: String) -> Result<(), String> {
 
 /// 全部取消暂存：有 HEAD → index 重置为 HEAD tree；unborn → 清空 index。工作区不受影响。
 #[tauri::command]
+// 将索引还原为 HEAD 树；无可用 HEAD 时清空索引，保留工作区。
 pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let effective_project_path = effective_git_project_path(&project_path);
@@ -1078,6 +1110,7 @@ pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
 
 /// 批量暂存多个文件（目录批量勾选用）：单次 index 写入，避免逐文件往返刷新。
 #[tauri::command]
+// 校验全部路径后批量加入或移除索引条目，并一次写入。
 pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result<(), String> {
     for p in &paths {
         validate_repo_relative_path(p)?;
@@ -1113,6 +1146,7 @@ pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result
 
 /// 批量取消暂存多个文件：有 HEAD → 一次 reset_default；unborn → 逐个从 index 移除。
 #[tauri::command]
+// 校验全部路径后批量取消暂存，无可用 HEAD 时移除对应索引条目。
 pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Result<(), String> {
     for p in &paths {
         validate_repo_relative_path(p)?;
@@ -1149,6 +1183,7 @@ pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Resu
 
 /// 提交已暂存内容。空信息 / 无暂存 / 无 git 身份返回稳定错误。成功返回短 commit id。
 #[tauri::command]
+// 验证说明与暂存内容，使用仓库身份创建提交并返回七位提交 ID。
 pub async fn git_commit(project_path: String, message: String) -> Result<String, String> {
     let msg = message.trim().to_string();
     if msg.is_empty() {
@@ -1209,6 +1244,7 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
 /// 用于「选中部分文件提交」：未列入的已暂存文件（如取消勾选但保持跟踪的新增文件）
 /// 不会被提交，且保持其暂存状态不变。shell out 系统 git 以获得 --only 语义。
 #[tauri::command]
+// 通过 Git 提交指定路径并返回短提交 ID，将身份和空提交错误归一化。
 pub async fn git_commit_paths(
     project_path: String,
     message: String,
@@ -1285,6 +1321,7 @@ pub struct GitBranchInfo {
 /// 边界：非仓库 → 错误；unborn（无提交）→ branch=None 全 0；
 /// detached HEAD → detached=true、branch=None；无 upstream → has_upstream=false、ahead/behind=0。
 #[tauri::command]
+// 只读查询当前分支、上游、领先落后数量及进行中的 Git 操作。
 pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, String> {
     tokio::task::spawn_blocking(move || {
         let effective_project_path = effective_git_project_path(&project_path);
@@ -1364,6 +1401,7 @@ pub async fn git_branch_status(project_path: String) -> Result<GitBranchStatus, 
 }
 
 #[tauri::command]
+// 列出本地与远程分支及跟踪信息，跳过远程 HEAD 并排序。
 pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranchInfo>, String> {
     tokio::task::spawn_blocking(move || {
         let effective_project_path = effective_git_project_path(&project_path);
@@ -1437,6 +1475,7 @@ pub async fn git_list_branches(project_path: String) -> Result<Vec<GitBranchInfo
 }
 
 #[tauri::command]
+// 在线程池获取远程引用并清理失效的远程跟踪分支。
 pub async fn git_fetch(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || run_git_cli(&project_path, &["fetch", "--prune"]))
         .await
@@ -1444,6 +1483,7 @@ pub async fn git_fetch(project_path: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+// 通过 Git 验证分支名后切换本地或远程跟踪分支。
 pub async fn git_checkout_branch(
     project_path: String,
     branch: String,
@@ -1458,6 +1498,7 @@ pub async fn git_checkout_branch(
 }
 
 #[tauri::command]
+// 先保存包含未跟踪文件的 stash，再切换分支并尝试应用最新 stash。
 pub async fn git_smart_checkout_branch(
     project_path: String,
     branch: String,
@@ -1495,6 +1536,7 @@ pub async fn git_smart_checkout_branch(
 }
 
 #[tauri::command]
+// 验证分支名后创建并切换到新分支。
 pub async fn git_create_branch(project_path: String, branch: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         validate_branch_name_with_git(&project_path, &branch)?;
@@ -1507,6 +1549,7 @@ pub async fn git_create_branch(project_path: String, branch: String) -> Result<S
 /// 比较两个 Git 引用；target_ref 为空时比较 base_ref 与当前工作区（含暂存区）。
 /// 结果复用只读 Diff 的大小限制，避免把无限制的命令输出送入 WebView。
 #[tauri::command]
+// 校验引用后比较合并基点与目标，或比较基础引用与当前工作区。
 pub async fn git_compare_refs(
     project_path: String,
     base_ref: String,
@@ -1550,6 +1593,7 @@ pub async fn git_compare_refs(
 
 /// 执行分支/提交相关的显式 Git 操作。高风险操作由前端确认后调用，后端仍负责校验引用。
 #[tauri::command]
+// 按操作白名单校验分支、提交和模式，再执行对应 Git 变更命令。
 pub async fn git_execute_operation(
     project_path: String,
     operation: String,
@@ -1666,6 +1710,7 @@ pub async fn git_execute_operation(
     .map_err(|e| format!("task_failed: {e}"))?
 }
 
+// 优先检查 Git 状态标记文件，再用仓库状态识别进行中的操作。
 fn pending_git_operation(repo: &Repository) -> Option<String> {
     let git_dir = repo.path();
     if git_dir.join("MERGE_HEAD").exists() {
@@ -1689,6 +1734,7 @@ fn pending_git_operation(repo: &Repository) -> Option<String> {
     }
 }
 
+// 仅接受 merge、rebase、cherry-pick 和 revert 操作名称。
 fn validate_pending_operation(operation: &str) -> Result<(), String> {
     match operation {
         "merge" | "rebase" | "cherry-pick" | "revert" => Ok(()),
@@ -1696,6 +1742,7 @@ fn validate_pending_operation(operation: &str) -> Result<(), String> {
     }
 }
 
+// 为支持的继续或中止动作构造固定参数，继续时禁用交互式编辑器。
 fn pending_operation_args(operation: &str, action: &str) -> Result<Vec<&'static str>, String> {
     validate_pending_operation(operation)?;
     let args = match (operation, action) {
@@ -1714,6 +1761,7 @@ fn pending_operation_args(operation: &str, action: &str) -> Result<Vec<&'static 
 
 /// 继续已解决的 Merge/Rebase/Cherry-pick/Revert 操作。
 #[tauri::command]
+// 构造继续操作参数并执行 Git，将冲突归一化为冲突错误。
 pub async fn git_operation_continue(
     project_path: String,
     operation: String,
@@ -1728,6 +1776,7 @@ pub async fn git_operation_continue(
 
 /// 中止进行中的 Merge/Rebase/Cherry-pick/Revert 操作，恢复操作前状态。
 #[tauri::command]
+// 构造中止操作参数并在线程池调用 Git。
 pub async fn git_operation_abort(
     project_path: String,
     operation: String,
@@ -1743,6 +1792,7 @@ pub async fn git_operation_abort(
 /// 推送当前分支。set_upstream=true 时 `push -u origin <branch>` 建立跟踪。
 /// shell out 系统 git；失败错误码见 map_git_cli_error。
 #[tauri::command]
+// 推送当前分支，按请求向 origin 建立指定分支的上游跟踪。
 pub async fn git_push(
     project_path: String,
     set_upstream: bool,
@@ -1769,6 +1819,7 @@ pub async fn git_push(
 /// - rebase：`--rebase`，把本地提交变基到远端之上，保持线性历史。
 /// - ff-only：仅快进，分叉则失败（保留旧行为）。
 /// merge/rebase 均加 `--autostash`：拉取前自动暂存脏工作区、完成后恢复；冲突中止时一并恢复，绝不静默丢改动。
+// 将拉取策略映射为固定参数，merge 与 rebase 启用 autostash。
 fn pull_args(strategy: &str) -> Result<Vec<&'static str>, String> {
     match strategy {
         "merge" => Ok(vec!["pull", "--no-rebase", "--no-edit", "--autostash"]),
@@ -1781,6 +1832,7 @@ fn pull_args(strategy: &str) -> Result<Vec<&'static str>, String> {
 /// 执行 git 子命令并区分「冲突」与普通失败。合并/变基的冲突提示多写到 stdout，
 /// 故合并 stdout+stderr 检测；命中 → 稳定错误码 `pull_conflict`（前端引导解决/继续/中止），
 /// 否则回退通用错误映射。成功返回合并输出。
+// 执行 Git 并检查合并输出中的冲突提示，命中时返回 pull_conflict。
 fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, String> {
     let output = git_command_output(project_path, args)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1805,6 +1857,7 @@ fn run_git_conflict_aware(project_path: &str, args: &[&str]) -> Result<String, S
     Err(map_git_cli_error(&format!("{stderr}{stdout}")))
 }
 
+// 执行 Git 并将输出中的冲突提示映射为调用方指定的错误码。
 fn run_git_conflict_aware_with_code(
     project_path: &str,
     args: &[&str],
@@ -1836,6 +1889,7 @@ fn run_git_conflict_aware_with_code(
 /// 按策略拉取当前分支（merge / rebase / ff-only）。shell out 系统 git，继承凭据/代理/SSH。
 /// 分叉时 merge/rebase 可直接拉取，无需切终端；冲突返回 `pull_conflict`，可经 git_pull_abort 安全回退。
 #[tauri::command]
+// 按校验后的策略拉取分支，并区分冲突与普通 Git 错误。
 pub async fn git_pull(project_path: String, strategy: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let args = pull_args(&strategy)?;
@@ -1848,6 +1902,7 @@ pub async fn git_pull(project_path: String, strategy: String) -> Result<String, 
 /// 中止进行中的合并/变基，回到拉取前状态（`--autostash` 暂存的改动会一并恢复）。
 /// 依据 git2 仓库状态自动选择 `rebase --abort` 或 `merge --abort`。
 #[tauri::command]
+// 识别仓库进行中的操作，构造对应中止命令并执行。
 pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         let effective_project_path = effective_git_project_path(&project_path);
@@ -1870,6 +1925,7 @@ pub async fn git_pull_abort(project_path: String) -> Result<String, String> {
 /// 变基冲突解决并暂存后继续变基。`-c core.editor=true` 跳过提交信息编辑器避免挂起；
 /// 仍有未解决冲突 → `pull_conflict`，前端维持冲突态。
 #[tauri::command]
+// 禁用交互式编辑器继续变基，将未解决冲突返回给调用方。
 pub async fn git_rebase_continue(project_path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
         run_git_conflict_aware(
@@ -1883,6 +1939,7 @@ pub async fn git_rebase_continue(project_path: String) -> Result<String, String>
 
 /// 开始监听项目目录文件变化（fs-watcher）。失败返回错误，前端据此降级为慢轮询。
 #[tauri::command]
+// 启动项目文件监听，将失败交给调用方决定是否降级轮询。
 pub async fn git_watch_start(
     app_handle: AppHandle,
     bridge: State<'_, GitWatcherBridge>,
@@ -1893,6 +1950,7 @@ pub async fn git_watch_start(
 
 /// 停止文件监听并释放 watcher。
 #[tauri::command]
+// 停止 Git 文件监听并释放监听资源。
 pub async fn git_watch_stop(bridge: State<'_, GitWatcherBridge>) -> Result<(), String> {
     bridge.stop()
 }

@@ -5,6 +5,7 @@ use super::{
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// 递归解析支持的消息载荷与补丁事件，规范角色、正文、分块及用量并忽略元数据行。
 pub(crate) fn parse_message(value: &Value) -> Option<HistoryMessage> {
     if let Some(root_type) = value.get("type").and_then(Value::as_str) {
         if root_type == "response_item" {
@@ -120,6 +121,7 @@ pub(crate) fn parse_message(value: &Value) -> Option<HistoryMessage> {
 /// - Codex response_item 消息行：payload.content 中的 `input_text` / `output_text` 块。
 /// 返回 None 表示该行没有可安全编辑的文本载体（tool_use / function_call / thinking / tool_result 等），
 /// 前端据此禁用编辑与删除入口。与展示用 extract_content 的有损提取口径刻意分离。
+// 仅提取 Claude 文本消息或 Codex response_item 消息中允许替换的文本载体。
 pub(crate) fn extract_editable_text(value: &Value) -> Option<String> {
     let root_type = value.get("type").and_then(Value::as_str)?;
     if root_type == "user" || root_type == "assistant" {
@@ -138,6 +140,7 @@ pub(crate) fn extract_editable_text(value: &Value) -> Option<String> {
     None
 }
 
+// 保留字符串内容，或用双换行连接指定类型文本块，其他形状返回空值。
 pub(super) fn editable_text_from_content(
     content: &Value,
     text_block_types: &[&str],
@@ -166,10 +169,12 @@ pub(super) fn editable_text_from_content(
     }
 }
 
+// 从消息正文提取适合作为会话标题的候选文本。
 pub(super) fn message_title_candidate(message: &HistoryMessage) -> Option<String> {
     title_candidate_from_text(&message.content)
 }
 
+// 优先从 objective 标签内容提取标题，未命中时处理完整文本。
 pub(super) fn title_candidate_from_text(text: &str) -> Option<String> {
     if let Some(objective) = extract_simple_tag_block(text, "objective") {
         if let Some(candidate) = title_candidate_from_lines(objective) {
@@ -179,6 +184,7 @@ pub(super) fn title_candidate_from_text(text: &str) -> Option<String> {
     title_candidate_from_lines(text)
 }
 
+// 截取首对指定简单标签之间的原始文本。
 pub(super) fn extract_simple_tag_block<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let close = format!("</{tag}>");
@@ -187,6 +193,7 @@ pub(super) fn extract_simple_tag_block<'a>(text: &'a str, tag: &str) -> Option<&
     Some(&text[start..end])
 }
 
+// 跳过已知噪声及工作流块，拒绝注入提示行并优先组织图片标题。
 pub(super) fn title_candidate_from_lines(text: &str) -> Option<String> {
     let lines: Vec<&str> = text.lines().collect();
     let mut index = 0usize;
@@ -241,6 +248,7 @@ pub(super) fn title_candidate_from_lines(text: &str) -> Option<String> {
     None
 }
 
+// 从连续图片标记收集去重标签并连接后续正文作为标题。
 pub(super) fn image_title_candidate_from_lines(
     lines: &[&str],
     start_index: usize,
@@ -297,6 +305,7 @@ pub(super) fn image_title_candidate_from_lines(
     Some(title)
 }
 
+// 分离图片标签、图片编号与剩余文本，移除图片结束标记。
 pub(super) fn extract_image_title_parts(line: &str) -> (Vec<String>, String) {
     let mut rest = line;
     let mut image_tokens = Vec::new();
@@ -340,16 +349,19 @@ pub(super) fn extract_image_title_parts(line: &str) -> (Vec<String>, String) {
     (image_tokens, remaining_text.trim().to_string())
 }
 
+// 从图片标签文本中截取完整的 Image 编号标记。
 pub(super) fn extract_image_label(token: &str) -> Option<String> {
     let start = find_ascii_ci(token, "[image #")?;
     let end = token[start..].find(']')? + start + 1;
     Some(token[start..end].to_string())
 }
 
+// 将待查文本转为 ASCII 小写后查找给定小写模式的位置。
 pub(super) fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
     haystack.to_ascii_lowercase().find(needle)
 }
 
+// 安全截取前缀长度并进行 ASCII 大小写无关比较。
 pub(super) fn starts_with_ascii_ci(value: &str, prefix: &str) -> bool {
     value
         .get(..prefix.len())
@@ -357,6 +369,7 @@ pub(super) fn starts_with_ascii_ci(value: &str, prefix: &str) -> bool {
         .unwrap_or(false)
 }
 
+// 从起始标签读取并规范简单标签名，忽略结束标签和声明。
 pub(super) fn title_xml_tag_name(line: &str) -> Option<String> {
     let rest = line.trim_start().strip_prefix('<')?;
     if rest.starts_with('/') || rest.starts_with('!') || rest.starts_with('?') {
@@ -369,6 +382,7 @@ pub(super) fn title_xml_tag_name(line: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_lowercase())
 }
 
+// 判断标签名是否属于需要从标题候选中跳过的上下文块。
 pub(super) fn is_title_noise_block_tag(tag: &str) -> bool {
     matches!(
         tag,
@@ -381,18 +395,22 @@ pub(super) fn is_title_noise_block_tag(tag: &str) -> bool {
     )
 }
 
+// 按小写文本判断当前行是否包含指定结束标签。
 pub(super) fn title_line_closes_tag(line: &str, tag: &str) -> bool {
     line.to_lowercase().contains(&format!("</{tag}>"))
 }
 
+// 判断行是否以工作流状态起始标记开头。
 pub(super) fn is_workflow_state_start_line(line: &str) -> bool {
     line.starts_with("[workflow-state:")
 }
 
+// 判断行是否以工作流状态结束标记开头。
 pub(super) fn is_workflow_state_end_line(line: &str) -> bool {
     line.starts_with("[/workflow-state")
 }
 
+// 识别目标标签及日期、预算等已知标题噪声行。
 pub(super) fn is_title_noise_line(line: &str) -> bool {
     let lower = line.to_lowercase();
     lower == "<objective>"
@@ -403,6 +421,7 @@ pub(super) fn is_title_noise_line(line: &str) -> bool {
         || lower.starts_with("budget:")
 }
 
+// 修剪标题前缀并识别 AGENTS、技能与系统开发者提示注入行。
 pub(super) fn is_injected_prompt_title_line(line: &str) -> bool {
     let normalized = line.trim_start_matches('#').trim().to_lowercase();
     normalized.starts_with("agents.md instructions for ")
@@ -412,6 +431,7 @@ pub(super) fn is_injected_prompt_title_line(line: &str) -> bool {
         || normalized.starts_with("developer instructions")
 }
 
+// 从兼容角色字段按关键词识别用户、助手、系统或工具角色。
 pub(super) fn extract_role(value: &Value) -> Option<String> {
     let candidates = [
         value.get("role").and_then(Value::as_str),
@@ -444,6 +464,7 @@ pub(super) fn extract_role(value: &Value) -> Option<String> {
     None
 }
 
+// 按首行及已知上下文标签启发式识别注入提示正文。
 pub(super) fn is_injected_prompt_content(content: &str) -> bool {
     let trimmed = content.trim_start();
     let lower = trimmed.to_lowercase();
@@ -467,6 +488,7 @@ pub(super) fn is_injected_prompt_content(content: &str) -> bool {
         || lower.contains("### available skills")
 }
 
+// 先识别注入系统内容，再依据消息角色选择默认分块类型。
 pub(super) fn fallback_message_part_kind(role: &str, content: &str) -> &'static str {
     if is_injected_prompt_content(content) {
         return "system";
@@ -479,6 +501,7 @@ pub(super) fn fallback_message_part_kind(role: &str, content: &str) -> &'static 
     }
 }
 
+// 根据角色和正文创建无工具身份的默认消息分块。
 pub(super) fn fallback_history_message_part(role: &str, content: &str) -> HistoryMessagePart {
     HistoryMessagePart {
         kind: fallback_message_part_kind(role, content).to_string(),
@@ -488,6 +511,7 @@ pub(super) fn fallback_history_message_part(role: &str, content: &str) -> Histor
     }
 }
 
+// 按规范化内容块类型映射展示分类，文本块回退角色分类。
 pub(super) fn message_part_kind(value: &Value, role: &str, content: &str) -> &'static str {
     let part_type = value
         .get("type")
@@ -512,6 +536,7 @@ pub(super) fn message_part_kind(value: &Value, role: &str, content: &str) -> &'s
     }
 }
 
+// 从兼容字段提取非空工具名。
 pub(super) fn message_part_tool_name(value: &Value) -> Option<String> {
     value
         .get("name")
@@ -523,6 +548,7 @@ pub(super) fn message_part_tool_name(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+// 从兼容字段提取非空工具调用 ID。
 pub(super) fn message_part_call_id(value: &Value) -> Option<String> {
     value
         .get("call_id")
@@ -536,6 +562,7 @@ pub(super) fn message_part_call_id(value: &Value) -> Option<String> {
         .map(str::to_string)
 }
 
+// 按已知正文字段及 JSON 摘要回退提取非空分块内容。
 pub(super) fn extract_message_part_content(value: &Value) -> Option<String> {
     [
         "text",
@@ -554,6 +581,7 @@ pub(super) fn extract_message_part_content(value: &Value) -> Option<String> {
     .filter(|content| !content.is_empty())
 }
 
+// 将内容数组或单值转换为分类分块，无法提取时使用扁平正文回退。
 pub(super) fn extract_message_parts(
     value: &Value,
     role: &str,
@@ -595,6 +623,7 @@ pub(super) fn extract_message_parts(
     }
 }
 
+// 按优先字段提取首个规范化后非空的展示正文。
 pub(super) fn extract_content(value: &Value) -> Option<String> {
     let candidates = [
         value.get("content"),
@@ -617,6 +646,7 @@ pub(super) fn extract_content(value: &Value) -> Option<String> {
     None
 }
 
+// 递归提取标量、数组或对象优先文本字段，数组以换行连接。
 pub(super) fn extract_text_from_value(value: &Value) -> Option<String> {
     match value {
         Value::Null => None,
@@ -664,6 +694,7 @@ pub(super) fn extract_text_from_value(value: &Value) -> Option<String> {
     }
 }
 
+// 按字段顺序返回首个字符串时间值，不进行解析或空值修剪。
 pub(crate) fn extract_timestamp(value: &Value) -> Option<String> {
     let candidates = [
         value.get("timestamp").and_then(Value::as_str),
@@ -682,6 +713,7 @@ pub(crate) fn extract_timestamp(value: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+// 按兼容时间字段寻找首个可解析的毫秒时间戳。
 pub(super) fn extract_timestamp_millis(value: &Value) -> Option<i64> {
     let candidates = [
         value.get("timestamp"),
@@ -696,6 +728,7 @@ pub(super) fn extract_timestamp_millis(value: &Value) -> Option<i64> {
         .find_map(parse_timestamp_millis_value)
 }
 
+// 遍历根层与 payload/data 时间字段，更新扫描的最早与最晚时间。
 pub(super) fn update_timestamp_bounds(
     value: &Value,
     first_timestamp_ms: &mut Option<i64>,
@@ -722,6 +755,7 @@ pub(super) fn update_timestamp_bounds(
     }
 }
 
+// 用单个可解析时间值扩展已有时间范围。
 pub(super) fn update_timestamp_bound(
     candidate: Option<&Value>,
     first_timestamp_ms: &mut Option<i64>,
@@ -741,6 +775,7 @@ pub(super) fn update_timestamp_bound(
     }
 }
 
+// 将数字或字符串时间值解析为 Unix 毫秒数。
 pub(super) fn parse_timestamp_millis_value(value: &Value) -> Option<i64> {
     match value {
         Value::Number(number) => number.as_f64().and_then(normalize_unix_timestamp_millis),
@@ -749,6 +784,7 @@ pub(super) fn parse_timestamp_millis_value(value: &Value) -> Option<i64> {
     }
 }
 
+// 优先解析数值秒或毫秒文本，回退 RFC3339 日期时间。
 pub(super) fn parse_timestamp_millis_str(text: &str) -> Option<i64> {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -762,6 +798,7 @@ pub(super) fn parse_timestamp_millis_str(text: &str) -> Option<i64> {
         .map(|timestamp| timestamp.timestamp_millis())
 }
 
+// 按数值阈值区分秒和毫秒，拒绝非正、非有限或溢出的时间值。
 pub(super) fn normalize_unix_timestamp_millis(value: f64) -> Option<i64> {
     if !value.is_finite() || value <= 0.0 {
         return None;
@@ -774,6 +811,7 @@ pub(super) fn normalize_unix_timestamp_millis(value: f64) -> Option<i64> {
     (millis <= i64::MAX as f64).then_some(millis as i64)
 }
 
+// 按兼容字段读取首个非空分支字符串并保留原始文本。
 pub(super) fn extract_branch(value: &Value) -> Option<String> {
     let candidates = [
         value.get("branch").and_then(Value::as_str),
@@ -791,6 +829,7 @@ pub(super) fn extract_branch(value: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+// 移除 NUL 字符并修剪首尾空白，保留正文内部格式。
 pub(super) fn normalize_text(text: &str) -> String {
     // 多数文本不含 \0，避免无意义的 replace 分配。
     if text.contains('\u{0000}') {
@@ -800,12 +839,14 @@ pub(super) fn normalize_text(text: &str) -> String {
     }
 }
 
+// 按 Begin Patch 或统一 diff 标记启发式识别补丁正文。
 pub(super) fn looks_like_patch(text: &str) -> bool {
     text.contains("*** Begin Patch")
         || text.contains("diff --git ")
         || (text.contains("@@") && (text.contains("+++ ") || text.contains("--- ")))
 }
 
+// 按 Unicode 字符数截短修剪后的文本，超限时附加三个点。
 pub(super) fn excerpt(text: &str, max_chars: usize) -> String {
     let trimmed = text.trim();
     // 每字符最多 4 字节（UTF-8）；预留稍微宽松一些避免临界 realloc。
@@ -820,6 +861,7 @@ pub(super) fn excerpt(text: &str, max_chars: usize) -> String {
     out
 }
 
+// 将系统时间转换为 Unix 毫秒数，早于纪元时返回零。
 pub(super) fn system_time_to_millis(time: SystemTime) -> i64 {
     time.duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
