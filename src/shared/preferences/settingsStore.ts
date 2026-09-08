@@ -536,8 +536,8 @@ interface SettingsStore extends Settings {
 
 const DEFAULTS: Settings = {
   language: "auto",
-  theme: "system",
-  lightThemePalette: "emerald-mist",
+  theme: "light",
+  lightThemePalette: "apple-mono",
   darkThemePalette: "terminal-green",
   fontSize: TERMINAL_FONT_SIZE_DEFAULT,
   terminalScrollbackCustomEnabled: false,
@@ -568,7 +568,7 @@ const DEFAULTS: Settings = {
   useExternalTerminal: false,
   debugMode: false,
   terminalThemeMode: "independent",
-  terminalThemeName: "forestNightDark",
+  terminalThemeName: "windowsTerminalCampbell",
   terminalPreviewThemeName: FOLLOW_TERMINAL_PREVIEW_THEME,
   sidebarDensity: "comfortable",
   sidebarProjectFilterVisible: false,
@@ -601,7 +601,7 @@ const DEFAULTS: Settings = {
   terminalToolbarOrder: ["new", "templates", "fullscreen", "sessionHistory", "replay", "files", "gitChanges", "stats", "providers", "systemResources", "backgroundTasks"],
   terminalSidePanelMerged: true,
   terminalSidePanelSingleOpen: true,
-  terminalSidePanelSkin: "terminal",
+  terminalSidePanelSkin: "classic-terminal",
   terminalPanelWidths: { ...TERMINAL_PANEL_WIDTH_DEFAULTS },
   workspaceLayout: { ...WORKSPACE_LAYOUT_DEFAULTS },
   terminalStatsCardVisibility: {
