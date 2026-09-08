@@ -56,6 +56,16 @@ pub(super) fn scan_session_inner(
     path: &Path,
     collect_messages: bool,
 ) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
+    let (summary, mut stats, messages) = scan_native_session(path, collect_messages);
+    let events = super::scan_tool_events(path);
+    super::tool_observations::reconcile_tool_stats(&mut stats, &events);
+    (summary, stats, messages)
+}
+
+fn scan_native_session(
+    path: &Path,
+    collect_messages: bool,
+) -> (SessionSummaryScan, SessionStatsScan, Vec<HistoryMessage>) {
     if !is_jsonl(path) {
         return scan_json_session(path, collect_messages);
     }

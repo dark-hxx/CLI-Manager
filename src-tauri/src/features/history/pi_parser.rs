@@ -161,7 +161,7 @@ pub(super) fn scan_pi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                             .or_else(|| block.get("input"))
                             .and_then(summarize_json_value),
                         None,
-                        None,
+                        super::tool_observations::mcp_server(block),
                     ));
                 }
             }
@@ -179,7 +179,7 @@ pub(super) fn scan_pi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                 &mut events,
                 call_id.as_deref(),
                 extract_content(&value),
-                Some("completed".to_string()),
+                Some(super::tool_observations::result_status(value.get("message").unwrap_or(&value)).to_string()),
             );
         }
     }

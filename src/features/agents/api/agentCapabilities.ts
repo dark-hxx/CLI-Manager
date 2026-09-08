@@ -1,3 +1,4 @@
+import { parseWslPath } from "../../../shared/lib/wslPaths";
 import type { HistorySessionDetail, HistoryToolEvent, ProjectEnvironmentType } from "../../../shared/types/index";
 
 export type AgentRuntimeKind = "claude" | "codex" | "pi" | "grok" | "opencode";
@@ -100,8 +101,8 @@ export function resolveAgentRuntimeKind(value: string | null | undefined): Agent
 
 export function inferWslDistroName(...paths: Array<string | null | undefined>): string | null {
   for (const path of paths) {
-    const match = path?.trim().match(/^\\\\(?:wsl\.localhost|wsl\$)\\([^\\]+)(?:\\|$)/i);
-    if (match?.[1]) return match[1];
+    const parsed = parseWslPath(path);
+    if (parsed) return parsed.distro;
   }
   return null;
 }
@@ -111,11 +112,12 @@ function evidenceFromEvent(event: HistoryToolEvent): McpRuntimeEvidence | null {
   const server = category.toLowerCase().startsWith("mcp:")
     ? category.slice(category.indexOf(":") + 1).trim()
     : "";
-  if (!server) return null;
+  if (!server || event.evidence?.kind === "inferred") return null;
   const status = event.status?.trim().toLowerCase() ?? "";
+  if (!["completed", "success", "succeeded", "failed", "error", "errored"].includes(status)) return null;
   return {
     server,
-    success: !/(?:fail|error|cancel|denied)/.test(status),
+    success: ["completed", "success", "succeeded"].includes(status),
     timestamp: event.timestamp ?? null,
   };
 }
@@ -125,7 +127,14 @@ export function buildSessionMcpEvidence(session: HistorySessionDetail | null): M
   const latest = new Map<string, McpRuntimeEvidence>();
   for (const event of session.tool_events) {
     const evidence = evidenceFromEvent(event);
-    if (evidence) latest.set(evidence.server.toLowerCase(), evidence);
+    if (!evidence) continue;
+    const key = evidence.server.toLowerCase();
+    const previous = latest.get(key);
+    const time = Date.parse(evidence.timestamp ?? "");
+    const previousTime = Date.parse(previous?.timestamp ?? "");
+    if (!previous || !Number.isFinite(time) || !Number.isFinite(previousTime) || time >= previousTime) {
+      latest.set(key, evidence);
+    }
   }
   return Array.from(latest.values());
 }

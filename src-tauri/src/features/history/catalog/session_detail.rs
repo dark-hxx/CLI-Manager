@@ -277,7 +277,7 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
 
     let tool_rows = sqlx::query(
         "SELECT te.call_id, te.name, te.category, hm.message_index, te.timestamp_ms,
-                te.status, te.duration_ms, te.input_summary, te.output_summary
+                te.status, te.duration_ms, te.input_summary, te.output_summary, te.source_extension_json
          FROM history_tool_events te
          LEFT JOIN history_messages hm ON hm.id = te.message_id
          WHERE te.session_id = ?1
@@ -296,15 +296,30 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
         let category: String = tool_row
             .try_get("category")
             .map_err(|err| err.to_string())?;
+        let evidence = tool_row.try_get::<Option<String>, _>("source_extension_json")
+            .map_err(|err| err.to_string())?
+            .and_then(|raw| serde_json::from_str::<super::super::types::HistoryToolEvidence>(&raw).ok());
+        let inferred = evidence.as_ref().is_some_and(|e| e.kind == "inferred");
         match category.as_str() {
+            _ if inferred => {},
+            category if category.starts_with("mcp:") => {
+                *mcp_calls.entry(category[4..].to_string()).or_insert(0) += 1;
+            },
             "mcp" => *mcp_calls.entry(name.clone()).or_insert(0) += 1,
-            "skill" => *skill_calls.entry(name.clone()).or_insert(0) += 1,
+            "skill" => {
+                let skill = tool_row.try_get::<Option<String>, _>("input_summary").ok().flatten()
+                    .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                    .and_then(|value| value.get("skill").and_then(Value::as_str).map(str::to_string))
+                    .unwrap_or_else(|| name.clone());
+                *skill_calls.entry(skill).or_insert(0) += 1;
+            },
             _ => *builtin_calls.entry(name.clone()).or_insert(0) += 1,
         }
         let timestamp_ms = tool_row
             .try_get::<Option<i64>, _>("timestamp_ms")
             .map_err(|err| err.to_string())?;
         tool_events.push(HistoryToolEvent {
+            evidence,
             call_id: tool_row.try_get("call_id").map_err(|err| err.to_string())?,
             name,
             category,

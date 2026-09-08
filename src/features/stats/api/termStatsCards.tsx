@@ -1,3 +1,4 @@
+import { inferredToolActivity } from "../../history/api/toolActivity";
 import { Activity, CalendarClock, Coins, Cpu, FileCode2, GitCompareArrows, Wrench } from "lucide-react";
 import type { HistoryFileChangeSummary, HistorySessionDetail, HistoryToolCount } from "../../../shared/types/index";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
@@ -336,6 +337,7 @@ function ToolCountList({
 }
 
 export function ToolsCard({ session }: { session: HistorySessionDetail | null }) {
+  const inferred = inferredToolActivity(session?.tool_events);
   const { t } = useI18n();
   const usage = session?.usage;
   const toolCalls = usage?.tool_call_count ?? 0;
@@ -358,6 +360,13 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
         ) : undefined
       }
     >
+      {inferred.total > 0 && (
+        <div title={t("termStats.inferredHelp")}>
+          <div className="text-[11px]">{t("termStats.inferredCount", { count: inferred.total })}</div>
+          <ToolCountList label={t("termStats.inferredTools")} color={TERM_PANEL.dim} items={inferred.builtin} />
+          <ToolCountList label={t("termStats.inferredMcp")} color={TERM_PANEL.cyan} items={inferred.mcp} />
+        </div>
+      )}
       {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
         <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
           {t("termStats.noToolCalls")}

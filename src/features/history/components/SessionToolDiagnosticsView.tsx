@@ -1,3 +1,4 @@
+import { inferredToolActivity } from "../api/toolActivity";
 import { AlertTriangle, Gauge, Wrench } from "lucide-react";
 import type { HistoryToolCount, HistoryToolEvent } from "../../../shared/types/index";
 import { useI18n } from "../../../shared/i18n/index";
@@ -43,6 +44,7 @@ export function SessionToolDiagnosticsView({
   onJumpToMessage,
 }: SessionToolDiagnosticsViewProps) {
   const { t } = useI18n();
+  const inferred = inferredToolActivity(toolEvents);
   const hasCounts = builtinCalls.length > 0 || mcpCalls.length > 0 || skillCalls.length > 0;
   const hasEvents = toolEvents.length > 0 || model.toolEvents.length > 0 || model.errorEvents.length > 0;
   const orderedToolEvents = sortHistoryItems(toolEvents, direction);
@@ -72,6 +74,12 @@ export function SessionToolDiagnosticsView({
         </section>
       </div>
 
+      {inferred.total > 0 && (
+        <div title={t("termStats.inferredHelp")}>
+          <ToolCountSection title={t("termStats.inferredTools")} items={inferred.builtin} />
+          <ToolCountSection title={t("termStats.inferredMcp")} items={inferred.mcp} />
+        </div>
+      )}
       {toolEvents.length > 0 && (
         <section className="ui-session-process-card mt-2">
           <div className="ui-session-process-card-title">
@@ -87,6 +95,7 @@ export function SessionToolDiagnosticsView({
               >
                 <span>
                   {event.name}
+                  {event.evidence?.kind === "inferred" ? ` · ${t("termStats.inferred")}` : ""}
                   {event.status ? ` · ${event.status}` : ""}
                   {event.duration_ms ? ` · ${event.duration_ms}ms` : ""}
                 </span>

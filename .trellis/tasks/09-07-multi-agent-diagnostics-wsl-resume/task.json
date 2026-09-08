@@ -1,0 +1,30 @@
+{
+  "id": "multi-agent-diagnostics-wsl-resume",
+  "name": "multi-agent-diagnostics-wsl-resume",
+  "title": "Multi-agent tools, MCP health and WSL resume",
+  "description": "Integrate the three child fixes across all 12 registered history sources. Preserve unsupported capability boundaries, exact session identity, and the zero-debt architecture gate.",
+  "status": "review",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-09-07",
+  "completedAt": null,
+  "branch": "fix/multi-agent-diagnostics-wsl-resume",
+  "base_branch": "refactor/ai-architecture",
+  "worktree_path": "D:\\work\\pythonProject\\CLI-Manager-fix-multi-agent-diagnostics",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-07-multi-agent-tool-events",
+    "09-07-multi-agent-mcp-health",
+    "09-07-multi-agent-wsl-resume"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "Implementation and automated checks complete. See parent check.md. Manual desktop acceptance pending; changes uncommitted.",
+  "meta": {}
+}

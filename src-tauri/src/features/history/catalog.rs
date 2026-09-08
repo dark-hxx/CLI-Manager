@@ -36,7 +36,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
-const CATALOG_PARSER_VERSION: i64 = 2;
+const CATALOG_PARSER_VERSION: i64 = 3;
 const HISTORY_INDEX_SCHEMA_VERSION: i64 = 6;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;

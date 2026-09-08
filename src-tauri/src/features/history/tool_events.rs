@@ -111,6 +111,11 @@ pub(super) fn collect_tool_events_from_value(
     seen_call_ids: &mut HashSet<String>,
     events: &mut Vec<HistoryToolEvent>,
 ) {
+    super::native_tool_records::collect_native_records(value, message_index, seen_call_ids, events);
+    if let Some(payload) = value.get("payload").filter(|p| p.get("type").and_then(Value::as_str) == Some("message")) {
+        let wrapped = serde_json::json!({"message": payload, "timestamp": extract_timestamp(value)});
+        collect_tool_events_from_value(&wrapped, message_index, seen_call_ids, events);
+    }
     if let Some(event_type) = value.get("type").and_then(Value::as_str) {
         if let Some(data) = value.get("data") {
             if event_type == "assistant.message" {
@@ -137,7 +142,7 @@ pub(super) fn collect_tool_events_from_value(
                                 .or_else(|| request.get("input"))
                                 .and_then(summarize_json_value),
                             None,
-                            None,
+                            super::tool_observations::mcp_server(request),
                         ));
                     }
                 }
@@ -183,7 +188,7 @@ pub(super) fn collect_tool_events_from_value(
                             extract_tool_duration_ms(data),
                             None,
                             output,
-                            None,
+                            super::tool_observations::mcp_server(data),
                         ));
                     } else {
                         update_tool_event_output(
@@ -224,7 +229,7 @@ pub(super) fn collect_tool_events_from_value(
                 None,
                 block.get("input").and_then(summarize_json_value),
                 None,
-                None,
+                super::tool_observations::mcp_server(block),
             ));
         }
     }
@@ -245,10 +250,7 @@ pub(super) fn collect_tool_events_from_value(
             if !mark_tool_event_seen(call_id.as_deref(), seen_call_ids) {
                 return;
             }
-            let mcp_server = payload
-                .get("namespace")
-                .and_then(Value::as_str)
-                .and_then(extract_mcp_server);
+            let mcp_server = super::tool_observations::mcp_server(payload);
             events.push(make_tool_event(
                 call_id,
                 name,
@@ -256,20 +258,27 @@ pub(super) fn collect_tool_events_from_value(
                 extract_timestamp(value),
                 Some("started"),
                 None,
-                payload.get("arguments").and_then(summarize_json_value),
+                payload.get("arguments").or_else(|| payload.get("input")).and_then(summarize_json_value),
                 None,
                 mcp_server,
             ));
+            if name == "exec" {
+                if let Some(script) = payload.get("input").and_then(Value::as_str) {
+                    let parent = events.last().unwrap().clone();
+                    super::nested_tools::append_nested_tools(script, &parent, events);
+                }
+            }
             return;
         }
 
-        if payload_type == Some("function_call_output") {
+        if matches!(payload_type, Some("function_call_output" | "custom_tool_call_output")) {
             let call_id = payload
                 .get("call_id")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let output_summary = payload.get("output").and_then(summarize_json_value);
-            update_tool_event_output(events, call_id.as_deref(), output_summary, None);
+            update_tool_event_output(events, call_id.as_deref(), output_summary,
+                Some(super::tool_observations::result_status(payload).to_string()));
             return;
         }
 
@@ -283,7 +292,7 @@ pub(super) fn collect_tool_events_from_value(
                 .map(str::to_string);
             let duration_ms = extract_tool_duration_ms(payload);
             let status = if payload_type == Some("mcp_tool_call_end") {
-                Some("completed")
+                Some(super::tool_observations::result_status(payload))
             } else if payload_type == Some("mcp_tool_call_error") {
                 Some("failed")
             } else {
@@ -343,14 +352,9 @@ pub(super) fn make_tool_event(
     output_summary: Option<String>,
     mcp_server: Option<&str>,
 ) -> HistoryToolEvent {
-    let category = if let Some(server) = mcp_server.or_else(|| extract_mcp_server(name)) {
-        format!("mcp:{server}")
-    } else if name == "Skill" {
-        "skill".to_string()
-    } else {
-        "builtin".to_string()
-    };
+    let category = super::tool_observations::tool_category(name, mcp_server);
     HistoryToolEvent {
+        evidence: None,
         call_id,
         name: name.to_string(),
         category,
@@ -413,6 +417,7 @@ pub(super) fn extract_tool_duration_ms(value: &Value) -> Option<u64> {
 }
 
 pub(super) fn extract_mcp_server(value: &str) -> Option<&str> {
+    let value = value.strip_prefix("functions.").unwrap_or(value);
     let rest = value.strip_prefix("mcp__")?;
     let server = rest.split("__").next().unwrap_or(rest).trim();
     (!server.is_empty()).then_some(server)

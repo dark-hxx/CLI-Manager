@@ -1,0 +1,32 @@
+{
+  "id": "realtime-stats-screenshot",
+  "name": "realtime-stats-screenshot",
+  "title": "实时统计完整长图复制",
+  "description": "Copy full-height realtime statistics image to native clipboard with theme-matched action",
+  "status": "review",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-09-07",
+  "completedAt": null,
+  "branch": "fix/multi-agent-diagnostics-wsl-resume",
+  "base_branch": "refactor/ai-architecture",
+  "worktree_path": "D:\\work\\pythonProject\\CLI-Manager-fix-multi-agent-diagnostics",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/features/terminal/components/TerminalStatsPanel.tsx",
+    "src/features/terminal/components/StatsScreenshotButton.tsx",
+    "src/features/stats/api/statsScreenshot.ts",
+    "src/features/stats/api/statsScreenshotClipboard.ts",
+    "src-tauri/capabilities/default.json"
+  ],
+  "notes": "Implemented; 5 Node tests and 7 browser renderer cases passed. Build, Tauri permission check and architecture pass. See check.md for manual desktop acceptance.",
+  "meta": {}
+}

@@ -29,6 +29,10 @@ pub(super) fn scan_session_detail(
 }
 
 pub(super) fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
+    super::tool_observations::merge_tool_events(scan_native_tool_events(path))
+}
+
+fn scan_native_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     if looks_like_grok_updates_file(path) {
         return scan_grok_tool_events(path);
     }
@@ -40,6 +44,9 @@ pub(super) fn scan_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     }
     if looks_like_cline_session_file(path) {
         return scan_cline_tool_events(path);
+    }
+    if !super::is_jsonl(path) {
+        return super::native_tool_records::scan_json_tool_records(path);
     }
     let Ok(file) = File::open(path) else {
         return Vec::new();
@@ -118,7 +125,7 @@ pub(super) fn scan_grok_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                         None,
                         grok_tool_input(update),
                         None,
-                        None,
+                        super::tool_observations::mcp_server(update),
                     ));
                 }
             }
@@ -137,7 +144,7 @@ pub(super) fn scan_grok_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                             None,
                             grok_tool_input(update),
                             output,
-                            None,
+                            super::tool_observations::mcp_server(update),
                         ));
                     } else {
                         update_tool_event_output(&mut events, call_id.as_deref(), output, status);
@@ -208,7 +215,7 @@ pub(super) fn update_cline_tool_results(entry: &Value, events: &mut [HistoryTool
             events,
             call_id,
             block.get("content").and_then(json_content_text),
-            Some("completed".to_string()),
+            Some(super::tool_observations::result_status(block).to_string()),
         );
     }
 }

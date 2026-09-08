@@ -1,3 +1,4 @@
+import { StatsScreenshotButton } from "./StatsScreenshotButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { Copy, FolderGit2, GitBranch, RefreshCw, FolderOpen, Save } from "lucide-react";
@@ -426,6 +427,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
 
 export function TerminalStatsPanel({ activeSessionId, open, visible = true, embedded = false }: TerminalStatsPanelProps) {
   const { t } = useI18n();
+  const screenshotRef = useRef<HTMLElement>(null);
   const { canSave, saveSession, saveSessionDialog } = useSaveSessionToSidebar();
   const terminalStatsCardVisibility = useSettingsStore((state) => state.terminalStatsCardVisibility);
   const terminalStatsCardOrder = useSettingsStore((state) => state.terminalStatsCardOrder);
@@ -848,6 +850,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
 
   return (
     <Container
+      ref={(node: HTMLElement | null) => { screenshotRef.current = node; }}
       className={containerClassName}
       style={containerStyle}
     >
@@ -861,7 +864,9 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             <span className="text-[10px]" style={{ color: TERM.dim }}>
           {updatedAt && <span>{formatRelativeTime(updatedAt)}</span>}
             </span>
+          <StatsScreenshotButton targetRef={screenshotRef} />
           <button
+            data-stats-screenshot-exclude
             onClick={handleRefresh}
             className="ui-focus-ring rounded p-0.5"
             style={{ color: TERM.cyan }}
@@ -874,7 +879,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         )}
       />
 
-      <div className="ui-thin-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
+      <div data-stats-screenshot-scroll className="ui-thin-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
         {!displayProjectPath ? (
           <EmptyHint text={t("termStats.noProject")} />
         ) : !displaySession ? (

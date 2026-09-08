@@ -484,6 +484,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   }
   return {
     shell: resolvedShell,
+    environmentType: os === "windows" && normalizeShellKey(resolvedShell) === "wsl" ? "wsl" : "local",
     startupCmd,
     startupHandledByLaunch: false,
     providerSnapshot,

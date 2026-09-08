@@ -619,7 +619,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 .or_insert_with(|| "1".to_string());
         }
         let mut ssh_env = HashMap::new();
-        let (exe, args) = if let Some(ssh_launch) = ssh_launch {
+        let (exe, mut args) = if let Some(ssh_launch) = ssh_launch {
             let launch = ssh_launch.build_process_launch().map_err(|e| {
                 error!(
                     "pty resolve ssh launch failed: id={}, error={}",
@@ -637,6 +637,14 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 );
                 e
             })?
+        };
+        let host_cwd = if cfg!(target_os = "windows") && shell_key == "wsl" && ssh_launch.is_none() {
+            let (wsl_args, host_cwd) = super::wsl_launch::resolve_wsl_launch(cwd)?;
+            super::wsl_launch::validate_wsl_directory(&wsl_args)?;
+            args.extend(wsl_args);
+            host_cwd
+        } else {
+            cwd.map(str::to_string)
         };
         let launch_shell_key = if ssh_launch.is_some() {
             "ssh"
@@ -667,7 +675,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
             cwd: if ssh_launch.is_some() {
                 None
             } else {
-                cwd.map(str::to_string)
+                host_cwd
             },
             env: launch_env,
             cols: 80,

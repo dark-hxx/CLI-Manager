@@ -288,7 +288,7 @@ export interface ResolvedPtyLaunch {
   shell: string | null;
   startupCmd?: string;
   startupHandledByLaunch: boolean;
-  environmentType?: "ssh";
+  environmentType?: "local" | "wsl" | "ssh";
   sshHostId?: string;
   remotePath?: string;
   providerSnapshot: NativeProviderLaunchSnapshot | null;

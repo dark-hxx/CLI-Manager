@@ -53,7 +53,10 @@ export interface OpenCodeHookStatus {
 }
 
 function environmentFor(session: TerminalSession, project: Project | null): ProjectEnvironmentType {
-  return session.environmentType ?? project?.environment_type ?? "local";
+  if (session.environmentType === "ssh" || project?.environment_type === "ssh") return "ssh";
+  if (session.environmentType === "wsl" || project?.environment_type === "wsl"
+    || session.shell === "wsl" || inferWslDistroName(session.cwd, project?.path)) return "wsl";
+  return "local";
 }
 
 export function useAgentCapabilities({
@@ -118,7 +121,7 @@ export function useAgentCapabilities({
       configRoot: project?.cli_config_root?.trim() || null,
       launchArgs: project?.cli_args ?? "",
       baselineConfigFingerprint: baselineFingerprints.get(scopeKey) ?? null,
-      runtimeEvidence: buildSessionMcpEvidence(boundSession),
+      runtimeEvidence: buildSessionMcpEvidence(boundSession?.session_id === cliSessionId && boundSession.source === agent ? boundSession : null),
       wslDistroName,
     };
     if (environment === "ssh") {

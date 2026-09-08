@@ -410,3 +410,10 @@ if should_register_codex_state_db(&state_db_path) {
     register_codex_thread_native(...).await?;
 }
 ```
+
+
+## History resume launch boundary (TEMP, 2026-09-07)
+
+History resume resolves source UNC/raw pointers, cwd and selected project/worktree into a single distro and canonical UNC cwd. Reject conflicting or missing WSL identity rather than silently selecting the default distro. Match Linux paths case-sensitively and do not fall back to project names across distros. Source CLI homes take precedence over selected project homes; an OpenCode database directory is not its config home.
+
+The shared Windows PTY launcher translates WSL cwd into argument-vector `--distribution <distro> --cd <linux-path>` and leaves the Windows process cwd unset. Preflight `wsl.exe --exec test -d` with a bounded timeout; emit stable `history_resume_wsl_*` errors. Never give a Linux cwd to CreateProcessW or concatenate cwd into a shell command. Native Windows, Linux/macOS and SSH retain their existing launch paths. Existing resume capabilities are Claude/Codex/Pi/Grok/Kimi/OpenCode; other source entries remain unsupported.

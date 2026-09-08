@@ -1211,7 +1211,7 @@ pub fn apply_probe_output(
         if item.activation == McpActivation::Disabled {
             continue;
         }
-        if let Some(status) = observed.get(&item.name.to_lowercase()) {
+        if let Some(status) = observed.get(&item.name.to_lowercase()).filter(|status| **status != McpHealth::Unknown) {
             item.health = status.clone();
             item.error_code =
                 (item.health == McpHealth::Error).then(|| "agent_reported_mcp_error".to_string());
@@ -1451,6 +1451,24 @@ command = "local"
         let snapshot = assemble_snapshot(request(AgentKind::Codex), bundle);
         assert_eq!(snapshot.skill_summary.available, 1);
         assert_eq!(snapshot.skill_summary.shadowed, 1);
+    }
+
+    #[test]
+    fn unknown_probes_preserve_session_health_for_all_diagnostic_agents() {
+        for agent in [AgentKind::Claude, AgentKind::Codex, AgentKind::Pi, AgentKind::Grok, AgentKind::Opencode] {
+            for success in [true, false] {
+                let mut req = request(agent.clone());
+                req.runtime_evidence.push(RuntimeEvidence {
+                    server: "docs".into(), success, timestamp: Some("2026-09-07T00:00:00Z".into()),
+                });
+                let mut snapshot = assemble_snapshot(req, DiscoveryBundle::default());
+                let expected = if success { McpHealth::Healthy } else { McpHealth::Error };
+                apply_probe_output(&mut snapshot, r#"[{"name":"docs","auth_status":"unsupported"}]"#, true);
+                assert_eq!(snapshot.mcp[0].health, expected);
+                apply_probe_output(&mut snapshot, "unsupported diagnostic output", false);
+                assert_eq!(snapshot.mcp[0].health, expected);
+            }
+        }
     }
 
     #[test]

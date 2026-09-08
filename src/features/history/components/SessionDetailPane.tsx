@@ -1,3 +1,4 @@
+import { HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../../shared/lib/historySources";
 ﻿import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -1013,7 +1014,7 @@ export function SessionDetailPane({
           <div className="flex shrink-0 items-center gap-1.5">
             <button
               onClick={onResumeSession}
-              disabled={loadingSessionDetail || !activeSession}
+              disabled={loadingSessionDetail || !activeSession || HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(activeSession.source)?.capabilities.resume !== "supported"}
               aria-label={t("history.detail.resume")}
               className="ui-flat-action ui-toolbar-button ui-toolbar-button-compact ui-history-detail-resume-action"
               title={t("history.detail.resumeTitle")}

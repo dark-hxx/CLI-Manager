@@ -190,6 +190,9 @@ use message_stream::{
     extract_codex_context_info, extract_codex_token_count, extract_context_window, extract_usage_tokens, iter_session_messages,
     CodexCumulativeUsage,
 };
+mod tool_observations;
+mod native_tool_records;
+mod nested_tools;
 mod tool_events;
 use tool_events::{
     collect_tool_calls, collect_tool_events_from_value, extract_command_name,
@@ -246,7 +249,7 @@ const OOM_HISTORY_DETAIL_WARN_BYTES: usize = 10 * 1024 * 1024;
 const OOM_HISTORY_STATS_WARN_BYTES: usize = 5 * 1024 * 1024;
 const OOM_HISTORY_MESSAGES_WARN_COUNT: usize = 2_000;
 const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
-const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 5;
+const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 6;
 const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
 const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;

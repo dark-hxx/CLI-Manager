@@ -298,7 +298,8 @@ pub(super) async fn replace_v2_session(
                 session_id, message_id, event_index, call_id, name, category, status,
                 timestamp_ms, duration_ms, input_summary, output_summary,
                 input_json, output_json, raw_pointers_json, source_extension_json
-             ) VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL, NULL)",
+             ) VALUES (?1, (SELECT id FROM history_messages WHERE session_id = ?1 AND message_index = ?11),
+                ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, NULL, NULL, NULL, ?12)",
         )
         .bind(session_row_id)
         .bind(event_index as i64)
@@ -315,6 +316,8 @@ pub(super) async fn replace_v2_session(
         .bind(event.duration_ms.map(|value| value as i64))
         .bind(&event.input_summary)
         .bind(&event.output_summary)
+        .bind(event.message_index.map(|index| index as i64))
+        .bind(event.evidence.as_ref().and_then(|e| serde_json::to_string(e).ok()))
         .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;

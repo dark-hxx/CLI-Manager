@@ -1,4 +1,16 @@
 export const zh = {
+  "termStats.screenshot": "复制完整统计长图",
+  "termStats.screenshotBusy": "正在生成统计长图…",
+  "termStats.screenshotCopied": "统计长图已复制到剪贴板",
+  "termStats.screenshotFailed": "统计长图复制失败，请重试",
+  "termStats.screenshotTooLarge": "统计长图过大，请隐藏部分卡片后重试",
+
+  "termStats.inferred": "推断",
+  "termStats.inferredCount": "另识别 {count} 处嵌套调用（推断）",
+  "termStats.inferredTools": "嵌套工具（推断）",
+  "termStats.inferredMcp": "MCP（推断）",
+  "termStats.inferredHelp": "根据编排脚本中的调用位置识别，不代表实际执行次数，也不用于判定健康状态。",
+  "termStats.agentCapabilities.health.unknownReason": "尚无可验证的调用结果或原生健康状态；推断调用不能证明连接健康。",
   "terminal.backgroundTasks.title": "后台任务",
   "terminal.backgroundTasks.shortTitle": "任务",
   "terminal.backgroundTasks.running": "执行中",
