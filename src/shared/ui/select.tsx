@@ -56,6 +56,7 @@ function collectOptions(children: ReactNode, acc: ParsedOption[]): void {
 
 interface SelectProps {
   className?: string;
+  contentClassName?: string;
   value?: string | number;
   defaultValue?: string | number;
   onChange?: (e: ChangeEvent<HTMLSelectElement>) => void;
@@ -71,6 +72,7 @@ interface SelectProps {
 
 export function Select({
   className,
+  contentClassName,
   value,
   defaultValue,
   onChange,
@@ -134,7 +136,8 @@ export function Select({
           sideOffset={4}
           className={cn(
             "ui-select-popover z-[1000] overflow-hidden rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg",
-            "data-[state=open]:animate-slide-down"
+            "data-[state=open]:animate-slide-down",
+            contentClassName
           )}
           style={{
             width: "var(--radix-select-trigger-width)",

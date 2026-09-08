@@ -1121,6 +1121,48 @@
   background-color: var(--interactive-selected-bg);
 }
 
+.git-workspace-repository-select {
+  width: 200px;
+  min-width: 0;
+  max-width: 200px;
+  flex: 0 1 200px;
+  border-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 12%, var(--term-panel-border, #2e2e2e));
+  background-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 3%, var(--term-panel-card, #121212));
+  color: var(--term-panel-fg, #ececec);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--term-panel-fg, #ececec) 6%, transparent);
+}
+
+.git-workspace-repository-select:hover {
+  border-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 18%, var(--term-panel-border, #2e2e2e));
+  background-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 5%, var(--term-panel-card, #121212));
+}
+
+.git-workspace-repository-menu.ui-select-popover {
+  border-radius: 8px;
+  border-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 12%, var(--term-panel-border, #2e2e2e));
+  background-color: var(--term-panel-card, #121212);
+  color: var(--term-panel-fg, #ececec);
+  box-shadow: 0 6px 18px color-mix(in srgb, #000 24%, transparent);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.git-workspace-repository-menu.ui-select-popover [role="option"] {
+  margin: 1px 4px;
+  border-radius: 6px;
+  color: var(--term-panel-dim, #9ca0a6);
+}
+
+.git-workspace-repository-menu.ui-select-popover [role="option"][data-highlighted] {
+  background-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 7%, var(--term-panel-card-inner, #181818));
+  color: var(--term-panel-fg, #ececec);
+}
+
+.git-workspace-repository-menu.ui-select-popover [role="option"][data-state="checked"] {
+  background-color: color-mix(in srgb, var(--term-panel-fg, #ececec) 5%, var(--term-panel-card-inner, #181818));
+  color: var(--term-panel-fg, #ececec);
+}
+
 .ui-list-row {
   transition: background-color var(--animate-duration-fast), opacity var(--animate-duration-fast);
 }

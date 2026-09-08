@@ -39,6 +39,7 @@ import { GitCompareDialog } from "../components/workspace/GitCompareDialog";
 import { GitPowerToolsDialog } from "../components/workspace/GitPowerToolsDialog";
 import { useWorktreeStore } from "../../projects/api/worktreeStore";
 import { WorktreeFinishDialog } from "../../projects/api/WorktreeFinishDialog";
+import { Select } from "../../../shared/ui/select";
 
 interface GitWorkspaceProps {
   active: boolean;
@@ -929,18 +930,14 @@ export function GitWorkspace({
             </button>
           ))}
         </div>
-        <select
+        <Select
           value={repositoryId === null ? "__none__" : repositoryId || "__root__"}
           onChange={(event) => {
             const value = event.currentTarget.value;
             setRepositoryId(value === "__none__" ? null : value === "__root__" ? "" : value);
           }}
-          className="ui-focus-ring max-w-56 rounded-sm border bg-transparent px-2 py-1 text-[11px] outline-none"
-          style={{
-            color: TERM.fg,
-            borderColor: TERM.border,
-            backgroundColor: TERM.card,
-          }}
+          className="git-workspace-repository-select !h-7 !rounded-md px-2.5 py-0 text-[11px] font-medium"
+          contentClassName="git-workspace-repository-menu"
           aria-label={t("git.workspace.repository")}
           disabled={repositories.length === 0}
         >
@@ -955,13 +952,18 @@ export function GitWorkspace({
               {repository.relativePath || project?.name || t("git.repo.root")}
             </option>
           ))}
-        </select>
+        </Select>
         {view === "log" && branchStatus && (
           <div className="flex shrink-0 items-center gap-1">
             <button
               type="button"
-              className="ui-focus-ring flex items-center gap-1 rounded-sm border px-1.5 py-1 text-[10px] disabled:opacity-40"
-              style={{ color: TERM.cyan, borderColor: panelColorTint(TERM.cyan, 35) }}
+              className="ui-focus-ring flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[10px] font-medium transition-[filter,box-shadow] duration-150 hover:brightness-105 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                color: panelColorTint(TERM.cyan, 62, TERM.dim),
+                borderColor: panelColorTint(TERM.cyan, 26, TERM.border),
+                backgroundColor: panelColorTint(TERM.cyan, 4, TERM.card),
+                boxShadow: `inset 0 1px 0 ${panelColorTint(TERM.fg, 6)}, 0 1px 3px rgba(0, 0, 0, 0.14)`,
+              }}
               onClick={() => {
                 if (transport && repositoryId !== null) {
                   void transport
@@ -981,8 +983,13 @@ export function GitWorkspace({
             </button>
             <button
               type="button"
-              className="ui-focus-ring flex items-center gap-1 rounded-sm border px-1.5 py-1 text-[10px] disabled:opacity-40"
-              style={{ color: TERM.green, borderColor: panelColorTint(TERM.green, 35) }}
+              className="ui-focus-ring flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[10px] font-medium transition-[filter,box-shadow] duration-150 hover:brightness-105 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                color: panelColorTint(TERM.green, 62, TERM.dim),
+                borderColor: panelColorTint(TERM.green, 26, TERM.border),
+                backgroundColor: panelColorTint(TERM.green, 4, TERM.card),
+                boxShadow: `inset 0 1px 0 ${panelColorTint(TERM.fg, 6)}, 0 1px 3px rgba(0, 0, 0, 0.14)`,
+              }}
               onClick={() => {
                 if (transport && repositoryId !== null && branchStatus.upstream) {
                   void transport
@@ -1002,8 +1009,13 @@ export function GitWorkspace({
             </button>
             <button
               type="button"
-              className="ui-focus-ring flex items-center gap-1 rounded-sm border px-1.5 py-1 text-[10px] disabled:opacity-40"
-              style={{ color: TERM.yellow, borderColor: panelColorTint(TERM.yellow, 35) }}
+              className="ui-focus-ring flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-[10px] font-medium transition-[filter,box-shadow] duration-150 hover:brightness-105 active:brightness-95 disabled:cursor-not-allowed disabled:opacity-40"
+              style={{
+                color: panelColorTint(TERM.yellow, 62, TERM.dim),
+                borderColor: panelColorTint(TERM.yellow, 26, TERM.border),
+                backgroundColor: panelColorTint(TERM.yellow, 4, TERM.card),
+                boxShadow: `inset 0 1px 0 ${panelColorTint(TERM.fg, 6)}, 0 1px 3px rgba(0, 0, 0, 0.14)`,
+              }}
               onClick={() => {
                 if (transport && repositoryId !== null && branchStatus.branch) {
                   void transport
