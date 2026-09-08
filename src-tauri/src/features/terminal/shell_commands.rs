@@ -132,20 +132,26 @@ fn unix_shell_exe(shell: Option<&str>) -> String {
 // 顺序拼接可选 cd、原样启动命令与 exec shell，以分号连接，因此 cd 失败不会自动阻止后续命令。
 fn build_unix_terminal_command(tab: &ExternalTab) -> String {
     let shell = unix_shell_exe(tab.shell.as_deref());
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(cwd) = tab
+    let cwd = tab
         .cwd
         .as_deref()
         .map(str::trim)
-        .filter(|cwd| !cwd.is_empty())
-    {
-        parts.push(format!("cd {}", escape_posix_single_quoted(cwd)));
+        .filter(|cwd| !cwd.is_empty());
+    let startup = trimmed_startup_cmd(tab);
+    let setup = match (cwd, startup) {
+        (Some(cwd), Some(cmd)) => {
+            format!("cd {} && {cmd}", escape_posix_single_quoted(cwd))
+        }
+        (Some(cwd), None) => format!("cd {}", escape_posix_single_quoted(cwd)),
+        (None, Some(cmd)) => cmd.to_string(),
+        (None, None) => String::new(),
+    };
+    let launch_shell = format!("exec {}", escape_posix_single_quoted(&shell));
+    if setup.is_empty() {
+        launch_shell
+    } else {
+        format!("{setup}; {launch_shell}")
     }
-    if let Some(cmd) = trimmed_startup_cmd(tab) {
-        parts.push(cmd.to_string());
-    }
-    parts.push(format!("exec {}", escape_posix_single_quoted(&shell)));
-    parts.join("; ")
 }
 
 #[cfg(target_os = "macos")]
@@ -398,14 +404,23 @@ pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> R
     #[cfg(target_os = "macos")]
     {
         let mut command = Command::new("open");
-        if path_buf.is_file() {
+        let open_with_default_app = path_buf.is_file() && open_file.unwrap_or(false);
+        if path_buf.is_file() && !open_with_default_app {
             command.arg("-R").arg(&path);
         } else {
             command.arg(&path);
         }
         command.spawn().map_err(|e| {
             error!("Failed to open path in Finder: {}", e);
-            format!("无法打开文件夹: {}", e)
+            format!(
+                "{}: {}",
+                if open_with_default_app {
+                    "无法打开文件"
+                } else {
+                    "无法打开文件夹"
+                },
+                e
+            )
         })?;
 
         debug!("Opened path in Finder: {}", path);
@@ -414,14 +429,23 @@ pub async fn open_folder_in_explorer(path: String, open_file: Option<bool>) -> R
 
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
-        let target = if path_buf.is_file() {
+        let open_with_default_app = path_buf.is_file() && open_file.unwrap_or(false);
+        let target = if path_buf.is_file() && !open_with_default_app {
             path_buf.parent().unwrap_or(&path_buf)
         } else {
             path_buf.as_path()
         };
         Command::new("xdg-open").arg(target).spawn().map_err(|e| {
             error!("Failed to open path with xdg-open: {}", e);
-            format!("无法打开文件夹: {}", e)
+            format!(
+                "{}: {}",
+                if open_with_default_app {
+                    "无法打开文件"
+                } else {
+                    "无法打开文件夹"
+                },
+                e
+            )
         })?;
 
         debug!("Opened path with xdg-open: {}", target.to_string_lossy());

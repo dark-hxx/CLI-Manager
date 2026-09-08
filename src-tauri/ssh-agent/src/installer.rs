@@ -566,31 +566,34 @@ pub fn rollback(install_dir: Option<PathBuf>) -> Result<InstallResult, String> {
     if current == previous {
         return Err("agent_previous_same_as_current".to_string());
     }
-    replace_symlink(&current_link, &previous)?;
-    replace_symlink(&previous_link, &current)?;
-    if let Err(error) = validate_installed_binary(&current_link.join(AGENT_FILE_NAME), None) {
-        restore_symlink(&current_link, Some(&current));
-        restore_symlink(&previous_link, Some(&previous));
-        return Err(error);
-    }
-    let output = Command::new(current_link.join(AGENT_FILE_NAME))
-        .arg("version")
-        .output()
-        .map_err(|error| format!("agent_self_check_failed:{error}"))?;
-    let version: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("agent_self_check_invalid:{error}"))?;
-    let old_version = record.agent_version.clone();
-    record.agent_version = version["agentVersion"]
-        .as_str()
-        .unwrap_or_default()
-        .to_string();
-    record.previous_version = old_version;
-    record.installed_at = timestamp();
-    if let Err(error) = write_json_atomic(&layout.installation_record, &record) {
-        restore_symlink(&current_link, Some(&current));
-        restore_symlink(&previous_link, Some(&previous));
-        return Err(error);
-    }
+    let swapped = (|| {
+        replace_symlink(&current_link, &previous)?;
+        replace_symlink(&previous_link, &current)?;
+        validate_installed_binary(&current_link.join(AGENT_FILE_NAME), None)?;
+        let output = Command::new(current_link.join(AGENT_FILE_NAME))
+            .arg("version")
+            .output()
+            .map_err(|error| format!("agent_self_check_failed:{error}"))?;
+        let version: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("agent_self_check_invalid:{error}"))?;
+        let old_version = record.agent_version.clone();
+        record.agent_version = version["agentVersion"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
+        record.previous_version = old_version;
+        record.installed_at = timestamp();
+        write_json_atomic(&layout.installation_record, &record)?;
+        Ok::<_, String>(record)
+    })();
+    let record = match swapped {
+        Ok(record) => record,
+        Err(error) => {
+            restore_symlink(&current_link, Some(&current));
+            restore_symlink(&previous_link, Some(&previous));
+            return Err(error);
+        }
+    };
     Ok(InstallResult {
         action: "rolledBack",
         installation: Some(record),

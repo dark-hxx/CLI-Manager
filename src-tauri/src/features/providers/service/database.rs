@@ -3,7 +3,8 @@ use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqliteJournalMode};
 use sqlx::{Connection, Row};
 use std::collections::HashSet;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -513,11 +514,24 @@ async fn configure_connection(connection: &mut SqliteConnection) -> Result<(), S
 
 // 请求 TRUNCATE WAL 检查点；只处理查询执行错误，不检查返回行中的 busy 或检查点进度。
 async fn checkpoint_before_backup(connection: &mut SqliteConnection) -> Result<(), String> {
-    sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+    let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
         .fetch_one(&mut *connection)
         .await
-        .map(|_| ())
-        .map_err(|err| format!("provider_db_checkpoint_failed: {err}"))
+        .map_err(|err| format!("provider_db_checkpoint_failed: {err}"))?;
+    ensure_checkpoint_complete(row.get(0), row.get(1), row.get(2))
+}
+
+fn ensure_checkpoint_complete(
+    busy: i64,
+    log_frames: i64,
+    checkpointed_frames: i64,
+) -> Result<(), String> {
+    if busy != 0 {
+        return Err(format!(
+            "provider_db_checkpoint_busy: log_frames={log_frames}, checkpointed_frames={checkpointed_frames}"
+        ));
+    }
+    Ok(())
 }
 
 // 读取 SQLite user_version 作为供应商结构版本，读取失败保留错误上下文。
@@ -740,14 +754,37 @@ fn backup_existing_database(path: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(&backup_dir)
         .map_err(|err| format!("provider_db_backup_directory_failed: {err}"))?;
 
-    let backup_name = format!(
-        "providers.db.backup-{}-{}.db",
+    let prefix = format!(
+        "providers.db.backup-{}-{}",
         unix_timestamp_millis(),
         std::process::id()
     );
-    let backup_path = backup_dir.join(backup_name);
-    fs::copy(path, &backup_path).map_err(|err| format!("provider_db_backup_failed: {err}"))?;
-    Ok(backup_path)
+    for attempt in 0..100_u8 {
+        let suffix = if attempt == 0 {
+            ".db".to_string()
+        } else {
+            format!("-{attempt}.db")
+        };
+        let backup_path = backup_dir.join(format!("{prefix}{suffix}"));
+        let mut destination = match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&backup_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("provider_db_backup_failed: {error}")),
+        };
+        let result = fs::File::open(path)
+            .and_then(|mut source| io::copy(&mut source, &mut destination))
+            .and_then(|_| destination.sync_all());
+        if let Err(error) = result {
+            let _ = fs::remove_file(&backup_path);
+            return Err(format!("provider_db_backup_failed: {error}"));
+        }
+        return Ok(backup_path);
+    }
+    Err("provider_db_backup_name_exhausted".to_string())
 }
 
 // 返回截断至 i64 上限的 Unix 毫秒时间；系统时间早于纪元时回退为零。
@@ -911,6 +948,30 @@ mod tests {
                 "passwordCredentialAccount": "routing-global-proxy-password"
             })
         );
+    }
+
+    #[test]
+    fn checkpoint_busy_result_is_rejected() {
+        assert!(ensure_checkpoint_complete(0, 7, 7).is_ok());
+        assert_eq!(
+            ensure_checkpoint_complete(1, 7, 3).unwrap_err(),
+            "provider_db_checkpoint_busy: log_frames=7, checkpointed_frames=3"
+        );
+    }
+
+    #[test]
+    fn database_backups_never_overwrite_an_existing_copy() {
+        let temp = tempdir().unwrap();
+        let source = temp.path().join("providers.db");
+        fs::write(&source, b"database-one").unwrap();
+
+        let first = backup_existing_database(&source).unwrap();
+        fs::write(&source, b"database-two").unwrap();
+        let second = backup_existing_database(&source).unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(fs::read(first).unwrap(), b"database-one");
+        assert_eq!(fs::read(second).unwrap(), b"database-two");
     }
 
     #[tokio::test]

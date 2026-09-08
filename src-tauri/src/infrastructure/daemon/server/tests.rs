@@ -3,11 +3,11 @@ use super::client_transport::{
 };
 use super::pty_events::{emit_daemon_output, output_batch_would_overflow};
 use super::*;
-use std::io::Write;
 use crate::daemon::protocol::{decode_daemon_frame, ROUTING_ERROR_PROTOCOL_UNSUPPORTED};
 use crate::daemon::protocol::{
     encode_frame, ReplayEntry, BINARY_KIND_OUTPUT, BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET,
 };
+use std::io::Write;
 use tungstenite::client::IntoClientRequest;
 
 #[test]
@@ -1070,4 +1070,25 @@ fn hook_events_map_to_task_status() {
     assert_eq!(map_hook_event_to_task_status("Stop"), Some("done"));
     assert_eq!(map_hook_event_to_task_status("StopFailure"), Some("failed"));
     assert_eq!(map_hook_event_to_task_status("SessionStart"), None);
+}
+#[test]
+fn websocket_origin_requires_an_exact_loopback_authority() {
+    for allowed in [
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "http://localhost:1420",
+        "https://127.0.0.1:1420",
+    ] {
+        assert!(is_allowed_webview_origin(allowed), "{allowed}");
+    }
+    for rejected in [
+        "http://localhost:1420.evil.test",
+        "http://localhost:1420/path",
+        "http://localhost.evil.test:1420",
+        "http://127.0.0.1:1420?next=evil",
+        "http://localhost",
+    ] {
+        assert!(!is_allowed_webview_origin(rejected), "{rejected}");
+    }
 }

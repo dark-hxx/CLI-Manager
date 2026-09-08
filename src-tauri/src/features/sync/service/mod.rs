@@ -2,8 +2,8 @@ use crate::webdav::{WebDavClient, WebDavConfig};
 use chrono::{Local, Utc};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
-use std::fs::{self, File};
-use std::io::Read;
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 const DEFAULT_REMOTE_DIR: &str = "cli-manager";
@@ -569,20 +569,32 @@ fn write_snapshot_zip(path: &Path, snapshot: &serde_json::Value) -> Result<(), S
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|error| format!("创建目录失败: {error}"))?;
     }
-    let file = File::create(path).map_err(|error| format!("创建 zip 文件失败: {error}"))?;
-    let mut writer = zip::ZipWriter::new(file);
-    let options = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated)
-        .unix_permissions(0o644);
-    writer
-        .start_file("snapshot.json", options)
-        .map_err(|error| format!("写入 zip 失败: {error}"))?;
-    serde_json::to_writer_pretty(&mut writer, snapshot)
-        .map_err(|error| format!("序列化失败: {error}"))?;
-    writer
-        .finish()
-        .map_err(|error| format!("完成 zip 失败: {error}"))?;
-    Ok(())
+    let file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| format!("创建 zip 文件失败: {error}"))?;
+    let result = (|| {
+        let mut writer = zip::ZipWriter::new(file);
+        let options = zip::write::FileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .unix_permissions(0o644);
+        writer
+            .start_file("snapshot.json", options)
+            .map_err(|error| format!("写入 zip 失败: {error}"))?;
+        serde_json::to_writer_pretty(&mut writer, snapshot)
+            .map_err(|error| format!("序列化失败: {error}"))?;
+        let file = writer
+            .finish()
+            .map_err(|error| format!("完成 zip 失败: {error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("同步 zip 失败: {error}"))?;
+        Ok::<_, String>(())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(path);
+    }
+    result
 }
 
 // 校验 V3 快照后以本地时间及快照 ID 命名 ZIP，保留原 JSON 内容并返回路径。
@@ -649,7 +661,16 @@ pub fn save_outbox(target_hash: &str, snapshot: &serde_json::Value) -> Result<St
     }
     let bytes = serde_json::to_vec_pretty(snapshot)
         .map_err(|error| format!("backup_snapshot_serialize_failed: {error}"))?;
-    fs::write(&path, bytes).map_err(|error| format!("backup_outbox_write_failed: {error}"))?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(|error| format!("backup_outbox_write_failed: {error}"))?;
+    let result = file.write_all(&bytes).and_then(|_| file.sync_all());
+    if let Err(error) = result {
+        let _ = fs::remove_file(&path);
+        return Err(format!("backup_outbox_write_failed: {error}"));
+    }
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -885,5 +906,15 @@ mod tests {
 
         assert!(data.data.worktrees.is_empty());
         assert!(data.data.model_prices.is_empty());
+    }
+
+    #[test]
+    fn snapshot_zip_refuses_to_truncate_an_existing_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("snapshot.zip");
+        fs::write(&path, b"keep-existing").unwrap();
+
+        assert!(write_snapshot_zip(&path, &serde_json::json!({"safe": true})).is_err());
+        assert_eq!(fs::read(path).unwrap(), b"keep-existing");
     }
 }

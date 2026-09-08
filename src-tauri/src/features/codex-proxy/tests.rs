@@ -528,6 +528,44 @@ fn matching_resume_is_forwarded_and_tracked() {
 }
 
 #[test]
+fn resume_tracking_rejects_new_requests_at_capacity_without_dropping_existing_entries() {
+    let mut pending = (0..MAX_PENDING_RESUMES)
+        .map(|id| {
+            (
+                id.to_string(),
+                PendingResume {
+                    requested_thread_id: format!("thread-{id}"),
+                    expected_thread_id: None,
+                    expected_model_provider: None,
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    let mut delivery_instruction_pending = false;
+    let request =
+        br#"{"jsonrpc":"2.0","id":999,"method":"thread/resume","params":{"threadId":"thread-new"}}
+"#;
+
+    let ClientLineAction::Reject(response) = inspect_client_line(
+        request,
+        None,
+        None,
+        None,
+        &mut pending,
+        &mut delivery_instruction_pending,
+    ) else {
+        panic!("resume request beyond capacity must be rejected");
+    };
+    let response: Value = serde_json::from_slice(trim_line_ending(&response)).unwrap();
+    assert_eq!(response["id"], 999);
+    assert!(response["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("too many pending"));
+    assert_eq!(pending.len(), MAX_PENDING_RESUMES);
+}
+
+#[test]
 // 验证本机受管恢复请求注入供应商标识并保持线程标识。
 fn local_handoff_resume_injects_registered_provider() {
     let mut pending = HashMap::new();

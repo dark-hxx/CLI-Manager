@@ -917,13 +917,27 @@ fn websocket_error(status: StatusCode, message: &str) -> ErrorResponse {
 
 // 按固定 Tauri origin 或本机 HTTP(S) 前缀检查 WebView 来源。
 fn is_allowed_webview_origin(origin: &str) -> bool {
-    matches!(
+    if matches!(
         origin,
         "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
-    ) || origin.starts_with("http://localhost:")
-        || origin.starts_with("https://localhost:")
-        || origin.starts_with("http://127.0.0.1:")
-        || origin.starts_with("https://127.0.0.1:")
+    ) {
+        return true;
+    }
+    let Ok(uri) = origin.parse::<hyper::Uri>() else {
+        return false;
+    };
+    let Some(scheme) = uri.scheme_str() else {
+        return false;
+    };
+    let Some(authority) = uri.authority() else {
+        return false;
+    };
+    matches!(scheme, "http" | "https")
+        && matches!(authority.host(), "localhost" | "127.0.0.1")
+        && authority.port_u16().is_some()
+        && uri
+            .path_and_query()
+            .is_none_or(|path_and_query| path_and_query.as_str() == "/")
 }
 
 // 只允许 /pty 路径及支持的 Origin 进入 WebSocket 握手。

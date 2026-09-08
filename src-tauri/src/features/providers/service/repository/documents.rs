@@ -239,7 +239,15 @@ pub(crate) fn merge_common_into_settings(
 fn redact_toml_item(item: &mut Item) -> bool {
     match item {
         Item::Table(table) => redact_toml_table(table),
-        Item::ArrayOfTables(tables) => tables.iter_mut().any(redact_toml_table),
+        Item::ArrayOfTables(tables) => {
+            let mut found_secret = false;
+            for table in tables.iter_mut() {
+                if redact_toml_table(table) {
+                    found_secret = true;
+                }
+            }
+            found_secret
+        }
         Item::Value(value) => redact_toml_value(value),
         Item::None => false,
     }
@@ -335,31 +343,36 @@ fn reject_new_json_secrets(
 
 // 递归处理双方均为对象的节点，恢复缺失或遮罩敏感值并拒绝修改；不遍历数组或恢复整个缺失的非敏感父节点。
 fn preserve_json_secrets(existing: &JsonValue, incoming: &mut JsonValue) -> Result<(), String> {
-    let (Some(existing_object), Some(incoming_object)) =
-        (existing.as_object(), incoming.as_object_mut())
-    else {
-        return Ok(());
-    };
-    for (key, existing_value) in existing_object {
-        if is_secret_key(key) {
-            match incoming_object.get(key) {
-                None => {
-                    incoming_object.insert(key.clone(), existing_value.clone());
+    match (existing, incoming) {
+        (JsonValue::Object(existing_object), JsonValue::Object(incoming_object)) => {
+            for (key, existing_value) in existing_object {
+                if is_secret_key(key) {
+                    match incoming_object.get(key) {
+                        None => {
+                            incoming_object.insert(key.clone(), existing_value.clone());
+                        }
+                        Some(value) if is_masked_secret(value) => {
+                            incoming_object.insert(key.clone(), existing_value.clone());
+                        }
+                        Some(value) if value != existing_value => {
+                            return Err(error(
+                                "provider_document_secret_edit_requires_key_manager",
+                                key,
+                            ));
+                        }
+                        _ => {}
+                    }
+                } else if let Some(incoming_value) = incoming_object.get_mut(key) {
+                    preserve_json_secrets(existing_value, incoming_value)?;
                 }
-                Some(value) if is_masked_secret(value) => {
-                    incoming_object.insert(key.clone(), existing_value.clone());
-                }
-                Some(value) if value != existing_value => {
-                    return Err(error(
-                        "provider_document_secret_edit_requires_key_manager",
-                        key,
-                    ));
-                }
-                _ => {}
             }
-        } else if let Some(incoming_value) = incoming_object.get_mut(key) {
-            preserve_json_secrets(existing_value, incoming_value)?;
         }
+        (JsonValue::Array(existing_items), JsonValue::Array(incoming_items)) => {
+            for (existing_item, incoming_item) in existing_items.iter().zip(incoming_items) {
+                preserve_json_secrets(existing_item, incoming_item)?;
+            }
+        }
+        _ => {}
     }
     Ok(())
 }
@@ -386,7 +399,7 @@ pub(crate) fn preserve_toml_secrets(
     incoming: &mut DocumentMut,
 ) -> Result<(), String> {
     let Ok(existing_document) = existing.parse::<DocumentMut>() else {
-        if !collect_toml_edit_secret_paths(incoming.as_item(), &[]).is_empty() {
+        if toml_item_contains_secret(incoming.as_item()) {
             return Err(error(
                 "provider_document_secret_edit_requires_key_manager",
                 "toml",
@@ -394,75 +407,200 @@ pub(crate) fn preserve_toml_secrets(
         }
         return Ok(());
     };
-    let existing_paths = collect_toml_edit_secret_paths(existing_document.as_item(), &[]);
-    let incoming_paths = collect_toml_edit_secret_paths(incoming.as_item(), &[]);
-    for (path, _) in incoming_paths {
-        if !existing_paths
+    reject_new_toml_secrets(
+        Some(existing_document.as_item()),
+        incoming.as_item(),
+        "toml",
+    )?;
+    preserve_toml_item(existing_document.as_item(), incoming.as_item_mut());
+    Ok(())
+}
+
+fn toml_item_contains_secret(item: &Item) -> bool {
+    match item {
+        Item::Table(table) => table
             .iter()
-            .any(|(existing_path, _)| existing_path == &path)
-        {
-            return Err(error(
-                "provider_document_secret_edit_requires_key_manager",
-                path.join("."),
-            ));
-        }
+            .any(|(key, child)| is_secret_key(key) || toml_item_contains_secret(child)),
+        Item::ArrayOfTables(tables) => tables.iter().any(|table| {
+            table
+                .iter()
+                .any(|(key, child)| is_secret_key(key) || toml_item_contains_secret(child))
+        }),
+        Item::Value(value) => toml_value_contains_secret(value),
+        Item::None => false,
     }
-    for (path, secret) in existing_paths {
-        let Some(item) = get_toml_item_mut(incoming.as_item_mut(), &path) else {
-            continue;
-        };
-        *item = Item::Value(TomlValue::from(secret));
+}
+
+fn toml_value_contains_secret(value: &TomlValue) -> bool {
+    if let Some(table) = value.as_inline_table() {
+        return table
+            .iter()
+            .any(|(key, child)| is_secret_key(key) || toml_value_contains_secret(child));
+    }
+    value
+        .as_array()
+        .is_some_and(|array| array.iter().any(toml_value_contains_secret))
+}
+
+fn reject_new_toml_secrets(
+    existing: Option<&Item>,
+    incoming: &Item,
+    path: &str,
+) -> Result<(), String> {
+    match incoming {
+        Item::Table(table) => {
+            let existing = existing.and_then(Item::as_table);
+            for (key, child) in table.iter() {
+                let detail = format!("{path}.{key}");
+                let existing_child = existing.and_then(|table| table.get(key));
+                if (is_secret_key(key) || toml_item_contains_secret(child))
+                    && existing_child.is_none()
+                {
+                    return Err(error(
+                        "provider_document_secret_edit_requires_key_manager",
+                        detail,
+                    ));
+                }
+                if !is_secret_key(key) {
+                    reject_new_toml_secrets(existing_child, child, &detail)?;
+                }
+            }
+        }
+        Item::ArrayOfTables(tables) => {
+            let existing = existing.and_then(Item::as_array_of_tables);
+            for (index, table) in tables.iter().enumerate() {
+                let existing_table = existing.and_then(|tables| tables.get(index));
+                for (key, child) in table.iter() {
+                    let detail = format!("{path}[{index}].{key}");
+                    let existing_child = existing_table.and_then(|table| table.get(key));
+                    if (is_secret_key(key) || toml_item_contains_secret(child))
+                        && existing_child.is_none()
+                    {
+                        return Err(error(
+                            "provider_document_secret_edit_requires_key_manager",
+                            detail,
+                        ));
+                    }
+                    if !is_secret_key(key) {
+                        reject_new_toml_secrets(existing_child, child, &detail)?;
+                    }
+                }
+            }
+        }
+        Item::Value(value) => {
+            reject_new_toml_value_secrets(existing.and_then(Item::as_value), value, path)?
+        }
+        Item::None => {}
     }
     Ok(())
 }
 
-// 收集普通表递归路径及内联表直接字符串敏感键；忽略表数组、普通数组和内联表非敏感键下的嵌套结构。
-fn collect_toml_edit_secret_paths(item: &Item, parent: &[String]) -> Vec<(Vec<String>, String)> {
-    match item {
-        Item::Table(table) => table
-            .iter()
-            .flat_map(|(key, child)| {
-                let mut path = parent.to_vec();
-                path.push(key.to_string());
+// 递归检查内联表与普通数组；输入新增任何敏感分支时拒绝由文档编辑器直接写入。
+fn reject_new_toml_value_secrets(
+    existing: Option<&TomlValue>,
+    incoming: &TomlValue,
+    path: &str,
+) -> Result<(), String> {
+    if let Some(table) = incoming.as_inline_table() {
+        let existing = existing.and_then(TomlValue::as_inline_table);
+        for (key, child) in table.iter() {
+            let detail = format!("{path}.{key}");
+            let existing_child = existing.and_then(|table| table.get(key));
+            if (is_secret_key(key) || toml_value_contains_secret(child)) && existing_child.is_none()
+            {
+                return Err(error(
+                    "provider_document_secret_edit_requires_key_manager",
+                    detail,
+                ));
+            }
+            if !is_secret_key(key) {
+                reject_new_toml_value_secrets(existing_child, child, &detail)?;
+            }
+        }
+    } else if let Some(array) = incoming.as_array() {
+        let existing = existing.and_then(TomlValue::as_array);
+        for (index, child) in array.iter().enumerate() {
+            let existing_child = existing.and_then(|array| array.get(index));
+            if toml_value_contains_secret(child) && existing_child.is_none() {
+                return Err(error(
+                    "provider_document_secret_edit_requires_key_manager",
+                    format!("{path}[{index}]"),
+                ));
+            }
+            reject_new_toml_value_secrets(existing_child, child, &format!("{path}[{index}]"))?;
+        }
+    }
+    Ok(())
+}
+
+fn preserve_toml_item(existing: &Item, incoming: &mut Item) {
+    match (existing, incoming) {
+        (Item::Table(existing), Item::Table(incoming)) => {
+            for (key, child) in existing.iter() {
                 if is_secret_key(key) {
-                    child
-                        .as_str()
-                        .map(|secret| vec![(path, secret.to_string())])
-                        .unwrap_or_default()
-                } else {
-                    collect_toml_edit_secret_paths(child, &path)
+                    incoming.insert(key, child.clone());
+                } else if let Some(target) = incoming.get_mut(key) {
+                    preserve_toml_item(child, target);
+                } else if toml_item_contains_secret(child) {
+                    incoming.insert(key, child.clone());
                 }
-            })
-            .collect(),
-        Item::ArrayOfTables(_) => Vec::new(),
-        Item::Value(value) => value
-            .as_inline_table()
-            .map(|table| {
-                table
+            }
+        }
+        (Item::ArrayOfTables(existing), Item::ArrayOfTables(incoming)) => {
+            for (index, table) in existing.iter().enumerate() {
+                if let Some(target) = incoming.get_mut(index) {
+                    preserve_toml_table(table, target);
+                } else if table
                     .iter()
-                    .filter_map(|(key, child)| {
-                        if !is_secret_key(key) {
-                            return None;
-                        }
-                        let mut path = parent.to_vec();
-                        path.push(key.to_string());
-                        child.as_str().map(|secret| (path, secret.to_string()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default(),
-        Item::None => Vec::new(),
+                    .any(|(key, child)| is_secret_key(key) || toml_item_contains_secret(child))
+                {
+                    incoming.push(table.clone());
+                }
+            }
+        }
+        (Item::Value(existing), Item::Value(incoming)) => {
+            preserve_toml_value(existing, incoming);
+        }
+        _ => {}
     }
 }
 
-// 沿非空字符串路径逐级查找可变 TOML 项，路径缺失即返回 None，不创建节点。
-fn get_toml_item_mut<'a>(item: &'a mut Item, path: &[String]) -> Option<&'a mut Item> {
-    let (head, tail) = path.split_first()?;
-    let next = item.get_mut(head)?;
-    if tail.is_empty() {
-        Some(next)
-    } else {
-        get_toml_item_mut(next, tail)
+// 按表键递归恢复既有敏感值；输入缺失整个敏感子树时复制原节点。
+fn preserve_toml_table(existing: &Table, incoming: &mut Table) {
+    for (key, child) in existing.iter() {
+        if is_secret_key(key) {
+            incoming.insert(key, child.clone());
+        } else if let Some(target) = incoming.get_mut(key) {
+            preserve_toml_item(child, target);
+        } else if toml_item_contains_secret(child) {
+            incoming.insert(key, child.clone());
+        }
+    }
+}
+
+fn preserve_toml_value(existing: &TomlValue, incoming: &mut TomlValue) {
+    if let (Some(existing), Some(incoming)) =
+        (existing.as_inline_table(), incoming.as_inline_table_mut())
+    {
+        for (key, child) in existing.iter() {
+            if is_secret_key(key) {
+                incoming.insert(key, child.clone());
+            } else if let Some(target) = incoming.get_mut(key) {
+                preserve_toml_value(child, target);
+            } else if toml_value_contains_secret(child) {
+                incoming.insert(key, child.clone());
+            }
+        }
+        return;
+    }
+    if let (Some(existing), Some(incoming)) = (existing.as_array(), incoming.as_array_mut()) {
+        for (index, child) in existing.iter().enumerate() {
+            if let Some(target) = incoming.get_mut(index) {
+                preserve_toml_value(child, target);
+            } else if toml_value_contains_secret(child) {
+                incoming.push(child.clone());
+            }
+        }
     }
 }
 
@@ -558,6 +696,22 @@ mod tests {
     }
 
     #[test]
+    fn redacts_secrets_from_every_array_of_tables_entry() {
+        let raw = r#"[[providers]]
+api_key = "first-secret"
+
+[[providers]]
+api_key = "second-secret"
+"#;
+        let (redacted, has_secret, valid) = redact_toml_document(raw);
+        assert!(valid);
+        assert!(has_secret);
+        assert!(!redacted.contains("first-secret"));
+        assert!(!redacted.contains("second-secret"));
+        assert_eq!(redacted.matches("[REDACTED]").count(), 2);
+    }
+
+    #[test]
     // 验证 Codex auth 与 TOML 中的遮罩被还原为原凭据，同时允许模型字段更新。
     fn codex_document_patch_preserves_redacted_credentials() {
         let existing = r##"{
@@ -612,6 +766,48 @@ mod tests {
         )
         .unwrap_err();
         assert!(toml_error.contains("provider_document_secret_edit_requires_key_manager"));
+    }
+
+    #[test]
+    fn toml_document_patch_preserves_table_array_and_inline_array_secrets() {
+        let existing = r#"{"config":"[[providers]]\nname = \"one\"\napi_key = \"first\"\n\n[[providers]]\nname = \"two\"\napi_key = \"second\"\n\nitems = [{ api_key = \"nested\" }]\n"}"#;
+        let incoming = "[[providers]]\nname = \"one-new\"\napi_key = \"[REDACTED]\"\n\n[[providers]]\nname = \"two-new\"\napi_key = \"***\"\n\nitems = [{ api_key = \"[REDACTED]\" }]\n";
+
+        let updated = patch_settings_document("codex", existing, "codex.config", incoming).unwrap();
+        let value: Value = serde_json::from_str(&updated).unwrap();
+        let config = value["config"].as_str().unwrap();
+        assert!(config.contains("api_key = \"first\""));
+        assert!(config.contains("api_key = \"second\""));
+        assert!(config.contains("api_key = \"nested\""));
+        assert!(config.contains("name = \"one-new\""));
+    }
+
+    #[test]
+    fn toml_document_patch_rejects_a_new_secret_in_an_extra_table_array_entry() {
+        let existing = r#"{"config":"[[providers]]\nname = \"one\"\n"}"#;
+        let incoming = "[[providers]]\nname = \"one\"\n\n[[providers]]\napi_key = \"new-secret\"\n";
+
+        assert!(
+            patch_settings_document("codex", existing, "codex.config", incoming)
+                .unwrap_err()
+                .contains("provider_document_secret_edit_requires_key_manager")
+        );
+    }
+
+    #[test]
+    fn json_document_patch_preserves_secrets_inside_arrays() {
+        let existing = r#"{"items":[{"api_key":"first"},{"api_key":"second"}]}"#;
+        let updated = patch_settings_document(
+            "claude",
+            existing,
+            "claude.settings",
+            r#"{"items":[{"api_key":"***"},{"api_key":"[REDACTED]"}]}"#,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&updated).unwrap();
+
+        assert_eq!(value["items"][0]["api_key"], "first");
+        assert_eq!(value["items"][1]["api_key"], "second");
     }
 
     #[test]

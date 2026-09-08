@@ -12,7 +12,7 @@
 use crate::shell_resolver::silent_command;
 use std::collections::HashMap;
 use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +29,7 @@ const POLL_MS: u64 = 250;
 const OOM_TRANSCRIPT_APPEND_WARN_BYTES: usize = 1024 * 1024;
 const OOM_TRANSCRIPT_OFFSET_WARN_BYTES: u64 = 10 * 1024 * 1024;
 const TRANSCRIPT_READ_MAX_BYTES: u64 = 1024 * 1024;
+const SESSION_META_LINE_MAX_BYTES: u64 = 256 * 1024;
 
 // 按追加量和累计偏移选择告警级别，记录路径与读取规模而不输出转录正文。
 fn log_transcript_oom_diagnostic(
@@ -83,7 +84,12 @@ pub struct SubscribeResult {
 /// 持有每个订阅的停止开关（drop/置位即让对应轮询线程退出）。
 #[derive(Default)]
 pub struct SubagentTranscriptBridge {
-    entries: Mutex<HashMap<String, Arc<AtomicBool>>>,
+    entries: Mutex<HashMap<String, TranscriptSubscription>>,
+}
+
+struct TranscriptSubscription {
+    stop: Arc<AtomicBool>,
+    handle: thread::JoinHandle<()>,
 }
 
 impl SubagentTranscriptBridge {
@@ -107,14 +113,6 @@ impl SubagentTranscriptBridge {
         self.unsubscribe(&key);
 
         let stop = Arc::new(AtomicBool::new(false));
-        {
-            let mut guard = self
-                .entries
-                .lock()
-                .map_err(|_| "lock_poisoned".to_string())?;
-            guard.insert(key.clone(), stop.clone());
-        }
-
         let path_buf = PathBuf::from(&path);
         let (initial_content, initial_offset) = read_new_lines(&path_buf, 0)
             .map(|(content, offset, _)| (content, offset))
@@ -130,16 +128,31 @@ impl SubagentTranscriptBridge {
         );
         let thread_key = key.clone();
         let thread_path = path.clone();
-        thread::spawn(move || {
+        let thread_stop = Arc::clone(&stop);
+        let handle = thread::spawn(move || {
             tail_loop(
                 app_handle,
                 thread_key,
                 thread_path,
                 initial_offset,
                 has_initial_content,
-                stop,
+                thread_stop,
             )
         });
+        let mut guard = match self.entries.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                stop.store(true, Ordering::Relaxed);
+                let _ = handle.join();
+                return Err("lock_poisoned".to_string());
+            }
+        };
+        let replaced = guard.insert(key.clone(), TranscriptSubscription { stop, handle });
+        drop(guard);
+        if let Some(replaced) = replaced {
+            replaced.stop.store(true, Ordering::Relaxed);
+            let _ = replaced.handle.join();
+        }
         debug!("[subagent_transcript] subscribe: key={key} path={path}");
         Ok(SubscribeResult {
             path,
@@ -150,11 +163,30 @@ impl SubagentTranscriptBridge {
     /// 停止并移除指定订阅。
     // 移除指定订阅并置停止标记；不等待旧线程退出。
     pub fn unsubscribe(&self, key: &str) {
-        if let Ok(mut guard) = self.entries.lock() {
-            if let Some(stop) = guard.remove(key) {
-                stop.store(true, Ordering::Relaxed);
-                debug!("[subagent_transcript] unsubscribe: {key}");
-            }
+        let subscription = self
+            .entries
+            .lock()
+            .ok()
+            .and_then(|mut guard| guard.remove(key));
+        if let Some(subscription) = subscription {
+            subscription.stop.store(true, Ordering::Relaxed);
+            let _ = subscription.handle.join();
+            debug!("[subagent_transcript] unsubscribe: {key}");
+        }
+    }
+}
+
+impl Drop for SubagentTranscriptBridge {
+    fn drop(&mut self) {
+        let Ok(entries) = self.entries.get_mut() else {
+            return;
+        };
+        let subscriptions = entries.drain().map(|(_, value)| value).collect::<Vec<_>>();
+        for subscription in &subscriptions {
+            subscription.stop.store(true, Ordering::Relaxed);
+        }
+        for subscription in subscriptions {
+            let _ = subscription.handle.join();
         }
     }
 }
@@ -187,31 +219,34 @@ fn tail_loop(
             );
         }
         if let Some((content, new_offset, shrank)) = read_new_lines(&path, offset) {
-            let reset = shrank || !started;
-            started = true;
             offset = new_offset;
             if content.is_empty() {
-                continue;
+                if shrank {
+                    started = false;
+                }
+            } else {
+                let reset = shrank || !started;
+                started = true;
+                debug!(
+                    "[subagent_transcript] tail read lines: key={key} bytes={} offset={} reset={reset}",
+                    content.len(),
+                    offset
+                );
+                log_transcript_oom_diagnostic(
+                    "tail_append",
+                    &key,
+                    path.to_string_lossy().as_ref(),
+                    content.len(),
+                    offset,
+                    reset,
+                );
+                let payload = AppendPayload {
+                    key: key.clone(),
+                    content,
+                    reset,
+                };
+                let _ = app_handle.emit(EVENT_NAME, payload);
             }
-            debug!(
-                "[subagent_transcript] tail read lines: key={key} bytes={} offset={} reset={reset}",
-                content.len(),
-                offset
-            );
-            log_transcript_oom_diagnostic(
-                "tail_append",
-                &key,
-                path.to_string_lossy().as_ref(),
-                content.len(),
-                offset,
-                reset,
-            );
-            let payload = AppendPayload {
-                key: key.clone(),
-                content,
-                reset,
-            };
-            let _ = app_handle.emit(EVENT_NAME, payload);
         }
         thread::sleep(Duration::from_millis(POLL_MS));
     }
@@ -819,13 +854,22 @@ fn codex_rollout_parent_thread_id(path: &Path) -> Option<String> {
             return None;
         }
     };
-    let mut reader = std::io::BufReader::new(file);
+    let reader = std::io::BufReader::new(file);
     let mut first_line = String::new();
-    use std::io::BufRead;
-    if let Err(err) = reader.read_line(&mut first_line) {
+    let read_result = reader
+        .take(SESSION_META_LINE_MAX_BYTES + 1)
+        .read_line(&mut first_line);
+    if let Err(err) = read_result {
         warn!(
             "[subagent_transcript:codex] inspect rollout read first line failed: path={} error={err}",
             path_text
+        );
+        return None;
+    }
+    if first_line.len() as u64 > SESSION_META_LINE_MAX_BYTES {
+        warn!(
+            "[subagent_transcript:codex] inspect rollout first line too large: path={} limit={}",
+            path_text, SESSION_META_LINE_MAX_BYTES
         );
         return None;
     }
@@ -1574,5 +1618,14 @@ mod tests {
         assert!(!shrank);
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn rollout_metadata_rejects_an_oversized_first_line() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("rollout.jsonl");
+        fs::write(&path, vec![b'x'; SESSION_META_LINE_MAX_BYTES as usize + 1]).unwrap();
+
+        assert_eq!(codex_rollout_parent_thread_id(&path), None);
     }
 }

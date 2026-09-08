@@ -11,8 +11,10 @@ process.env.CLI_MANAGER_NOTIFY_TOKEN = "test-token";
 
 const calls = [];
 // 用内存替身收集通知正文，所有测试均不发送真实 HTTP 请求。
+const signals = [];
 globalThis.fetch = async (_url, options) => {
   calls.push(JSON.parse(options.body));
+  signals.push(options.signal);
   return { ok: true };
 };
 
@@ -71,6 +73,41 @@ test("OpenCode hook binds the canonical root session and ignores child lifecycle
       { event: "UserPromptSubmit", sessionId: rootId },
     ],
   );
+});
+
+test("failed status delivery does not suppress a retry of the same state", async () => {
+  calls.length = 0;
+  const bridge = await newBridge();
+  const retryRootId = "ses_retryA";
+  await bridge.event(created(retryRootId));
+
+  const successfulFetch = globalThis.fetch;
+  try {
+    globalThis.fetch = async () => {
+      throw new Error("fixture delivery failure");
+    };
+    await bridge.event(status(retryRootId));
+    globalThis.fetch = successfulFetch;
+    await bridge.event(status(retryRootId));
+  } finally {
+    globalThis.fetch = successfulFetch;
+  }
+
+  assert.equal(
+    calls.filter(({ event, sessionId }) => event === "UserPromptSubmit" && sessionId === retryRootId)
+      .length,
+    1,
+  );
+});
+
+test("OpenCode delivery requests carry an abort deadline", async () => {
+  calls.length = 0;
+  signals.length = 0;
+  const bridge = await newBridge();
+  await bridge.event(created("ses_deadlineA"));
+
+  assert.equal(calls.length, 1);
+  assert.ok(signals[0] instanceof AbortSignal);
 });
 
 // 验证先到达的子会话在父根出现后解析身份，但不补发子事件。
@@ -195,7 +232,7 @@ test("capacity eviction does not break the active root", async () => {
   const bridge = await newBridge();
   await bridge.event(created(rootId));
   for (let i = 0; i < 1030; i += 1) {
-    await bridge.event({ type: "session.status", properties: { sessionID: `ses_filler${i}`, status: { type: "idle" } } });
+    await bridge.event(created(`ses_filler${i}`, { parentID: rootId }));
   }
   await bridge.event(status(rootId));
   // 查找活动根创建通知，不要求无关状态事件确实触发缓存淘汰。

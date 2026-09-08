@@ -5,6 +5,7 @@ const DEV_PORT = 1420;
 const DEV_HOST = "127.0.0.1";
 const DEV_URL = `http://${DEV_HOST}:${DEV_PORT}`;
 const SERVER_PROBE_TIMEOUT_MS = 15_000;
+const SERVER_PROBE_MAX_BYTES = 64 * 1024;
 
 // 探测固定回环地址的开发首页，供复用判断而非启动服务。
 const requestIndex = () =>
@@ -13,9 +14,16 @@ const requestIndex = () =>
     // 收到响应后按 UTF-8 收集正文；当前实现没有正文大小上限。
     const request = http.get(DEV_URL, { timeout: SERVER_PROBE_TIMEOUT_MS }, (response) => {
       let body = "";
+      let bodyBytes = 0;
       response.setEncoding("utf8");
       // 追加响应数据块供页面标记检测。
       response.on("data", (chunk) => {
+        bodyBytes += Buffer.byteLength(chunk);
+        if (bodyBytes > SERVER_PROBE_MAX_BYTES) {
+          request.destroy();
+          resolve({ available: true, statusCode: response.statusCode ?? 0, body: "" });
+          return;
+        }
         body += chunk;
       });
       // 响应结束时返回可达状态、HTTP 状态码和完整正文。

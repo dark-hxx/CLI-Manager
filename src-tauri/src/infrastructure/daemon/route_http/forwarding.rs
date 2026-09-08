@@ -22,9 +22,32 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+async fn response_bytes_limited(
+    mut response: reqwest::Response,
+) -> Result<bytes::Bytes, &'static str> {
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_BODY_BYTES as u64)
+    {
+        return Err("routing_upstream_body_too_large");
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "routing_upstream_body_failed")?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_BODY_BYTES {
+            return Err("routing_upstream_body_too_large");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body.into())
+}
+
 // 校验路由、请求头和 JSON 大小，加载供应商快照并按共享预算尝试密钥、纠偏和故障转移。
-// 非流式响应读取完成后更新熔断、用量及可选热切换；流式响应交给限时流处理器提交结果。
-// 返回上游响应或稳定错误码；请求体有大小限制，不表示所有上游响应体都受同样限制。
+// 非流式响应以明确上限读取后更新熔断、用量及可选热切换；流式响应交给限时流处理器提交结果。
+// 返回上游响应或稳定错误码；请求体与收集到内存的上游响应体均受大小限制。
 pub(super) async fn forward_request(
     request: Request<Incoming>,
     state: Arc<RouteState>,
@@ -496,20 +519,17 @@ pub(super) async fn forward_request(
                 && can_media;
             if should_read_anthropic_client_error || should_read_media_error {
                 let response_status = response.status();
-                let error_body = match response.bytes().await {
+                let error_body = match response_bytes_limited(response).await {
                     Ok(body) => body,
-                    Err(_) => {
+                    Err(error_code) => {
                         record_failed_attempt(
                             &snapshot,
                             actual_attempt_index,
                             Some(StatusCode::BAD_GATEWAY),
-                            "routing_upstream_body_failed",
+                            error_code,
                             usage::UsageCapture::default(),
                         );
-                        break ProviderAttemptOutcome::Failure(
-                            StatusCode::BAD_GATEWAY,
-                            "routing_upstream_body_failed",
-                        );
+                        break ProviderAttemptOutcome::Failure(StatusCode::BAD_GATEWAY, error_code);
                     }
                 };
                 let error_capture = usage_logging_enabled
@@ -791,14 +811,14 @@ pub(super) async fn forward_request(
     if !streaming {
         let body = match tokio::time::timeout(
             Duration::from_secs(failover_config.non_streaming_timeout),
-            response.bytes(),
+            response_bytes_limited(response),
         )
         .await
         {
             Ok(Ok(body)) => body,
-            Ok(Err(_)) => {
+            Ok(Err(error_code)) => {
                 record_circuit_failure(&state, &mut circuit_permit, circuit_policy);
-                return Err((StatusCode::BAD_GATEWAY, "routing_upstream_body_failed"));
+                return Err((StatusCode::BAD_GATEWAY, error_code));
             }
             Err(_) => {
                 record_circuit_failure(&state, &mut circuit_permit, circuit_policy);

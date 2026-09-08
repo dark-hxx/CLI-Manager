@@ -1,9 +1,7 @@
 use super::{live_path, LivePath, WSL_OPERATION_TIMEOUT};
 use crate::{shell_resolver, wsl};
 use std::fs;
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::process::Command;
 
 // 定位 wsl.exe 并构造指定发行版的直接程序调用，参数逐项传递；只构造命令，不执行。
 pub(super) fn wsl_command(distro: &str, program: &str, args: &[&str]) -> Result<Command, String> {
@@ -48,46 +46,26 @@ pub(super) fn run_wsl_script_with_input(
     input: &[u8],
 ) -> Result<(), String> {
     let mut command = wsl_command(distro, "sh", &["-lc", script, "cli-manager"])?;
-    command
-        .args(args)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "provider_wsl_operation_failed".to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(input).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("provider_wsl_operation_failed".to_string());
+    command.args(args);
+    let output = shell_resolver::output_with_input_timeout_bounded(
+        command,
+        input.to_vec(),
+        WSL_OPERATION_TIMEOUT,
+        0,
+        0,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "provider_wsl_operation_timeout".to_string()
+        } else {
+            "provider_wsl_operation_failed".to_string()
         }
-    }
-    let deadline = Instant::now() + WSL_OPERATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err("provider_wsl_operation_failed".to_string())
-                };
-            }
-            Ok(None) if Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_timeout".to_string());
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_failed".to_string());
-            }
-        }
-    }
+    })?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "provider_wsl_operation_failed".to_string())
 }
 
 // 仅当非空路径列表均为同一发行版的 WSL UNC 时返回批处理组，发行版比较忽略大小写。
@@ -115,46 +93,26 @@ pub(super) fn run_wsl_with_input(
     args: &[&str],
     input: &[u8],
 ) -> Result<(), String> {
-    let mut command = wsl_command(distro, program, args)?;
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    let mut child = command
-        .spawn()
-        .map_err(|_| "provider_wsl_operation_failed".to_string())?;
-    if let Some(mut stdin) = child.stdin.take() {
-        if stdin.write_all(input).is_err() {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err("provider_wsl_operation_failed".to_string());
+    let command = wsl_command(distro, program, args)?;
+    let output = shell_resolver::output_with_input_timeout_bounded(
+        command,
+        input.to_vec(),
+        WSL_OPERATION_TIMEOUT,
+        0,
+        0,
+    )
+    .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::TimedOut {
+            "provider_wsl_operation_timeout".to_string()
+        } else {
+            "provider_wsl_operation_failed".to_string()
         }
-    }
-    let deadline = std::time::Instant::now() + WSL_OPERATION_TIMEOUT;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    Err("provider_wsl_operation_failed".to_string())
-                };
-            }
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_timeout".to_string());
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err("provider_wsl_operation_failed".to_string());
-            }
-        }
-    }
+    })?;
+    output
+        .status
+        .success()
+        .then_some(())
+        .ok_or_else(|| "provider_wsl_operation_failed".to_string())
 }
 
 // 按本机或 WSL 路径读取内容，缺失返回 None；WSL 先 test 再 cat，二者之间不是原子快照。

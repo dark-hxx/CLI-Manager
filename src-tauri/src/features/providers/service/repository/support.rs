@@ -406,7 +406,15 @@ pub(crate) fn redact_json(value: &mut Value) -> bool {
             }
             found_secret
         }
-        Value::Array(items) => items.iter_mut().any(redact_json),
+        Value::Array(items) => {
+            let mut found_secret = false;
+            for item in items {
+                if redact_json(item) {
+                    found_secret = true;
+                }
+            }
+            found_secret
+        }
         _ => false,
     }
 }
@@ -465,7 +473,15 @@ pub(crate) fn strip_json_secrets(value: &mut Value) -> bool {
             }
             found_secret
         }
-        Value::Array(items) => items.iter_mut().any(strip_json_secrets),
+        Value::Array(items) => {
+            let mut found_secret = false;
+            for item in items {
+                if strip_json_secrets(item) {
+                    found_secret = true;
+                }
+            }
+            found_secret
+        }
         _ => false,
     }
 }

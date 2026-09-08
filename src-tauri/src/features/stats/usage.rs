@@ -355,20 +355,20 @@ fn as_non_negative_u64(value: &Value) -> Option<u64> {
 
 #[derive(Debug, Default)]
 pub struct SseUsageCollector {
-    buffer: String,
+    buffer: Vec<u8>,
     capture: UsageCapture,
 }
 
 impl SseUsageCollector {
     // 追加 SSE 字节文本并限制缓冲，再逐个消费完整事件。
     pub fn observe(&mut self, bytes: &Bytes) {
-        self.buffer.push_str(&String::from_utf8_lossy(bytes));
+        self.buffer.extend_from_slice(bytes);
         if self.buffer.len() > MAX_SSE_BUFFER_BYTES {
             let keep_from = self.buffer.len().saturating_sub(MAX_SSE_BUFFER_BYTES);
             self.buffer.drain(..keep_from);
         }
         while let Some((end, delimiter_len)) = sse_event_boundary(&self.buffer) {
-            let event = self.buffer[..end].to_string();
+            let event = String::from_utf8_lossy(&self.buffer[..end]).into_owned();
             self.buffer.drain(..end + delimiter_len);
             self.observe_event(&event);
         }
@@ -414,18 +414,24 @@ impl SseUsageCollector {
 
     // 消费剩余未分隔事件并返回最终用量捕获。
     pub fn finish(mut self) -> UsageCapture {
-        if !self.buffer.trim().is_empty() {
-            let event = std::mem::take(&mut self.buffer);
-            self.observe_event(&event);
+        if self.buffer.iter().any(|byte| !byte.is_ascii_whitespace()) {
+            let bytes = std::mem::take(&mut self.buffer);
+            self.observe_event(&String::from_utf8_lossy(&bytes));
         }
         self.capture
     }
 }
 
-// 寻找最早的 LF 或 CRLF 空行事件边界。
-fn sse_event_boundary(buffer: &str) -> Option<(usize, usize)> {
-    let lf = buffer.find("\n\n").map(|index| (index, 2));
-    let crlf = buffer.find("\r\n\r\n").map(|index| (index, 4));
+// 在原始字节缓冲中寻找最早的 LF 或 CRLF 空行事件边界。
+fn sse_event_boundary(buffer: &[u8]) -> Option<(usize, usize)> {
+    let lf = buffer
+        .windows(2)
+        .position(|window| window == b"\n\n")
+        .map(|index| (index, 2));
+    let crlf = buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| (index, 4));
     match (lf, crlf) {
         (Some(left), Some(right)) => Some(if left.0 <= right.0 { left } else { right }),
         (Some(boundary), None) | (None, Some(boundary)) => Some(boundary),
@@ -807,6 +813,19 @@ mod tests {
         let capture = collector.finish();
         assert_eq!(capture.usage.output_tokens, 6);
         assert!(capture.completed);
+    }
+
+    #[test]
+    fn sse_collector_preserves_utf8_split_across_chunks() {
+        let mut collector = SseUsageCollector::default();
+        let payload = "data: {\"model\":\"模型甲\",\"usage\":{\"output_tokens\":2}}\n\n".as_bytes();
+        let split = payload.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+        collector.observe(&Bytes::copy_from_slice(&payload[..split]));
+        collector.observe(&Bytes::copy_from_slice(&payload[split..]));
+
+        let capture = collector.finish();
+        assert_eq!(capture.response_model.as_deref(), Some("模型甲"));
+        assert_eq!(capture.usage.output_tokens, 2);
     }
 
     #[test]

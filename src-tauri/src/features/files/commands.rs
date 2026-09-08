@@ -833,6 +833,7 @@ pub async fn file_copy(
         if source.is_dir() && target.starts_with(&source) {
             return Err("target_inside_source".into());
         }
+        ensure_distinct_source_target(&source, &target)?;
         prepare_target(&target, overwrite)?;
         copy_path(&root, &source, &target)
     })
@@ -1254,8 +1255,21 @@ fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Resu
     if source.is_dir() && target.starts_with(source) {
         return Err("target_inside_source".into());
     }
+    ensure_distinct_source_target(source, target)?;
     prepare_target(target, overwrite)?;
     fs::rename(source, target).map_err(|err| format!("move_failed: {err}"))
+}
+
+fn ensure_distinct_source_target(source: &Path, target: &Path) -> Result<(), String> {
+    if source == target {
+        return Err("source_equals_target".into());
+    }
+    match target.canonicalize() {
+        Ok(existing_target) if existing_target == source => Err("source_equals_target".into()),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("target_canonicalize_failed: {error}")),
+    }
 }
 
 // 按图片扩展名返回支持的媒体类型。
@@ -1522,6 +1536,10 @@ fn collect_content_matches_in_file(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "commands/security_tests.rs"]
+mod security_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1808,54 +1826,6 @@ mod tests {
         move_path(&root, &target, &moved, false).unwrap();
         assert!(!root.join("two.txt").exists());
         assert_eq!(fs::read_to_string(root.join("three.txt")).unwrap(), "one");
-    }
-
-    #[test]
-    // 验证写入目标检查拒绝指向已有文件的符号链接。
-    fn file_write_rejects_symlink_targets() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("root");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("real.txt"), "real").unwrap();
-        let root = root.canonicalize().unwrap();
-        let link = root.join("link.txt");
-
-        #[cfg(unix)]
-        if std::os::unix::fs::symlink(root.join("real.txt"), &link).is_err() {
-            return;
-        }
-        #[cfg(target_os = "windows")]
-        if std::os::windows::fs::symlink_file(root.join("real.txt"), &link).is_err() {
-            return;
-        }
-
-        assert_eq!(
-            ensure_target_safe_for_write(&root, &link).unwrap_err(),
-            "path_is_symlink"
-        );
-    }
-
-    #[test]
-    // 验证递归复制拒绝源目录中的符号链接。
-    fn copy_rejects_nested_symlink_sources() {
-        let tmp = TempDir::new().unwrap();
-        let root = tmp.path().join("root");
-        fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("real.txt"), "real").unwrap();
-        let root = root.canonicalize().unwrap();
-        let link = root.join("src").join("link.txt");
-
-        #[cfg(unix)]
-        if std::os::unix::fs::symlink(root.join("real.txt"), &link).is_err() {
-            return;
-        }
-        #[cfg(target_os = "windows")]
-        if std::os::windows::fs::symlink_file(root.join("real.txt"), &link).is_err() {
-            return;
-        }
-
-        let err = copy_path(&root, &root.join("src"), &root.join("dst")).unwrap_err();
-        assert_eq!(err, "path_is_symlink");
     }
 
     #[test]

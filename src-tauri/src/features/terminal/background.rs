@@ -81,10 +81,39 @@ pub(crate) fn validate_relative_path(p: &str) -> Result<(), &'static str> {
     if p.starts_with('/') {
         return Err("path_is_absolute");
     }
-    if !p.starts_with("backgrounds/") {
+    let mut components = Path::new(p).components();
+    let valid_shape = matches!(components.next(), Some(std::path::Component::Normal(value)) if value == "backgrounds")
+        && matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none();
+    if !valid_shape {
         return Err("path_outside_backgrounds_dir");
     }
+    let file_name = Path::new(p)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or("invalid_source_filename")?;
+    validate_extension(file_name)?;
     Ok(())
+}
+
+fn safe_background_file_exists(base: &Path, relative_path: &str) -> Result<bool, String> {
+    validate_relative_path(relative_path).map_err(str::to_string)?;
+    let path = base.join(relative_path);
+    let metadata = match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("background_metadata_failed: {error}")),
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Ok(false);
+    }
+    let canonical_base = base
+        .canonicalize()
+        .map_err(|error| format!("background_base_canonicalize_failed: {error}"))?;
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| format!("background_canonicalize_failed: {error}"))?;
+    Ok(canonical_path.starts_with(canonical_base))
 }
 
 /// 解析 backgrounds 目录的绝对路径，并确保目录存在。
@@ -164,12 +193,25 @@ pub async fn save_background_image(
         return Err("path_escapes_backgrounds_dir".into());
     }
 
-    if !dest.exists() {
-        let dest_for_write = dest.clone();
-        tokio::task::spawn_blocking(move || std::fs::write(&dest_for_write, &bytes))
-            .await
-            .map_err(|e| format!("join_error: {e}"))?
-            .map_err(|e| format!("write_dest_failed: {e}"))?;
+    match std::fs::symlink_metadata(&dest) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => {
+            return Err("background_destination_not_regular_file".into());
+        }
+        Ok(_) => {
+            let existing = std::fs::read(&dest)
+                .map_err(|error| format!("read_destination_failed: {error}"))?;
+            if existing != bytes {
+                return Err("background_destination_conflict".into());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let dest_for_write = dest.clone();
+            tokio::task::spawn_blocking(move || std::fs::write(&dest_for_write, &bytes))
+                .await
+                .map_err(|e| format!("join_error: {e}"))?
+                .map_err(|e| format!("write_dest_failed: {e}"))?;
+        }
+        Err(error) => return Err(format!("destination_metadata_failed: {error}")),
     }
 
     Ok(SavedBackground {
@@ -190,7 +232,7 @@ pub async fn background_image_exists(
         .path()
         .app_local_data_dir()
         .map_err(|e| format!("app_local_data_dir: {e}"))?;
-    Ok(base.join(&relative_path).exists())
+    safe_background_file_exists(&base, &relative_path)
 }
 
 #[tauri::command]
@@ -228,13 +270,19 @@ fn cleanup_dir(dir: &Path, keep_names: &std::collections::HashSet<String>) -> Re
     for entry in read_dir {
         let entry = entry.map_err(|e| format!("read_dir_entry: {e}"))?;
         let path = entry.path();
-        if !path.is_file() {
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("entry_file_type: {e}"))?;
+        if file_type.is_symlink() || !file_type.is_file() {
             continue;
         }
         let name = match path.file_name().and_then(|s| s.to_str()) {
             Some(n) => n.to_string(),
             None => continue,
         };
+        if validate_extension(&name).is_err() {
+            continue;
+        }
         if keep_names.contains(&name) {
             continue;
         }
@@ -417,6 +465,28 @@ mod tests {
         assert_eq!(deleted, 1);
         assert!(dir.join("sub").exists());
         assert!(!dir.join("a.jpg").exists());
+    }
+
+    #[test]
+    fn cleanup_ignores_non_image_files() {
+        let tmp = TempDir::new().unwrap();
+        touch(&tmp.path().join("notes.txt"));
+
+        assert_eq!(cleanup_dir(tmp.path(), &HashSet::new()).unwrap(), 0);
+        assert!(tmp.path().join("notes.txt").exists());
+    }
+
+    #[test]
+    fn safe_exists_requires_a_regular_image_inside_the_base() {
+        let tmp = TempDir::new().unwrap();
+        let backgrounds = tmp.path().join("backgrounds");
+        fs::create_dir(&backgrounds).unwrap();
+        touch(&backgrounds.join("safe.png"));
+        fs::create_dir(backgrounds.join("folder.jpg")).unwrap();
+
+        assert!(safe_background_file_exists(tmp.path(), "backgrounds/safe.png").unwrap());
+        assert!(!safe_background_file_exists(tmp.path(), "backgrounds/folder.jpg").unwrap());
+        assert!(safe_background_file_exists(tmp.path(), "backgrounds/note.txt").is_err());
     }
 
     // ---------- validate_relative_path ----------

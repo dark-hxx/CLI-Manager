@@ -104,6 +104,9 @@ impl DaemonClient {
             .try_clone()
             .map_err(|err| format!("daemon stream clone failed: {err}"))?;
         writer
+            .set_write_timeout(Some(REQUEST_TIMEOUT))
+            .map_err(|err| format!("daemon write timeout setup failed: {err}"))?;
+        writer
             .write_all(
                 encode_frame(&ClientFrame::Auth {
                     token: info.token.clone(),
@@ -283,25 +286,29 @@ impl DaemonClient {
         if let Ok(mut pending) = self.pending.lock() {
             pending.insert(id, tx);
         }
-        {
-            let mut writer = self
-                .writer
-                .lock()
-                .map_err(|_| "daemon writer poisoned".to_string())?;
-            writer
-                .write_all(encode_frame(frame).as_bytes())
-                .map_err(|err| {
-                    self.connected.store(false, Ordering::SeqCst);
-                    format!("daemon write failed: {err}")
-                })?;
+        let write_result = self
+            .writer
+            .lock()
+            .map_err(|_| "daemon writer poisoned".to_string())
+            .and_then(|mut writer| {
+                writer
+                    .write_all(encode_frame(frame).as_bytes())
+                    .map_err(|err| {
+                        self.connected.store(false, Ordering::SeqCst);
+                        format!("daemon write failed: {err}")
+                    })
+            });
+        if let Err(error) = write_result {
+            if let Ok(mut pending) = self.pending.lock() {
+                pending.remove(&id);
+            }
+            return Err(error);
         }
         let reply = rx
             .recv_timeout(timeout)
             .map_err(|err| format!("daemon reply timeout: {err}"));
-        if reply.is_err() {
-            if let Ok(mut pending) = self.pending.lock() {
-                pending.remove(&id);
-            }
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.remove(&id);
         }
         reply
     }

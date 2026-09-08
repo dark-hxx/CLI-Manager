@@ -771,6 +771,19 @@ fn claude_model_mapping_accepts_custom_display_name() {
 }
 
 #[test]
+fn claude_model_mapping_handles_non_ascii_display_name_suffixes() {
+    let mut mappings = Vec::new();
+    add_claude_model_mapping(&mut mappings, "fable", "gpt-5.6-sol", "模型甲[1m]");
+    for model in ["模型甲[1m]", "模型甲"] {
+        let body = apply_model_mapping(&serde_json::json!({"model": model}), &mappings).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["model"],
+            "gpt-5.6-sol"
+        );
+    }
+}
+
+#[test]
 // 验证模型映射拒绝空源和重复源。
 fn model_mapping_rejects_empty_and_duplicate_sources() {
     assert_eq!(
@@ -833,6 +846,35 @@ fn generic_sse_commits_on_first_parseable_event_and_ignores_keepalive() {
         tracker.observe(&Bytes::from_static(b"data: {\"later\":true}\n\n")),
         StreamCommitOutcome::None
     );
+}
+
+#[test]
+fn stream_commit_tracker_accepts_crlf_and_split_utf8() {
+    let mut tracker = StreamCommitTracker::new(StreamCommitKind::GenericSse);
+    let payload = "data: {\"label\":\"你\",\"type\":\"message_start\"}\r\n\r\n".as_bytes();
+    let split = payload.iter().position(|byte| *byte >= 0x80).unwrap() + 1;
+
+    assert_eq!(
+        tracker.observe(&Bytes::copy_from_slice(&payload[..split])),
+        StreamCommitOutcome::None
+    );
+    assert_eq!(
+        tracker.observe(&Bytes::copy_from_slice(&payload[split..])),
+        StreamCommitOutcome::Success
+    );
+}
+
+#[test]
+fn stream_commit_tracker_caps_undecided_input() {
+    let mut tracker = StreamCommitTracker::new(StreamCommitKind::GenericSse);
+    assert_eq!(
+        tracker.observe(&Bytes::from(vec![
+            b'x';
+            MAX_ERROR_DIAGNOSTIC_BODY_BYTES * 2
+        ])),
+        StreamCommitOutcome::None
+    );
+    assert_eq!(tracker.buffer.len(), MAX_ERROR_DIAGNOSTIC_BODY_BYTES);
 }
 
 #[test]
