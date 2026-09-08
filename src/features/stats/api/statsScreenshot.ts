@@ -1,14 +1,16 @@
 const MAX_PIXELS = 16_000_000;
 const MAX_DIMENSION = 16_384;
 const MAX_NODES = 10_000;
+const MIN_PIXEL_RATIO = 2;
+const MAX_PIXEL_RATIO = 3;
 
-/** Keep the entire panel, scaling proportionally instead of clipping long images. */
+/** Export at high density while scaling extreme long panels proportionally instead of clipping them. */
 export function screenshotPixelRatio(width: number, height: number, deviceRatio: number): number {
   if (![width, height].every((value) => Number.isFinite(value) && value > 0)) {
     throw new Error("stats_screenshot_unavailable");
   }
   const ratio = Math.min(
-    Math.max(1, Number.isFinite(deviceRatio) ? deviceRatio : 1), 2,
+    Math.max(MIN_PIXEL_RATIO, Number.isFinite(deviceRatio) ? deviceRatio : 1), MAX_PIXEL_RATIO,
     MAX_DIMENSION / width, MAX_DIMENSION / height,
     Math.sqrt(MAX_PIXELS / (width * height)),
   );

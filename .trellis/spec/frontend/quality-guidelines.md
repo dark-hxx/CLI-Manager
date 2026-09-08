@@ -6,19 +6,7 @@
 
 ## Overview
 
-<!--
-Document your project's quality standards here.
-
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
-
-(To be filled by the team)
-
----
+The rules below capture project-specific performance, diagnostics, layout, and review constraints.
 
 ## Forbidden Patterns
 
@@ -265,11 +253,3 @@ AI agents must not start CLI-Manager services or the Tauri desktop app to verify
 - Normal terminal layout has no unintended one-sided padding or outer gaps.
 - Fullscreen terminal layout still fills the available window.
 - Terminal background image mode still shows transparency, blur, darken, fit, and position correctly.
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)

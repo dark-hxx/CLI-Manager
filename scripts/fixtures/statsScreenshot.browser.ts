@@ -34,6 +34,7 @@ export async function runScreenshotRegression() {
       const image = await job;
       const pixels = image.getContext("2d")!;
       const ratio = image.width / 240;
+      check(ratio >= 2, `Capture is not high density: ${ratio}x`);
       const pixel = (x: number, y: number) => [...pixels.getImageData(Math.floor(x * ratio), Math.floor(y * ratio), 1, 1).data].slice(0, 3).join(",");
       check(image.height >= 1096, `Full height missing: ${image.height}`);
       check(pixel(220, 60) === (theme === "dark" ? "12,18,24" : "245,246,248"), "Inherited theme lost");

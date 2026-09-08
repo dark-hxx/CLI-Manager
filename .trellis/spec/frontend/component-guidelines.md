@@ -155,16 +155,6 @@ terminalProcessManager.write(sessionId, colorReply);
 
 **Tests**: Run `node --test scripts/terminalOsc.test.mjs`; assert both live and replay queries are filtered and `useTerminalOsc.ts` contains no `terminalProcessManager.write` or `replyToColorQueries` path.
 
-> How components are built in this project.
-
----
-
-## Overview
-
-(To be filled by the team)
-
----
-
 ## Component Structure
 
 ### Convention: User-facing app shell text goes through `useI18n`
@@ -1175,12 +1165,6 @@ const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
 
 ---
 
-## Props Conventions
-
-(To be filled by the team)
-
----
-
 ## Styling Patterns
 
 ### Convention: Project-tree hover actions preserve row geometry
@@ -1298,12 +1282,6 @@ const option = {
 - Keep page-level search behavior only on tabs that actually consume `searchValue`.
 
 **Tests**: For settings visual migrations, run `npx tsc --noEmit` and `npm run build`; desktop runtime UI verification remains manual.
-
----
-
-## Accessibility
-
-(To be filled by the team)
 
 ---
 
@@ -2252,6 +2230,8 @@ switch / document switch still reload content and keep the viewport.
 The live statistics panel marks its scroll content with `data-stats-screenshot-scroll`; screenshot/refresh actions carry `data-stats-screenshot-exclude`. Export the currently enabled cards at the current panel width, including content below the viewport, without changing live layout or scroll position. Hidden cards and closed dialogs stay excluded.
 
 Snapshot computed styles (including inherited theme variables) and canvas pixels synchronously before asynchronous rendering. Expand only the offscreen scroll clone, and remove its inert/aria-hidden host in `finally`. Do not point the renderer at the terminal, the whole window or a different session after a tab switch. Use a proportional pixel budget rather than cropping.
+
+Ordinary captures use at least a 2x pixel ratio and may follow high-density displays up to 3x. Dimension and total-pixel limits may proportionally reduce extreme long captures so the full panel remains present without exceeding the renderer budget.
 
 `statsScreenshot` lazily loads html-to-image; `statsScreenshotClipboard` uses Tauri `Image.new` with explicit RGBA dimensions and `writeImage`, then closes the native resource in `finally`. The only added permission is clipboard-manager write-image. No filesystem export, upload or clipboard read is needed. The button owns its in-flight guard, disables duplicate clicks and localizes all feedback.
 

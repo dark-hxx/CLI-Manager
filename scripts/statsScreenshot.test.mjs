@@ -15,8 +15,11 @@ const compile = async (name, source) => {
 };
 const source = (path) => readFileSync(new URL("../" + path, import.meta.url), "utf8");
 const {screenshotPixelRatio} = await compile("capture", source("src/features/stats/api/statsScreenshot.ts"));
-test("image dimensions preserve complete long panels within pixel budget", () => {
+test("ordinary panels render at high density and long panels stay within the pixel budget", () => {
+  assert.equal(screenshotPixelRatio(480, 2000, 1), 2);
+  assert.equal(screenshotPixelRatio(480, 2000, 1.5), 2);
   assert.equal(screenshotPixelRatio(188, 3000, 2), 2);
+  assert.equal(screenshotPixelRatio(188, 3000, 3), 3);
   assert.equal(screenshotPixelRatio(188, 20000, 2), 16384 / 20000);
   const ratio = screenshotPixelRatio(4000, 4000, 3);
   assert.equal(ratio, 1);

@@ -1,14 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
-import {
-  PanelBottomClose,
-  PanelBottomOpen,
-  PanelLeftClose,
-  PanelLeftOpen,
-  PanelRightClose,
-  PanelRightOpen,
-  PanelTopClose,
-  PanelTopOpen,
-} from "lucide-react";
+import { useEffect, useState } from "react";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useTerminalStore } from "../../terminal/state";
 import { useI18n } from "../../../shared/i18n/index";
@@ -25,36 +15,6 @@ import {
   type WorkspanTabBarPosition,
 } from "../../../shared/lib/workspaceLayout";
 import { WorkspaceLayoutMenu } from "../components/WorkspaceLayoutMenu";
-
-function QuickLayoutButton({
-  label,
-  active,
-  disabled = false,
-  onClick,
-  children,
-}: {
-  label: string;
-  active: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <button
-      type="button"
-      className="workspace-layout-control ui-focus-ring"
-      aria-label={label}
-      title={label}
-      aria-pressed={active}
-      disabled={disabled}
-      data-workspace-layout-quick="true"
-      data-active={active ? "true" : "false"}
-      onClick={onClick}
-    >
-      {children}
-    </button>
-  );
-}
 
 function useSidebarLayoutState() {
   const [state, setState] = useState<SidebarStateChangeDetail>(() => ({
@@ -114,24 +74,7 @@ export function WorkspaceLayoutControls() {
     if (sidebarState.collapsed) requestSidebarExpand();
   };
 
-  const sidebarIcon = sidebarState.collapsed
-    ? projectSidebarSide === "left" ? <PanelLeftOpen size={15} /> : <PanelRightOpen size={15} />
-    : projectSidebarSide === "left" ? <PanelLeftClose size={15} /> : <PanelRightClose size={15} />;
-  const sideIcon = terminalSidePanelVisible
-    ? terminalSidePanelSide === "left" ? <PanelLeftClose size={15} /> : <PanelRightClose size={15} />
-    : terminalSidePanelSide === "left" ? <PanelLeftOpen size={15} /> : <PanelRightOpen size={15} />;
-  const sideLabel = terminalSidePanelVisible
-    ? t("workspaceLayout.controls.hideAuxiliaryPanel")
-    : t("workspaceLayout.controls.showAuxiliaryPanel");
-  const tabIcon = workspanTabBarVisible
-    ? workspanTabBarPosition === "top" ? <PanelTopClose size={15} /> : <PanelBottomClose size={15} />
-    : workspanTabBarPosition === "top" ? <PanelTopOpen size={15} /> : <PanelBottomOpen size={15} />;
   const workspanDisabled = !workspanEnabled || !hasWorkspanTabs;
-  const tabLabel = workspanDisabled
-    ? t("workspaceLayout.controls.workspanUnavailable")
-    : workspanTabBarVisible
-      ? t("workspaceLayout.controls.hideWorkspanTabs")
-      : t("workspaceLayout.controls.showWorkspanTabs");
 
   return (
     <div
@@ -139,29 +82,6 @@ export function WorkspaceLayoutControls() {
       role="group"
       aria-label={t("workspaceLayout.controls.groupLabel")}
     >
-      <QuickLayoutButton
-        label={sidebarState.collapsed ? t("workspaceLayout.controls.showSidebar") : t("workspaceLayout.controls.hideSidebar")}
-        active={!sidebarState.collapsed}
-        disabled={sidebarState.compactMode || viewMode === "compact"}
-        onClick={requestSidebarToggle}
-      >
-        {sidebarIcon}
-      </QuickLayoutButton>
-      <QuickLayoutButton
-        label={sideLabel}
-        active={terminalSidePanelVisible}
-        onClick={toggleTerminalSidePanel}
-      >
-        {sideIcon}
-      </QuickLayoutButton>
-      <QuickLayoutButton
-        label={tabLabel}
-        active={!workspanDisabled && workspanTabBarVisible}
-        disabled={workspanDisabled}
-        onClick={toggleWorkspanTabBar}
-      >
-        {tabIcon}
-      </QuickLayoutButton>
       <WorkspaceLayoutMenu
         open={menuOpen}
         onOpenChange={setMenuOpen}
