@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { initLogging, installGlobalCrashHandlers, reportFrontendCrash } from "./lib/logger";
+import { initLogging, installGlobalCrashHandlers, reportFrontendCrash } from "./shared/platform/logger";
 
 installGlobalCrashHandlers();
 
@@ -14,7 +14,7 @@ async function bootstrap() {
   const root = ReactDOM.createRoot(document.getElementById("root") as HTMLElement);
   const isDesktopPetWindow = getCurrentWindow().label === "desktop-pet";
   if (isDesktopPetWindow) {
-    const { default: DesktopPetApp } = await import("./desktop-pet/DesktopPetApp");
+    const { default: DesktopPetApp } = await import("./features/desktop-pet/api/DesktopPetApp");
     root.render(
       <React.StrictMode>
         <DesktopPetApp />
@@ -30,11 +30,11 @@ async function bootstrap() {
     { QueryClientProvider },
     { queryClient },
   ] = await Promise.all([
-    import("./App"),
-    import("./components/AppErrorBoundary"),
-    import("./components/ui/MantineThemeProvider"),
+    import("./app/App"),
+    import("./app/components/AppErrorBoundary"),
+    import("./shared/ui/MantineThemeProvider"),
     import("@tanstack/react-query"),
-    import("./lib/queryClient"),
+    import("./shared/platform/queryClient"),
     import("@mantine/core/styles.css"),
   ]);
   void initLogging();

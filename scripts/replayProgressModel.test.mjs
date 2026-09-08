@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import ts from "typescript";
 
-const source = await readFile(new URL("../src/components/terminal/replayProgressModel.ts", import.meta.url), "utf8");
+const source = await readFile(new URL("../src/features/terminal/components/replayProgressModel.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -151,7 +151,7 @@ test("uses history tool output, recognizes validation, and maps file operations 
       output_summary: "exit code 0",
     }],
     file_changes: [{
-      file_path: "src/App.tsx",
+      file_path: "src/app/App.tsx",
       status: "M",
       additions: 2,
       deletions: 1,
@@ -161,7 +161,7 @@ test("uses history tool output, recognizes validation, and maps file operations 
       operations: [{
         source: "patch",
         tool_name: "Edit",
-        file_path: "src/App.tsx",
+        file_path: "src/app/App.tsx",
         patch: "@@\n-old\n+new",
         additions: 2,
         deletions: 1,
@@ -179,7 +179,7 @@ test("uses history tool output, recognizes validation, and maps file operations 
 
   assert.equal(validation?.outputSummary, "exit code 0");
   assert.equal(validation?.durationMs, 1200);
-  assert.equal(files?.files[0].file_path, "src/App.tsx");
+  assert.equal(files?.files[0].file_path, "src/app/App.tsx");
   assert.equal(turn.counts.files, 1);
   assert.equal(turn.counts.validations, 1);
 });

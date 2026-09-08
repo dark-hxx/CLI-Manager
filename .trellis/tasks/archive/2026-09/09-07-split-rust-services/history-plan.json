@@ -1,0 +1,41 @@
+[
+  {
+    "file": "src-tauri/src/commands/history.rs",
+    "preserveAll": true,
+    "groups": [
+      { "name": "diagnostics", "first": "estimate_history_detail_content_bytes", "last": "log_history_stats_oom_diagnostic" },
+      { "name": "scan_state", "first": "HistoryRoots", "last": "remote_history_detail_cache" },
+      { "name": "types", "first": "HistoryMessagePart", "last": "StatsTimeBounds" },
+      { "name": "legacy_listing", "first": "history_list_sessions_legacy", "last": "history_list_sessions_legacy" },
+      { "name": "opencode_detail", "first": "build_opencode_session_detail", "last": "finalize_opencode_detail" },
+      { "name": "scope", "first": "validate_session_file_ref", "last": "should_register_codex_state_db" },
+      { "name": "remote_requests", "first": "validate_remote_history_plan", "last": "validate_remote_history_sync_result" },
+      { "name": "remote_detail", "first": "remote_detail_value", "last": "remote_detail_value" },
+      { "name": "stats", "first": "normalize_history_stats_project_paths", "last": "stats_daily_index_cache_set" },
+      { "name": "index_cache", "first": "get_project_cache", "last": "grok_summary_timestamp_ms" },
+      { "name": "session_detail", "first": "scan_session_detail_parts_with_thread_names", "last": "collect_subtask_session_file_refs" },
+      { "name": "conversion", "first": "convert_history_session", "last": "write_jsonl_lines" },
+      { "name": "roots", "first": "list_subagent_transcript_files", "last": "resolve_kiro_history_root" },
+      { "name": "opencode", "first": "resolve_opencode_database_path", "last": "opencode_tool_event" },
+      { "name": "codex_config", "first": "codex_config_string", "last": "expand_codex_config_path" },
+      { "name": "discovery", "first": "collect_session_files", "last": "scan_session_files" },
+      { "name": "wsl_discovery", "first": "wsl_command_output", "last": "collect_wsl_codex_session_files" },
+      { "name": "source_files", "first": "collect_claude_session_files", "last": "collect_cursor_session_files" },
+      { "name": "source_metadata", "first": "looks_like_gemini_session_file", "last": "cline_ui_timestamps" },
+      { "name": "project_paths", "first": "codex_project_key_from_session", "last": "extract_session_meta_id" },
+      { "name": "route_usage", "first": "load_history_stats_data_quality", "last": "route_record_matches_fact" },
+      { "name": "scanner", "first": "extract_session_meta_parent_id", "last": "scan_session_inner" },
+      { "name": "copilot_parser", "first": "scan_copilot_jsonl_session", "last": "copilot_tool_name" },
+      { "name": "grok_parser", "first": "scan_grok_jsonl_session", "last": "grok_tool_message_text" },
+      { "name": "pi_parser", "first": "scan_pi_jsonl_session", "last": "scan_pi_tool_events" },
+      { "name": "transcript_parsers", "first": "scan_cursor_jsonl_session", "last": "empty_session_scan" },
+      { "name": "json_parsers", "first": "scan_json_session", "last": "normalize_json_role" },
+      { "name": "file_changes", "first": "scan_session_combined", "last": "extract_patch_file_path" },
+      { "name": "message_stream", "first": "iter_session_messages", "last": "extract_context_window_from_value" },
+      { "name": "tool_events", "first": "collect_tool_calls", "last": "sorted_tool_counts" },
+      { "name": "usage", "first": "codex_usage_delta", "last": "normalize_reasoning_effort_label" },
+      { "name": "time", "first": "now_millis", "last": "is_tool_result_message" },
+      { "name": "message_content", "first": "parse_message", "last": "system_time_to_millis" }
+    ]
+  }
+]

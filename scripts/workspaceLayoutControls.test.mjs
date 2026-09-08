@@ -1,23 +1,23 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
-const titleBarSource = readFileSync(new URL("../src/components/WindowTitleBar.tsx", import.meta.url), "utf8");
+const titleBarSource = readFileSync(new URL("../src/app/components/WindowTitleBar.tsx", import.meta.url), "utf8");
 const controlsSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceLayoutControls.tsx", import.meta.url),
   "utf8",
 );
 const menuSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  new URL("../src/features/workspace/components/WorkspaceLayoutMenu.tsx", import.meta.url),
   "utf8",
 );
-const sidebarSource = readFileSync(new URL("../src/components/sidebar/index.tsx", import.meta.url), "utf8");
-const terminalTabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const sidebarSource = readFileSync(new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url), "utf8");
+const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
 const settingsSource = readFileSync(
-  new URL("../src/components/settings/pages/SidebarSettingsPage.tsx", import.meta.url),
+  new URL("../src/features/settings/components/pages/SidebarSettingsPage.tsx", import.meta.url),
   "utf8",
 );
-const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
+const i18nSource = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
 
 test("title-bar controls stay outside the window drag region", () => {
   assert.match(titleBarSource, /<WorkspaceLayoutControls \/>/);

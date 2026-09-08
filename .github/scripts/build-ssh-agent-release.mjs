@@ -24,6 +24,7 @@ const [trustedKey, tauriConfigText, installerText] = await Promise.all([
 ]);
 const tauriConfig = JSON.parse(tauriConfigText);
 const updaterKey = Buffer.from(tauriConfig.plugins.updater.pubkey, "base64").toString("utf8");
+// 统一公钥文本的换行与首尾空白，供三个信任入口比较。
 const normalizeKey = (value) => value.replace(/\r\n/g, "\n").trim();
 const normalizedTrustedKey = normalizeKey(trustedKey);
 const publicKeyLine = normalizedTrustedKey.split("\n")[1];
@@ -32,6 +33,7 @@ if (normalizeKey(updaterKey) !== normalizedTrustedKey || installerKey !== public
   throw new Error("SSH Agent, installer, and Tauri updater public keys must match");
 }
 
+// 复制指定架构二进制，并生成包含下载地址、大小和摘要的清单条目。
 async function artifact(target, input) {
   const name = `cli-manager-ssh-agent-${target}`;
   const output = join(outputDir, name);

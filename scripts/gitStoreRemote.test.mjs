@@ -2,14 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const source = readFileSync(new URL("../src/stores/gitStore.ts", import.meta.url), "utf8");
-const terminalTabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
-const gitPanelSource = readFileSync(new URL("../src/components/git/GitChangesPanel.tsx", import.meta.url), "utf8");
-const fileStoreSource = readFileSync(new URL("../src/stores/fileExplorerStore.ts", import.meta.url), "utf8");
-const filePanelSource = readFileSync(new URL("../src/components/files/FileExplorerSidebar.tsx", import.meta.url), "utf8");
-const terminalProjectSource = readFileSync(new URL("../src/lib/terminalProject.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/git/store/gitStore.ts", import.meta.url), "utf8");
+const terminalTabsSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalTabsController.tsx", import.meta.url), "utf8");
+const gitPanelSource = readFileSync(new URL("../src/features/git/api/GitChangesPanel.tsx", import.meta.url), "utf8");
+const fileStoreSource = readFileSync(new URL("../src/features/files/api/fileExplorerStore.ts", import.meta.url), "utf8");
+const filePanelSource = readFileSync(new URL("../src/features/files/api/FileExplorerSidebar.tsx", import.meta.url), "utf8");
+const terminalProjectSource = readFileSync(new URL("../src/features/terminal/api/terminalProject.ts", import.meta.url), "utf8");
 const sshAgentManifestSource = readFileSync(new URL("../src-tauri/ssh-agent/Cargo.toml", import.meta.url), "utf8");
 
+// 验证远程根仓库允许删除未跟踪文件。
 test("remote root repository permits deleting untracked files", () => {
   const actionStart = source.indexOf("deleteUntrackedPaths: async");
   const actionEnd = source.indexOf("loadFileDiff: async", actionStart);
@@ -20,6 +21,7 @@ test("remote root repository permits deleting untracked files", () => {
   assert.doesNotMatch(action, /!repoPath/);
 });
 
+// 验证 SSH 终端面板使用注册的远程项目根。
 test("SSH terminal panels use the registered remote project root", () => {
   assert.match(
     terminalTabsSource,
@@ -27,6 +29,7 @@ test("SSH terminal panels use the registered remote project root", () => {
   );
 });
 
+// 验证 SSH 可见文件刷新不会降级调用本地文件命令。
 test("SSH visible-file refresh never falls back to local file commands", () => {
   const refreshStart = fileStoreSource.indexOf("refreshVisibleStateOnce: async");
   const refreshEnd = fileStoreSource.indexOf("refreshGitChanges: async", refreshStart);
@@ -37,12 +40,14 @@ test("SSH visible-file refresh never falls back to local file commands", () => {
   assert.match(refresh, /loadProjectFile\(project, latestEntry, remoteFileContext, options\)/);
 });
 
+// 验证远程项目初次加载上下文时显示加载状态。
 test("remote project panels show loading during initial context fetch", () => {
   assert.match(gitPanelSource, /\(contextLoading \|\| loading\) && changes\.length === 0/);
   assert.match(filePanelSource, /loading && tree\.length === 0/);
   assert.match(filePanelSource, /t\("common\.loading"\)/);
 });
 
+// 验证 SSH 文件上下文身份包含主机及远程项目根。
 test("SSH file context identity includes host and remote project root", () => {
   const comparisonStart = terminalProjectSource.indexOf("export function isSameProjectFileContext");
   const comparisonEnd = terminalProjectSource.indexOf("export function findWorktreeByPath", comparisonStart);
@@ -61,6 +66,7 @@ test("SSH file context identity includes host and remote project root", () => {
   assert.match(terminalTabsSource, /filePanelProject\?\.remote_path/);
 });
 
+// 验证打开相同文件位置保留已加载的目录树。
 test("opening the same file location preserves the loaded tree", () => {
   const locationStart = terminalProjectSource.indexOf("export function isSameProjectFileLocation");
   const locationEnd = terminalProjectSource.indexOf("export function findWorktreeByPath", locationStart);
@@ -79,6 +85,7 @@ test("opening the same file location preserves the loaded tree", () => {
   assert.match(openProject, /}\s+return;\s+}/);
 });
 
+// 验证代理能力诊断使用指定的不可变发布版本。
 test("Agent capability diagnostics have a new immutable release identity", () => {
-  assert.match(sshAgentManifestSource, /^version = "0\.1\.8"$/m);
+  assert.match(sshAgentManifestSource, /^version = "0\.1\.14"$/m);
 });

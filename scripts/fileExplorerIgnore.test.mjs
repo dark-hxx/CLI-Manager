@@ -5,7 +5,7 @@ import {
   createIgnoreMatcher,
   includesProjectGitIgnoreChange,
   isFileExplorerIgnoreCaseInsensitive,
-} from "../src/lib/fileExplorerIgnore.ts";
+} from "../src/features/files/lib/fileExplorerIgnore.ts";
 
 test("bare directory rules match at any depth", () => {
   const matcher = createIgnoreMatcher("node_modules/");

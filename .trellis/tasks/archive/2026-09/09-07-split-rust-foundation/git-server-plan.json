@@ -1,0 +1,16 @@
+[
+  { "file": "src-tauri/src/commands/git.rs", "groups": [
+    { "name": "status", "first": "git_get_changes_native", "last": "git_get_changes_wsl" },
+    { "name": "wsl", "first": "run_wsl_git", "last": "map_porcelain_status_byte" },
+    { "name": "snapshot", "first": "build_worktree_patch", "last": "parse_numstat_count" },
+    { "name": "diff_format", "first": "format_diff_to_text_allow_empty", "last": "validate_repo_relative_path" },
+    { "name": "patches", "first": "parse_hunk_header", "last": "apply_patch_to_workdir" },
+    { "name": "partial_patch", "first": "reverse_hunk_lines", "last": "build_reverse_lines_patch" },
+    { "name": "cli", "first": "map_git_cli_error", "last": "is_no_stash_created" }
+  ] },
+  { "file": "src-tauri/src/daemon/server.rs", "groups": [
+    { "name": "replay", "first": "ReplayFrame", "last": "SessionBuffer" },
+    { "name": "client_transport", "first": "ClientTransport", "last": "frame_payload_bytes" },
+    { "name": "pty_events", "first": "DaemonPtyEventSink", "last": "emit_daemon_status" }
+  ] }
+]

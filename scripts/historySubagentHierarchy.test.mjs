@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-history-subagent-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/lib/historySubagents.ts", import.meta.url),
+  new URL("../src/features/history/lib/historySubagents.ts", import.meta.url),
   "utf8"
 );
 const output = ts.transpileModule(source, {

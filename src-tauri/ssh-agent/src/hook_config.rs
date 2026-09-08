@@ -1,3 +1,8 @@
+mod json_hooks;
+use json_hooks::{
+    add_exact_hooks, exact_commands, inspect_json, read_json, remove_exact_hooks, serialize_json,
+};
+
 use crate::installer::{read_installation_record, InstallationRecord};
 use crate::layout::{resolve_layout, AgentLayout};
 use cli_manager_hook_schema::{
@@ -6,9 +11,8 @@ use cli_manager_hook_schema::{
     HookHistorySourceCandidate, HookInstallationFile, HookInstallationRecord,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -80,6 +84,7 @@ enum Source {
 }
 
 impl Source {
+    // 仅接受四个已支持的 Hook 来源字符串，未知来源返回统一错误。
     fn parse(value: &str) -> Result<Self, String> {
         match value {
             "claude" => Ok(Self::Claude),
@@ -90,6 +95,7 @@ impl Source {
         }
     }
 
+    // 把来源枚举转换为协议和记录使用的稳定小写标识。
     fn as_str(self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -99,6 +105,7 @@ impl Source {
         }
     }
 
+    // 返回各来源在 HOME 下的默认配置目录名，不执行路径解析。
     fn default_dir(self) -> &'static str {
         match self {
             Self::Claude => ".claude",
@@ -108,6 +115,7 @@ impl Source {
         }
     }
 
+    // 返回 JSON Hook 来源的事件、桥接事件和 matcher 映射；Kimi 使用独立 TOML 定义而返回空表。
     fn hooks(self) -> &'static [(&'static str, &'static str, &'static str)] {
         match self {
             Self::Claude => CLAUDE_HOOKS,
@@ -117,6 +125,7 @@ impl Source {
         }
     }
 
+    // 返回应托管的条目数，Kimi 从独立定义集计数而非 JSON Hook 映射。
     fn required_entries(self) -> u32 {
         match self {
             Self::Kimi => kimi::DEFINITIONS.len() as u32,
@@ -145,10 +154,12 @@ struct FileState {
 }
 
 impl FileState {
+    // 根据文件是否存在计算内容指纹，明确区分缺失文件与空文件。
     fn fingerprint(&self) -> String {
         fingerprint(self.exists.then_some(self.bytes.as_slice()))
     }
 
+    // 输出当前文件状态的角色、规范路径、存在性和指纹，不包含配置正文。
     fn report(&self) -> HookConfigFile {
         HookConfigFile {
             role: self.role.to_string(),
@@ -167,10 +178,12 @@ struct PlannedFile {
 }
 
 impl PlannedFile {
+    // 根据计划的目标存在性和内容计算应用后指纹。
     fn after_fingerprint(&self) -> String {
         fingerprint(self.after_exists.then_some(self.after.as_slice()))
     }
 
+    // 比较前后指纹与存在性生成 unchanged/delete/update/create 摘要，不写入文件。
     fn change(&self) -> HookConfigChange {
         let before = self.before.fingerprint();
         let after = self.after_fingerprint();
@@ -213,11 +226,13 @@ struct TransactionJournal {
 struct HookLock(PathBuf);
 
 impl Drop for HookLock {
+    // 释放 Hook 配置锁时尽力删除锁文件，清理失败不传播。
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
 }
 
+// 返回 Unix 纪元毫秒数；系统时间早于纪元时回退零。
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -225,10 +240,12 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+// 将路径有损转换为字符串供报告使用，不执行路径合法性检查。
 fn path_text(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }
 
+// 要求 Unicode 绝对路径且不含 NUL、回车、换行或反斜杠；不在此 canonicalize 或验证归属。
 fn validate_canonical_path(path: &Path) -> Result<(), String> {
     let text = path
         .to_str()
@@ -239,6 +256,7 @@ fn validate_canonical_path(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 存在字节计算 SHA-256；None 使用 missing 哨兵，不混同于空内容摘要。
 fn fingerprint(bytes: Option<&[u8]>) -> String {
     let Some(bytes) = bytes else {
         return MISSING_FINGERPRINT.to_string();
@@ -248,12 +266,14 @@ fn fingerprint(bytes: Option<&[u8]>) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+// 对路径的操作系统编码字节取 SHA-256，作为已解析配置根的状态隔离键。
 fn config_root_hash(path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.as_os_str().as_encoded_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+// Unix 检查目标元数据 UID 与有效用户一致；非 Unix 不执行所有者检查。
 fn ensure_current_user_owner(path: &Path) -> Result<(), String> {
     #[cfg(unix)]
     {
@@ -268,11 +288,13 @@ fn ensure_current_user_owner(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+// 接受 missing 哨兵或 64 位十六进制摘要格式，不验证其对应文件内容。
 fn valid_fingerprint(value: &str) -> bool {
     value == MISSING_FINGERPRINT
         || (value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
 }
 
+// 允许空默认值、HOME 波浪号形式或绝对路径，拒绝父级段、控制字符及变量或反引号展开。
 fn validate_configured_root(value: &str) -> Result<(), String> {
     if value.contains(['\0', '\r', '\n', '\\', '$', '`']) {
         return Err("hook_config_root_invalid".to_string());
@@ -293,6 +315,7 @@ fn validate_configured_root(value: &str) -> Result<(), String> {
     Ok(())
 }
 
+// 把空值映射到来源默认目录并展开 HOME 波浪号前缀；调用方负责先校验配置文本。
 fn expand_root(value: &str, source: Source, layout: &AgentLayout) -> PathBuf {
     if value.is_empty() {
         return layout.home.join(source.default_dir());
@@ -306,6 +329,8 @@ fn expand_root(value: &str, source: Source, layout: &AgentLayout) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(value))
 }
 
+// 解析配置根并校验目录、规范路径及 Unix 所有者；仅缺失的默认根可按参数创建。
+// existed 表示调用前是否存在，即使本次已创建目录也保留原状态供报告使用。
 fn resolve_root(
     configured: &str,
     source: Source,
@@ -354,6 +379,8 @@ fn resolve_root(
     })
 }
 
+// 扫描最多 256 个目录项，以来源、配置文本和可选旧规范根匹配卸载记录，并核对候选根信息。
+// 只允许唯一匹配；可恢复已删除根，现存根另验目录、规范路径稳定性和 Unix 所有者。
 fn resolve_recorded_uninstall_root(
     configured: &str,
     expected_canonical_root: Option<&str>,
@@ -452,6 +479,7 @@ fn resolve_recorded_uninstall_root(
     }
 }
 
+// 优先解析当前根，缺失或与期望旧根不同才转查记录；其他解析错误直接传播。
 fn resolve_uninstall_root(
     configured: &str,
     expected_canonical_root: Option<&str>,
@@ -473,6 +501,7 @@ fn resolve_uninstall_root(
     }
 }
 
+// 重解析请求根以确认仍指向已捕获规范路径；仅原本缺失且仍缺失的根可免除存在性要求。
 fn root_target_unchanged(root: &ResolvedRoot) -> Result<(), String> {
     match fs::symlink_metadata(&root.requested) {
         Ok(_) => {
@@ -497,6 +526,8 @@ fn root_target_unchanged(root: &ResolvedRoot) -> Result<(), String> {
     }
 }
 
+// 解析配置文件前后复核根目标，捕获真实路径、内容、存在性与 Unix 权限，并检查所有者和大小。
+// 已有符号链接可指向根外文件；元数据大小检查与后续读取并非原子快照。
 fn resolve_config_file(
     root: &ResolvedRoot,
     role: &'static str,
@@ -558,6 +589,7 @@ fn resolve_config_file(
     })
 }
 
+// 要求本地 Agent 安装记录存在并检查启动器路径格式，不在此校验所有记录字段或启动器内容。
 fn installation(layout: &AgentLayout) -> Result<InstallationRecord, String> {
     let record = read_installation_record(layout)?
         .ok_or_else(|| "agent_installation_record_missing".to_string())?;
@@ -565,6 +597,8 @@ fn installation(layout: &AgentLayout) -> Result<InstallationRecord, String> {
     Ok(record)
 }
 
+// 以空标准输入和丢弃输出执行 Kimi，轮询退出状态，十秒后尝试终止并回收。
+// kill/wait 结果被忽略，try_wait 出错直接返回；这里不保证进程树清理或硬性总耗时上限。
 fn run_kimi_command(executable: &Path, args: &[&str]) -> Result<bool, String> {
     let mut child = Command::new(executable)
         .args(args)
@@ -590,6 +624,7 @@ fn run_kimi_command(executable: &Path, args: &[&str]) -> Result<bool, String> {
     }
 }
 
+// 按 PATH 候选再 HOME 默认位置依次执行能力探测，返回首个支持 doctor 的 Kimi。
 fn discover_kimi_executable(layout: &AgentLayout) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     if let Some(path) = std::env::var_os("PATH") {
@@ -604,10 +639,12 @@ fn discover_kimi_executable(layout: &AgentLayout) -> Result<PathBuf, String> {
     Err("kimi_code_unsupported".to_string())
 }
 
+// 要求候选为文件且 doctor --help 成功；探测错误视为不支持。
 fn supports_current_kimi(executable: &Path) -> bool {
     executable.is_file() && run_kimi_command(executable, &["doctor", "--help"]).unwrap_or(false)
 }
 
+// 仅 Kimi 来源执行可执行文件发现，其他来源返回 None 且不启动 CLI。
 fn ensure_kimi_capability(source: Source, layout: &AgentLayout) -> Result<Option<PathBuf>, String> {
     if source == Source::Kimi {
         discover_kimi_executable(layout).map(Some)
@@ -616,6 +653,8 @@ fn ensure_kimi_capability(source: Source, layout: &AgentLayout) -> Result<Option
     }
 }
 
+// 把候选配置写入同目录临时文件并同步，设置权限后运行 doctor config 校验，最后尽力删除候选。
+// 不替换实际配置文件；临时文件清理失败不会改变校验结果。
 fn validate_kimi_candidate(
     executable: &Path,
     config_path: &Path,
@@ -648,10 +687,13 @@ fn validate_kimi_candidate(
     result
 }
 
+// 用 POSIX 单引号引用字符串，并将内嵌单引号转为闭合、转义、重新打开形式。
 fn posix_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+// 引用安装启动器路径并拼接固定 Hook 参数，Kimi 额外带精确 owner token。
+// 事件与安装 ID 直接拼入命令，依赖调用方提供可信定义及安装记录。
 fn hook_command(installation: &InstallationRecord, source: Source, event: &str) -> String {
     let owner = (source == Source::Kimi).then(|| {
         format!(
@@ -670,6 +712,7 @@ fn hook_command(installation: &InstallationRecord, source: Source, event: &str) 
     )
 }
 
+// 按 Kimi 定义生成桥接事件到托管命令的有序映射。
 fn kimi_commands(installation: &InstallationRecord) -> BTreeMap<String, String> {
     kimi::DEFINITIONS
         .iter()
@@ -682,241 +725,7 @@ fn kimi_commands(installation: &InstallationRecord) -> BTreeMap<String, String> 
         .collect()
 }
 
-fn read_json(state: &FileState) -> Result<Value, String> {
-    if state.bytes.iter().all(u8::is_ascii_whitespace) {
-        return Ok(json!({}));
-    }
-    let value: Value =
-        serde_json::from_slice(&state.bytes).map_err(|_| "hook_config_json_invalid".to_string())?;
-    if !value.is_object() {
-        return Err("hook_config_json_root_invalid".to_string());
-    }
-    Ok(value)
-}
-
-fn command_values(value: &Value) -> impl Iterator<Item = &str> {
-    value
-        .get("hooks")
-        .and_then(Value::as_object)
-        .into_iter()
-        .flat_map(|events| events.values())
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter_map(|entry| entry.get("hooks").and_then(Value::as_array))
-        .flatten()
-        .filter_map(|hook| hook.get("command").and_then(Value::as_str))
-}
-
-fn exact_commands(
-    installation: &InstallationRecord,
-    source: Source,
-) -> HashMap<&'static str, String> {
-    source
-        .hooks()
-        .iter()
-        .map(|(_, command_event, _)| {
-            (
-                *command_event,
-                hook_command(installation, source, command_event),
-            )
-        })
-        .collect()
-}
-
-fn inspect_json(
-    value: &Value,
-    source: Source,
-    expected: &HashMap<&str, String>,
-) -> Result<(u32, bool, bool), String> {
-    if let Some(hooks) = value.get("hooks") {
-        if !hooks.is_object() {
-            return Err("hook_config_hooks_invalid".to_string());
-        }
-        let relevant_events: HashSet<&str> = source
-            .hooks()
-            .iter()
-            .map(|(hook_event, _, _)| *hook_event)
-            .collect();
-        for event in hooks
-            .as_object()
-            .into_iter()
-            .flat_map(|map| relevant_events.iter().filter_map(|name| map.get(*name)))
-        {
-            let Some(entries) = event.as_array() else {
-                return Err("hook_config_event_invalid".to_string());
-            };
-            for entry in entries {
-                let Some(commands) = entry.get("hooks").and_then(Value::as_array) else {
-                    return Err("hook_config_event_invalid".to_string());
-                };
-                if commands.iter().any(|command| !command.is_object()) {
-                    return Err("hook_config_event_invalid".to_string());
-                }
-            }
-        }
-    }
-    let mut managed = 0;
-    let mut conflict = false;
-    let mut outdated = false;
-    for (hook_event, command_event, matcher) in source.hooks() {
-        let expected_command = expected
-            .get(command_event)
-            .ok_or_else(|| "hook_config_command_missing".to_string())?;
-        let mut occurrences = 0;
-        if let Some(entries) = value
-            .get("hooks")
-            .and_then(|hooks| hooks.get(*hook_event))
-            .and_then(Value::as_array)
-        {
-            for entry in entries {
-                let entry_matcher = entry.get("matcher").and_then(Value::as_str).unwrap_or("");
-                for hook in entry
-                    .get("hooks")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                {
-                    if hook.get("command").and_then(Value::as_str)
-                        == Some(expected_command.as_str())
-                    {
-                        if entry_matcher == *matcher {
-                            occurrences += 1;
-                        } else {
-                            conflict = true;
-                        }
-                    }
-                }
-            }
-        }
-        if occurrences >= 1 {
-            managed += 1;
-            outdated |= occurrences > 1;
-        }
-    }
-    let expected_values: HashSet<&str> = expected.values().map(String::as_str).collect();
-    for command in command_values(value) {
-        if command.contains("--managed-by cli-manager-ssh-agent")
-            && !expected_values.contains(command)
-        {
-            conflict = true;
-        }
-    }
-    Ok((managed, conflict, outdated))
-}
-
-fn hooks_object(value: &mut Value) -> Result<&mut Map<String, Value>, String> {
-    let root = value
-        .as_object_mut()
-        .ok_or_else(|| "hook_config_json_root_invalid".to_string())?;
-    let hooks = root
-        .entry("hooks")
-        .or_insert_with(|| Value::Object(Map::new()));
-    hooks
-        .as_object_mut()
-        .ok_or_else(|| "hook_config_hooks_invalid".to_string())
-}
-
-fn add_exact_hooks(
-    value: &mut Value,
-    source: Source,
-    expected: &HashMap<&str, String>,
-) -> Result<(), String> {
-    let hooks = hooks_object(value)?;
-    for (hook_event, command_event, matcher) in source.hooks() {
-        let command = expected
-            .get(command_event)
-            .ok_or_else(|| "hook_config_command_missing".to_string())?;
-        let event = hooks
-            .entry((*hook_event).to_string())
-            .or_insert_with(|| Value::Array(Vec::new()));
-        let entries = event
-            .as_array_mut()
-            .ok_or_else(|| "hook_config_event_invalid".to_string())?;
-        let mut already_present = false;
-        entries.retain_mut(|entry| {
-            if entry.get("matcher").and_then(Value::as_str).unwrap_or("") != *matcher {
-                return true;
-            }
-            let Some(items) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
-                return true;
-            };
-            items.retain(|item| {
-                if item.get("command").and_then(Value::as_str) != Some(command.as_str()) {
-                    return true;
-                }
-                if already_present {
-                    false
-                } else {
-                    already_present = true;
-                    true
-                }
-            });
-            !items.is_empty()
-        });
-        if !already_present {
-            entries.push(json!({
-                "matcher": matcher,
-                "hooks": [{ "type": "command", "command": command, "timeout": 15 }]
-            }));
-        }
-    }
-    Ok(())
-}
-
-fn remove_exact_hooks(
-    value: &mut Value,
-    source: Source,
-    expected: &HashMap<&str, String>,
-) -> Result<(), String> {
-    let Some(hooks) = value.get_mut("hooks") else {
-        return Ok(());
-    };
-    let hooks = hooks
-        .as_object_mut()
-        .ok_or_else(|| "hook_config_hooks_invalid".to_string())?;
-    let mut empty_events = Vec::new();
-    for (event_name, command_event, matcher) in source.hooks() {
-        let Some(event) = hooks.get_mut(*event_name) else {
-            continue;
-        };
-        let entries = event
-            .as_array_mut()
-            .ok_or_else(|| "hook_config_event_invalid".to_string())?;
-        entries.retain_mut(|entry| {
-            let entry_matcher = entry.get("matcher").and_then(Value::as_str).unwrap_or("");
-            if entry_matcher != *matcher {
-                return true;
-            }
-            let Some(commands) = entry.get_mut("hooks").and_then(Value::as_array_mut) else {
-                return true;
-            };
-            let expected_command = expected.get(command_event).map(String::as_str);
-            commands.retain(|item| item.get("command").and_then(Value::as_str) != expected_command);
-            !commands.is_empty()
-        });
-        if entries.is_empty() {
-            empty_events.push((*event_name).to_string());
-        }
-    }
-    for event in empty_events {
-        hooks.remove(&event);
-    }
-    if hooks.is_empty() {
-        value
-            .as_object_mut()
-            .expect("JSON root validated")
-            .remove("hooks");
-    }
-    Ok(())
-}
-
-fn serialize_json(value: &Value) -> Result<Vec<u8>, String> {
-    let mut bytes = serde_json::to_vec_pretty(value)
-        .map_err(|_| "hook_config_json_serialize_failed".to_string())?;
-    bytes.push(b'\n');
-    Ok(bytes)
-}
-
+// 编码安装 ID、原值与是否新建 features 表，作为 Codex 布尔值尾部恢复标记。
 fn feature_marker(installation_id: &str, previous: &str, table_created: bool) -> String {
     format!(
         " # cli-manager-ssh-agent installation={} previous={} tableCreated={}",
@@ -924,6 +733,7 @@ fn feature_marker(installation_id: &str, previous: &str, table_created: bool) ->
     )
 }
 
+// 提取 TOML 值的字符串后缀装饰；非值或不可表示的后缀返回空串。
 fn marker_suffix(item: &Item) -> String {
     item.as_value()
         .and_then(|value| value.decor().suffix())
@@ -932,6 +742,7 @@ fn marker_suffix(item: &Item) -> String {
         .unwrap_or_default()
 }
 
+// 从最后一个托管标记解析同安装 ID 的恢复信息；缺失 previous/tableCreated 时分别默认 missing/false。
 fn parse_owned_marker(suffix: &str, installation_id: &str) -> Option<(String, bool, String)> {
     let marker = "# cli-manager-ssh-agent ";
     let (original_suffix, fields) = suffix.rsplit_once(marker)?;
@@ -956,6 +767,7 @@ fn parse_owned_marker(suffix: &str, installation_id: &str) -> Option<(String, bo
     })
 }
 
+// 提取 TOML 值的前后装饰文本用于保留格式，非值或缺失装饰按空串处理。
 fn item_decor(item: &Item) -> (String, String) {
     let Some(value) = item.as_value() else {
         return (String::new(), String::new());
@@ -975,12 +787,14 @@ fn item_decor(item: &Item) -> (String, String) {
     (prefix, suffix)
 }
 
+// 先要求 UTF-8，再解析为可保留格式的 TOML 文档，分别映射编码与语法错误。
 fn parse_toml(state: &FileState) -> Result<DocumentMut, String> {
     let text = std::str::from_utf8(&state.bytes)
         .map_err(|_| "hook_config_toml_utf8_invalid".to_string())?;
     DocumentMut::from_str(text).map_err(|_| "hook_config_toml_invalid".to_string())
 }
 
+// 仅当 features 表形结构中的 hooks 明确为布尔 true 时判为启用。
 fn codex_feature_enabled(document: &DocumentMut) -> bool {
     document
         .get("features")
@@ -990,6 +804,7 @@ fn codex_feature_enabled(document: &DocumentMut) -> bool {
         == Some(true)
 }
 
+// 用户已启用时不改；否则开启 hooks 并记录缺失或 false 的原值、表归属和原装饰文本。
 fn install_codex_feature(document: &mut DocumentMut, installation_id: &str) -> Result<(), String> {
     if codex_feature_enabled(document) {
         return Ok(());
@@ -1020,6 +835,7 @@ fn install_codex_feature(document: &mut DocumentMut, installation_id: &str) -> R
     Ok(())
 }
 
+// 仅还原仍为 true 且带本安装标记的 hooks，恢复原 false 或删除新增项，并按标记清理空表。
 fn uninstall_codex_feature(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1064,6 +880,7 @@ fn uninstall_codex_feature(
     Ok(())
 }
 
+// 记录 Grok 兼容开关原值及两层表是否新建，供同安装卸载恢复。
 fn grok_compat_marker(
     installation_id: &str,
     previous: &str,
@@ -1075,6 +892,7 @@ fn grok_compat_marker(
     )
 }
 
+// 解析最后一个同安装 Grok 标记，要求原值字段及两个合法布尔表归属字段完整。
 fn parse_grok_compat_marker(
     suffix: &str,
     installation_id: &str,
@@ -1118,6 +936,7 @@ fn parse_grok_compat_marker(
     ))
 }
 
+// 为指定兼容来源禁用 hooks 并标记原值和新建表；用户原本已禁用时保持不变。
 fn install_grok_compat_hooks(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1158,6 +977,7 @@ fn install_grok_compat_hooks(
     Ok(())
 }
 
+// 依次禁用 Claude 与 Cursor 兼容 Hook；出错不撤销已修改的内存文档。
 fn install_grok_compat_isolation(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1168,6 +988,7 @@ fn install_grok_compat_isolation(
     Ok(())
 }
 
+// 仅恢复仍为 false 且有完整同安装标记的兼容开关，清理本安装新增空 vendor 表并返回 compat 表归属。
 fn uninstall_grok_compat_hooks(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1214,6 +1035,7 @@ fn uninstall_grok_compat_hooks(
     Ok(compat_created)
 }
 
+// 依次恢复两类兼容 Hook，若标记表明 compat 为本安装创建且已空，再移除顶层表。
 fn uninstall_grok_compat_isolation(
     document: &mut DocumentMut,
     installation_id: &str,
@@ -1233,6 +1055,7 @@ fn uninstall_grok_compat_isolation(
     Ok(())
 }
 
+// 按嵌套表、点号表和点号键的优先顺序读取兼容 hooks，只有明确 false 才视为禁用。
 fn grok_compat_hooks_disabled(document: &DocumentMut, vendor: &str) -> bool {
     let nested = document
         .get("compat")
@@ -1254,12 +1077,15 @@ fn grok_compat_hooks_disabled(document: &DocumentMut, vendor: &str) -> bool {
     nested.or(dotted_table).or(dotted_key) == Some(false)
 }
 
+// 要求 Claude 与 Cursor 两类兼容 Hook 都被明确禁用。
 fn grok_compat_isolated(document: &DocumentMut) -> bool {
     ["claude", "cursor"]
         .iter()
         .all(|vendor| grok_compat_hooks_disabled(document, vendor))
 }
 
+// 按来源读取当前配置，生成检查、安装或卸载的候选字节与存在性，不在此应用文件变更。
+// Kimi 用共享 TOML 规划器，Grok/Codex 各联动 JSON 与 TOML；返回的布尔值合并冲突和过期状态。
 fn plan_files(
     root: &ResolvedRoot,
     source: Source,
@@ -1424,6 +1250,7 @@ fn plan_files(
     Ok((plans, managed_entries, conflict || outdated))
 }
 
+// 基于计划中的 before 状态判定安装状态和托管数量，并结合 Codex 功能开关或 Grok 兼容隔离状态。
 fn current_status(
     plans: &[PlannedFile],
     source: Source,
@@ -1484,6 +1311,7 @@ fn current_status(
     Ok((status.to_string(), managed))
 }
 
+// 要求请求提供同数量、合法格式的期望指纹，再按角色和规范路径逐项比对当前计划前态。
 fn expected_files_match(plans: &[PlannedFile], request: &HookConfigRequest) -> Result<(), String> {
     if request.expected_files.len() != plans.len() {
         return Err("hook_config_fingerprint_required".to_string());
@@ -1512,10 +1340,12 @@ fn expected_files_match(plans: &[PlannedFile], request: &HookConfigRequest) -> R
     Ok(())
 }
 
+// 构造 Agent 状态目录下的 hooks 子目录，不创建目录。
 fn hook_state_dir(layout: &AgentLayout) -> PathBuf {
     layout.state_dir.join("hooks")
 }
 
+// Unix 有有效 PID 且 /proc 可用时按进程存在性判断，否则退回文件修改时间超过五分钟的规则。
 fn lock_is_stale(path: &Path) -> bool {
     #[cfg(unix)]
     if let Some(pid) = fs::read_to_string(path)
@@ -1533,6 +1363,7 @@ fn lock_is_stale(path: &Path) -> bool {
         .is_some_and(|age| age > Duration::from_secs(300))
 }
 
+// 按根哈希独占新建锁，最多尝试十二次并清理陈旧锁；竞争时短暂等待，PID 写入为尽力操作。
 fn acquire_lock(layout: &AgentLayout, root_hash: &str) -> Result<HookLock, String> {
     let directory = hook_state_dir(layout);
     fs::create_dir_all(&directory).map_err(|_| "hook_config_state_create_failed".to_string())?;
@@ -1562,6 +1393,7 @@ fn acquire_lock(layout: &AgentLayout, root_hash: &str) -> Result<HookLock, Strin
     Err("hook_config_locked".to_string())
 }
 
+// 路径不存在返回缺失空值，否则先检查元数据大小再读取内容；不是并发写入下的原子快照。
 fn read_current(path: &Path) -> Result<(bool, Vec<u8>), String> {
     if !path.exists() {
         return Ok((false, Vec::new()));
@@ -1576,6 +1408,7 @@ fn read_current(path: &Path) -> Result<(bool, Vec<u8>), String> {
     ))
 }
 
+// 重新解析逻辑文件或其父目录，确认目标仍等于计划规范路径；允许计划前后均缺失的特定情况。
 fn config_target_unchanged(state: &FileState) -> Result<(), String> {
     let current = match fs::symlink_metadata(&state.logical_path) {
         Ok(_) => fs::canonicalize(&state.logical_path)
@@ -1604,6 +1437,7 @@ fn config_target_unchanged(state: &FileState) -> Result<(), String> {
     Ok(())
 }
 
+// Unix 按可选权限值设置文件模式；None 或非 Unix 平台不修改权限。
 fn set_mode(path: &Path, mode: Option<u32>) -> Result<(), String> {
     #[cfg(unix)]
     if let Some(mode) = mode {
@@ -1616,6 +1450,8 @@ fn set_mode(path: &Path, mode: Option<u32>) -> Result<(), String> {
     Ok(())
 }
 
+// 写入并同步同目录临时文件，应用原权限或默认 0600 后重命名替换目标。
+// Windows 先删除旧目标再重命名，因此不是原子替换；失败不统一清理临时文件。
 fn replace_file(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1634,6 +1470,7 @@ fn replace_file(path: &Path, bytes: &[u8], mode: Option<u32>) -> Result<(), Stri
     fs::rename(&temporary, path).map_err(|_| "hook_config_replace_failed".to_string())
 }
 
+// 按原存在性恢复字节与权限，或删除本次创建的文件；原本及当前均缺失时直接成功。
 fn restore_file(path: &Path, existed: bool, bytes: &[u8], mode: Option<u32>) -> Result<(), String> {
     if existed {
         replace_file(path, bytes, mode)
@@ -1644,16 +1481,20 @@ fn restore_file(path: &Path, existed: bool, bytes: &[u8], mode: Option<u32>) -> 
     }
 }
 
+// 按配置根哈希构造 Hook 事务日志目录，调用方提供可信哈希。
 fn transaction_dir(layout: &AgentLayout, root_hash: &str) -> PathBuf {
     hook_state_dir(layout).join("transactions").join(root_hash)
 }
 
+// 把状态序列化为格式化 JSON，再委托状态字节写入流程。
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(value)
         .map_err(|_| "hook_config_state_serialize_failed".to_string())?;
     write_bytes_atomic(path, &bytes)
 }
 
+// 将状态字节写入唯一临时文件并同步、设为 0600 后替换目标。
+// Windows 先删除现有目标，失败可能留下临时文件；函数名不代表所有平台都原子替换。
 fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let parent = path
         .parent()
@@ -1673,6 +1514,7 @@ fn write_bytes_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::rename(temporary, path).map_err(|_| "hook_config_state_promote_failed".to_string())
 }
 
+// 有旧记录字节时恢复，否则删除新记录；已不存在视为成功。
 fn restore_hook_record(path: &Path, previous: Option<&[u8]>) -> Result<(), String> {
     if let Some(previous) = previous {
         write_bytes_atomic(path, previous)
@@ -1685,6 +1527,8 @@ fn restore_hook_record(path: &Path, previous: Option<&[u8]>) -> Result<(), Strin
     }
 }
 
+// 按日志逆序恢复仍匹配事务后态的文件，已为前态则跳过，外部冲突保留并最终报错。
+// 无冲突才删除事务目录；中途错误可发生在部分文件已恢复之后，日志内容被作为本地恢复依据。
 fn recover_transaction(layout: &AgentLayout, root_hash: &str) -> Result<(), String> {
     let directory = transaction_dir(layout, root_hash);
     let journal_path = directory.join("journal.json");
@@ -1720,6 +1564,7 @@ fn recover_transaction(layout: &AgentLayout, root_hash: &str) -> Result<(), Stri
     fs::remove_dir_all(directory).map_err(|_| "hook_config_journal_cleanup_failed".to_string())
 }
 
+// 尝试恢复事务，成功保留原错误，失败则把恢复错误追加到原错误文本。
 fn transaction_error(layout: &AgentLayout, root_hash: &str, error: String) -> String {
     match recover_transaction(layout, root_hash) {
         Ok(()) => error,
@@ -1727,6 +1572,8 @@ fn transaction_error(layout: &AgentLayout, root_hash: &str, error: String) -> St
     }
 }
 
+// 恢复旧事务并预检所有目标后备份、写日志，逐文件复核、应用并验证，再删除日志目录。
+// 路径或指纹冲突及替换错误触发恢复；部分读取与日志操作直接早退，不能将任意错误等同于完整回滚。
 fn apply_transaction(
     layout: &AgentLayout,
     root_hash: &str,
@@ -1817,6 +1664,7 @@ fn apply_transaction(
     fs::remove_dir_all(directory).map_err(|_| "hook_config_journal_cleanup_failed".to_string())
 }
 
+// 按预览或已应用动作选择前后文件指纹，汇总根目录、变更和可选安装记录；不重新读取文件。
 fn report(
     outcome: (&str, String),
     source: Source,
@@ -1861,6 +1709,7 @@ fn report(
     }
 }
 
+// 由成功候选计划构造 Hook 安装记录，保存前后指纹与归属；仅 Claude/Codex 附历史源候选。
 fn installation_record(
     source: Source,
     root: &ResolvedRoot,
@@ -1895,12 +1744,14 @@ fn installation_record(
     }
 }
 
+// 以来源和根哈希构造安装记录路径，不访问文件系统。
 fn record_path(layout: &AgentLayout, source: Source, root_hash: &str) -> PathBuf {
     hook_state_dir(layout)
         .join("installations")
         .join(format!("{}-{root_hash}.json", source.as_str()))
 }
 
+// 读取来源、根和安装状态并生成检查报告，不写配置；Kimi 检查会实际执行能力探测。
 pub fn inspect(request: HookConfigRequest) -> Result<HookConfigReport, String> {
     let source = Source::parse(&request.source)?;
     let layout = resolve_layout().map_err(str::to_string)?;
@@ -1920,6 +1771,7 @@ pub fn inspect(request: HookConfigRequest) -> Result<HookConfigReport, String> {
     ))
 }
 
+// 为安装或卸载生成候选变更与当前状态，不写配置；Kimi 安装预览会探测 CLI，卸载可沿旧记录解析根。
 pub fn preview(request: HookConfigRequest, install: bool) -> Result<HookConfigReport, String> {
     if install && request.expected_canonical_root.is_some() {
         return Err("hook_config_action_invalid".to_string());
@@ -1960,6 +1812,8 @@ pub fn preview(request: HookConfigRequest, install: bool) -> Result<HookConfigRe
     ))
 }
 
+// 解析根后持锁恢复事务、复核预览指纹，Kimi 安装先检查候选，再保存安装记录并应用配置计划。
+// 安装失败尝试恢复旧记录；配置、记录及默认根创建不是一个联合事务，卸载记录删除失败不回滚配置。
 pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigReport, String> {
     if install && request.expected_canonical_root.is_some() {
         return Err("hook_config_action_invalid".to_string());
@@ -2030,782 +1884,4 @@ pub fn apply(request: HookConfigRequest, install: bool) -> Result<HookConfigRepo
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        add_exact_hooks, apply_transaction, feature_marker, fingerprint, grok_compat_isolated,
-        hook_command, inspect_json, install_codex_feature, install_grok_compat_isolation,
-        parse_owned_marker, parse_toml, recover_transaction, remove_exact_hooks, transaction_dir,
-        uninstall_codex_feature, uninstall_grok_compat_isolation, FileState, PlannedFile, Source,
-        TransactionFile, TransactionJournal,
-    };
-    #[cfg(unix)]
-    use super::{
-        config_target_unchanged, exact_commands, installation_record, plan_files,
-        supports_current_kimi, validate_kimi_candidate, ResolvedRoot,
-    };
-    use crate::installer::InstallationRecord;
-    use crate::layout::AgentLayout;
-    use serde_json::json;
-    use std::collections::HashMap;
-    use std::fs;
-
-    fn installation_record_for_test(path: &std::path::Path) -> InstallationRecord {
-        InstallationRecord {
-            schema_version: 1,
-            installation_id: "00000000-0000-4000-8000-000000000001".to_string(),
-            remote_machine_id: "machine".to_string(),
-            agent_version: "0.1.9".to_string(),
-            protocol_version: "1.11".to_string(),
-            target: "linux-x86_64".to_string(),
-            install_root: path.parent().unwrap().to_path_buf(),
-            install_path: path.to_path_buf(),
-            source: "test".to_string(),
-            manifest_url: String::new(),
-            artifact_sha256: "a".repeat(64),
-            installed_at: 1,
-            previous_version: String::new(),
-        }
-    }
-
-    #[test]
-    fn kimi_source_uses_native_root_and_exact_owner_token() {
-        let installation = installation_record_for_test(std::path::Path::new(
-            "/opt/cli-manager/cli-manager-ssh-agent",
-        ));
-        assert_eq!(Source::Kimi.default_dir(), ".kimi-code");
-        assert_eq!(Source::Kimi.required_entries(), 9);
-        assert_eq!(
-            hook_command(&installation, Source::Kimi, "PermissionResult"),
-            "'/opt/cli-manager/cli-manager-ssh-agent' hook --source kimi --event PermissionResult --owner cli-manager-ssh-agent:00000000-0000-4000-8000-000000000001 --managed-by cli-manager-ssh-agent --installation-id 00000000-0000-4000-8000-000000000001"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kimi_plan_uses_single_config_role_and_omits_history_candidate() {
-        let temp = tempfile::tempdir().unwrap();
-        let root_path = temp.path().join(".kimi-code");
-        fs::create_dir_all(&root_path).unwrap();
-        fs::write(
-            root_path.join("config.toml"),
-            "# keep\nmodel = \"kimi-k2\"\n\n[[hooks]]\nevent = \"Stop\"\ncommand = \"third-party\"\n",
-        )
-        .unwrap();
-        let canonical = fs::canonicalize(&root_path).unwrap();
-        let root = ResolvedRoot {
-            configured: "~/.kimi-code".to_string(),
-            requested: root_path,
-            canonical,
-            hash: "a".repeat(64),
-            existed: true,
-        };
-        let installation = installation_record_for_test(std::path::Path::new(
-            "/opt/cli-manager/cli-manager-ssh-agent",
-        ));
-
-        let (plans, managed, conflict) =
-            plan_files(&root, Source::Kimi, &installation, Some(true)).unwrap();
-        assert_eq!(plans.len(), 1);
-        assert_eq!(plans[0].before.role, "kimiConfig");
-        assert_eq!(managed, 9);
-        assert!(!conflict);
-        let content = String::from_utf8(plans[0].after.clone()).unwrap();
-        assert!(content.contains("# keep"));
-        assert!(content.contains("third-party"));
-        assert_eq!(content.matches("--source kimi").count(), 9);
-
-        let record = installation_record(Source::Kimi, &root, &installation, &plans);
-        assert!(record.history_source_candidate.is_none());
-    }
-
-    #[test]
-    fn grok_source_uses_native_root_and_permission_request_command() {
-        let installation = installation_record_for_test(std::path::Path::new(
-            "/opt/cli-manager/cli-manager-ssh-agent",
-        ));
-        assert_eq!(Source::Grok.default_dir(), ".grok");
-        assert_eq!(Source::Grok.required_entries(), 11);
-        assert_eq!(
-            hook_command(&installation, Source::Grok, "PermissionRequest"),
-            "'/opt/cli-manager/cli-manager-ssh-agent' hook --source grok --event PermissionRequest --managed-by cli-manager-ssh-agent --installation-id 00000000-0000-4000-8000-000000000001"
-        );
-    }
-
-    fn grok_compat_doc(text: &str) -> toml_edit::DocumentMut {
-        parse_toml(&FileState {
-            role: "grokCompat",
-            logical_path: "config.toml".into(),
-            canonical_path: "config.toml".into(),
-            bytes: text.as_bytes().to_vec(),
-            exists: true,
-            mode: None,
-        })
-        .expect("grok compat toml")
-    }
-
-    #[test]
-    fn grok_compat_isolated_reads_nested_and_dotted_tables() {
-        assert!(!grok_compat_isolated(&grok_compat_doc(
-            "[compat.claude]\nskills = true\n"
-        )));
-        assert!(grok_compat_isolated(&grok_compat_doc(
-            "[compat.claude]\nhooks = false\n[compat.cursor]\nhooks = false\n"
-        )));
-        assert!(grok_compat_isolated(&grok_compat_doc(
-            "compat.claude.hooks = false\ncompat.cursor.hooks = false\n"
-        )));
-        assert!(grok_compat_isolated(&grok_compat_doc(
-            "[compat]\nclaude.hooks = false\ncursor.hooks = false\n"
-        )));
-        assert!(!grok_compat_isolated(&grok_compat_doc(
-            "[compat.claude]\nhooks = false\n[compat.cursor]\nhooks = true\n"
-        )));
-    }
-
-    #[test]
-    fn grok_compat_uninstall_restores_owned_values_and_preserves_user_values() {
-        let mut document = grok_compat_doc(
-            "# keep\n[compat.claude]\nhooks = true # claude user comment\nskills = true\n[compat.cursor]\nhooks = false # cursor user choice\n",
-        );
-
-        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        let installed = document.to_string();
-        assert!(grok_compat_isolated(&document));
-        assert!(installed.contains("hooks = false # claude user comment # cli-manager-ssh-agent"));
-        assert!(installed.contains("hooks = false # cursor user choice"));
-        assert_eq!(installed.matches("cli-manager-ssh-agent").count(), 1);
-
-        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        let restored = document.to_string();
-        assert!(restored.contains("hooks = true # claude user comment"));
-        assert!(restored.contains("hooks = false # cursor user choice"));
-        assert!(!restored.contains("cli-manager-ssh-agent"));
-        assert!(restored.contains("skills = true"));
-    }
-
-    #[test]
-    fn grok_compat_uninstall_removes_only_agent_created_tables() {
-        let mut document = grok_compat_doc("# keep\n[other]\nvalue = true\n");
-
-        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        assert!(grok_compat_isolated(&document));
-        assert!(document.contains_key("compat"));
-
-        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        assert!(!document.contains_key("compat"));
-        let restored = document.to_string();
-        assert!(restored.contains("# keep"));
-        assert!(restored.contains("[other]"));
-        assert!(restored.contains("value = true"));
-    }
-
-    #[test]
-    fn grok_compat_uninstall_respects_other_installations_and_user_changes() {
-        let mut document =
-            grok_compat_doc("[compat.claude]\nhooks = true\n[compat.cursor]\nhooks = true\n");
-        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
-
-        uninstall_grok_compat_isolation(&mut document, "installation-2").unwrap();
-        assert!(grok_compat_isolated(&document));
-        assert!(document.to_string().contains("installation=installation-1"));
-
-        document["compat"]["claude"]["hooks"] = toml_edit::value(true);
-        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        assert_eq!(document["compat"]["claude"]["hooks"].as_bool(), Some(true));
-        assert_eq!(document["compat"]["cursor"]["hooks"].as_bool(), Some(true));
-    }
-
-    #[test]
-    fn grok_compat_already_isolated_without_marker_remains_unchanged() {
-        let original =
-            "[compat.claude]\nhooks = false # user\n[compat.cursor]\nhooks = false # user\n";
-        let mut document = grok_compat_doc(original);
-
-        install_grok_compat_isolation(&mut document, "installation-1").unwrap();
-        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-
-        assert_eq!(document.to_string(), original);
-    }
-
-    #[test]
-    fn grok_compat_uninstall_ignores_incomplete_markers() {
-        let original =
-            "[compat.claude]\nhooks = false # cli-manager-ssh-agent installation=installation-1\n";
-        let mut document = grok_compat_doc(original);
-
-        uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-
-        assert_eq!(document.to_string(), original);
-    }
-
-    #[test]
-    fn grok_compat_install_and_uninstall_preserve_supported_dotted_forms() {
-        for original in [
-            "compat.claude.hooks = true\ncompat.cursor.hooks = true\n",
-            "[compat]\nclaude.hooks = true\ncursor.hooks = true\n",
-        ] {
-            let mut document = grok_compat_doc(original);
-            install_grok_compat_isolation(&mut document, "installation-1").unwrap();
-            assert!(grok_compat_isolated(&document));
-
-            uninstall_grok_compat_isolation(&mut document, "installation-1").unwrap();
-            assert!(!grok_compat_isolated(&document));
-            assert_eq!(document["compat"]["claude"]["hooks"].as_bool(), Some(true));
-            assert_eq!(document["compat"]["cursor"]["hooks"].as_bool(), Some(true));
-            assert!(!document.to_string().contains("cli-manager-ssh-agent"));
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn grok_plan_writes_hooks_json_and_compat_and_omits_history_candidate() {
-        let temp = tempfile::tempdir().unwrap();
-        let root_path = temp.path().join(".grok");
-        fs::create_dir_all(root_path.join("hooks")).unwrap();
-        fs::write(
-            root_path.join("hooks").join("cli-manager.json"),
-            "{\n  \"keep\": true\n}\n",
-        )
-        .unwrap();
-        fs::write(
-            root_path.join("config.toml"),
-            "# keep\n[compat.claude]\nhooks = true\nskills = true\n",
-        )
-        .unwrap();
-        let canonical = fs::canonicalize(&root_path).unwrap();
-        let root = ResolvedRoot {
-            configured: "~/.grok".to_string(),
-            requested: root_path.clone(),
-            canonical,
-            hash: "a".repeat(64),
-            existed: true,
-        };
-        let installation = installation_record_for_test(std::path::Path::new(
-            "/opt/cli-manager/cli-manager-ssh-agent",
-        ));
-
-        let (plans, _, conflict) =
-            plan_files(&root, Source::Grok, &installation, Some(true)).unwrap();
-        assert_eq!(plans.len(), 2);
-        assert_eq!(plans[0].before.role, "grokHooks");
-        assert_eq!(plans[1].before.role, "grokCompat");
-        assert!(!conflict);
-        let hooks = String::from_utf8(plans[0].after.clone()).unwrap();
-        assert!(hooks.contains("\"keep\": true"));
-        assert_eq!(hooks.matches("--source grok").count(), 11);
-        assert!(hooks.contains("PermissionRequest"));
-        let after_json = serde_json::from_slice(&plans[0].after).unwrap();
-        let expected = exact_commands(&installation, Source::Grok);
-        let (managed, after_conflict, _) =
-            inspect_json(&after_json, Source::Grok, &expected).unwrap();
-        assert_eq!(managed, 11);
-        assert!(!after_conflict);
-        let config = String::from_utf8(plans[1].after.clone()).unwrap();
-        assert!(config.contains("# keep"));
-        assert!(config.contains("skills = true"));
-        assert!(config.contains("hooks = false"));
-
-        let record = installation_record(Source::Grok, &root, &installation, &plans);
-        assert!(record.history_source_candidate.is_none());
-
-        let inspect_plans = plan_files(&root, Source::Grok, &installation, None)
-            .unwrap()
-            .0;
-        assert!(!grok_compat_isolated(
-            &parse_toml(&inspect_plans[1].before).unwrap()
-        ));
-        let after_toml = parse_toml(&FileState {
-            role: "grokCompat",
-            logical_path: inspect_plans[1].before.logical_path.clone(),
-            canonical_path: inspect_plans[1].before.canonical_path.clone(),
-            bytes: plans[1].after.clone(),
-            exists: true,
-            mode: None,
-        })
-        .unwrap();
-        assert!(grok_compat_isolated(&after_toml));
-
-        fs::write(root_path.join("config.toml"), &plans[1].after).unwrap();
-        let uninstall_plans = plan_files(&root, Source::Grok, &installation, Some(false))
-            .unwrap()
-            .0;
-        let restored = String::from_utf8(uninstall_plans[1].after.clone()).unwrap();
-        assert!(restored.contains("hooks = true"));
-        assert!(restored.contains("skills = true"));
-        assert!(!restored.contains("cli-manager-ssh-agent"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kimi_candidate_failure_leaves_live_config_untouched() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().unwrap();
-        let config = temp.path().join("config.toml");
-        fs::write(&config, "model = \"kimi-k2\"\n").unwrap();
-        let doctor = temp.path().join("kimi");
-        fs::write(&doctor, "#!/bin/sh\nexit 2\n").unwrap();
-        fs::set_permissions(&doctor, fs::Permissions::from_mode(0o700)).unwrap();
-
-        assert_eq!(
-            validate_kimi_candidate(&doctor, &config, b"model = \"other\"\n").unwrap_err(),
-            "hook_config_doctor_failed"
-        );
-        assert_eq!(
-            fs::read_to_string(&config).unwrap(),
-            "model = \"kimi-k2\"\n"
-        );
-        assert_eq!(fs::read_dir(temp.path()).unwrap().count(), 2);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn kimi_capability_rejects_legacy_cli_and_accepts_current_cli() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = tempfile::tempdir().unwrap();
-        let current = temp.path().join("current-kimi");
-        fs::write(&current, "#!/bin/sh\n[ \"$1\" = doctor ]\n").unwrap();
-        fs::set_permissions(&current, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(supports_current_kimi(&current));
-
-        let legacy = temp.path().join("legacy-kimi");
-        fs::write(&legacy, "#!/bin/sh\nexit 2\n").unwrap();
-        fs::set_permissions(&legacy, fs::Permissions::from_mode(0o700)).unwrap();
-        assert!(!supports_current_kimi(&legacy));
-    }
-
-    #[test]
-    fn exact_owner_merge_preserves_third_party_entries() {
-        let mut value = json!({
-            "permissions": { "allow": ["Read"] },
-            "hooks": {
-                "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "third-party" }] }]
-            }
-        });
-        let expected = HashMap::from([
-            ("SessionStart", "agent SessionStart".to_string()),
-            ("UserPromptSubmit", "agent UserPromptSubmit".to_string()),
-            ("Notification", "agent Notification".to_string()),
-            ("Stop", "agent Stop".to_string()),
-            ("StopFailure", "agent StopFailure".to_string()),
-            ("SubagentStart", "agent SubagentStart".to_string()),
-            ("SubagentStop", "agent SubagentStop".to_string()),
-            ("AgentToolStart", "agent AgentToolStart".to_string()),
-            ("AgentToolStop", "agent AgentToolStop".to_string()),
-            ("ToolStart", "agent ToolStart".to_string()),
-            ("ToolStop", "agent ToolStop".to_string()),
-        ]);
-        add_exact_hooks(&mut value, Source::Claude, &expected).unwrap();
-        assert_eq!(
-            inspect_json(&value, Source::Claude, &expected).unwrap().0,
-            12
-        );
-        remove_exact_hooks(&mut value, Source::Claude, &expected).unwrap();
-        assert_eq!(
-            value["hooks"]["Stop"][0]["hooks"][0]["command"],
-            "third-party"
-        );
-        assert_eq!(value["permissions"]["allow"][0], "Read");
-    }
-
-    #[test]
-    fn marker_only_matches_same_installation() {
-        let marker = feature_marker("installation-1", "false", false);
-        assert_eq!(
-            parse_owned_marker(&marker, "installation-1"),
-            Some(("false".to_string(), false, " ".to_string()))
-        );
-        assert_eq!(parse_owned_marker(&marker, "installation-2"), None);
-    }
-
-    #[test]
-    fn duplicate_exact_entries_are_outdated_but_removable() {
-        let mut value = json!({});
-        let expected = HashMap::from([
-            ("SessionStart", "agent SessionStart".to_string()),
-            ("UserPromptSubmit", "agent UserPromptSubmit".to_string()),
-            ("Notification", "agent Notification".to_string()),
-            ("PermissionRequest", "agent PermissionRequest".to_string()),
-            ("Stop", "agent Stop".to_string()),
-            ("SubagentStart", "agent SubagentStart".to_string()),
-            ("SubagentStop", "agent SubagentStop".to_string()),
-        ]);
-        add_exact_hooks(&mut value, Source::Codex, &expected).unwrap();
-        let duplicate = value["hooks"]["Stop"][0].clone();
-        value["hooks"]["Stop"]
-            .as_array_mut()
-            .unwrap()
-            .push(duplicate);
-        let (managed, conflict, outdated) = inspect_json(&value, Source::Codex, &expected).unwrap();
-        assert_eq!(managed, 7);
-        assert!(!conflict);
-        assert!(outdated);
-        add_exact_hooks(&mut value, Source::Codex, &expected).unwrap();
-        let (managed, conflict, outdated) = inspect_json(&value, Source::Codex, &expected).unwrap();
-        assert_eq!(managed, 7);
-        assert!(!conflict);
-        assert!(!outdated);
-        remove_exact_hooks(&mut value, Source::Codex, &expected).unwrap();
-        assert!(value.get("hooks").is_none());
-    }
-
-    #[test]
-    fn codex_feature_uninstall_restores_only_owned_changes() {
-        let mut disabled = "[features]\nhooks = false # keep this\n".parse().unwrap();
-        install_codex_feature(&mut disabled, "installation-1").unwrap();
-        assert!(disabled.to_string().contains("cli-manager-ssh-agent"));
-        uninstall_codex_feature(&mut disabled, "installation-1").unwrap();
-        assert!(disabled.to_string().contains("hooks = false # keep this"));
-
-        let mut user_enabled = "[features]\nhooks = true # user\n".parse().unwrap();
-        install_codex_feature(&mut user_enabled, "installation-1").unwrap();
-        uninstall_codex_feature(&mut user_enabled, "installation-1").unwrap();
-        assert!(user_enabled.to_string().contains("hooks = true # user"));
-    }
-
-    fn test_layout(root: &std::path::Path) -> AgentLayout {
-        let state_dir = root.join("state");
-        AgentLayout {
-            home: root.join("home"),
-            data_dir: root.join("data"),
-            runtime_dir: root.join("run"),
-            installation_record: state_dir.join("installation.json"),
-            state_dir,
-        }
-    }
-
-    #[cfg(unix)]
-    fn write_hook_record(
-        layout: &AgentLayout,
-        source: Source,
-        configured: &std::path::Path,
-        canonical: &std::path::Path,
-    ) {
-        let hash = super::config_root_hash(canonical);
-        let records = layout.state_dir.join("hooks/installations");
-        fs::create_dir_all(&records).unwrap();
-        fs::write(
-            records.join(format!("{}-{hash}.json", source.as_str())),
-            serde_json::to_vec(&json!({
-                "source": source.as_str(),
-                "installationId": "00000000-0000-4000-8000-000000000001",
-                "ownerId": "cli-manager-ssh-agent:00000000-0000-4000-8000-000000000001",
-                "configuredConfigRoot": configured.to_string_lossy(),
-                "canonicalConfigRoot": canonical.to_string_lossy(),
-                "configFiles": [],
-                "managedEntries": source.required_entries(),
-                "adapterVersion": 1,
-                "installedAt": 1,
-                "historySourceCandidate": matches!(source, Source::Claude | Source::Codex).then(|| json!({
-                    "source": source.as_str(),
-                    "canonicalConfigRoot": canonical.to_string_lossy(),
-                    "configRootHash": hash,
-                }))
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-    }
-
-    fn test_plan(path: &std::path::Path, before: &[u8], after: &[u8]) -> PlannedFile {
-        PlannedFile {
-            before: FileState {
-                role: "test",
-                logical_path: path.to_path_buf(),
-                canonical_path: fs::canonicalize(path).unwrap(),
-                bytes: before.to_vec(),
-                exists: true,
-                mode: None,
-            },
-            after: after.to_vec(),
-            after_exists: true,
-        }
-    }
-
-    #[test]
-    fn transaction_rejects_external_change_without_overwrite() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("settings.json");
-        fs::write(&path, b"before").unwrap();
-        let plan = test_plan(&path, b"before", b"after");
-        fs::write(&path, b"external").unwrap();
-        assert_eq!(
-            apply_transaction(&test_layout(temp.path()), "root", &[plan]).unwrap_err(),
-            "hook_config_changed"
-        );
-        assert_eq!(fs::read(&path).unwrap(), b"external");
-    }
-
-    #[test]
-    fn transaction_preflights_all_targets_before_first_write() {
-        let temp = tempfile::tempdir().unwrap();
-        let first = temp.path().join("first.json");
-        let second = temp.path().join("second.json");
-        let replacement = temp.path().join("replacement.json");
-        fs::write(&first, b"first-before").unwrap();
-        fs::write(&second, b"second-before").unwrap();
-        fs::write(&replacement, b"replacement").unwrap();
-        let first_plan = test_plan(&first, b"first-before", b"first-after");
-        let mut second_plan = test_plan(&second, b"second-before", b"second-after");
-        second_plan.before.logical_path = replacement;
-        assert_eq!(
-            apply_transaction(
-                &test_layout(temp.path()),
-                "root",
-                &[first_plan, second_plan]
-            )
-            .unwrap_err(),
-            "hook_config_root_changed"
-        );
-        assert_eq!(fs::read(&first).unwrap(), b"first-before");
-        assert_eq!(fs::read(&second).unwrap(), b"second-before");
-    }
-
-    #[test]
-    fn recovery_restores_safe_files_and_preserves_external_conflict() {
-        let temp = tempfile::tempdir().unwrap();
-        let layout = test_layout(temp.path());
-        let first = temp.path().join("first.json");
-        let second = temp.path().join("second.json");
-        fs::write(&first, b"first-after").unwrap();
-        fs::write(&second, b"external").unwrap();
-        let directory = transaction_dir(&layout, "root");
-        fs::create_dir_all(&directory).unwrap();
-        fs::write(directory.join("0.before"), b"first-before").unwrap();
-        fs::write(directory.join("1.before"), b"second-before").unwrap();
-        fs::write(
-            directory.join("journal.json"),
-            serde_json::to_vec(&TransactionJournal {
-                files: vec![
-                    TransactionFile {
-                        role: "first".to_string(),
-                        canonical_path: fs::canonicalize(&first)
-                            .unwrap()
-                            .to_string_lossy()
-                            .to_string(),
-                        existed: true,
-                        before_fingerprint: fingerprint(Some(b"first-before")),
-                        after_fingerprint: fingerprint(Some(b"first-after")),
-                        mode: None,
-                        backup_name: "0.before".to_string(),
-                    },
-                    TransactionFile {
-                        role: "second".to_string(),
-                        canonical_path: fs::canonicalize(&second)
-                            .unwrap()
-                            .to_string_lossy()
-                            .to_string(),
-                        existed: true,
-                        before_fingerprint: fingerprint(Some(b"second-before")),
-                        after_fingerprint: fingerprint(Some(b"second-after")),
-                        mode: None,
-                        backup_name: "1.before".to_string(),
-                    },
-                ],
-            })
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(
-            recover_transaction(&layout, "root").unwrap_err(),
-            "hook_config_recovery_conflict"
-        );
-        assert_eq!(fs::read(&first).unwrap(), b"first-before");
-        assert_eq!(fs::read(&second).unwrap(), b"external");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn config_symlink_resolves_to_the_real_target() {
-        use super::{resolve_config_file, ResolvedRoot};
-        use std::fs;
-        use std::os::unix::fs::symlink;
-
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("root");
-        fs::create_dir_all(&root).unwrap();
-        let target = temp.path().join("settings-target.json");
-        fs::write(&target, b"{}\n").unwrap();
-        symlink(&target, root.join("settings.json")).unwrap();
-        let resolved = ResolvedRoot {
-            configured: root.to_string_lossy().to_string(),
-            requested: root.clone(),
-            canonical: fs::canonicalize(&root).unwrap(),
-            hash: "hash".to_string(),
-            existed: true,
-        };
-        let state = resolve_config_file(&resolved, "claudeSettings", "settings.json").unwrap();
-        assert_eq!(state.canonical_path, fs::canonicalize(target).unwrap());
-    }
-
-    #[test]
-    fn unrelated_hook_event_shapes_are_preserved() {
-        let value = json!({
-            "hooks": {
-                "FutureEvent": { "schema": 2 },
-                "Stop": [{ "matcher": "", "hooks": [{ "type": "command", "command": "third-party" }] }]
-            }
-        });
-        let expected = Source::Claude
-            .hooks()
-            .iter()
-            .map(|(_, command_event, _)| (*command_event, format!("agent {command_event}")))
-            .collect();
-        assert_eq!(
-            inspect_json(&value, Source::Claude, &expected).unwrap(),
-            (0, false, false)
-        );
-        assert_eq!(value["hooks"]["FutureEvent"]["schema"], 2);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn config_symlink_target_change_is_rejected() {
-        use super::{resolve_config_file, ResolvedRoot};
-        use std::fs;
-        use std::os::unix::fs::symlink;
-
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path().join("root");
-        fs::create_dir_all(&root).unwrap();
-        let first = temp.path().join("first.json");
-        let second = temp.path().join("second.json");
-        fs::write(&first, b"{}\n").unwrap();
-        fs::write(&second, b"{}\n").unwrap();
-        let logical = root.join("settings.json");
-        symlink(&first, &logical).unwrap();
-        let resolved = ResolvedRoot {
-            configured: root.to_string_lossy().to_string(),
-            requested: root.clone(),
-            canonical: fs::canonicalize(&root).unwrap(),
-            hash: "hash".to_string(),
-            existed: true,
-        };
-        let state = resolve_config_file(&resolved, "claudeSettings", "settings.json").unwrap();
-        fs::remove_file(&logical).unwrap();
-        symlink(&second, &logical).unwrap();
-        assert_eq!(
-            config_target_unchanged(&state).unwrap_err(),
-            "hook_config_root_changed"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn config_root_symlink_target_change_before_planning_is_rejected() {
-        use super::{resolve_config_file, resolve_root};
-        use std::os::unix::fs::symlink;
-
-        let temp = tempfile::tempdir().unwrap();
-        let layout = test_layout(temp.path());
-        fs::create_dir_all(&layout.home).unwrap();
-        let first = layout.home.join("claude-a");
-        let second = layout.home.join("claude-b");
-        fs::create_dir_all(&first).unwrap();
-        fs::create_dir_all(&second).unwrap();
-        let configured = layout.home.join("claude-current");
-        symlink(&first, &configured).unwrap();
-        let resolved = resolve_root(
-            configured.to_string_lossy().as_ref(),
-            Source::Claude,
-            &layout,
-            false,
-        )
-        .unwrap();
-
-        fs::remove_file(&configured).unwrap();
-        symlink(&second, &configured).unwrap();
-        assert_eq!(
-            resolve_config_file(&resolved, "claudeSettings", "settings.json").unwrap_err(),
-            "hook_config_root_changed"
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn deleted_custom_root_can_be_recovered_for_record_cleanup() {
-        use super::resolve_uninstall_root;
-        use crate::layout::AgentLayout;
-        use std::fs;
-
-        let temp = tempfile::tempdir().unwrap();
-        let home = temp.path().join("home");
-        let custom = home.join("custom-claude");
-        fs::create_dir_all(&custom).unwrap();
-        let canonical = fs::canonicalize(&custom).unwrap();
-        fs::remove_dir(&custom).unwrap();
-        let state_dir = temp.path().join("state");
-        let layout = AgentLayout {
-            home: home.clone(),
-            data_dir: temp.path().join("data"),
-            state_dir: state_dir.clone(),
-            runtime_dir: temp.path().join("run"),
-            installation_record: state_dir.join("installation.json"),
-        };
-        write_hook_record(&layout, Source::Claude, &custom, &canonical);
-        let recovered = resolve_uninstall_root(
-            custom.to_string_lossy().as_ref(),
-            None,
-            Source::Claude,
-            &layout,
-        )
-        .unwrap();
-        assert!(!recovered.existed);
-        assert_eq!(recovered.canonical, canonical);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn retained_uninstall_uses_recorded_root_after_symlink_retarget() {
-        use super::{resolve_config_file, resolve_uninstall_root};
-        use std::os::unix::fs::symlink;
-
-        let temp = tempfile::tempdir().unwrap();
-        let layout = test_layout(temp.path());
-        fs::create_dir_all(&layout.home).unwrap();
-        let first = layout.home.join("claude-a");
-        let second = layout.home.join("claude-b");
-        fs::create_dir_all(&first).unwrap();
-        fs::create_dir_all(&second).unwrap();
-        let first = fs::canonicalize(first).unwrap();
-        let second = fs::canonicalize(second).unwrap();
-        let configured = layout.home.join("claude-current");
-        symlink(&first, &configured).unwrap();
-        write_hook_record(&layout, Source::Claude, &configured, &first);
-
-        fs::remove_file(&configured).unwrap();
-        symlink(&second, &configured).unwrap();
-
-        let current = resolve_uninstall_root(
-            configured.to_string_lossy().as_ref(),
-            None,
-            Source::Claude,
-            &layout,
-        )
-        .unwrap();
-        assert_eq!(current.canonical, second);
-        assert_eq!(
-            resolve_config_file(&current, "claudeSettings", "settings.json")
-                .unwrap()
-                .canonical_path,
-            second.join("settings.json")
-        );
-
-        let retained = resolve_uninstall_root(
-            configured.to_string_lossy().as_ref(),
-            Some(first.to_string_lossy().as_ref()),
-            Source::Claude,
-            &layout,
-        )
-        .unwrap();
-        assert_eq!(retained.canonical, first);
-        assert_eq!(retained.requested, first);
-        assert_eq!(
-            resolve_config_file(&retained, "claudeSettings", "settings.json")
-                .unwrap()
-                .canonical_path,
-            retained.canonical.join("settings.json")
-        );
-    }
-}
+mod tests;

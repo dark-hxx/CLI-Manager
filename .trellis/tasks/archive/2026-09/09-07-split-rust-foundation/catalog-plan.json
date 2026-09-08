@@ -1,0 +1,12 @@
+[
+  {
+    "file": "src-tauri/src/commands/history/catalog.rs",
+    "groups": [
+      { "name": "schema", "first": "ensure_schema", "last": "ensure_column" },
+      { "name": "queries", "first": "project_candidates", "last": "search_sessions" },
+      { "name": "session_detail", "first": "v2_raw_pointer_line_index", "last": "get_session_detail_from_v2_with_conn" },
+      { "name": "remote_sync", "first": "apply_remote_sync", "last": "list_remote_cached" },
+      { "name": "materialization", "first": "active_v2_source_instances", "last": "shadow_build_v2" }
+    ]
+  }
+]

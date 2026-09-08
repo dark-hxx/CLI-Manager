@@ -3,23 +3,27 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const detailSource = readFileSync(
-  new URL("../src/components/history/SessionDetailPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/SessionDetailPane.tsx", import.meta.url),
   "utf8",
 );
 const workspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const listSource = readFileSync(
-  new URL("../src/components/history/HistoryListPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/HistoryListPane.tsx", import.meta.url),
   "utf8",
 );
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
+  "utf8",
+);
+const normalizationSource = readFileSync(
+  new URL("../src/features/history/lib/historyNormalization.ts", import.meta.url),
   "utf8",
 );
 const conversationSource = readFileSync(
-  new URL("../src/lib/historyConversation.ts", import.meta.url),
+  new URL("../src/features/history/lib/historyConversation.ts", import.meta.url),
   "utf8",
 );
 
@@ -41,7 +45,7 @@ test("conversation keeps only visible user and assistant text", () => {
   assert.match(detailSource, /if \(textParts\.length === 0\) return;/);
   assert.match(detailSource, /isConversationVisibleMessage/);
   assert.match(conversationSource, /firstLine\.startsWith\("base directory for this skill:"\)/);
-  assert.match(storeSource, /parts: parts\.length > 0 \? parts : undefined/);
+  assert.match(normalizationSource, /parts: parts\.length > 0 \? parts : undefined/);
 });
 
 test("search and cross-view jumps keep the conversation view targetable", () => {

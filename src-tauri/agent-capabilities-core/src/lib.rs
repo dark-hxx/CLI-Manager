@@ -3,6 +3,7 @@ use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use toml::Value as TomlValue;
@@ -24,6 +25,7 @@ pub enum AgentKind {
 }
 
 impl AgentKind {
+    // 返回 Agent 对应的固定可执行文件名，不采用配置文档中的命令。
     pub fn executable(self) -> &'static str {
         match self {
             Self::Claude => "claude",
@@ -249,6 +251,7 @@ struct SkillPolicy {
     deny_all: bool,
 }
 
+// 优先生成项目或用户目录相对标签，其他路径仅保留文件名。
 fn path_label(path: &Path, home: &Path, cwd: &Path) -> String {
     if let Ok(relative) = path.strip_prefix(cwd) {
         return format!("project/{}", relative.to_string_lossy().replace('\\', "/"));
@@ -262,6 +265,7 @@ fn path_label(path: &Path, home: &Path, cwd: &Path) -> String {
         .to_string()
 }
 
+// 将配置候选路径及来源、格式元数据追加到发现布局。
 fn push_config(
     layout: &mut DiscoveryLayout,
     path: PathBuf,
@@ -280,6 +284,7 @@ fn push_config(
     });
 }
 
+// 按路径去重后登记 Skill 扫描根目录及来源标签。
 fn push_skill_root(
     layout: &mut DiscoveryLayout,
     path: PathBuf,
@@ -297,6 +302,7 @@ fn push_skill_root(
     }
 }
 
+// 向上收集项目祖先，遇到 Git 标记或深度上限停止，再按外到内排序。
 fn project_ancestors(cwd: &Path) -> Vec<PathBuf> {
     let mut current = Some(cwd.to_path_buf());
     let mut result = Vec::new();
@@ -312,6 +318,7 @@ fn project_ancestors(cwd: &Path) -> Vec<PathBuf> {
     result
 }
 
+// 按 Agent 和用户、项目优先级生成配置及 Skill 候选位置，不读取配置内容。
 pub fn discovery_layout(
     agent: AgentKind,
     home: &Path,
@@ -563,14 +570,24 @@ pub fn discovery_layout(
     layout
 }
 
+// 先按元数据检查普通文件及大小，再读取 UTF-8；读取期间增长不受该预检限制。
 fn read_bounded(path: &Path, max_bytes: u64) -> Result<String, &'static str> {
-    let metadata = fs::metadata(path).map_err(|_| "source_unreadable")?;
+    let file = fs::File::open(path).map_err(|_| "source_unreadable")?;
+    let metadata = file.metadata().map_err(|_| "source_unreadable")?;
     if !metadata.is_file() || metadata.len() > max_bytes {
         return Err("source_invalid");
     }
-    fs::read_to_string(path).map_err(|_| "source_unreadable")
+    let mut bytes = Vec::new();
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| "source_unreadable")?;
+    if bytes.len() as u64 > max_bytes {
+        return Err("source_invalid");
+    }
+    String::from_utf8(bytes).map_err(|_| "source_unreadable")
 }
 
+// 读取候选配置并分根扫描 Skill，限制深度与文件数，保留读取失败诊断。
 pub fn collect_local_bundle(layout: &DiscoveryLayout) -> DiscoveryBundle {
     let mut bundle = DiscoveryBundle::default();
     for spec in &layout.configs {
@@ -663,6 +680,7 @@ pub fn collect_local_bundle(layout: &DiscoveryLayout) -> DiscoveryBundle {
     bundle
 }
 
+// 跳过字符串之外的 JSON 注释和尾逗号，保留字符串内容及注释中的换行。
 fn json_comments_removed(content: &str) -> String {
     let mut result = String::with_capacity(content.len());
     let mut chars = content.chars().peekable();
@@ -748,6 +766,7 @@ fn json_comments_removed(content: &str) -> String {
     without_trailing_commas
 }
 
+// 按 URL 或显式类型推断 JSON MCP 传输标签，缺省使用 stdio。
 fn transport_from_json(value: &JsonValue) -> String {
     if value.get("url").and_then(JsonValue::as_str).is_some()
         || value
@@ -766,6 +785,7 @@ fn transport_from_json(value: &JsonValue) -> String {
     }
 }
 
+// 合并 JSON MCP 元数据及 Skill 禁用策略，同名后来源覆盖前来源。
 fn collect_json_mcp(
     agent: AgentKind,
     document: &ConfigDocument,
@@ -829,6 +849,7 @@ fn collect_json_mcp(
     }
 }
 
+// 按 TOML URL 或类型生成传输标签，不返回连接地址。
 fn toml_transport(value: &TomlValue) -> String {
     if value.get("url").and_then(TomlValue::as_str).is_some() {
         "remote".to_string()
@@ -842,6 +863,7 @@ fn toml_transport(value: &TomlValue) -> String {
     }
 }
 
+// 合并 TOML MCP 元数据和 Skill 禁用名单，静态健康度保持未知。
 fn collect_toml_mcp(
     document: &ConfigDocument,
     root: &TomlValue,
@@ -884,6 +906,7 @@ fn collect_toml_mcp(
     }
 }
 
+// 按行提取简单 frontmatter 名称和描述，以非空名称判定有效而非完整 YAML 校验。
 fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<String>, bool) {
     if let Some(code) = content.strip_prefix("__CLI_MANAGER_ERROR__:") {
         return (fallback_name.to_string(), None, code.trim().is_empty());
@@ -894,9 +917,11 @@ fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<Stri
     }
     let mut name = None;
     let mut description = None;
+    let mut closed = false;
     for line in lines {
         let line = line.trim();
         if line == "---" {
+            closed = true;
             break;
         }
         if let Some(value) = line.strip_prefix("name:") {
@@ -906,7 +931,7 @@ fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<Stri
             description = Some(value.trim().trim_matches(['\'', '"']).to_string());
         }
     }
-    let valid = name.as_ref().is_some_and(|value| !value.trim().is_empty());
+    let valid = closed && name.as_ref().is_some_and(|value| !value.trim().is_empty());
     (
         name.filter(|value| !value.is_empty())
             .unwrap_or_else(|| fallback_name.to_string()),
@@ -915,6 +940,7 @@ fn parse_frontmatter(content: &str, fallback_name: &str) -> (String, Option<Stri
     )
 }
 
+// 分别统计 MCP 启用与禁用项，仅对启用项累加健康状态。
 fn summarize_mcp(items: &[McpItem]) -> McpSummary {
     let mut summary = McpSummary::default();
     for item in items {
@@ -933,6 +959,7 @@ fn summarize_mcp(items: &[McpItem]) -> McpSummary {
     summary
 }
 
+// 统计所有 Skill 条目总数及各可用、禁用、拒绝、覆盖和无效状态。
 fn summarize_skills(items: &[SkillItem]) -> SkillSummary {
     let mut summary = SkillSummary {
         total: items.len(),
@@ -950,6 +977,7 @@ fn summarize_skills(items: &[SkillItem]) -> SkillSummary {
     summary
 }
 
+// 按配置文档顺序散列路径标签和内容；Skill 文档不纳入此配置指纹。
 fn fingerprint(bundle: &DiscoveryBundle) -> String {
     let mut hasher = Sha256::new();
     for document in &bundle.configs {
@@ -958,9 +986,20 @@ fn fingerprint(bundle: &DiscoveryBundle) -> String {
         hasher.update(document.content.as_bytes());
         hasher.update([0xff]);
     }
+    for document in &bundle.skills {
+        hasher.update(document.path_label.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.scope.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.source_kind.as_bytes());
+        hasher.update([0]);
+        hasher.update(document.content.as_bytes());
+        hasher.update([0xfe]);
+    }
     format!("sha256:{:x}", hasher.finalize())
 }
 
+// 合并静态配置、会话证据和 Skill 策略，生成派生快照及汇总，不执行 MCP 命令。
 pub fn assemble_snapshot(
     request: InspectRequest,
     mut bundle: DiscoveryBundle,
@@ -1109,6 +1148,7 @@ pub fn assemble_snapshot(
     }
 }
 
+// 按错误优先的文本关键词识别 MCP 健康状态，未命中保持未知。
 fn probe_status_from_text(line: &str) -> Option<McpHealth> {
     let lower = line.to_lowercase();
     if [
@@ -1142,6 +1182,7 @@ fn probe_status_from_text(line: &str) -> Option<McpHealth> {
     None
 }
 
+// 从顶层或已知包装字段提取探测结果数组，不递归搜索其他结构。
 fn probe_records(value: &JsonValue) -> Vec<&JsonValue> {
     if let Some(array) = value.as_array() {
         return array.iter().collect();
@@ -1154,6 +1195,7 @@ fn probe_records(value: &JsonValue) -> Vec<&JsonValue> {
     Vec::new()
 }
 
+// 以结构化名称或纯文本回退更新已有启用 MCP 的健康状态，并刷新汇总。
 pub fn apply_probe_output(
     snapshot: &mut AgentCapabilitySnapshot,
     output: &str,
@@ -1211,7 +1253,10 @@ pub fn apply_probe_output(
         if item.activation == McpActivation::Disabled {
             continue;
         }
-        if let Some(status) = observed.get(&item.name.to_lowercase()) {
+        if let Some(status) = observed
+            .get(&item.name.to_lowercase())
+            .filter(|status| **status != McpHealth::Unknown)
+        {
             item.health = status.clone();
             item.error_code =
                 (item.health == McpHealth::Error).then(|| "agent_reported_mcp_error".to_string());
@@ -1224,6 +1269,7 @@ pub fn apply_probe_output(
 mod tests {
     use super::*;
 
+    // 构造能力快照的内存请求夹具，使用固定会话和项目标识。
     fn request(agent: AgentKind) -> InspectRequest {
         InspectRequest {
             terminal_session_id: "tab-1".into(),
@@ -1239,6 +1285,7 @@ mod tests {
     }
 
     #[test]
+    // 验证静态配置仅标记启用而非健康，快照不包含配置 URL。
     fn static_config_is_active_but_unknown() {
         let bundle = DiscoveryBundle {
             configs: vec![ConfigDocument {
@@ -1259,6 +1306,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时项目中验证 Pi 用户与项目配置候选的低到高优先级。
     fn pi_adapter_configs_follow_their_documented_precedence() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
@@ -1286,6 +1334,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Pi disabled 标志及静态未知状态，快照不回传配置命令。
     fn pi_adapter_config_reports_active_and_disabled_mcp_without_unknown_diagnostic() {
         let bundle = DiscoveryBundle {
             configs: vec![ConfigDocument {
@@ -1319,6 +1368,7 @@ mod tests {
     }
 
     #[test]
+    // 验证包含顶层键或注释的完整 TOML 文档可正常提取 MCP。
     fn complete_toml_documents_are_parsed_without_false_diagnostics() {
         let bundle = DiscoveryBundle {
             configs: vec![
@@ -1359,6 +1409,7 @@ command = "git"
     }
 
     #[test]
+    // 验证不完整 TOML 文档仍产生解析失败诊断。
     fn invalid_toml_document_still_reports_parse_error() {
         let bundle = DiscoveryBundle {
             configs: vec![ConfigDocument {
@@ -1380,6 +1431,7 @@ command = "git"
     }
 
     #[test]
+    // 验证结构化探测识别蛇形认证字段，并按准确名称区分健康、错误和未知。
     fn codex_probe_reads_snake_case_auth_status() {
         let bundle = DiscoveryBundle {
             configs: vec![ConfigDocument {
@@ -1427,6 +1479,7 @@ command = "local"
     }
 
     #[test]
+    // 验证同名 Skill 保留两个条目，后来源可用、前来源标记被覆盖。
     fn disabled_and_shadowed_skills_are_preserved() {
         let manifest = |name: &str| format!("---\nname: {name}\ndescription: test\n---\n");
         let bundle = DiscoveryBundle {
@@ -1454,6 +1507,41 @@ command = "local"
     }
 
     #[test]
+    fn unknown_probes_preserve_session_health_for_all_diagnostic_agents() {
+        for agent in [
+            AgentKind::Claude,
+            AgentKind::Codex,
+            AgentKind::Pi,
+            AgentKind::Grok,
+            AgentKind::Opencode,
+        ] {
+            for success in [true, false] {
+                let mut req = request(agent.clone());
+                req.runtime_evidence.push(RuntimeEvidence {
+                    server: "docs".into(),
+                    success,
+                    timestamp: Some("2026-09-07T00:00:00Z".into()),
+                });
+                let mut snapshot = assemble_snapshot(req, DiscoveryBundle::default());
+                let expected = if success {
+                    McpHealth::Healthy
+                } else {
+                    McpHealth::Error
+                };
+                apply_probe_output(
+                    &mut snapshot,
+                    r#"[{"name":"docs","auth_status":"unsupported"}]"#,
+                    true,
+                );
+                assert_eq!(snapshot.mcp[0].health, expected);
+                apply_probe_output(&mut snapshot, "unsupported diagnostic output", false);
+                assert_eq!(snapshot.mcp[0].health, expected);
+            }
+        }
+    }
+
+    #[test]
+    // 验证失败运行证据建立对应服务器错误状态及稳定错误码。
     fn runtime_failure_marks_only_the_matching_server() {
         let mut req = request(AgentKind::Claude);
         req.runtime_evidence.push(RuntimeEvidence {
@@ -1470,6 +1558,7 @@ command = "local"
     }
 
     #[test]
+    // 验证 JSONC 注释和尾逗号处理不破坏字符串中的 URL 与逗号。
     fn jsonc_comments_and_trailing_commas_preserve_string_content() {
         let normalized = json_comments_removed(
             r#"{
@@ -1487,7 +1576,8 @@ command = "local"
     }
 
     #[test]
-    fn nested_plugin_skill_is_discovered_without_following_symlinks() {
+    // 在临时目录验证嵌套插件 Skill 被发现并保留来源标签；本例未创建符号链接。
+    fn nested_plugin_skill_is_discovered() {
         let temp = tempfile::tempdir().unwrap();
         let skill = temp
             .path()
@@ -1509,5 +1599,38 @@ command = "local"
         assert!(bundle.skills[0]
             .path_label
             .ends_with("skills/nested/SKILL.md"));
+    }
+
+    #[test]
+    fn skill_frontmatter_requires_a_closing_delimiter() {
+        let (name, _, valid) = parse_frontmatter("---\nname: open-ended\nbody", "fallback");
+        assert_eq!(name, "open-ended");
+        assert!(!valid);
+    }
+
+    #[test]
+    fn skill_content_changes_the_configuration_fingerprint() {
+        let skill = |content: &str| DiscoveryBundle {
+            skills: vec![SkillDocument {
+                path_label: "home/demo/SKILL.md".into(),
+                scope: "user".into(),
+                source_kind: "native".into(),
+                fallback_name: "demo".into(),
+                content: content.into(),
+            }],
+            ..DiscoveryBundle::default()
+        };
+
+        assert_ne!(fingerprint(&skill("first")), fingerprint(&skill("second")));
+    }
+
+    #[test]
+    fn bounded_reader_enforces_the_open_file_byte_limit() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        fs::write(&path, b"12345").unwrap();
+
+        assert_eq!(read_bounded(&path, 4).unwrap_err(), "source_invalid");
+        assert_eq!(read_bounded(&path, 5).unwrap(), "12345");
     }
 }

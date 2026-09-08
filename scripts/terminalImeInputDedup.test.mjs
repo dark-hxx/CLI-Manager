@@ -11,7 +11,7 @@ process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const outputPath = join(tempDir, "terminalImeInputDedup.mjs");
 const output = ts.transpileModule(
-  readFileSync(new URL("../src/lib/terminalImeInputDedup.ts", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/features/terminal/lib/terminalImeInputDedup.ts", import.meta.url), "utf8"),
   {
     compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
     fileName: "terminalImeInputDedup.ts",
@@ -83,8 +83,8 @@ test("same-source matching requires an enabled, recent process-key checkpoint", 
 });
 
 test("terminal IME lifecycle forwards the process-key and composition boundary", () => {
-  const inputSource = readFileSync(new URL("../src/hooks/useTerminalInput.ts", import.meta.url), "utf8");
-  const imeSource = readFileSync(new URL("../src/lib/terminalIme.ts", import.meta.url), "utf8");
+  const inputSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalInput.ts", import.meta.url), "utf8");
+  const imeSource = readFileSync(new URL("../src/features/terminal/lib/terminalIme.ts", import.meta.url), "utf8");
 
   assert.match(inputSource, /onImeProcessKey: forwarding\.noteImeProcessKey,/);
   assert.match(inputSource, /onCompositionStarted: forwarding\.resetImeInputDedup,/);

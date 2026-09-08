@@ -224,9 +224,17 @@ function SshControls({ t, field, update, run, busy }: ControlProps) {
   return <>
     <div className="management-actions"><Action disabled={busy} label={t("listHosts")} onClick={() => run("ssh.hosts.list")} /><Action disabled={busy} label={t("clientStatus")} onClick={() => run("ssh.client_status")} /></div>
     <div className="management-grid"><Input label={t("hostId")} value={field("hostId")} onChange={(value) => update("hostId", value)} /><Input label={t("remotePath")} value={field("path")} onChange={(value) => update("path", value)} placeholder="/" /><label className="checkbox-row"><input type="checkbox" checked={field("acceptNewHostKey") === "true"} onChange={(event) => update("acceptNewHostKey", String(event.target.checked))} />{t("acceptNewHostKey")}</label></div>
-    <div className="management-actions"><Action disabled={busy} label={t("testConnection")} onClick={() => run("ssh.test_connection", { hostId: field("hostId"), acceptNewHostKey: field("acceptNewHostKey") === "true" }, field("acceptNewHostKey") === "true")} /><Action disabled={busy} label={t("checkPath")} onClick={() => run("ssh.check_path", { hostId: field("hostId"), path: field("path") })} /><Action disabled={busy} label={t("listDirectories")} onClick={() => run("ssh.list_directories", { hostId: field("hostId"), path: field("path") || "/" })} /></div>
+    <div className="management-actions">
+      <Action disabled={busy} label={t("testConnection")} onClick={() => run("ssh.test_connection", { hostId: field("hostId"), acceptNewHostKey: field("acceptNewHostKey") === "true" }, field("acceptNewHostKey") === "true")} />
+      <Action disabled={busy} label={t("checkPath")} onClick={() => run("ssh.check_path", { hostId: field("hostId"), path: field("path") })} />
+      <Action disabled={busy} label={t("listDirectories")} onClick={() => run("ssh.list_directories", { hostId: field("hostId"), path: field("path") || "/" })} />
+    </div>
     <div className="management-grid"><Input label={t("hostName")} value={field("hostName")} onChange={(value) => update("hostName", value)} /><Input label={t("hostAddress")} value={field("host")} onChange={(value) => update("host", value)} /><Input label={t("port")} value={field("port")} onChange={(value) => update("port", value)} /><Input label={t("username")} value={field("sshUsername")} onChange={(value) => update("sshUsername", value)} /></div>
-    <div className="management-actions"><Action disabled={busy} label={t("createHost")} onClick={() => run("ssh.host.create", { name: field("hostName"), host: field("host"), port: Number(field("port")), username: field("sshUsername"), authMode: "agent" }, true)} /><Action disabled={busy} label={t("updateHost")} onClick={() => run("ssh.host.update", { hostId: field("hostId"), name: field("hostName"), host: field("host"), port: Number(field("port")), username: field("sshUsername") }, true)} /><Action disabled={busy} label={t("deleteHost")} onClick={() => run("ssh.host.delete", { hostId: field("hostId") }, true)} /></div>
+    <div className="management-actions">
+      <Action disabled={busy} label={t("createHost")} onClick={() => run("ssh.host.create", { name: field("hostName"), host: field("host"), port: Number(field("port")), username: field("sshUsername"), authMode: "agent" }, true)} />
+      <Action disabled={busy} label={t("updateHost")} onClick={() => run("ssh.host.update", { hostId: field("hostId"), name: field("hostName"), host: field("host"), port: Number(field("port")), username: field("sshUsername") }, true)} />
+      <Action disabled={busy} label={t("deleteHost")} onClick={() => run("ssh.host.delete", { hostId: field("hostId") }, true)} />
+    </div>
   </>;
 }
 
@@ -235,7 +243,14 @@ function FileControls({ t, field, update, run, busy, disabled }: ControlProps & 
     {disabled && <p className="form-error">{t("projectContextRequired")}</p>}
     <div className="management-grid"><Input label={t("relativePath")} value={field("path")} onChange={(value) => update("path", value)} /><Input label={t("query")} value={field("query")} onChange={(value) => update("query", value)} /><Input label={t("name")} value={field("name")} onChange={(value) => update("name", value)} /><Input label={t("targetPath")} value={field("targetPath")} onChange={(value) => update("targetPath", value)} /></div>
     <div className="management-actions"><Action disabled={busy || disabled} label={t("listFiles")} onClick={() => run("file.list", { path: field("path") })} /><Action disabled={busy || disabled} label={t("searchFiles")} onClick={() => run("file.search", { query: field("query") })} /><Action disabled={busy || disabled} label={t("searchContent")} onClick={() => run("file.search_content", { query: field("query") })} /></div>
-    <div className="management-actions"><Action disabled={busy || disabled} label={t("createFile")} onClick={() => run("file.create", { parentPath: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("createDirectory")} onClick={() => run("file.create_directory", { parentPath: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("rename")} onClick={() => run("file.rename", { path: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("copy")} onClick={() => run("file.copy", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("move")} onClick={() => run("file.move", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("deleteAction")} onClick={() => run("file.delete", { path: field("path") }, true)} /></div>
+    <div className="management-actions">
+      <Action disabled={busy || disabled} label={t("createFile")} onClick={() => run("file.create", { parentPath: field("path"), name: field("name") }, true)} />
+      <Action disabled={busy || disabled} label={t("createDirectory")} onClick={() => run("file.create_directory", { parentPath: field("path"), name: field("name") }, true)} />
+      <Action disabled={busy || disabled} label={t("rename")} onClick={() => run("file.rename", { path: field("path"), name: field("name") }, true)} />
+      <Action disabled={busy || disabled} label={t("copy")} onClick={() => run("file.copy", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} />
+      <Action disabled={busy || disabled} label={t("move")} onClick={() => run("file.move", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} />
+      <Action disabled={busy || disabled} label={t("deleteAction")} onClick={() => run("file.delete", { path: field("path") }, true)} />
+    </div>
   </>;
 }
 
@@ -244,7 +259,17 @@ function GitControls({ t, field, update, run, busy, disabled }: ControlProps & {
     {disabled && <p className="form-error">{t("projectContextRequired")}</p>}
     <div className="management-actions"><Action disabled={busy || disabled} label={t("gitStatus")} onClick={() => run("git.status")} /><Action disabled={busy || disabled} label={t("branches")} onClick={() => run("git.branches")} /><Action disabled={busy || disabled} label={t("fetch")} onClick={() => run("git.fetch", {}, true)} /></div>
     <div className="management-grid"><Input label={t("branch")} value={field("branch")} onChange={(value) => update("branch", value)} /><Input label={t("pathsCommaSeparated")} value={field("paths")} onChange={(value) => update("paths", value)} /><Input label={t("statusCode")} value={field("status")} onChange={(value) => update("status", value)} /><Input label={t("commitMessage")} value={field("message")} onChange={(value) => update("message", value)} /></div>
-    <div className="management-actions"><Action disabled={busy || disabled} label={t("checkout")} onClick={() => run("git.checkout", { branch: field("branch"), remote: false }, true)} /><Action disabled={busy || disabled} label={t("createBranch")} onClick={() => run("git.create_branch", { branch: field("branch") }, true)} /><Action disabled={busy || disabled} label={t("stage")} onClick={() => run("git.stage", { paths: csv(field("paths")) }, true)} /><Action disabled={busy || disabled} label={t("unstage")} onClick={() => run("git.unstage", { paths: csv(field("paths")) }, true)} /><Action disabled={busy || disabled} label={t("commit")} onClick={() => run("git.commit", { message: field("message") }, true)} /><Action disabled={busy || disabled} label={t("pull")} onClick={() => run("git.pull", { strategy: field("pullStrategy") }, true)} /><Action disabled={busy || disabled} label={t("push")} onClick={() => run("git.push", {}, true)} /><Action disabled={busy || disabled} label={t("discard")} onClick={() => run("git.discard", { items: csv(field("paths")).map((path) => ({ path, status: field("status") || "M" })) }, true)} /><Action disabled={busy || disabled} label={t("deleteUntracked")} onClick={() => run("git.delete_untracked", { paths: csv(field("paths")) }, true)} /></div>
+    <div className="management-actions">
+      <Action disabled={busy || disabled} label={t("checkout")} onClick={() => run("git.checkout", { branch: field("branch"), remote: false }, true)} />
+      <Action disabled={busy || disabled} label={t("createBranch")} onClick={() => run("git.create_branch", { branch: field("branch") }, true)} />
+      <Action disabled={busy || disabled} label={t("stage")} onClick={() => run("git.stage", { paths: csv(field("paths")) }, true)} />
+      <Action disabled={busy || disabled} label={t("unstage")} onClick={() => run("git.unstage", { paths: csv(field("paths")) }, true)} />
+      <Action disabled={busy || disabled} label={t("commit")} onClick={() => run("git.commit", { message: field("message") }, true)} />
+      <Action disabled={busy || disabled} label={t("pull")} onClick={() => run("git.pull", { strategy: field("pullStrategy") }, true)} />
+      <Action disabled={busy || disabled} label={t("push")} onClick={() => run("git.push", {}, true)} />
+      <Action disabled={busy || disabled} label={t("discard")} onClick={() => run("git.discard", { items: csv(field("paths")).map((path) => ({ path, status: field("status") || "M" })) }, true)} />
+      <Action disabled={busy || disabled} label={t("deleteUntracked")} onClick={() => run("git.delete_untracked", { paths: csv(field("paths")) }, true)} />
+    </div>
   </>;
 }
 
@@ -252,13 +277,25 @@ function WorktreeControls({ t, field, update, run, busy, disabled, deleteBranch,
   return <>
     {disabled && <p className="form-error">{t("projectContextRequired")}</p>}
     <div className="management-grid"><Input label={t("taskName")} value={field("taskName")} onChange={(value) => update("taskName", value)} /><Input label={t("worktreeId")} value={field("worktreeId")} onChange={(value) => update("worktreeId", value)} /><label className="checkbox-row"><input type="checkbox" checked={deleteBranch} onChange={(event) => setDeleteBranch(event.target.checked)} />{t("deleteBranch")}</label></div>
-    <div className="management-actions"><Action disabled={busy || disabled} label={t("listWorktrees")} onClick={() => run("worktree.list")} /><Action disabled={busy || disabled} label={t("createWorktree")} onClick={() => run("worktree.create", { taskName: field("taskName") }, true)} /><Action disabled={busy || disabled} label={t("checkDeps")} onClick={() => run("worktree.check_deps", { worktreeId: field("worktreeId") })} /><Action disabled={busy || disabled} label={t("mergeWorktree")} onClick={() => run("worktree.merge", { worktreeId: field("worktreeId") }, true)} /><Action disabled={busy || disabled} label={t("removeWorktree")} onClick={() => run("worktree.remove", { worktreeId: field("worktreeId"), deleteBranch }, true)} /></div>
+    <div className="management-actions">
+      <Action disabled={busy || disabled} label={t("listWorktrees")} onClick={() => run("worktree.list")} />
+      <Action disabled={busy || disabled} label={t("createWorktree")} onClick={() => run("worktree.create", { taskName: field("taskName") }, true)} />
+      <Action disabled={busy || disabled} label={t("checkDeps")} onClick={() => run("worktree.check_deps", { worktreeId: field("worktreeId") })} />
+      <Action disabled={busy || disabled} label={t("mergeWorktree")} onClick={() => run("worktree.merge", { worktreeId: field("worktreeId") }, true)} />
+      <Action disabled={busy || disabled} label={t("removeWorktree")} onClick={() => run("worktree.remove", { worktreeId: field("worktreeId"), deleteBranch }, true)} />
+    </div>
   </>;
 }
 
 function HookControls({ t, field, update, run, busy }: ControlProps) {
   return <>
     <label><span>{t("hookTarget")}</span><select value={field("target")} onChange={(event) => update("target", event.target.value)}><option value="all">{t("allTargets")}</option><option value="claude">Claude</option><option value="codex">Codex</option></select></label>
-    <div className="management-actions"><Action disabled={busy} label={t("hookStatus")} onClick={() => run("hook.status", { target: field("target") })} /><Action disabled={busy} label={t("install")} onClick={() => run("hook.install", { target: field("target") }, true)} /><Action disabled={busy} label={t("repair")} onClick={() => run("hook.repair", { target: field("target") }, true)} /><Action disabled={busy} label={t("testAction")} onClick={() => run("hook.test", { target: field("target") })} /><Action disabled={busy} label={t("uninstall")} onClick={() => run("hook.uninstall", { target: field("target") }, true)} /></div>
+    <div className="management-actions">
+      <Action disabled={busy} label={t("hookStatus")} onClick={() => run("hook.status", { target: field("target") })} />
+      <Action disabled={busy} label={t("install")} onClick={() => run("hook.install", { target: field("target") }, true)} />
+      <Action disabled={busy} label={t("repair")} onClick={() => run("hook.repair", { target: field("target") }, true)} />
+      <Action disabled={busy} label={t("testAction")} onClick={() => run("hook.test", { target: field("target") })} />
+      <Action disabled={busy} label={t("uninstall")} onClick={() => run("hook.uninstall", { target: field("target") }, true)} />
+    </div>
   </>;
 }

@@ -1,0 +1,572 @@
+.ui-history-shell {
+  background-color: color-mix(in srgb, var(--surface-container-low) 72%, var(--surface) 28%);
+}
+
+.ui-history-sidebar {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-high) 46%, transparent), transparent 18%),
+    var(--surface-container-lowest);
+  border-right: 1px solid color-mix(in srgb, var(--border) 16%, transparent);
+}
+
+.ui-history-detail {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-low) 62%, transparent), transparent 20%),
+    var(--surface);
+}
+
+.ui-history-transcript-chat-surface {
+  background-color: color-mix(in srgb, var(--surface-container-low) 54%, var(--surface) 46%);
+}
+
+.ui-history-conversation-message .ui-history-message-stack {
+  gap: 0.45rem;
+}
+
+.ui-history-message-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  background-color: transparent;
+}
+
+.ui-history-message-card[data-selection-mode="true"] {
+  cursor: pointer;
+  transition: border-color 130ms ease, background-color 130ms ease;
+}
+
+.ui-history-message-card[data-selection-mode="true"]:hover {
+  background-color: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+
+.ui-history-message-card[data-selected="true"] {
+  background-color: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.ui-history-message-card[data-selection-mode="true"]:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: -2px;
+}
+
+.ui-history-message-card[data-role="user"] {
+  justify-content: flex-end;
+}
+
+.ui-history-message-card[data-role="assistant"],
+.ui-history-message-card[data-role="other"] {
+  justify-content: flex-start;
+}
+
+.ui-history-message-stack {
+  display: flex;
+  min-width: 0;
+  max-width: min(72%, 780px);
+  flex-direction: column;
+}
+
+.ui-history-message-card[data-role="user"] .ui-history-message-stack {
+  align-items: flex-end;
+}
+
+.ui-history-message-card[data-role="assistant"] .ui-history-message-stack,
+.ui-history-message-card[data-role="other"] .ui-history-message-stack {
+  align-items: flex-start;
+}
+
+.ui-history-message-meta {
+  max-width: 100%;
+  overflow: hidden;
+  padding: 0 0.18rem 0.24rem;
+  color: var(--text-muted);
+  font-family: var(--font-ui-mono);
+  font-size: 0.68rem;
+  font-weight: 600;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-history-message-bubble {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  border: 1px solid var(--history-message-bubble-border, color-mix(in srgb, var(--border) 24%, transparent));
+  border-radius: 6px;
+  background-color: var(--history-message-bubble-bg, color-mix(in srgb, var(--surface-container-lowest) 95%, var(--surface) 5%));
+  box-shadow: 0 1px 1px color-mix(in srgb, var(--on-surface) 7%, transparent);
+  color: var(--on-surface);
+  overflow-wrap: anywhere;
+  padding: 0.62rem 0.78rem;
+}
+
+.ui-history-message-bubble::after {
+  position: absolute;
+  top: 0.68rem;
+  height: 0.56rem;
+  width: 0.56rem;
+  border: 1px solid var(--history-message-bubble-border, color-mix(in srgb, var(--border) 32%, transparent));
+  background-color: var(--history-message-bubble-bg, var(--surface-container-lowest));
+  content: "";
+  transform: rotate(45deg);
+}
+
+.ui-history-message-card[data-role="user"] .ui-history-message-bubble {
+  --history-message-bubble-bg: color-mix(in srgb, var(--success) 48%, var(--surface-container-lowest) 52%);
+  --history-message-bubble-border: color-mix(in srgb, var(--success) 56%, var(--border) 44%);
+  color: var(--on-surface);
+  border-top-right-radius: 4px;
+}
+
+.ui-history-message-card[data-role="user"] .ui-history-message-bubble::after {
+  right: -0.31rem;
+  border-bottom: 0;
+  border-left: 0;
+}
+
+.ui-history-message-card[data-role="assistant"] .ui-history-message-bubble {
+  --history-message-bubble-bg: color-mix(in srgb, var(--surface-container-lowest) 90%, var(--surface-container-low) 10%);
+  --history-message-bubble-border: color-mix(in srgb, var(--border) 24%, transparent);
+  border-top-left-radius: 4px;
+}
+
+.ui-history-message-card[data-role="assistant"] .ui-history-message-bubble::after,
+.ui-history-message-card[data-role="other"] .ui-history-message-bubble::after {
+  left: -0.31rem;
+  border-top: 0;
+  border-right: 0;
+}
+
+.ui-history-message-card[data-role="other"] .ui-history-message-bubble {
+  --history-message-bubble-bg: color-mix(in srgb, var(--warning) 9%, var(--surface-container-lowest) 91%);
+  --history-message-bubble-border: color-mix(in srgb, var(--warning) 26%, var(--border) 74%);
+  border-top-left-radius: 4px;
+}
+
+.ui-history-message-avatar {
+  display: inline-grid;
+  flex: none;
+  height: 2.1rem;
+  width: 2.1rem;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 28%, transparent);
+  border-radius: 7px;
+  background-color: var(--surface-container-lowest);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--on-surface) 10%, transparent);
+}
+
+.ui-history-message-avatar img {
+  display: block;
+  height: 100%;
+  width: 100%;
+  object-fit: cover;
+}
+
+.ui-history-message-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.16rem;
+  margin-top: 0.42rem;
+  border: 0;
+  border-radius: 4px;
+  background-color: transparent;
+  color: color-mix(in srgb, var(--text-muted) 88%, var(--on-surface) 12%);
+  cursor: pointer;
+  padding: 0.08rem 0.08rem;
+  font-size: 0.72rem;
+  font-weight: 520;
+  line-height: 1.35;
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.ui-history-message-expand:hover {
+  background-color: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  color: var(--text-secondary);
+}
+
+.ui-history-message-expand:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: 2px;
+}
+
+.ui-history-message-collapse-icon {
+  display: inline-flex;
+  height: 0.9rem;
+  width: 0.9rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: currentColor;
+  opacity: 0.72;
+}
+
+.ui-history-message-collapse {
+  overflow: hidden;
+  border-radius: 10px;
+  background-color: transparent;
+}
+
+.ui-history-message-collapse-preview {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.18rem;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.ui-history-message-collapse-preview span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-history-message-collapse-meta {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-ui-mono);
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.ui-history-message-collapse > .ui-history-transcript,
+.ui-history-message-collapse > .ui-markdown {
+  padding: 0.1rem 0 0;
+}
+
+/* 消息级编辑：气泡头部 hover 操作栏 */
+.ui-history-message-header {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.ui-history-message-card[data-role="user"] .ui-history-message-header {
+  flex-direction: row-reverse;
+}
+
+.ui-history-message-actions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.06rem;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 130ms ease;
+}
+
+.ui-history-message-card:hover .ui-history-message-actions,
+.ui-history-message-actions:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.ui-history-message-action {
+  display: inline-flex;
+  height: 1.3rem;
+  width: 1.3rem;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 130ms ease, background-color 130ms ease;
+}
+
+.ui-history-message-action:hover {
+  background-color: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  color: var(--text-secondary);
+}
+
+.ui-history-message-action[data-danger="true"]:hover {
+  background-color: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
+
+.ui-history-message-action:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: 1px;
+}
+
+/* 批量删除：消息选择框与顶部选择工具条 */
+.ui-history-message-select {
+  display: inline-flex;
+  height: 1.3rem;
+  width: 1.3rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background-color: transparent;
+  color: var(--text-muted);
+  transition: color 130ms ease, background-color 130ms ease;
+}
+
+.ui-history-message-select[data-selected="true"] {
+  color: var(--accent);
+}
+
+.ui-history-message-select-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.45rem;
+  border: 1px dashed color-mix(in srgb, var(--danger) 38%, var(--border) 62%);
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--danger) 4%, var(--surface-container-lowest) 96%);
+  color: var(--text-secondary);
+  padding: 0.28rem 0.55rem;
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+/* 消息编辑记录：连续时间线布局 + diff 视觉 */
+.ui-history-audit-entry {
+  padding: 0.55rem 0.1rem 0.65rem;
+}
+
+.ui-history-audit-entry + .ui-history-audit-entry {
+  border-top: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.ui-history-audit-head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.42rem;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.ui-history-audit-op {
+  flex: none;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.ui-history-audit-op[data-op="edit"] {
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.ui-history-audit-op[data-op="delete"] {
+  background-color: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.ui-history-audit-op[data-op="insert"] {
+  background-color: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+
+.ui-history-audit-op[data-op="restore"] {
+  background-color: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
+}
+
+.ui-history-audit-time {
+  margin-left: auto;
+  font-family: var(--font-ui-mono);
+  font-size: 0.68rem;
+}
+
+.ui-history-audit-diff {
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border) 45%, transparent);
+  border-radius: 6px;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.ui-history-audit-line {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.34rem 0.6rem 0.34rem 0.45rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background-color: var(--surface-container-lowest);
+  color: var(--on-surface);
+}
+
+.ui-history-audit-line + .ui-history-audit-line {
+  border-top: 1px solid color-mix(in srgb, var(--border) 35%, transparent);
+}
+
+.ui-history-audit-line[data-tone="del"] {
+  background-color: color-mix(in srgb, var(--danger) 7%, var(--surface-container-lowest) 93%);
+}
+
+.ui-history-audit-line[data-tone="ins"] {
+  background-color: color-mix(in srgb, var(--success) 7%, var(--surface-container-lowest) 93%);
+}
+
+.ui-history-audit-gutter {
+  flex: none;
+  width: 0.95rem;
+  text-align: center;
+  font-family: var(--font-ui-mono);
+  font-weight: 700;
+  user-select: none;
+}
+
+.ui-history-audit-line[data-tone="del"] .ui-history-audit-gutter {
+  color: var(--danger);
+}
+
+.ui-history-audit-line[data-tone="ins"] .ui-history-audit-gutter {
+  color: var(--success);
+}
+
+.ui-history-audit-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.ui-history-audit-text del {
+  border-radius: 2px;
+  background-color: color-mix(in srgb, var(--danger) 24%, transparent);
+  color: inherit;
+  padding: 0 0.08em;
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in srgb, var(--danger) 72%, transparent);
+}
+
+.ui-history-audit-text ins {
+  border-radius: 2px;
+  background-color: color-mix(in srgb, var(--success) 24%, transparent);
+  color: inherit;
+  padding: 0 0.08em;
+  text-decoration: none;
+}
+
+/* 气泡内行内编辑态：宽度全部相对容器，禁止视口单位（窄窗口会越过详情面板边界） */
+.ui-history-message-card[data-editing="true"] .ui-history-message-stack,
+.ui-history-message-card[data-inserting="true"] .ui-history-message-stack {
+  width: min(72%, 780px);
+}
+
+.ui-history-message-card[data-editing="true"] .ui-history-message-bubble {
+  width: 100%;
+}
+
+.ui-history-message-edit {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ui-history-message-edit textarea,
+.ui-history-message-insert textarea {
+  width: 100%;
+  min-height: 8rem;
+  max-height: min(60vh, 40rem);
+  resize: vertical;
+  border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 92%, transparent);
+  color: var(--on-surface);
+  padding: 0.45rem 0.55rem;
+  font-family: inherit;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.ui-history-message-edit textarea:focus-visible,
+.ui-history-message-insert textarea:focus-visible {
+  outline: 2px solid var(--interactive-focus-ring);
+  outline-offset: 1px;
+}
+
+.ui-history-message-edit-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.ui-history-message-edit-hint {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-ui-mono);
+  font-size: 0.66rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-history-message-edit-buttons {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+/* 在此后插入：气泡下方的行内小表单 */
+.ui-history-message-insert {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+  border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border) 55%);
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--accent) 4%, var(--surface-container-lowest) 96%);
+  padding: 0.55rem 0.65rem;
+}
+
+.ui-history-message-insert-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+.ui-history-message-insert-roles {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.ui-history-message-insert-role {
+  border: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  border-radius: 999px;
+  background-color: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0.1rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  transition: color 130ms ease, background-color 130ms ease, border-color 130ms ease;
+}
+
+.ui-history-message-insert-role[data-active="true"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+  background-color: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text-primary);
+}
+
+@media (max-width: 720px) {
+  .ui-history-message-stack {
+    max-width: calc(100% - 3rem);
+  }
+}

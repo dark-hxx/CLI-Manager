@@ -9,12 +9,22 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-history-resume-project-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
+const emitModule = (name, path) => {
+  const source = readFileSync(new URL(path, import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022}}).outputText
+  .replaceAll('"./historyResumeEnvironment"', '"./historyResumeEnvironment.mjs"')
+    .replaceAll('"../../../shared/lib/wslPaths"', '"./wslPaths.mjs"');
+  writeFileSync(join(tempDir, name + ".mjs"), output);
+};
+emitModule("wslPaths", "../src/shared/lib/wslPaths.ts");
+emitModule("historyResumeEnvironment", "../src/features/history/lib/historyResumeEnvironment.ts");
+
 const source = readFileSync(
-  new URL("../src/lib/historyResumeProject.ts", import.meta.url),
+  new URL("../src/features/history/lib/historyResumeProject.ts", import.meta.url),
   "utf8"
 );
 const historyWorkspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8"
 );
 writeFileSync(
@@ -36,8 +46,9 @@ const output = ts.transpileModule(source, {
     target: ts.ScriptTarget.ES2022,
   },
 }).outputText
-  .replace('from "./cliTools"', 'from "./cliTools.mjs"')
-  .replace('from "./providerSwitching"', 'from "./providerSwitching.mjs"');
+  .replaceAll('"./historyResumeEnvironment"', '"./historyResumeEnvironment.mjs"')
+  .replace('from "../../../shared/lib/cliTools"', 'from "./cliTools.mjs"')
+  .replace('from "../../providers/api/providerSwitching"', 'from "./providerSwitching.mjs"');
 const outputPath = join(tempDir, "historyResumeProject.mjs");
 writeFileSync(outputPath, output, "utf8");
 

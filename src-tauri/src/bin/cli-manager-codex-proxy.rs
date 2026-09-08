@@ -2,6 +2,7 @@
 
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+// 先识别 SSH ProxyCommand，再处理继承的 AskPass 环境，最后进入 Codex shim；各路径自行负责进程退出。
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     // ProxyCommand inherits AskPass variables, so route it before AskPass dispatch.

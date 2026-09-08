@@ -18,6 +18,7 @@ pub(super) const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(60);
 const NETWORK_TIMEOUT: Duration = Duration::from_secs(120);
 
+// 返回响应生成时的 Unix 毫秒时间；系统时钟早于纪元时使用零。
 pub fn as_of_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -154,6 +155,50 @@ pub struct PullRequest {
     pub strategy: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OperationRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub operation: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitRefCompareRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub base_ref: String,
+    #[serde(default)]
+    pub target_ref: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitAdvancedOperationRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub operation: String,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GitCommitPatchRequest {
+    pub root_path: String,
+    #[serde(default)]
+    pub repo_path: String,
+    pub commit_id: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitRepoInfo {
@@ -199,10 +244,12 @@ pub(super) struct GitOutput {
     pub(super) stderr: Vec<u8>,
 }
 
+// 检测参数中的 NUL、回车和换行，不承担完整路径或 Git 引用校验。
 fn invalid_text(value: &str) -> bool {
     value.contains(['\0', '\r', '\n'])
 }
 
+// 校验绝对根路径并规范化为现存目录；拒绝反斜杠与上级段，不验证 Git 仓库身份。
 fn resolve_root(value: &str) -> Result<PathBuf, String> {
     if value.is_empty()
         || !Path::new(value).is_absolute()
@@ -221,6 +268,7 @@ fn resolve_root(value: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
+// 检查相对路径的分隔符与路径段；是否允许空路径由调用方指定，不访问文件系统。
 fn validate_relative(value: &str, allow_empty: bool) -> Result<String, String> {
     if (!allow_empty && value.is_empty())
         || invalid_text(value)
@@ -236,6 +284,21 @@ fn validate_relative(value: &str, allow_empty: bool) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitTagInfo {
+    pub name: String,
+    pub target: String,
+    pub annotated: bool,
+    pub message: String,
+}
+
+// 按非空相对路径规则校验仓库内路径，供 Diff、历史和工作区工具复用。
+pub(super) fn validate_repo_relative_path(value: &str) -> Result<String, String> {
+    validate_relative(value, false)
+}
+
+// 规范化根目录及其相对仓库目录并检查包含关系；目录是否为 Git 仓库留给 Git 判断。
 pub(super) fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf, PathBuf), String> {
     let root = resolve_root(root_path)?;
     let relative = validate_relative(repo_path, true)?;
@@ -249,8 +312,9 @@ pub(super) fn resolve_repo(root_path: &str, repo_path: &str) -> Result<(PathBuf,
     Ok((root, repo))
 }
 
+// 检查非空相对文件路径，并要求规范化后的父目录位于仓库内；不解析目标文件本身。
 pub(super) fn validate_file_path(repo: &Path, value: &str) -> Result<String, String> {
-    let value = validate_relative(value, false)?;
+    let value = validate_repo_relative_path(value)?;
     let candidate = repo.join(&value);
     let parent = candidate
         .parent()
@@ -266,6 +330,7 @@ pub(super) fn validate_file_path(repo: &Path, value: &str) -> Result<String, Str
     Ok(value)
 }
 
+// 限制路径数量及累计字节数，逐项检查父目录范围并按首次出现顺序去重。
 fn validate_paths(repo: &Path, paths: &[String]) -> Result<Vec<String>, String> {
     if paths.is_empty() || paths.len() > MAX_PATHS {
         return Err("remote_git_paths_invalid".to_string());
@@ -284,6 +349,7 @@ fn validate_paths(repo: &Path, paths: &[String]) -> Result<Vec<String>, String> 
     Ok(result)
 }
 
+// 先排除危险文本与超长分支名，再用 git check-ref-format --branch 验证格式。
 fn validate_branch(repo: &Path, branch: &str) -> Result<(), String> {
     if branch.is_empty()
         || branch.starts_with('-')
@@ -303,6 +369,7 @@ fn validate_branch(repo: &Path, branch: &str) -> Result<(), String> {
     .map_err(|_| "invalid_branch".to_string())
 }
 
+// 构造指定仓库的 Git 参数，关闭 fsmonitor、未跟踪缓存、外部 Diff 与 Diff 分页。
 fn command_args(repo: &Path, args: &[&str]) -> Vec<String> {
     let mut result = vec![
         "-C".to_string(),
@@ -322,6 +389,7 @@ fn command_args(repo: &Path, args: &[&str]) -> Vec<String> {
     result
 }
 
+// 以无标准输入模式调用共享 Git 执行器，沿用指定的交互策略和等待超时。
 pub(super) fn run_git(
     repo: &Path,
     args: &[&str],
@@ -331,6 +399,8 @@ pub(super) fn run_git(
     run_git_with_input(repo, args, None, write, timeout)
 }
 
+// 启动 Git 并并行收集输出，按轮询超时终止进程；write 仅切换交互环境，不代表授权。
+// 输出读取不设容量上限，线程回收仍可能等待管道关闭；输入写入与读取错误未单独上报。
 fn run_git_with_input(
     repo: &Path,
     args: &[&str],
@@ -417,6 +487,7 @@ fn run_git_with_input(
     Ok(GitOutput { stdout, stderr })
 }
 
+// 按 Git 输出中的特征文本映射稳定错误码；未命中时统一返回 git_failed。
 fn map_git_error(stderr: &[u8], stdout: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr).to_string() + &String::from_utf8_lossy(stdout);
     let lower = text.to_lowercase();
@@ -463,12 +534,14 @@ fn map_git_error(stderr: &[u8], stdout: &[u8]) -> String {
     code.to_string()
 }
 
+// 以有损 UTF-8 合并并裁剪 stdout/stderr；此处不进行凭据或路径脱敏。
 fn output_text(output: GitOutput) -> String {
     let mut text = String::from_utf8_lossy(&output.stdout).to_string();
     text.push_str(&String::from_utf8_lossy(&output.stderr));
     text.trim().to_string()
 }
 
+// 解析 NUL 分隔的 porcelain v1 状态，合并冲突及暂存状态；重命名跳过源路径记录。
 fn parse_status(bytes: &[u8]) -> Result<Vec<GitChange>, String> {
     let records: Vec<&[u8]> = bytes
         .split(|byte| *byte == 0)
@@ -526,6 +599,7 @@ fn parse_status(bytes: &[u8]) -> Result<Vec<GitChange>, String> {
     Ok(result)
 }
 
+// 解析 NUL 分隔的三列增删统计并按路径索引；无法解析的计数归零。
 fn parse_numstat(bytes: &[u8]) -> HashMap<String, (i32, i32)> {
     let mut result = HashMap::new();
     for record in bytes
@@ -549,6 +623,7 @@ fn parse_numstat(bytes: &[u8]) -> HashMap<String, (i32, i32)> {
     result
 }
 
+// 将 numstat 数字转为整数，二进制标记或无效文本按零处理。
 fn parse_count(value: &str) -> Option<i32> {
     if value == "-" {
         Some(0)
@@ -557,10 +632,12 @@ fn parse_count(value: &str) -> Option<i32> {
     }
 }
 
+// 仅将以斜杠结尾且内部存在 .git 标记的条目识别为嵌套仓库。
 fn is_nested_repo_entry(repo: &Path, file_path: &str) -> bool {
     file_path.ends_with('/') && repo.join(file_path).join(".git").exists()
 }
 
+// 查询完整未跟踪文件状态并过滤嵌套仓库条目；较小结果尝试补充 HEAD Diff 统计，失败不阻断。
 fn changes(request: RepoRequest) -> Result<Vec<GitChange>, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     // Match the local panel's recurse_untracked_dirs(true): normal mode collapses `test/c.txt`
@@ -592,6 +669,7 @@ fn changes(request: RepoRequest) -> Result<Vec<GitChange>, String> {
     Ok(changes)
 }
 
+// 汇总当前分支、待完成操作及上游差距；部分探测失败按 detached、无上游或零差距处理。
 fn branch_status(request: RepoRequest) -> Result<GitBranchStatus, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let branch_output = run_git(
@@ -609,6 +687,10 @@ fn branch_status(request: RepoRequest) -> Result<GitBranchStatus, String> {
             Some("merge".to_string())
         } else if dir.join("rebase-merge").exists() || dir.join("rebase-apply").exists() {
             Some("rebase".to_string())
+        } else if dir.join("CHERRY_PICK_HEAD").exists() {
+            Some("cherry-pick".to_string())
+        } else if dir.join("REVERT_HEAD").exists() {
+            Some("revert".to_string())
         } else {
             None
         }
@@ -670,6 +752,7 @@ fn branch_status(request: RepoRequest) -> Result<GitBranchStatus, String> {
     })
 }
 
+// 查询 Git 元数据目录并转换为仓库相对或绝对路径；规范化失败时保留解析后的路径。
 fn git_dir(repo: &Path) -> Result<PathBuf, String> {
     let output = run_git(repo, &["rev-parse", "--git-dir"], false, READ_TIMEOUT)?;
     let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -682,6 +765,7 @@ fn git_dir(repo: &Path) -> Result<PathBuf, String> {
     Ok(path.canonicalize().unwrap_or(path))
 }
 
+// 读取本地及远程分支，排除远程 HEAD 并排序；输出行数先受仓库数量常量限制。
 fn branches(request: RepoRequest) -> Result<Vec<GitBranchInfo>, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let current = branch_status(request.clone())?.branch;
@@ -736,6 +820,7 @@ fn branches(request: RepoRequest) -> Result<Vec<GitBranchInfo>, String> {
     Ok(result)
 }
 
+// 在根目录内有限深度发现仓库并排序截断，逐个补充分支信息；分支探测失败保留空值。
 fn list_repositories(request: ListRepositoriesRequest) -> Result<Vec<GitRepoInfo>, String> {
     let root = resolve_root(&request.root_path)?;
     let mut paths = Vec::new();
@@ -760,6 +845,7 @@ fn list_repositories(request: ListRepositoriesRequest) -> Result<Vec<GitRepoInfo
         .collect())
 }
 
+// 按深度和数量上限递归查找 .git 标记，跳过符号链接及常见生成目录；嵌套仓库不再深入。
 fn walk_repositories(
     root: &Path,
     directory: &Path,
@@ -796,10 +882,12 @@ fn walk_repositories(
     Ok(())
 }
 
+// 把 Git 命令输出包装为带生成时间的写操作响应。
 fn mutation(output: GitOutput) -> Value {
     json!({ "output": output_text(output), "asOf": as_of_ms() })
 }
 
+// 校验并去重指定路径后执行 add 或 reset HEAD，仅改变这些路径的暂存状态。
 fn stage(request: PathsRequest, unstage: bool) -> Result<(), String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let paths = validate_paths(&repo, &request.paths)?;
@@ -813,6 +901,7 @@ fn stage(request: PathsRequest, unstage: bool) -> Result<(), String> {
     run_git(&repo, &args, true, WRITE_TIMEOUT).map(|_| ())
 }
 
+// 在选定目录范围执行 add -A 或 reset HEAD；不逐项枚举和校验文件路径。
 fn stage_all(request: RepoRequest, unstage: bool) -> Result<(), String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     if unstage {
@@ -822,6 +911,7 @@ fn stage_all(request: RepoRequest, unstage: bool) -> Result<(), String> {
     }
 }
 
+// 按传入状态撤销单文件改动；未跟踪文件拒绝，新添加文件仅取消暂存，其余尝试 checkout 恢复。
 fn discard(request: FileRequest) -> Result<(), String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let path = validate_file_path(&repo, &request.relative_path)?;
@@ -836,6 +926,7 @@ fn discard(request: FileRequest) -> Result<(), String> {
     }
 }
 
+// 重新查询未跟踪路径后逐项删除非目录条目；中途失败不会恢复此前已经删除的文件。
 fn delete_untracked(request: DeleteRequest) -> Result<(), String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let paths = validate_paths(&repo, &request.paths)?;
@@ -862,6 +953,7 @@ fn delete_untracked(request: DeleteRequest) -> Result<(), String> {
     Ok(())
 }
 
+// 限制补丁字节数并检查 ---/+++ 文件头与请求路径一致；不是完整补丁语法验证。
 fn validate_patch(diff: &str, path: &str) -> Result<(), String> {
     if diff.is_empty() || diff.len() > MAX_DIFF_BYTES {
         return Err("remote_git_patch_invalid".to_string());
@@ -893,6 +985,7 @@ fn validate_patch(diff: &str, path: &str) -> Result<(), String> {
     }
 }
 
+// 解析统一 Diff 的旧、新范围与尾部标题；格式或数字无效时返回解析错误。
 fn parse_hunk_header(header: &str) -> Result<(u32, u32, u32, u32, String), String> {
     let body = header.strip_prefix("@@ ").ok_or("bad_hunk_header")?;
     let close = body.find(" @@").ok_or("bad_hunk_header")?;
@@ -912,6 +1005,7 @@ fn parse_hunk_header(header: &str) -> Result<(u32, u32, u32, u32, String), Strin
     Ok((old.0, old.1, new.0, new.1, body[close + 3..].to_string()))
 }
 
+// 解析 start,count 范围，省略 count 时按一行处理。
 fn parse_range(value: &str) -> Result<(u32, u32), String> {
     if let Some((start, count)) = value.split_once(',') {
         Ok((
@@ -923,6 +1017,7 @@ fn parse_range(value: &str) -> Result<(u32, u32), String> {
     }
 }
 
+// 交换 hunk 的新旧范围并翻转增删行前缀，保留上下文与其他标记。
 fn reverse_hunk(hunk: &[&str]) -> Result<Vec<String>, String> {
     let (old_start, old_count, new_start, new_count, heading) =
         parse_hunk_header(hunk.first().ok_or("empty_hunk")?.trim_end_matches('\r'))?;
@@ -944,6 +1039,7 @@ fn reverse_hunk(hunk: &[&str]) -> Result<Vec<String>, String> {
     Ok(result)
 }
 
+// 保留首个 hunk 之前的文件头，只选取指定序号的 hunk 生成反向补丁。
 fn build_reverse_hunk_patch(diff: &str, index: usize) -> Result<String, String> {
     let lines: Vec<&str> = diff.split('\n').collect();
     let mut header = Vec::new();
@@ -974,6 +1070,7 @@ fn build_reverse_hunk_patch(diff: &str, index: usize) -> Result<String, String> 
     Ok(format!("{}\n", output.join("\n")))
 }
 
+// 按旧侧/新侧行号反转选中的增删行并重算范围，未选新增行作为上下文；无命中返回空值。
 fn reverse_hunk_lines(
     hunk: &[&str],
     selected: &HashSet<(String, u32)>,
@@ -1033,6 +1130,7 @@ fn reverse_hunk_lines(
     Ok(Some(output.join("\n")))
 }
 
+// 按侧别和行号去重选中项，组合各 hunk 的局部反向补丁；没有实际命中时返回错误。
 fn build_reverse_lines_patch(diff: &str, selected: &[SelectedLine]) -> Result<String, String> {
     let selected: HashSet<_> = selected
         .iter()
@@ -1075,6 +1173,7 @@ fn build_reverse_lines_patch(diff: &str, selected: &[SelectedLine]) -> Result<St
     Ok(format!("{}\n", output.join("\n")))
 }
 
+// 先执行 git apply --check，再应用到工作区；两次命令之间不加锁，也不更新暂存区。
 fn apply_patch(repo: &Path, patch: &str) -> Result<(), String> {
     run_git_with_input(
         repo,
@@ -1093,6 +1192,7 @@ fn apply_patch(repo: &Path, patch: &str) -> Result<(), String> {
     .map(|_| ())
 }
 
+// 校验仓库、文件路径及补丁头后，将指定 hunk 的反向补丁应用到工作区。
 fn revert_hunk(request: HunkRequest) -> Result<(), String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let path = validate_file_path(&repo, &request.relative_path)?;
@@ -1103,6 +1203,7 @@ fn revert_hunk(request: HunkRequest) -> Result<(), String> {
     )
 }
 
+// 拒绝空选择并校验路径及补丁头，将实际命中的选中行反向补丁应用到工作区。
 fn revert_lines(request: LinesRequest) -> Result<(), String> {
     if request.selected_lines.is_empty() {
         return Err("no_lines_selected".to_string());
@@ -1116,6 +1217,7 @@ fn revert_lines(request: LinesRequest) -> Result<(), String> {
     )
 }
 
+// 校验提交消息和可选路径后执行提交，再查询短提交号；后续查询失败不会撤销已完成提交。
 fn commit(request: CommitRequest, paths: Option<Vec<String>>) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let message = request.message.trim();
@@ -1143,11 +1245,63 @@ fn commit(request: CommitRequest, paths: Option<Vec<String>>) -> Result<Value, S
     Ok(json!({ "output": output_text(output), "shortId": short_id, "asOf": as_of_ms() }))
 }
 
+// 在校验后的仓库执行给定参数，使用非交互写模式及网络操作超时；自身不限制命令种类。
 fn network(request: RepoRequest, args: &[&str]) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     Ok(mutation(run_git(&repo, args, true, NETWORK_TIMEOUT)?))
 }
 
+// 排除空、超长、选项前缀和含空白/控制字符的引用文本；不验证引用存在或完整 Git 语法。
+fn validate_ref(value: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 256
+        || value.starts_with('-')
+        || invalid_text(value)
+        || value.chars().any(char::is_whitespace)
+    {
+        return Err("invalid_git_ref".to_string());
+    }
+    Ok(())
+}
+
+// 在基本引用校验后解析为 commit 对象；解析失败统一映射为提交不存在。
+fn validate_commit(repo: &Path, value: &str) -> Result<(), String> {
+    validate_ref(value)?;
+    let revision = format!("{value}^{{commit}}");
+    run_git(
+        repo,
+        &["rev-parse", "--verify", &revision],
+        false,
+        READ_TIMEOUT,
+    )
+    .map(|_| ())
+    .map_err(|_| "git_history_commit_not_found".to_string())
+}
+
+// 将受支持操作的 continue/abort 映射为固定参数，继续操作时禁用交互编辑器。
+fn pending_operation_args(operation: &str, action: &str) -> Result<Vec<&'static str>, String> {
+    let args = match (operation, action) {
+        ("merge", "continue") => vec!["-c", "core.editor=true", "merge", "--continue"],
+        ("rebase", "continue") => vec!["-c", "core.editor=true", "rebase", "--continue"],
+        ("cherry-pick", "continue") => vec!["-c", "core.editor=true", "cherry-pick", "--continue"],
+        ("revert", "continue") => vec!["-c", "core.editor=true", "revert", "--continue"],
+        ("merge", "abort") => vec!["merge", "--abort"],
+        ("rebase", "abort") => vec!["rebase", "--abort"],
+        ("cherry-pick", "abort") => vec!["cherry-pick", "--abort"],
+        ("revert", "abort") => vec!["revert", "--abort"],
+        _ => return Err("git_operation_invalid".to_string()),
+    };
+    Ok(args)
+}
+
+// 校验仓库后执行受支持的继续或中止操作，并返回输出及时间。
+fn operation(request: OperationRequest, action: &str) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let args = pending_operation_args(&request.operation, action)?;
+    Ok(mutation(run_git(&repo, &args, true, WRITE_TIMEOUT)?))
+}
+
+// 执行普通或远程跟踪检出；智能模式先 stash，再检出并 apply，失败仅尝试恢复且不删除 stash。
 fn checkout(request: CheckoutRequest, smart: bool) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     validate_branch(&repo, &request.branch)?;
@@ -1197,6 +1351,7 @@ fn checkout(request: CheckoutRequest, smart: bool) -> Result<Value, String> {
     )
 }
 
+// 按 merge、rebase 或 ff-only 白名单构造 pull 参数，在网络超时内执行。
 fn pull(request: PullRequest) -> Result<Value, String> {
     let args: Vec<&str> = match request.strategy.as_str() {
         "merge" => vec!["pull", "--no-rebase", "--no-edit", "--autostash"],
@@ -1211,6 +1366,7 @@ fn pull(request: PullRequest) -> Result<Value, String> {
     }
 }
 
+// 依据 Git 元数据中的 rebase 标记选择 rebase --abort，否则尝试 merge --abort。
 fn pull_abort(request: RepoRequest) -> Result<Value, String> {
     let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
     let directory = git_dir(&repo)?;
@@ -1223,7 +1379,200 @@ fn pull_abort(request: RepoRequest) -> Result<Value, String> {
     Ok(mutation(run_git(&repo, args, true, WRITE_TIMEOUT)?))
 }
 
+// 尝试按创建时间读取引用并解析标签字段；仅收集符合四列格式的输出，附加响应时间。
+fn list_tags(request: RepoRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let separator = '\x1f';
+    let format = format!(
+        "--format=%(refname:short){separator}%(objectname){separator}%(objecttype){separator}%(subject)"
+    );
+    let output = run_git(
+        &repo,
+        &["for-each-ref", "--sort=-creatordate", &format, "refs/tags"],
+        false,
+        READ_TIMEOUT,
+    )?;
+    let tags = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let fields = line.splitn(4, separator).collect::<Vec<_>>();
+            (fields.len() == 4 && !fields[0].is_empty()).then(|| GitTagInfo {
+                name: fields[0].to_string(),
+                target: fields[1].to_string(),
+                annotated: fields[2] == "tag",
+                message: fields[3].to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(json!({ "tags": tags, "asOf": as_of_ms() }))
+}
+
+// 生成指定引用或三点范围的只读 Diff，读取完成后检查大小；响应不允许按 hunk 回滚。
+fn compare_refs(request: GitRefCompareRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    validate_ref(&request.base_ref)?;
+    if let Some(target) = request.target_ref.as_deref() {
+        validate_ref(target)?;
+    }
+    let range = request
+        .target_ref
+        .as_deref()
+        .map(|target| format!("{}...{target}", request.base_ref));
+    let reference = range.as_deref().unwrap_or(&request.base_ref);
+    let output = run_git(
+        &repo,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-color",
+            "--unified=3",
+            reference,
+        ],
+        false,
+        READ_TIMEOUT,
+    )?;
+    if output.stdout.len() > MAX_DIFF_BYTES {
+        return Err("git_diff_too_large".to_string());
+    }
+    let content = String::from_utf8_lossy(&output.stdout).into_owned();
+    let line_count = content.lines().count();
+    Ok(json!({
+        "diff": {
+            "content": content,
+            "canRevertHunks": false,
+            "byteLength": output.stdout.len(),
+            "lineCount": line_count
+        },
+        "asOf": as_of_ms()
+    }))
+}
+
+// 确认目标可解析为提交后导出含二进制内容的单提交邮件补丁，拒绝空结果或超过 4 MiB 的结果。
+fn commit_patch(request: GitCommitPatchRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    validate_commit(&repo, &request.commit_id)?;
+    let output = run_git(
+        &repo,
+        &[
+            "format-patch",
+            "-1",
+            "--stdout",
+            "--binary",
+            &request.commit_id,
+        ],
+        false,
+        READ_TIMEOUT,
+    )?;
+    if output.stdout.is_empty() || output.stdout.len() > 4 * 1024 * 1024 {
+        return Err("git_patch_content_invalid".to_string());
+    }
+    Ok(json!({
+        "content": String::from_utf8_lossy(&output.stdout).into_owned(),
+        "asOf": as_of_ms()
+    }))
+}
+
+// 按操作白名单校验参数并执行分支、标签或历史修改；force/hard 等模式会实际改变仓库，不提供事务回滚。
+fn advanced_operation(request: GitAdvancedOperationRequest) -> Result<Value, String> {
+    let (_, repo) = resolve_repo(&request.root_path, &request.repo_path)?;
+    let branch = request.branch.as_deref();
+    let target = request.target.as_deref();
+    let require_branch = || branch.ok_or_else(|| "branch_required".to_string());
+    let require_target = || target.ok_or_else(|| "target_required".to_string());
+    let output = match request.operation.as_str() {
+        "create-branch" => {
+            let name = require_branch()?;
+            validate_branch(&repo, name)?;
+            if let Some(base) = target {
+                validate_ref(base)?;
+                run_git(&repo, &["checkout", "-b", name, base], true, WRITE_TIMEOUT)?
+            } else {
+                run_git(&repo, &["checkout", "-b", name], true, WRITE_TIMEOUT)?
+            }
+        }
+        "rename-branch" => {
+            let old = require_branch()?;
+            let new = require_target()?;
+            validate_branch(&repo, old)?;
+            validate_branch(&repo, new)?;
+            run_git(&repo, &["branch", "-m", old, new], true, WRITE_TIMEOUT)?
+        }
+        "delete-branch" => {
+            let name = require_branch()?;
+            validate_branch(&repo, name)?;
+            let flag = if request.mode.as_deref() == Some("force") {
+                "-D"
+            } else {
+                "-d"
+            };
+            run_git(&repo, &["branch", flag, name], true, WRITE_TIMEOUT)?
+        }
+        "set-upstream" => {
+            let name = require_branch()?;
+            let upstream = require_target()?;
+            validate_branch(&repo, name)?;
+            validate_ref(upstream)?;
+            run_git(
+                &repo,
+                &["branch", "--set-upstream-to", upstream, name],
+                true,
+                WRITE_TIMEOUT,
+            )?
+        }
+        "merge" => {
+            let name = require_branch()?;
+            validate_ref(name)?;
+            run_git(&repo, &["merge", "--no-edit", name], true, WRITE_TIMEOUT)?
+        }
+        "rebase" => {
+            let name = require_branch()?;
+            validate_ref(name)?;
+            run_git(&repo, &["rebase", name], true, WRITE_TIMEOUT)?
+        }
+        "cherry-pick" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["cherry-pick", commit], true, WRITE_TIMEOUT)?
+        }
+        "revert" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["revert", "--no-edit", commit], true, WRITE_TIMEOUT)?
+        }
+        "reset" => {
+            let commit = require_target()?;
+            validate_commit(&repo, commit)?;
+            let mode = match request.mode.as_deref() {
+                Some("soft") => "--soft",
+                Some("mixed") | None => "--mixed",
+                Some("hard") => "--hard",
+                _ => return Err("invalid_reset_mode".to_string()),
+            };
+            run_git(&repo, &["reset", mode, commit], true, WRITE_TIMEOUT)?
+        }
+        "create-tag" => {
+            let tag = require_branch()?;
+            let commit = require_target()?;
+            validate_ref(tag)?;
+            validate_commit(&repo, commit)?;
+            run_git(&repo, &["tag", tag, commit], true, WRITE_TIMEOUT)?
+        }
+        "delete-tag" => {
+            let tag = require_branch()?;
+            validate_ref(tag)?;
+            run_git(&repo, &["tag", "-d", tag], true, WRITE_TIMEOUT)?
+        }
+        _ => return Err("git_operation_invalid".to_string()),
+    };
+    Ok(mutation(output))
+}
+
+// 先委派工作区工具，再严格解码各 Git RPC 并路由到查询或写操作；未知类型返回稳定错误码。
 pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
+    if crate::git_tools::handles(kind) {
+        return crate::git_tools::dispatch(kind, payload);
+    }
     match kind {
         "gitListRepositories" => Ok(
             json!({ "repositories": list_repositories(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
@@ -1237,11 +1586,32 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
         "gitDiffWithOptions" => Ok(
             json!({ "diff": crate::git_diff::diff_with_options(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
+        "gitListCommits" | "gitListCommitsFiltered" => Ok(
+            json!({ "page": crate::git_history::list_commits(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitCommitDetail" => Ok(
+            json!({ "detail": crate::git_history::commit_detail(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitCommitFileDiff" => Ok(
+            json!({ "diff": crate::git_history::commit_file_diff(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
         "gitBranchStatus" => Ok(
             json!({ "status": branch_status(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
         ),
         "gitBranches" => Ok(
             json!({ "branches": branches(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)?, "asOf": as_of_ms() }),
+        ),
+        "gitTags" => {
+            list_tags(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitCompareRefs" => {
+            compare_refs(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitCommitPatch" => {
+            commit_patch(serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?)
+        }
+        "gitExecuteOperation" => advanced_operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
         ),
         "gitStage" => {
             stage(
@@ -1358,6 +1728,14 @@ pub fn dispatch(kind: &str, payload: Value) -> Result<Value, String> {
             serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
             &["-c", "core.editor=true", "rebase", "--continue"],
         ),
+        "gitOperationContinue" => operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
+            "continue",
+        ),
+        "gitOperationAbort" => operation(
+            serde_json::from_value(payload).map_err(|_| "remote_git_request_invalid")?,
+            "abort",
+        ),
         _ => Err("remote_git_kind_invalid".to_string()),
     }
 }
@@ -1372,6 +1750,7 @@ mod tests {
     };
     use serde_json::json;
     #[test]
+    // 验证非仓库错误与远端不可达错误分别映射，避免文本匹配顺序混淆。
     fn non_git_repository_stderr_maps_to_stable_code() {
         assert_eq!(
             map_git_error(
@@ -1390,6 +1769,7 @@ mod tests {
         );
     }
     #[test]
+    // 验证相对路径正常值、空值策略及穿越、反斜杠和 NUL 的拒绝规则。
     fn paths_reject_traversal_and_windows_separators() {
         assert!(validate_relative("src/lib.rs", false).is_ok());
         assert!(validate_relative("", true).is_ok());
@@ -1399,6 +1779,7 @@ mod tests {
         assert!(validate_relative("bad\0path", false).is_err());
     }
     #[test]
+    // 验证 porcelain 状态对暂存、未跟踪及冲突条目的映射。
     fn porcelain_status_maps_untracked_staged_and_conflict() {
         let changes =
             parse_status(b"M  staged.txt\0 M work.txt\0?? new.txt\0UU conflict.txt\0").unwrap();
@@ -1412,6 +1793,7 @@ mod tests {
     }
 
     #[test]
+    // 在隔离临时目录验证普通目录与 .git 文件/目录标记的嵌套仓库识别。
     fn nested_repo_entries_are_distinguished_from_regular_directories() {
         let root = tempfile::tempdir().unwrap();
         let regular = root.path().join("test");
@@ -1431,6 +1813,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // 在 Unix 隔离临时仓库验证未跟踪目录展开到文件，并过滤嵌套仓库条目。
     fn changes_expands_untracked_directories_and_skips_nested_repositories() {
         let root = tempfile::tempdir().unwrap();
         let regular = root.path().join("test");
@@ -1464,6 +1847,7 @@ mod tests {
     }
 
     #[test]
+    // 验证补丁文件头必须与请求文件路径一致。
     fn patches_are_confined_to_the_requested_file() {
         let patch = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-a\n+b\n";
         assert!(validate_patch(patch, "src/lib.rs").is_ok());
@@ -1471,6 +1855,7 @@ mod tests {
     }
 
     #[test]
+    // 验证若干 Git RPC 拒绝额外字段，并在执行仓库命令前返回请求格式错误。
     fn each_rpc_rejects_unknown_payload_fields_before_execution() {
         assert_eq!(
             dispatch(
@@ -1488,5 +1873,24 @@ mod tests {
             .unwrap_err(),
             "remote_git_request_invalid"
         );
+        for (kind, payload) in [
+            (
+                "gitListCommits",
+                json!({ "rootPath": "/tmp", "repoPath": "", "cursor": null, "search": null, "extra": true }),
+            ),
+            (
+                "gitCommitDetail",
+                json!({ "rootPath": "/tmp", "repoPath": "", "commitId": "0123456789012345678901234567890123456789", "extra": true }),
+            ),
+            (
+                "gitCommitFileDiff",
+                json!({ "rootPath": "/tmp", "repoPath": "", "commitId": "0123456789012345678901234567890123456789", "relativePath": "file.txt", "oldRelativePath": null, "extra": true }),
+            ),
+        ] {
+            assert_eq!(
+                dispatch(kind, payload).unwrap_err(),
+                "remote_git_request_invalid"
+            );
+        }
     }
 }

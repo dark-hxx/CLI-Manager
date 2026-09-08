@@ -1,36 +1,37 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
-const tabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const tabsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabsView.tsx", import.meta.url), "utf8");
+const toolbarSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalToolbarRenderer.tsx", import.meta.url), "utf8");
 const frameSource = readFileSync(
-  new URL("../src/components/terminal/ResizableTerminalPanelFrame.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/ResizableTerminalPanelFrame.tsx", import.meta.url),
   "utf8",
 );
 const storageSource = readFileSync(
-  new URL("../src/lib/terminalPanelStorage.ts", import.meta.url),
+  new URL("../src/features/terminal/lib/terminalPanelStorage.ts", import.meta.url),
   "utf8",
 );
 const workspaceFrameSource = readFileSync(
-  new URL("../src/components/terminal/TerminalWorkspaceFrame.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/TerminalWorkspaceFrame.tsx", import.meta.url),
   "utf8",
 );
 const sidePanelSource = readFileSync(
-  new URL("../src/components/terminal/TerminalSidePanel.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/TerminalSidePanel.tsx", import.meta.url),
   "utf8",
 );
-const storeSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
-const syncSource = readFileSync(new URL("../src/lib/syncSettings.ts", import.meta.url), "utf8");
+const storeSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
+const syncSource = readFileSync(new URL("../src/features/sync/lib/syncSettings.ts", import.meta.url), "utf8");
 const controlsSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceLayoutControls.tsx", import.meta.url),
   "utf8",
 );
 const menuSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  new URL("../src/features/workspace/components/WorkspaceLayoutMenu.tsx", import.meta.url),
   "utf8",
 );
-const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
-const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/shared/lib/workspaceLayout.ts", import.meta.url), "utf8");
+const i18nSource = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
 const componentStylesSource = readFileSync(new URL("../src/styles/components.css", import.meta.url), "utf8");
 
@@ -54,9 +55,9 @@ test("docking keeps panels next to the terminal and moves the action rail to the
   assert.match(workspaceFrameSource, /dockSide === "right" && <Fragment key="workspace-actions">\{actions\}<\/Fragment>/);
   assert.match(workspaceFrameSource, /dockSide === "left" && panelSlot/);
   assert.match(workspaceFrameSource, /dockSide === "right" && panelSlot/);
-  assert.match(tabsSource, /data-dock-side=\{terminalSidePanelSide\}/);
-  assert.match(tabsSource, /popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
-  assert.match(tabsSource, /BackgroundTasksPanel[\s\S]*?popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
+  assert.match(toolbarSource, /data-dock-side=\{terminalSidePanelSide\}/);
+  assert.match(toolbarSource, /popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
+  assert.match(toolbarSource, /BackgroundTasksPanel[\s\S]*?popoverSide=\{terminalSidePanelSide === "left" \? "right" : "left"\}/);
 });
 
 test("merged and independent panels share the direction-aware resizable frame", () => {

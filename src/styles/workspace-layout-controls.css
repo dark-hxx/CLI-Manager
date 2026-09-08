@@ -69,10 +69,18 @@
   transition: background-color var(--animate-duration-fast), color var(--animate-duration-fast);
 }
 
-.workspace-layout-menu-item:hover:not(:disabled),
-.workspace-layout-menu-item[data-selected="true"] {
+.workspace-layout-menu-item:hover:not(:disabled) {
   color: var(--on-surface);
   background-color: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.workspace-layout-menu-item[data-selected="true"] {
+  color: var(--primary);
+  background-color: transparent;
+}
+
+.workspace-layout-menu-item[data-selected="true"] .workspace-layout-menu-item-icon {
+  color: var(--primary);
 }
 
 .workspace-layout-menu-item:disabled {
@@ -99,10 +107,4 @@
   height: 1px;
   margin: 5px 4px;
   background-color: color-mix(in srgb, var(--border) 54%, transparent);
-}
-
-@media (max-width: 760px) {
-  .workspace-layout-controls button[data-workspace-layout-quick="true"] {
-    display: none;
-  }
 }

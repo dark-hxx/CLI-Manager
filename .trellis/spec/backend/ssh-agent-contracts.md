@@ -4,7 +4,7 @@
 
 Apply this contract when changing `cli-manager-ssh-agent`, shared SSH transport generation, one-shot Agent probes, Agent installation metadata, bridge framing, or the SSH Host CLI Integration status UI.
 
-The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex/Kimi/Grok Hook configuration, the one-shot Hook runtime, Claude/Codex-only remote history/resume RPCs, and daemon-owned protocol `1.14` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`, protocol 1.12 adds Host-scoped attachment roots, protocol 1.13 adds direct Host SFTP uploads, and protocol 1.14 adds Host SFTP download/delete. Realtime/historical stats remain separate stages.
+The delivered scope includes explicit one-shot probe/install lifecycle, remote Claude/Codex/Kimi/Grok Hook configuration, the one-shot Hook runtime, Claude/Codex-only remote history/resume RPCs, and daemon-owned protocol `1.15` bridges per active SSH Host. Protocol 1.5 introduced read-only file RPCs; protocol 1.7 Git RPCs expose the full Git panel through a dedicated serialized Git lane, protocol 1.8 adds negotiated Diff generation options, protocol 1.9 adds bounded terminal image attachments outside project roots, protocol 1.10 generalizes attachment upload to arbitrary regular files, protocol 1.11 adds session-bound Agent MCP/Skill diagnostics through `agentCapabilitiesV1`, protocol 1.12 adds Host-scoped attachment roots, protocol 1.13 adds direct Host SFTP uploads, protocol 1.14 adds Host SFTP download/delete, and protocol 1.15 adds Git history plus negotiated Git workspace tools. Realtime/historical stats remain separate stages.
 
 Grok compatibility isolation is a stateful `config.toml` mutation: installing and uninstalling must
 distinguish Agent-owned `compat.<vendor>.hooks` values from values already chosen or subsequently
@@ -39,6 +39,8 @@ edited by the user.
    session/upload isolation.
    Agent `0.1.13` reports protocol `1.14` and adds `fileGet` for bounded arbitrary-file downloads
    and `fileDelete` for regular files or empty directories below the selected remote root.
+   Agent `0.1.14` reports protocol `1.15`, preserves all protocol `1.14` SFTP capabilities, and
+   adds `gitHistory` plus `gitWorkspaceTools` for commit browsing and explicitly gated Git actions.
 - The independent Agent release tag is exactly `ssh-agent-v<agent-version>`. Its signed manifest
   must carry that Agent version and point only to assets on that same tag.
 - Independent Agent releases are GitHub prereleases with `make_latest: false`. The desktop

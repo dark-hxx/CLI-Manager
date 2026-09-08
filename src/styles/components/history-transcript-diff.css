@@ -1,0 +1,276 @@
+.synced-history-transcript-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  background-color: var(--terminal-theme-background, var(--surface));
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font-family: var(--font-ui-mono);
+}
+
+.synced-history-transcript-top {
+  display: flex;
+  min-height: 2.4rem;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  padding: 0.45rem 1rem 0.2rem;
+}
+
+.synced-history-transcript-top h3 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font-size: 0.92rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synced-history-transcript-top p {
+  overflow: hidden;
+  margin: 0.18rem 0 0;
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 58%, var(--terminal-theme-muted, var(--text-muted)) 42%);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synced-history-transcript-scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 0.35rem 1rem 1rem;
+  cursor: text;
+}
+
+.synced-history-transcript-loading {
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 58%, var(--terminal-theme-muted, var(--text-muted)) 42%);
+  font-size: 0.78rem;
+}
+
+.synced-history-transcript-session {
+  margin: 0.5rem 0 0.65rem;
+  padding: 0;
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 72%, var(--terminal-theme-muted, var(--text-muted)) 28%);
+}
+
+.synced-history-transcript-session-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.synced-history-transcript-session-title span {
+  overflow: hidden;
+  color: var(--terminal-theme-accent, var(--accent));
+  font-size: 0.86rem;
+  font-weight: 760;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synced-history-transcript-session-title small {
+  flex: none;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 62%, var(--terminal-theme-muted, var(--text-muted)) 38%);
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+
+.synced-history-transcript-session-meta {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.35rem;
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 52%, var(--terminal-theme-muted, var(--text-muted)) 48%);
+  font-size: 0.7rem;
+}
+
+.synced-history-transcript-session-meta span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synced-history-transcript-error {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  color: var(--danger);
+  font-size: 0.72rem;
+}
+
+.synced-history-terminal-message {
+  display: grid;
+  grid-template-columns: 1.1rem minmax(0, 1fr) auto;
+  gap: 0.55rem;
+  align-items: start;
+  margin: 0 0 0.85rem;
+  padding: 0;
+}
+
+.synced-history-terminal-entry-prompt {
+  color: var(--term-panel-green, var(--success));
+  font-size: 0.92rem;
+  font-weight: 800;
+  line-height: 1.45;
+  text-align: right;
+}
+
+.synced-history-terminal-entry-meta {
+  max-width: 16rem;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 48%, var(--terminal-theme-muted, var(--text-muted)) 52%);
+  font-size: 0.68rem;
+  line-height: 1.45;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synced-history-terminal-text {
+  margin: 0;
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.52;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.synced-history-terminal-live-output {
+  margin: 0.25rem 0 0;
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.synced-history-terminal-composer {
+  display: flex;
+  min-height: 1.8rem;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.3rem;
+  padding: 0.1rem 0 0.35rem;
+  background: transparent;
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font-family: var(--font-ui-mono);
+}
+
+.synced-history-terminal-prompt {
+  flex: none;
+  color: var(--term-panel-green, var(--success));
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.synced-history-terminal-input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--terminal-theme-foreground, var(--text-primary));
+  font: inherit;
+  font-size: 0.86rem;
+  outline: none;
+}
+
+.synced-history-terminal-input::placeholder {
+  color: color-mix(in srgb, var(--terminal-theme-foreground, var(--text-primary)) 42%, var(--terminal-theme-muted, var(--text-muted)) 58%);
+}
+
+.synced-history-terminal-input:disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.history-diff-viewer {
+  --diff-background-color: var(--bg-secondary);
+  --diff-text-color: var(--text-primary);
+  --diff-font-family: var(--font-ui-mono);
+  --diff-gutter-insert-background-color: color-mix(in srgb, var(--success) 24%, var(--bg-secondary));
+  --diff-gutter-delete-background-color: color-mix(in srgb, var(--danger) 24%, var(--bg-secondary));
+  --diff-code-insert-background-color: color-mix(in srgb, var(--success) 18%, var(--bg-secondary));
+  --diff-code-delete-background-color: color-mix(in srgb, var(--danger) 18%, var(--bg-secondary));
+  --diff-code-insert-edit-background-color: color-mix(in srgb, var(--success) 38%, transparent);
+  --diff-code-delete-edit-background-color: color-mix(in srgb, var(--danger) 38%, transparent);
+  --diff-gutter-selected-background-color: color-mix(in srgb, var(--warning) 22%, var(--bg-secondary));
+  --diff-code-selected-background-color: color-mix(in srgb, var(--warning) 14%, var(--bg-secondary));
+  max-width: 100%;
+  background-color: var(--bg-secondary);
+}
+
+.history-diff-viewer .diff {
+  width: max-content;
+  min-width: max(100%, 820px);
+  table-layout: auto;
+  font-size: 12px;
+}
+
+.history-diff-viewer .diff-gutter {
+  color: var(--text-muted);
+}
+
+.history-diff-viewer .diff-code {
+  padding-left: 0.75rem;
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.history-diff-fallback-header,
+.history-diff-fallback-hunk,
+.history-diff-fallback-add,
+.history-diff-fallback-delete,
+.history-diff-fallback-line {
+  display: block;
+  min-height: 1.25rem;
+  padding: 0 0.5rem;
+}
+
+.history-diff-fallback-header {
+  color: var(--accent);
+  background-color: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.history-diff-fallback-hunk {
+  color: var(--warning);
+  background-color: color-mix(in srgb, var(--warning) 10%, transparent);
+}
+
+.history-diff-fallback-add {
+  color: var(--success);
+  background-color: color-mix(in srgb, var(--success) 14%, transparent);
+}
+
+.history-diff-fallback-delete {
+  color: var(--danger);
+  background-color: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+
+.tree-collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows var(--animate-duration-fast) var(--ease-standard);
+}
+
+.tree-collapse[data-open="true"] {
+  grid-template-rows: 1fr;
+}
+
+.tree-collapse-inner {
+  min-height: 0;
+  overflow: hidden;
+}

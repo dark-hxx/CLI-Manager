@@ -1,0 +1,209 @@
+/* ── Terminal background image layer (R1-R10) ─────────────────────────── */
+/*  Activated by `data-bg-enabled="true"` on the `.ui-terminal-bg-layer`
+    wrapper inside `XTermTerminal.tsx`. Dynamic values are passed via the
+    CSS custom properties --terminal-bg-image / --terminal-bg-opacity /
+    --terminal-bg-blur / --terminal-bg-darken / --terminal-bg-overlay-color
+    set inline.                                                            */
+
+.ui-terminal-bg-layer[data-bg-enabled="true"] {
+  position: relative;
+  /* Establish a stacking context WITHOUT promoting the subtree to a
+     GPU compositing layer. `isolation: isolate` forces compositing,
+     which downgrades DOM subpixel anti-aliasing to grayscale and makes
+     xterm's DOM overlay elements (helper textarea, link layer, decoration
+     container, scrollbar) look blurry on top of the canvas glyphs, and
+     can also subtly shift colors via alpha blending. `z-index: 0` is
+     enough to scope the ::before / ::after z-indexes below the xterm
+     container without triggering layer promotion. See research notes &
+     spec on xterm transparent BG. */
+  z-index: 0;
+}
+
+.terminal-link-hover-icon {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 8;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--terminal-link-icon-fg) 32%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--terminal-link-icon-bg) 88%, transparent);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  color: var(--terminal-link-icon-fg);
+  pointer-events: none;
+}
+
+.terminal-link-hover-icon[hidden] {
+  display: none;
+}
+
+.terminal-link-hover-icon::before {
+  width: 11px;
+  height: 11px;
+  background-color: currentColor;
+  content: "";
+  -webkit-mask-image: var(--terminal-link-icon-mask);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: contain;
+  mask-image: var(--terminal-link-icon-mask);
+  mask-position: center;
+  mask-repeat: no-repeat;
+  mask-size: contain;
+}
+
+.terminal-link-hover-icon[data-kind="link"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 13a5 5 0 0 0 7.07.07l2-2a5 5 0 0 0-7.07-7.07l-1.15 1.15'/%3E%3Cpath d='M14 11a5 5 0 0 0-7.07-.07l-2 2A5 5 0 0 0 12 20l1.15-1.15'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="file"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="directory"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="relative-file"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z'/%3E%3Cpolyline points='14 2 14 8 20 8'/%3E%3Cpath d='m8 15 2 2 4-4'/%3E%3C/svg%3E");
+}
+
+.terminal-link-hover-icon[data-kind="relative-directory"] {
+  --terminal-link-icon-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2z'/%3E%3Cpath d='m9 15 2 2 4-4'/%3E%3C/svg%3E");
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image: var(--terminal-bg-image);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  opacity: var(--terminal-bg-opacity, 1);
+  filter: blur(var(--terminal-bg-blur, 0));
+  transition: opacity 300ms ease, filter 300ms ease;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"]::before,
+.ui-terminal-bg-layer[data-bg-enabled="true"]::after {
+  pointer-events: none;
+  user-select: none;
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-fit="contain"]::before {
+  background-size: contain;
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-fit="center"]::before {
+  background-size: auto;
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-fit="tile"]::before {
+  background-size: auto;
+  background-repeat: repeat;
+}
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="top-left"]::before     { background-position: left top; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="top-center"]::before   { background-position: center top; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="top-right"]::before    { background-position: right top; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="center-left"]::before  { background-position: left center; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="center"]::before       { background-position: center center; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="center-right"]::before { background-position: right center; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="bottom-left"]::before  { background-position: left bottom; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="bottom-center"]::before { background-position: center bottom; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"][data-bg-position="bottom-right"]::before { background-position: right bottom; }
+
+.ui-terminal-bg-layer[data-bg-enabled="true"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  --terminal-bg-status-scrim-alpha: clamp(
+    0,
+    calc(0.46 - var(--terminal-bg-darken, 0)),
+    0.46
+  );
+  background-color: rgba(var(--terminal-bg-overlay-color, 0, 0, 0), var(--terminal-bg-darken, 0));
+  background-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(
+      var(--terminal-bg-overlay-color, 0, 0, 0),
+      var(--terminal-bg-status-scrim-alpha)
+    )
+  );
+  background-position: bottom;
+  background-repeat: no-repeat;
+  background-size: 100% 6rem;
+  z-index: 1;
+  transition: background-color 300ms ease;
+}
+
+/* Keep terminal content and controls above the pseudo-element layers without
+   overriding their own absolute/relative positioning. */
+.ui-terminal-bg-layer[data-bg-enabled="true"] > * {
+  z-index: 2;
+}
+
+/* The generic child layer above intentionally normalizes content stacking.
+   Restore a higher level for controls so the full-size terminal content layer
+   cannot intercept their pointer events in background mode. */
+.ui-terminal-bg-layer[data-bg-enabled="true"] > .terminal-markdown-preview-toggle,
+.ui-terminal-bg-layer[data-bg-enabled="true"] > .terminal-search-shell {
+  z-index: 20;
+}
+
+/* Background image and dimming overlays are decorative. Keep xterm as the
+   mouse target so drag selection, link hover and context-menu selection keep
+   working while the transparent background fix remains untouched. */
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm,
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm-viewport,
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm-screen,
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm-helper-textarea {
+  pointer-events: auto;
+}
+
+/* When the background image is active, force xterm's internal containers to
+   be transparent so the image / overlay layers below show through. xterm's
+   own stylesheet sets opaque background-colors at init (theme-driven), hence
+   the !important — scoped strictly to the [data-bg-enabled="true"] case so
+   default terminal rendering stays untouched. Same pattern as Hyper / Tabby /
+   WaveTerm; see research/xterm-transparent-background.md. */
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm,
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm-viewport,
+.ui-terminal-bg-layer[data-bg-enabled="true"] .xterm-screen {
+  background-color: transparent !important;
+}
+
+.ui-file-tree-row {
+  color: var(--on-surface);
+}
+
+.ui-file-tree-row:is(button, [role="button"]) {
+  cursor: pointer;
+}
+
+.ui-file-tree-row:hover {
+  background-color: color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 13%, transparent);
+}
+
+.ui-file-tree-row[data-selected="true"],
+.ui-file-tree-row[data-state="open"] {
+  background-color: color-mix(in srgb, var(--term-panel-cyan, #5AC8E0) 26%, transparent);
+  color: var(--term-panel-fg, #ececec);
+  box-shadow: inset 2px 0 0 var(--term-panel-cyan, #5AC8E0);
+}

@@ -1,27 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
-const tabsSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
+const tabsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabsView.tsx", import.meta.url), "utf8");
+const sortableTabsSource = readFileSync(new URL("../src/features/terminal/components/SortableTerminalTabs.tsx", import.meta.url), "utf8");
+const tabDialogsSource = readFileSync(new URL("../src/features/terminal/components/TerminalTabDialogs.tsx", import.meta.url), "utf8");
 const tabBarSource = readFileSync(
-  new URL("../src/components/workspace/WorkspanTabBar.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspanTabBar.tsx", import.meta.url),
   "utf8",
 );
 const layoutComponentSource = readFileSync(
-  new URL("../src/components/workspace/WorkspanTerminalLayout.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspanTerminalLayout.tsx", import.meta.url),
   "utf8",
 );
 const controlsSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceLayoutControls.tsx", import.meta.url),
   "utf8",
 );
 const menuSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  new URL("../src/features/workspace/components/WorkspaceLayoutMenu.tsx", import.meta.url),
   "utf8",
 );
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
-const i18nSource = readFileSync(new URL("../src/lib/i18n.ts", import.meta.url), "utf8");
-const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
+const i18nSource = readFileSync(new URL("../src/shared/i18n/index.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/shared/lib/workspaceLayout.ts", import.meta.url), "utf8");
 
 test("top-level Workspan tabs use one direction-aware document-flow slot", () => {
   assert.equal((tabsSource.match(/<WorkspanTabBar/g) ?? []).length, 1);
@@ -40,7 +42,7 @@ test("top-level Workspan tabs use one direction-aware document-flow slot", () =>
 test("bottom overflow list opens toward the terminal content", () => {
   assert.match(tabBarSource, /side=\{position === "bottom" \? "top" : "bottom"\}/);
   assert.match(tabBarSource, /collisionPadding=\{8\}/);
-  assert.match(tabsSource, /<PopoverContent[\s\S]*collisionPadding=\{8\}/);
+  assert.match(tabDialogsSource, /<PopoverContent[\s\S]*collisionPadding=\{8\}/);
   assert.match(tabBarSource, /onWheel=\{\(event\) =>/);
   assert.match(tabBarSource, /WORKSPAN_TABBAR_END_DROP_ID/);
 });
@@ -57,8 +59,8 @@ test("the persisted layout contract keeps top as the default and validates botto
 });
 
 test("pane-level terminal tab ownership remains outside the top-level docking slot", () => {
-  const paneTabBarSource = readFileSync(new URL("../src/components/TerminalTabs.tsx", import.meta.url), "utf8");
-  assert.match(paneTabBarSource, /function SortableTab\(/);
+  const paneTabBarSource = readFileSync(new URL("../src/features/terminal/components/PaneTabBar.tsx", import.meta.url), "utf8");
+  assert.match(sortableTabsSource, /function SortableTab\(/);
   assert.match(paneTabBarSource, /function PaneTabBar\(/);
   assert.doesNotMatch(tabBarSource, /SplitTerminalView|PaneTabBar/);
 });

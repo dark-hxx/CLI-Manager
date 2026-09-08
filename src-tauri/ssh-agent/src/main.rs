@@ -9,6 +9,7 @@ use serde_json::json;
 use std::io::{self, BufReader, BufWriter, Read};
 use uuid::Uuid;
 
+// 读取首次匹配选项的后项；未出现返回 None，缺少后项报错，但不校验后项的内容或选项形态。
 fn option_value(options: &[String], name: &str) -> Result<Option<String>, String> {
     let Some(index) = options.iter().position(|value| value == name) else {
         return Ok(None);
@@ -20,6 +21,7 @@ fn option_value(options: &[String], name: &str) -> Result<Option<String>, String
         .ok_or_else(|| format!("missing_option_value:{name}"))
 }
 
+// 将 JSON 值紧凑序列化为一行 stdout；序列化失败触发 panic，不在此增加响应封装。
 fn print_json(value: serde_json::Value) {
     println!(
         "{}",
@@ -27,6 +29,7 @@ fn print_json(value: serde_json::Value) {
     );
 }
 
+// 最多读取 64 KiB 加一字节以判断超限，再反序列化；错误统一为固定代码，读取没有时间上限。
 fn read_json_stdin<T: serde::de::DeserializeOwned>() -> Result<T, String> {
     let mut bytes = Vec::new();
     io::stdin()
@@ -39,6 +42,7 @@ fn read_json_stdin<T: serde::de::DeserializeOwned>() -> Result<T, String> {
     serde_json::from_slice(&bytes).map_err(|_| "agent_stdin_json_invalid".to_string())
 }
 
+// 汇总版本、布局和安装记录状态；布局或记录失败仍返回结构化诊断，不执行安装修复。
 fn status_report() -> serde_json::Value {
     match resolve_layout() {
         Ok(layout) => {
@@ -73,6 +77,7 @@ fn status_report() -> serde_json::Value {
     }
 }
 
+// 在状态报告上增加目标支持标志和诊断码；不支持目标优先，否则沿用布局/记录诊断或 ok。
 fn doctor_report() -> serde_json::Value {
     let mut report = status_report();
     let supported = target_supported();
@@ -89,6 +94,7 @@ fn doctor_report() -> serde_json::Value {
     report
 }
 
+// 强制要求 --protocol 及其后项并借用返回值；是否兼容版本 1 由 run 另行判断。
 fn bridge_protocol(options: &[String]) -> Result<&str, String> {
     let index = options
         .iter()
@@ -100,6 +106,8 @@ fn bridge_protocol(options: &[String]) -> Result<&str, String> {
         .ok_or_else(|| "bridge_protocol_required".to_string())
 }
 
+// 分发 CLI 子命令，默认输出版本；安装/卸载和 Hook 配置写入仅在对应显式命令下委托执行。
+// Hook 参数或运行错误被忽略以保持成功退出；bridge 则要求 --stdio 和协议 1 后进入帧循环。
 fn run() -> Result<(), String> {
     let mut args = std::env::args().skip(1);
     let command = args.next().unwrap_or_else(|| "version".to_string());
@@ -189,6 +197,7 @@ fn run() -> Result<(), String> {
     Ok(())
 }
 
+// 执行命令分发，失败时把错误写入 stderr 并以状态码 2 退出。
 fn main() {
     if let Err(error) = run() {
         eprintln!("{error}");
@@ -201,6 +210,7 @@ mod tests {
     use super::{bridge_protocol, doctor_report, option_value, status_report};
 
     #[test]
+    // 验证缺少协议选项被拒绝，显式版本 1 可被读取；此测试不运行 bridge 循环。
     fn bridge_requires_an_explicit_compatible_protocol() {
         assert_eq!(
             bridge_protocol(&["--stdio".into()]).unwrap_err(),
@@ -213,6 +223,7 @@ mod tests {
     }
 
     #[test]
+    // 验证状态报告保留 Agent 名称，doctor 的支持标志和诊断码类型稳定；未强制模拟布局缺失。
     fn status_and_doctor_remain_structured_without_a_layout() {
         assert_eq!(
             status_report()["version"]["agentName"],
@@ -224,6 +235,7 @@ mod tests {
     }
 
     #[test]
+    // 验证选项末尾缺值时返回对应错误，提供路径后原样取得该值。
     fn options_require_values() {
         assert_eq!(
             option_value(&["--install-dir".into()], "--install-dir").unwrap_err(),

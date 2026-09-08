@@ -1511,3 +1511,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 111: 修复文件浏览器右键菜单裁剪
+
+**Date**: 2026-09-07
+**Task**: 修复文件浏览器右键菜单裁剪
+**Branch**: `master`
+
+### Summary
+
+修复文件浏览器右键菜单在窗口边缘被裁剪的问题，恢复 Radix Popper 完整尺寸测量与视口避让，并在菜单打开期间高亮右键目标行；补充回归测试、V1.3.9 记录和前端浮层契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c1163a2d` | (see git log) |
+
+### Status
+
+[OK] **Completed**

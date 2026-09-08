@@ -123,11 +123,13 @@ struct SpoolMeta {
 struct SpoolLock(PathBuf);
 
 impl Drop for SpoolLock {
+    // 释放锁守卫时尽力删除锁文件，删除失败不传播错误。
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
     }
 }
 
+// 返回 Unix 纪元毫秒数；系统时间早于纪元时使用零。
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -135,10 +137,12 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+// 要求绑定字段非空且不超过 256 字节，并拒绝控制字符和路径分隔符；不校验 UUID。
 fn valid_bound_value(value: &str) -> bool {
     !value.is_empty() && value.len() <= 256 && !value.contains(['\0', '\r', '\n', '/', '\\'])
 }
 
+// 读取五个必需绑定环境变量，任一缺失、非 Unicode 或格式无效均不建立绑定。
 fn binding_from_env() -> Option<HookBinding> {
     let read = |key: &str| {
         std::env::var(key)
@@ -154,6 +158,7 @@ fn binding_from_env() -> Option<HookBinding> {
     })
 }
 
+// 要求固定管理者和合法安装 UUID，并按来源白名单校验事件名称。
 fn validate_options(options: &HookCommandOptions) -> Result<(), String> {
     if options.managed_by != "cli-manager-ssh-agent" {
         return Err("hook_owner_invalid".to_string());
@@ -173,6 +178,7 @@ fn validate_options(options: &HookCommandOptions) -> Result<(), String> {
     Ok(())
 }
 
+// 最多读取上限加一个字节以识别超限，再解析 JSON；不在此归一化事件字段。
 fn read_hook_input(reader: &mut impl Read) -> Result<serde_json::Value, String> {
     let mut bytes = Vec::new();
     reader
@@ -185,6 +191,7 @@ fn read_hook_input(reader: &mut impl Read) -> Result<serde_json::Value, String> 
     serde_json::from_slice(&bytes).map_err(|_| "hook_stdin_invalid".to_string())
 }
 
+// 用 NUL 分隔主机、客户端与安装标识后取完整 SHA-256，隔离不同绑定的 spool。
 pub(crate) fn spool_namespace(
     host_id: &str,
     client_instance_id: &str,
@@ -203,21 +210,25 @@ pub(crate) fn spool_namespace(
 const BRIDGE_RUNTIME_NAMESPACE_HEX_LENGTH: usize = 24;
 
 #[cfg(any(unix, test))]
+// 对完整 namespace 再哈希并截取 24 位十六进制，缩短运行时文件名。
 fn bridge_runtime_file_stem(namespace: &str) -> String {
     let digest = format!("{:x}", Sha256::digest(namespace.as_bytes()));
     format!("h-{}", &digest[..BRIDGE_RUNTIME_NAMESPACE_HEX_LENGTH])
 }
 
 #[cfg(any(unix, test))]
+// 在短 namespace 文件名前缀后添加 Unix 通知 socket 扩展名。
 pub(crate) fn bridge_socket_file_name(namespace: &str) -> String {
     format!("{}.sock", bridge_runtime_file_stem(namespace))
 }
 
 #[cfg(any(unix, test))]
+// 使用与 socket 相同的短前缀构造 bridge PID 文件名。
 pub(crate) fn bridge_pid_file_name(namespace: &str) -> String {
     format!("{}.pid", bridge_runtime_file_stem(namespace))
 }
 
+// 从绑定中提取主机和客户端，结合安装标识生成 spool 命名空间。
 fn namespace(binding: &HookBinding, installation_id: &str) -> String {
     spool_namespace(
         &binding.host_id,
@@ -226,6 +237,8 @@ fn namespace(binding: &HookBinding, installation_id: &str) -> String {
     )
 }
 
+// Unix 上优先检查 /proc 中记录的 PID 是否消失，否则按文件修改时间判断是否超过五分钟。
+// 不校验进程身份；即使 PID 仍存活，超过时间阈值也会被判为陈旧锁。
 fn spool_lock_is_stale(path: &Path) -> bool {
     #[cfg(unix)]
     if let Some(pid) = fs::read_to_string(path)
@@ -243,6 +256,8 @@ fn spool_lock_is_stale(path: &Path) -> bool {
         .is_some_and(|age| age > Duration::from_secs(SPOOL_LOCK_STALE_SECS))
 }
 
+// 创建目录并以 create_new 争抢锁文件，最多尝试六次；陈旧锁会删除，竞争时短暂等待。
+// Unix 目录权限与锁内 PID 写入均为尽力操作，失败不阻止返回锁守卫。
 fn acquire_spool_lock(directory: &Path) -> Result<SpoolLock, String> {
     fs::create_dir_all(directory).map_err(|_| "hook_spool_dir_failed".to_string())?;
     #[cfg(unix)]
@@ -270,6 +285,7 @@ fn acquire_spool_lock(directory: &Path) -> Result<SpoolLock, String> {
     Err("hook_spool_busy".to_string())
 }
 
+// 元数据字节数与文件长度一致时直接复用，否则重建统计并保留已有序号下限和压缩时间。
 fn read_meta(path: &Path, spool_path: &Path) -> SpoolMeta {
     let stored = fs::read(path)
         .ok()
@@ -289,6 +305,7 @@ fn read_meta(path: &Path, spool_path: &Path) -> SpoolMeta {
     }
 }
 
+// 整体读取 spool 并按非空行计数，从可解析的 sequence 推导下一序号；读取失败视为空。
 fn rebuild_meta(spool_path: &Path) -> SpoolMeta {
     let bytes = fs::read(spool_path).unwrap_or_default();
     let mut next_sequence = 1;
@@ -312,6 +329,7 @@ fn rebuild_meta(spool_path: &Path) -> SpoolMeta {
     }
 }
 
+// 把 JSON 写入唯一临时文件并同步，再重命名到目标；失败不统一清理临时文件或同步父目录。
 fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let temporary = path.with_extension(format!("tmp-{}", Uuid::new_v4().simple()));
     let bytes = serde_json::to_vec(value).map_err(|_| "hook_spool_meta_invalid".to_string())?;
@@ -323,6 +341,7 @@ fn write_json_atomic(path: &Path, value: &impl Serialize) -> Result<(), String> 
     fs::rename(temporary, path).map_err(|_| "hook_spool_meta_promote_failed".to_string())
 }
 
+// 从 JSON 行提取无符号 occurredAt；解析失败或字段缺失时返回零。
 fn line_timestamp(line: &[u8]) -> u64 {
     serde_json::from_slice::<serde_json::Value>(line)
         .ok()
@@ -330,6 +349,8 @@ fn line_timestamp(line: &[u8]) -> u64 {
         .unwrap_or_default()
 }
 
+// 按 TTL、事件数和字节预算淘汰旧行，必要时追加 gap，并保留序号下限。
+// 极大文件先整体读取再改名隔离并写 gap；普通压缩用临时文件替换，均非文件与元数据联合事务。
 fn compact_spool(
     spool_path: &Path,
     now: u64,
@@ -466,6 +487,8 @@ fn compact_spool(
     ))
 }
 
+// 持锁恢复元数据，按时间或配额触发压缩，再分配序号、追加并同步事件，最后保存元数据。
+// 追加和元数据更新分步执行，返回错误不保证事件未写入，也不回滚已发生的文件变更。
 fn append_spool_with_limits(
     state_dir: &Path,
     binding: &HookBinding,
@@ -524,6 +547,8 @@ fn append_spool_with_limits(
     Ok(event.sequence)
 }
 
+// 按文件顺序读取游标之后的 JSON 事件，批量限制钳制为 1 至 256；文件缺失返回空。
+// 校验文件与单行大小、换行及序号，坏记录报错；调用方提供可信 namespace，此处不加锁。
 pub(crate) fn read_spool_batch(
     state_dir: &Path,
     namespace: &str,
@@ -579,6 +604,7 @@ pub(crate) fn read_spool_batch(
     Ok(events)
 }
 
+// 逐行校验并把确认序号之后的原始记录写到临时文件，刷新同步后返回保留行数和字节数。
 fn write_unacked_spool(
     input: File,
     temporary: &Path,
@@ -625,6 +651,8 @@ fn write_unacked_spool(
     Ok((count, retained_bytes))
 }
 
+// 持锁重写未确认事件并替换 spool，随后更新元数据且保持下一序号；目录或文件缺失视为成功。
+// 重写失败会清理临时文件，但替换 spool 与保存元数据不是联合事务。
 pub(crate) fn ack_spool(
     state_dir: &Path,
     namespace: &str,
@@ -664,6 +692,7 @@ pub(crate) fn ack_spool(
 }
 
 #[cfg(unix)]
+// 通过 Unix 数据报发送序号唤醒 bridge，socket 创建与发送失败均被忽略。
 fn notify_bridge(runtime_dir: &Path, namespace: &str, sequence: u64) {
     use std::os::unix::net::UnixDatagram;
     let path = runtime_dir.join(bridge_socket_file_name(namespace));
@@ -673,8 +702,10 @@ fn notify_bridge(runtime_dir: &Path, namespace: &str, sequence: u64) {
 }
 
 #[cfg(not(unix))]
+// 非 Unix 平台不发送 bridge 通知；事件仍由 spool 保留。
 fn notify_bridge(_runtime_dir: &Path, _namespace: &str, _sequence: u64) {}
 
+// 清除 message 正文，附加绑定、随机事件 ID、版本和时间；保留转录路径等归一化字段，序号待落盘分配。
 fn build_event(
     options: &HookCommandOptions,
     binding: &HookBinding,
@@ -704,6 +735,8 @@ fn build_event(
     }
 }
 
+// 校验选项与环境绑定后读取并归一化输入，无绑定或不适用输入返回 Noop。
+// 成功落盘后尽力唤醒 bridge；返回 Spooled 仅表示取得落盘序号，不代表桌面已收到事件。
 pub fn run_hook(
     options: HookCommandOptions,
     reader: &mut impl Read,
@@ -759,6 +792,7 @@ mod tests {
     use serde_json::json;
     use std::fs;
 
+    // 构造合法 Claude Stop Hook 选项，使用固定测试安装 UUID。
     fn options() -> HookCommandOptions {
         HookCommandOptions {
             source: "claude".into(),
@@ -768,6 +802,7 @@ mod tests {
         }
     }
 
+    // 构造隔离测试使用的绑定字段，不读取真实环境变量。
     fn binding() -> HookBinding {
         HookBinding {
             host_id: "host".into(),
@@ -779,6 +814,7 @@ mod tests {
     }
 
     #[test]
+    // 验证常用及 Kimi/Grok 白名单事件可用，并拒绝错误管理者和未知事件；未逐项测试全部字段。
     fn validates_owner_source_event_and_installation() {
         validate_options(&options()).unwrap();
         let mut codex_notification = options();
@@ -826,6 +862,7 @@ mod tests {
     }
 
     #[test]
+    // 验证分别改变主机、客户端或安装标识均产生不同的测试 namespace。
     fn spool_namespace_isolates_hosts_clients_and_installations() {
         let base = spool_namespace("host-a", "client-a", "installation-a");
         assert_ne!(
@@ -843,6 +880,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 namespace 尾部变化参与短名哈希、socket 与 PID 共用前缀，示例路径低于 Unix socket 长度限制。
     fn bridge_runtime_names_are_short_and_include_the_full_namespace() {
         let namespace_a = format!("{}a", "0".repeat(63));
         let namespace_b = format!("{}b", "0".repeat(63));
@@ -862,6 +900,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时目录连续写入超过事件数限额的数据，验证 gap、最新事件和递增序号仍被保留。
     fn bounded_spool_inserts_gap_and_keeps_newest_events() {
         let temp = tempfile::tempdir().unwrap();
         let options = options();
@@ -906,6 +945,7 @@ mod tests {
     }
 
     #[test]
+    // 用小字节限额触发淘汰，验证包含 gap 和最新事件的实际文件仍不超预算。
     fn byte_limited_spool_counts_gap_within_quota() {
         let temp = tempfile::tempdir().unwrap();
         let options = options();
@@ -943,6 +983,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Noop 与带序号 Spooled 的派生相等比较，不执行 Hook。
     fn hook_result_shape_remains_noop_or_spooled() {
         assert_eq!(HookRunResult::Noop, HookRunResult::Noop);
         assert_eq!(
@@ -952,6 +993,7 @@ mod tests {
     }
 
     #[test]
+    // 在临时 spool 中读取前两条并确认，验证后续读取仅剩确认游标之后的事件。
     fn spool_batch_ack_removes_only_confirmed_sequences() {
         let temp = tempfile::tempdir().unwrap();
         let options = options();
@@ -985,6 +1027,7 @@ mod tests {
     }
 
     #[test]
+    // 验证坏 JSON 使读取与确认报错，原 spool 不变且确认失败的临时文件被清理。
     fn malformed_spool_is_not_silently_dropped_by_read_or_ack() {
         let temp = tempfile::tempdir().unwrap();
         let namespace = "malformed";
@@ -1012,6 +1055,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    // 在 Unix 临时目录写入不存在 PID 的锁，验证可重新取得锁并在释放后删除。
     fn stale_spool_lock_is_recovered() {
         let temp = tempfile::tempdir().unwrap();
         fs::write(temp.path().join("spool.lock"), u32::MAX.to_string()).unwrap();
@@ -1021,6 +1065,7 @@ mod tests {
     }
 
     #[test]
+    // 把元数据替换为滞后计数，验证下次追加通过文件重建恢复序号，避免在该场景重复使用序号。
     fn stale_meta_cannot_reuse_an_appended_sequence() {
         let temp = tempfile::tempdir().unwrap();
         let options = options();

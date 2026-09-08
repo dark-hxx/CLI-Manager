@@ -23,11 +23,11 @@ function transpile(relativePath, outputName) {
 }
 
 const contextPath = transpile(
-  "../src/terminal/browser/TerminalCliContext.ts",
+  "../src/features/terminal/browser/TerminalCliContext.ts",
   "TerminalCliContext.mjs",
 );
 const newlinePath = transpile(
-  "../src/terminal/browser/TerminalNewlineShortcut.ts",
+  "../src/features/terminal/browser/TerminalNewlineShortcut.ts",
   "TerminalNewlineShortcut.mjs",
 );
 
@@ -153,7 +153,7 @@ test("Alt+Shift+Enter is not a managed newline combo", () => {
 
 test("XTermTerminal uses the shared newline decision helper", () => {
   const componentSource = readFileSync(
-    new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+    new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
     "utf8",
   );
   assert.match(componentSource, /resolveTerminalNewlineKeyEvent/);

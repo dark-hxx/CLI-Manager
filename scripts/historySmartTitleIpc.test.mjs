@@ -3,34 +3,35 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
   "utf8",
 );
 const commandSource = readFileSync(
-  new URL("../src-tauri/src/commands/history_title.rs", import.meta.url),
+  new URL("../src-tauri/src/features/history/title.rs", import.meta.url),
   "utf8",
-);
+).replaceAll("\r\n", "\n");
 const settingsSource = readFileSync(
-  new URL("../src/stores/settingsStore.ts", import.meta.url),
+  new URL("../src/shared/preferences/settingsStore.ts", import.meta.url),
   "utf8",
 );
 const settingsPageSource = readFileSync(
-  new URL("../src/components/settings/pages/HistorySourceSettingsPage.tsx", import.meta.url),
+  new URL("../src/features/settings/components/pages/HistorySourceSettingsPage.tsx", import.meta.url),
   "utf8",
 );
 const historyWorkspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8",
 );
 const historyListPaneSource = readFileSync(
-  new URL("../src/components/history/HistoryListPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/HistoryListPane.tsx", import.meta.url),
   "utf8",
 );
 const sessionDetailPaneSource = readFileSync(
-  new URL("../src/components/history/SessionDetailPane.tsx", import.meta.url),
+  new URL("../src/features/history/components/SessionDetailPane.tsx", import.meta.url),
   "utf8",
 );
 
+// 断言起止标记存在并提取两者之间的源码片段。
 function sourceBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start + startMarker.length);
@@ -39,6 +40,7 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
+// 验证智能标题 IPC 将 Rust 请求结构封装在 request 参数中。
 test("smart-title IPC sends the Rust struct argument under request", () => {
   const generate = sourceBlock(storeSource, "generateSmartTitle: async", "clearSmartTitle: async");
   const clear = sourceBlock(storeSource, "clearSmartTitle: async", "updateMessage: async");
@@ -49,6 +51,7 @@ test("smart-title IPC sends the Rust struct argument under request", () => {
   assert.match(clear, /invoke<unknown>\("history_title_clear", \{\s*request: \{/);
 });
 
+// 验证供应商请求等待期间智能标题命令让出 IPC 执行线程。
 test("smart-title generation yields the IPC handler while the Provider request is pending", () => {
   const command = sourceBlock(
     commandSource,
@@ -62,6 +65,7 @@ test("smart-title generation yields the IPC handler while the Provider request i
   );
 });
 
+// 验证智能标题请求立即暴露加载状态并禁用重复操作。
 test("smart-title generation exposes an immediate in-flight loading state", () => {
   const generate = sourceBlock(storeSource, "generateSmartTitle: async", "clearSmartTitle: async");
 
@@ -90,6 +94,7 @@ test("smart-title generation exposes an immediate in-flight loading state", () =
   assert.match(sessionDetailPaneSource, /<LoaderCircle size=\{12\} className="animate-spin" \/>/);
 });
 
+// 验证自定义标题提示词由后端读取并保留内置回退。
 test("smart-title custom prompts stay backend-owned and retain the built-in fallback", () => {
   const generate = sourceBlock(storeSource, "generateSmartTitle: async", "clearSmartTitle: async");
   const request = sourceBlock(
@@ -126,6 +131,7 @@ test("smart-title custom prompts stay backend-owned and retain the built-in fall
   assert.doesNotMatch(request, /prompt/i);
 });
 
+// 验证标题持久化等待数据库写锁并向界面报告忙状态。
 test("smart-title persistence waits for shared-database writers and reports busy safely", () => {
   const errorHandler = sourceBlock(
     historyWorkspaceSource,

@@ -1,0 +1,333 @@
+.ui-session-process-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--border) 14%, transparent);
+  border-radius: 10px;
+  padding: 0.55rem 0.65rem;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 88%, transparent);
+}
+
+.ui-session-process-summary,
+.ui-session-process-filters {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ui-session-process-summary span,
+.ui-session-process-filters button,
+.ui-session-process-primary {
+  border: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+  border-radius: 7px;
+  padding: 0.2rem 0.48rem;
+  background-color: color-mix(in srgb, var(--surface-container-high) 54%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 650;
+}
+
+.ui-session-process-filters button[data-active="true"],
+.ui-session-process-primary {
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border) 54%);
+  color: var(--accent);
+}
+
+.ui-session-process-empty {
+  display: flex;
+  min-height: 120px;
+  align-items: center;
+  justify-content: center;
+  border: 1px dashed color-mix(in srgb, var(--border) 26%, transparent);
+  border-radius: 10px;
+  padding: 1rem;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.ui-session-process-empty.compact {
+  min-height: 42px;
+  padding: 0.55rem;
+  font-size: 0.7rem;
+}
+
+.ui-session-timeline-list,
+.ui-session-file-groups,
+.ui-session-file-events,
+.ui-session-change-list,
+.ui-session-change-files,
+.ui-session-diagnostic-list,
+.ui-session-subtask-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.ui-session-timeline-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ui-session-timeline-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--border) 14%, transparent);
+  border-radius: 12px;
+  padding: 0.65rem;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 90%, transparent);
+}
+
+.ui-session-timeline-icon {
+  display: flex;
+  width: 1.65rem;
+  height: 1.65rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background-color: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent);
+}
+
+.ui-session-timeline-item[data-kind="error"] .ui-session-timeline-icon {
+  background-color: color-mix(in srgb, var(--danger) 13%, transparent);
+  color: var(--danger);
+}
+
+.ui-session-timeline-item[data-kind="file"] .ui-session-timeline-icon {
+  background-color: color-mix(in srgb, var(--success) 13%, transparent);
+  color: var(--success);
+}
+
+.ui-session-timeline-title-row,
+.ui-session-file-header {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ui-session-timeline-title,
+.ui-session-file-header span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-session-timeline-meta,
+.ui-session-file-header small {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.ui-session-timeline-detail {
+  margin: 0.25rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+.ui-session-process-path {
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-family: var(--font-ui-mono);
+  font-size: 0.68rem;
+}
+
+.ui-session-process-jump {
+  flex: none;
+  border-radius: 7px;
+  padding: 0.25rem 0.48rem;
+  color: var(--accent);
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.ui-session-process-jump:hover,
+.ui-session-file-event:hover,
+.ui-session-diagnostic-list button:hover,
+.ui-session-subtask-node:hover {
+  background-color: var(--interactive-hover-bg);
+}
+
+.ui-session-process-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.65rem;
+}
+
+.ui-session-context-view {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 0.65rem;
+}
+
+.ui-session-process-card {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 14%, transparent);
+  border-radius: 12px;
+  padding: 0.75rem;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 90%, transparent);
+}
+
+.ui-session-process-card.wide {
+  grid-column: 1 / -1;
+}
+
+.ui-session-process-card-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.ui-session-process-card-title.danger {
+  color: var(--danger);
+}
+
+.ui-session-context-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  margin-bottom: 0.6rem;
+}
+
+.ui-session-context-main span {
+  color: var(--text-primary);
+  font-size: 1.35rem;
+  font-weight: 800;
+}
+
+.ui-session-context-main small,
+.ui-session-process-metrics span,
+.ui-session-tool-counts span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.ui-session-context-subline,
+.ui-session-context-legend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.45rem;
+  margin-top: 0.45rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.ui-session-context-token-card {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.ui-session-context-token-card .ui-session-process-metrics {
+  flex: 1;
+}
+
+.ui-session-context-donut-label {
+  color: var(--text-primary);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.ui-session-process-metrics,
+.ui-session-tool-counts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.ui-session-process-metrics span,
+.ui-session-tool-counts span {
+  display: flex;
+  min-width: 0;
+  justify-content: space-between;
+  gap: 0.4rem;
+  border-radius: 8px;
+  padding: 0.42rem 0.5rem;
+  background-color: color-mix(in srgb, var(--surface-container-low) 76%, transparent);
+}
+
+.ui-session-process-metrics .ui-session-context-metric {
+  display: grid;
+  min-height: 2.65rem;
+  align-content: center;
+  justify-content: stretch;
+  gap: 0.16rem;
+}
+
+.ui-session-context-metric small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-session-context-metric b {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-session-process-metrics b,
+.ui-session-tool-counts b {
+  color: var(--text-primary);
+}
+
+.ui-session-context-mini-charts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.ui-session-context-mini-charts > div {
+  min-width: 0;
+  border: 1px solid color-mix(in srgb, var(--border) 12%, transparent);
+  border-radius: 9px;
+  padding: 0.5rem;
+  background-color: color-mix(in srgb, var(--surface-container-low) 68%, transparent);
+}
+
+.ui-session-context-mini-charts span {
+  display: block;
+  margin-bottom: 0.35rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+@media (max-width: 860px) {
+  .ui-session-context-mini-charts {
+    grid-template-columns: 1fr;
+  }
+
+  .ui-session-context-token-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

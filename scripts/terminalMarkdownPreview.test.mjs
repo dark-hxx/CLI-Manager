@@ -1,29 +1,33 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 
 const previewSource = readFileSync(
-  new URL("../src/components/terminal/TerminalMarkdownPreview.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/TerminalMarkdownPreview.tsx", import.meta.url),
   "utf8",
 );
 const markdownSource = readFileSync(
-  new URL("../src/lib/markdownSource.ts", import.meta.url),
+  new URL("../src/shared/lib/markdownSource.ts", import.meta.url),
   "utf8",
 );
 const historyStoreSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/lib/historyRequests.ts", import.meta.url),
   "utf8",
 );
 const terminalSource = readFileSync(
-  new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/XTermView.tsx", import.meta.url),
+  "utf8",
+);
+const terminalController = readFileSync(
+  new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
   "utf8",
 );
 const terminalTabsSource = readFileSync(
-  new URL("../src/components/TerminalTabs.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/SortableTerminalTabs.tsx", import.meta.url),
   "utf8",
 );
 const i18nSource = readFileSync(
-  new URL("../src/lib/i18n.ts", import.meta.url),
+  new URL("../src/shared/i18n/index.ts", import.meta.url),
   "utf8",
 );
 
@@ -54,7 +58,7 @@ test("markdown preview can select every assistant response and unwrap source fen
   assert.match(previewSource, /function selectAssistantMarkdownMessages/);
   assert.match(previewSource, /message\?\.role\.toLowerCase\(\) !== "assistant"/);
   assert.match(markdownSource, /export function unwrapFencedMarkdown/);
-  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/lib\/markdownSource"/);
+  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/\.\.\/shared\/lib\/markdownSource"/);
   assert.doesNotMatch(previewSource, /const MARKDOWN_SOURCE_FENCE/);
   assert.match(previewSource, /unwrapFencedMarkdown\(selectedMessage\.content\)/);
   assert.match(previewSource, /terminal-markdown-preview-message-select/);
@@ -69,15 +73,15 @@ test("markdown preview supports themed answer scrolling, wheel zoom, and restore
   assert.match(previewSource, /MARKDOWN_PREVIEW_FONT_SIZE_MIN/);
   assert.match(previewSource, /onWheel=\{handlePreviewWheel\}/);
   assert.match(previewSource, /<FontSizeControl/);
-  assert.match(terminalSource, /const markdownPreviewCanOpen = markdownPreviewSupported\s*&&\s*Boolean\(terminalSession\?\.cliSessionId\?\.trim\(\)\);/);
-  assert.doesNotMatch(terminalSource, /markdownPreviewHookStatus/);
+  assert.match(terminalController, /const markdownPreviewCanOpen = markdownPreviewSupported\s*&&\s*Boolean\(terminalSession\?\.cliSessionId\?\.trim\(\)\);/);
+  assert.doesNotMatch(terminalController, /markdownPreviewHookStatus/);
 });
 
 test("configured CLI terminals keep a preview control and recognize every history source", () => {
   assert.doesNotMatch(previewSource, /PREVIEW_SOURCES/);
   assert.match(previewSource, /value\): value is HistorySource => value !== null/);
-  assert.match(terminalSource, /const markdownPreviewButtonVisible = Boolean\(/);
-  assert.match(terminalSource, /terminalSession\?\.isAgentSession/);
+  assert.match(terminalController, /const markdownPreviewButtonVisible = Boolean\(/);
+  assert.match(terminalController, /terminalSession\?\.isAgentSession/);
   assert.match(terminalSource, /\{markdownPreviewButtonVisible && \(/);
 });
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { readFileSync } from "./helpers/readComposedSource.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,7 +11,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-history-markdown-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/lib/markdownSource.ts", import.meta.url),
+  new URL("../src/shared/lib/markdownSource.ts", import.meta.url),
   "utf8",
 );
 const output = ts.transpileModule(source, {
@@ -60,11 +61,11 @@ test("unwraps the outer fence while preserving an inner code fence", () => {
 
 test("history-only integration uses the shared helper and theme variables", () => {
   const historySource = readFileSync(
-    new URL("../src/components/history/HistoryMarkdownContent.tsx", import.meta.url),
+    new URL("../src/features/history/components/HistoryMarkdownContent.tsx", import.meta.url),
     "utf8",
   );
   const previewSource = readFileSync(
-    new URL("../src/components/terminal/TerminalMarkdownPreview.tsx", import.meta.url),
+    new URL("../src/features/terminal/components/TerminalMarkdownPreview.tsx", import.meta.url),
     "utf8",
   );
   const stylesSource = readFileSync(
@@ -72,9 +73,9 @@ test("history-only integration uses the shared helper and theme variables", () =
     "utf8",
   );
 
-  assert.match(historySource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/lib\/markdownSource"/);
+  assert.match(historySource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/\.\.\/shared\/lib\/markdownSource"/);
   assert.match(historySource, /variant === "history"[\s\S]*unwrapFencedMarkdown\(props\.content\)/);
-  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/lib\/markdownSource"/);
+  assert.match(previewSource, /import \{ unwrapFencedMarkdown \} from "\.\.\/\.\.\/\.\.\/shared\/lib\/markdownSource"/);
   assert.match(stylesSource, /\.ui-markdown-code-block \{[\s\S]*background-color: var\(--md-canvas-subtle\);/);
   assert.match(stylesSource, /\.ui-markdown-code-header \{[\s\S]*border-bottom: 1px solid var\(--md-border\);[\s\S]*background-color: var\(--md-canvas-muted\);[\s\S]*color: var\(--md-subtle\);/);
   assert.match(stylesSource, /\.ui-markdown-terminal \.ui-markdown-code-block \{[\s\S]*background-color: #0a0a0a;/);

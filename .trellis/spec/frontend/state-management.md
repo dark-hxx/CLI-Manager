@@ -8,25 +8,27 @@
 
 This project uses **Zustand** for global stores and `tauri-plugin-store` for persistent settings (`settings.json`). Local component state via `useState` is preferred for ephemeral UI.
 
-Real state files live under `src/stores/`:
+State ownership follows the feature-first layout:
 
-- `settingsStore.ts` — user preferences (theme, font, terminal background, shortcuts), persisted
-- `terminalStore.ts` — PTY sessions, active session, splits, in-memory session overrides
-- `projectStore.ts`, `historyStore.ts`, `syncStore.ts`, `templateStore.ts`, `commandHistoryStore.ts`, `sessionStore.ts`, `updateStore.ts`
+- Application-wide persisted preferences live in `src/shared/preferences/settingsStore.ts`.
+- Feature-owned state lives under `src/features/<domain>` next to its consumers.
 
-(Filling status: spec captures only patterns we have hit in practice. Other sections remain "To be filled by the team".)
+This file records only state patterns verified in the current codebase.
 
 ---
 
 ## State Categories
 
-(To be filled by the team)
+- Feature-owned state lives under `src/features/<domain>` next to its consumers.
+- Application-wide persisted preferences live in `src/shared/preferences/settingsStore.ts`.
 
 ---
 
 ## When to Use Global State
 
-(To be filled by the team)
+- Keep transient interaction state local to its component.
+- Use a domain store when several components in one feature share lifecycle state.
+- Use shared preferences only for settings consumed across feature boundaries.
 
 ---
 

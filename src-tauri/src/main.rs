@@ -1,6 +1,8 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// 按顺序优先分流代理、AskPass、Hook、状态栏和 daemon 子命令，普通启动才进入 GUI runtime。
+// Hook 缺少 source/event 时使用 claude/Notification 默认值；各 helper 自行负责退出。
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if cli_manager_lib::codex_app_server_proxy::is_helper_request(&args) {
@@ -27,6 +29,7 @@ fn main() {
     cli_manager_lib::run()
 }
 
+// 取首次匹配选项后的一个参数；不检查其是否又是选项，缺少后项返回 None。
 fn arg_value(args: &[String], key: &str) -> Option<String> {
     args.iter()
         .position(|arg| arg == key)

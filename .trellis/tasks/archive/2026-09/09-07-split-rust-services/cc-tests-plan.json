@@ -1,0 +1,10 @@
+{
+  "file": "src-tauri/src/commands/cc_connect.rs",
+  "groups": [
+    { "name": "codex_launch", "pattern": "codex|provider_probe" },
+    { "name": "project_switch", "pattern": "project_list|project_switch|registered_projects|project_provider" },
+    { "name": "platforms", "pattern": "weixin|wecom|platform|allowlist" },
+    { "name": "transport", "pattern": "proxy|ssh|git_safe_directory|launcher|executable|process_output" },
+    { "name": "managed_config", "pattern": "managed_config|managed_agent|managed_claude|pi_and_opencode" }
+  ]
+}

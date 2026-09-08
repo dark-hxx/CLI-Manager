@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   resolveProjectFetchPolicy,
   shouldSidebarBootstrapProjects,
-} from "../src/lib/projectLoadPolicy.ts";
+} from "../src/features/projects/lib/projectLoadPolicy.ts";
 
 test("startup project fetch policy skips expensive diagnostics", () => {
   assert.deepEqual(resolveProjectFetchPolicy("startup"), {

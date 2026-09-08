@@ -155,21 +155,11 @@ terminalProcessManager.write(sessionId, colorReply);
 
 **Tests**: Run `node --test scripts/terminalOsc.test.mjs`; assert both live and replay queries are filtered and `useTerminalOsc.ts` contains no `terminalProcessManager.write` or `replyToColorQueries` path.
 
-> How components are built in this project.
-
----
-
-## Overview
-
-(To be filled by the team)
-
----
-
 ## Component Structure
 
 ### Convention: User-facing app shell text goes through `useI18n`
 
-**What**: New or changed user-facing labels, button text, menu text, aria labels, tooltips, settings titles, empty states, toast messages, OS notifications, stats/history text, and hook-notification script text must use `src/lib/i18n.ts` through `useI18n()` or `translateCurrent()` instead of hard-coded Chinese/English strings. Persisted language preference lives in `settingsStore.language` as `"auto" | "zh-CN" | "zh-TW" | "en-US"`.
+**What**: New or changed user-facing labels, button text, menu text, aria labels, tooltips, settings titles, empty states, toast messages, OS notifications, stats/history text, and hook-notification script text must use `src/shared/i18n/index.ts` through `useI18n()` or `translateCurrent()` instead of hard-coded Chinese/English strings. Persisted language preference lives in `settingsStore.language` as `"auto" | "zh-CN" | "zh-TW" | "en-US"`.
 
 **Why**: Language switching must be consistent across visible shell UI. Keeping translation keys in one local module avoids adding a heavyweight i18n dependency while the app supports Simplified Chinese, Traditional Chinese, and English.
 
@@ -389,7 +379,7 @@ function Panel({ items = [] }: { items?: Item[] }) {
 
 ### Convention: Markdown rendering goes through the shared MarkdownContent component
 
-**What**: Any UI that renders user/session/release Markdown must use `src/components/ui/MarkdownContent.tsx`. Do not import `react-markdown` directly from feature components.
+**What**: Any UI that renders user/session/release Markdown must use `src/shared/ui/MarkdownContent.tsx`. Do not import `react-markdown` directly from feature components.
 
 **Why**: Markdown content comes from history files, prompts, update notes, and tool transcripts. Keeping rendering in one component preserves the same GFM support, `skipHtml` safety policy, link behavior, image placeholder behavior, code highlighting, search highlighting, and GitHub-style visual treatment everywhere.
 
@@ -420,7 +410,7 @@ import ReactMarkdown from "react-markdown";
 - Scope terminal-variant CSS overrides to the caller container (for example a transcript shell or file-preview wrapper). Do not widen `.ui-markdown-terminal` defaults just to fix one surface.
 - The terminal background image is owned by `.ui-terminal-bg-layer`; when `data-bg-enabled="true"`, the Markdown preview must reveal that same pseudo-element layer through a translucent surface instead of loading a second asset. Controls that are direct children of the wrapper need a z-index above the generic direct-child stacking rule.
 - Terminal Markdown preview may unwrap one top-level `md` / `markdown` fenced source block before passing it to the shared renderer; nested code fences remain literal code. The preview must source all non-empty assistant messages from the loaded `HistorySessionDetail` and provide a stable message selector instead of silently discarding earlier responses.
-- When changing Markdown styles, update `src/components/ui/markdownSample.ts` so the manual preview covers the new element or edge case.
+- When changing Markdown styles, update `src/shared/ui/markdownSample.ts` so the manual preview covers the new element or edge case.
 
 **Tests**: Run `npx tsc --noEmit` and `npm run build`; manually inspect the Markdown style preview in Settings > About in both default and terminal variants. If the change targets a terminal-only caller such as a transcript or file preview, also verify that scoped caller still matches the active terminal theme while the other `variant="terminal"` callers keep their prior appearance.
 
@@ -683,7 +673,7 @@ if (becameVisible) scheduleFit(true, false);
 
 ### Convention: Session history transcripts use a history render layer before Markdown
 
-**What**: When rendering Claude/Codex session history message bodies, use `src/components/history/SessionTranscriptContent.tsx` instead of rendering raw message content directly with `MarkdownContent`. `SessionTranscriptContent` may detect session-log structures such as XML-ish blocks, workflow-state blocks, Git status lines, long lists, paths, commit hashes, and status tokens; ordinary Markdown content must still delegate to `HistoryMarkdownContent` / shared `MarkdownContent`.
+**What**: When rendering Claude/Codex session history message bodies, use `src/features/history/api/SessionTranscriptContent.tsx` instead of rendering raw message content directly with `MarkdownContent`. `SessionTranscriptContent` may detect session-log structures such as XML-ish blocks, workflow-state blocks, Git status lines, long lists, paths, commit hashes, and status tokens; ordinary Markdown content must still delegate to `HistoryMarkdownContent` / shared `MarkdownContent`.
 
 **Why**: History files are mixed transcripts, not pure Markdown. They contain system context, workflow metadata, Git changes, paths, and task states. A render-layer adapter preserves readability without changing backend history parsing, storage, or the shared Markdown safety policy.
 
@@ -954,7 +944,7 @@ const horizontalTransform = transform ? { ...transform, y: 0 } : transform;
 
 ### Convention: Drag responsiveness uses shared thresholds and frame-bounded previews
 
-**What**: Sortable surfaces use `DND_ACTIVATION_CONSTRAINT` and `DND_SORTABLE_TRANSITION` from `src/lib/dragInteraction.ts`. Custom pointer drags use the same start distance, while cursor-following previews update DOM transforms at most once per animation frame.
+**What**: Sortable surfaces use `DND_ACTIVATION_CONSTRAINT` and `DND_SORTABLE_TRANSITION` from `src/features/workspace/api/dragInteraction.ts`. Custom pointer drags use the same start distance, while cursor-following previews update DOM transforms at most once per animation frame.
 
 **Why**: Divergent 5-8px activation distances and dnd-kit's default 200ms transform transition make similar drag surfaces feel inconsistent. Calling a large parent component's `setState` on every `pointermove` also rerenders expensive trees and terminal children faster than the browser can paint.
 
@@ -1175,12 +1165,6 @@ const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
 
 ---
 
-## Props Conventions
-
-(To be filled by the team)
-
----
-
 ## Styling Patterns
 
 ### Convention: Project-tree hover actions preserve row geometry
@@ -1243,7 +1227,7 @@ const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
 
 ### Convention: Stats charts use a shared semantic palette
 
-**What**: Stats and usage-analysis chart components should import semantic colors from `src/components/stats/statsPalette.ts` instead of hard-coding one-off hex/RGBA colors for token series, peak markers, cost fills, or chart tooltips.
+**What**: Stats and usage-analysis chart components should import semantic colors from `src/features/stats/api/statsPalette.ts` instead of hard-coding one-off hex/RGBA colors for token series, peak markers, cost fills, or chart tooltips.
 
 **Why**: The app supports multiple light/dark themes. Hard-coded high-saturation chart colors can clash with theme surfaces and make related charts disagree visually. A shared palette keeps History Stats and ccusage charts consistent while still deriving colors from theme tokens.
 
@@ -1298,12 +1282,6 @@ const option = {
 - Keep page-level search behavior only on tabs that actually consume `searchValue`.
 
 **Tests**: For settings visual migrations, run `npx tsc --noEmit` and `npm run build`; desktop runtime UI verification remains manual.
-
----
-
-## Accessibility
-
-(To be filled by the team)
 
 ---
 
@@ -1447,9 +1425,9 @@ terminal.options.theme = isTransparent ? applyTransparency(theme) : theme;
 
 **Why "always on" instead of "rebuild the Terminal on toggle"**: Rebuilding loses scrollback, breaks the PTY data stream wiring, and incurs ~50 ms of GPU/font setup. xterm's WebglAddon is alpha-capable (`alpha: true` is the default WebGL context flag), so the cost of `allowTransparency: true` is a small constant per-frame — research measured ~5-10% FPS in pathological cases, imperceptible in normal terminal use.
 
-**Reference**: `src/components/XTermTerminal.tsx` — sets `allowTransparency: true` unconditionally; the hot-update `useEffect` only swaps `terminal.options.theme` via `applyTransparency` helper in `src/lib/terminalThemes.ts`.
+**Reference**: `src/features/terminal/index.ts` — sets `allowTransparency: true` unconditionally; the hot-update `useEffect` only swaps `terminal.options.theme` via `applyTransparency` helper in `src/shared/lib/terminalThemes.ts`.
 
-**Contrast contract**: Transparent terminal background compositing must be theme-brightness aware. Dark terminal themes may use black alpha for the xterm cell background and image overlay, but light terminal themes must use white alpha so muted ANSI text stays readable. Light terminal themes should avoid WebGL because its glyph rendering and alpha compositing can make glyph edges look soft on bright surfaces even without a background image. Do not increase xterm `fontWeight` as a contrast fix; it can change cell metrics and make glyphs collide in light themes. Keep xterm's measured font and rendered font aligned: if global UI font CSS touches `.xterm`, route it through `--terminal-font-family` from `XTermTerminal` instead of `revert` or a hard-coded stack. Keep the decision centralized in `src/lib/terminalThemes.ts` helpers such as `isLightTerminalTheme`, `applyTransparency`, `getTerminalBackgroundOverlayColor`, and `getTerminalMinimumContrastRatio`; do not hardcode `rgba(0,0,0,...)` in `XTermTerminal` or terminal background CSS.
+**Contrast contract**: Transparent terminal background compositing must be theme-brightness aware. Dark terminal themes may use black alpha for the xterm cell background and image overlay, but light terminal themes must use white alpha so muted ANSI text stays readable. Light terminal themes should avoid WebGL because its glyph rendering and alpha compositing can make glyph edges look soft on bright surfaces even without a background image. Do not increase xterm `fontWeight` as a contrast fix; it can change cell metrics and make glyphs collide in light themes. Keep xterm's measured font and rendered font aligned: if global UI font CSS touches `.xterm`, route it through `--terminal-font-family` from `XTermTerminal` instead of `revert` or a hard-coded stack. Keep the decision centralized in `src/shared/lib/terminalThemes.ts` helpers such as `isLightTerminalTheme`, `applyTransparency`, `getTerminalBackgroundOverlayColor`, and `getTerminalMinimumContrastRatio`; do not hardcode `rgba(0,0,0,...)` in `XTermTerminal` or terminal background CSS.
 
 **Prevention checklist when wiring a new xterm appearance feature**:
 
@@ -1695,7 +1673,7 @@ On a light terminal theme, a CLI that renders with its own dark theme paints mes
 
 ### Convention: Terminal-side preview panels share one theme resolver
 
-**What**: The Markdown preview, subagent transcript, session replay, and the in-terminal Git diff viewer resolve their colors through `useTerminalPreviewTheme()` (backed by `src/lib/terminalPreviewTheme.ts`). Panels must not call `getTerminalTheme()` / `isLightTerminalTheme()` themselves, and must not read `terminalThemeName` + the two palettes to re-derive brightness.
+**What**: The Markdown preview, subagent transcript, session replay, and the in-terminal Git diff viewer resolve their colors through `useTerminalPreviewTheme()` (backed by `src/shared/lib/terminalPreviewTheme.ts`). Panels must not call `getTerminalTheme()` / `isLightTerminalTheme()` themselves, and must not read `terminalThemeName` + the two palettes to re-derive brightness.
 
 **Why**: These panels follow the terminal theme by default but can be pinned to an independent preset (`terminalPreviewThemeName`, `follow-terminal` when unset). Every panel that judges brightness on its own drifts out of the family the first time that setting is used — and one of them silently kept following the *app* theme for code blocks before this was centralized.
 
@@ -1745,7 +1723,7 @@ const terminal = new Terminal({
 - Keep the policy generic; do not detect Grok or another CLI by process name.
 - A shell that has not enabled mouse reporting keeps normal xterm text selection behavior.
 - A mouse-aware TUI receives ordinary mouse reports; Shift remains the selection modifier.
-- Mouse policy belongs in `src/terminal/browser/TerminalMouseInteraction.ts`; `XTermTerminal` only assembles it.
+- Mouse policy belongs in `src/features/terminal/browser/TerminalMouseInteraction.ts`; `XTermTerminal` only assembles it.
 
 **Tests**: Run `node --test scripts/terminalMouseInteraction.test.mjs` and `npx tsc --noEmit`; manually verify Grok fullscreen click/drag/wheel, Shift+drag selection in a mouse-aware TUI, and ordinary shell selection.
 
@@ -1886,16 +1864,16 @@ onPointerDown={(event) => drag.handlePointerDown(event, { path: node.path, kind:
 - Create one controller per terminal attachment; its selection state must start empty and dispose() must remove its DOM listeners.
 - Input owns the current-input buffer and cursor index. Callers must use the controller API rather than passing or mutating those refs.
 - Use the existing terminalTextEditing and terminalCellWidth helpers for cursor indices and display cells. Do not approximate CJK/wide-character offsets with string length.
-- The shared TUI composer markers belong in src/lib/terminalTui.ts; selection and rendering import the same patterns instead of defining local copies.
+- The shared TUI composer markers belong in src/features/terminal/lib/terminalTui.ts; selection and rendering import the same patterns instead of defining local copies.
 - forwardTerminalInput() consumes a replacement selection before writing to the PTY, then clears only the state required by the original input path.
 
 **Tests**: Run npx tsc --noEmit; manually verify Ctrl/Cmd+A, Shift+Left/Right, collapse with Left/Right, Backspace/Delete, typing to replace a selection, Ctrl/Cmd+C selection copy versus Ctrl+C interrupt, and switching sessions after a selection.
 
 ### Convention: Pi terminal compatibility stays outside XTermTerminal
 
-**What**: Shared IME input-anchor parsing lives in `src/lib/terminalImeAnchor.ts`, while IME DOM events
-and composition lifecycle stay in `src/lib/terminalIme.ts`. Shared CLI context parsing lives in
-`src/terminal/browser/TerminalCliContext.ts`.
+**What**: Shared IME input-anchor parsing lives in `src/features/terminal/lib/terminalImeAnchor.ts`, while IME DOM events
+and composition lifecycle stay in `src/features/terminal/lib/terminalIme.ts`. Shared CLI context parsing lives in
+`src/features/terminal/browser/TerminalCliContext.ts`.
 Pi IME positioning, ANSI transformation, and diagnostics live in `TerminalPiIme.ts`,
 `TerminalPiAnsiTransform.ts`, and `TerminalPiDiagnostics.ts`. `TerminalPiCompatibility.ts` is only
 the facade/state coordinator. `XTermTerminal` supplies context and connects narrow callbacks.
@@ -2246,3 +2224,15 @@ must adopt the same policy if caret jumps are reported there.
 **Tests**: `npx tsc --noEmit`; manually hold a key in a long common configuration to confirm the
 caret stays in place and the characters keep their order, then verify refresh / save / provider
 switch / document switch still reload content and keep the viewport.
+
+## Realtime statistics image export
+
+The live statistics panel marks its scroll content with `data-stats-screenshot-scroll`; screenshot/refresh actions carry `data-stats-screenshot-exclude`. Export the currently enabled cards at the current panel width, including content below the viewport, without changing live layout or scroll position. Hidden cards and closed dialogs stay excluded.
+
+Snapshot computed styles (including inherited theme variables) and canvas pixels synchronously before asynchronous rendering. Expand only the offscreen scroll clone, and remove its inert/aria-hidden host in `finally`. Do not point the renderer at the terminal, the whole window or a different session after a tab switch. Use a proportional pixel budget rather than cropping.
+
+Ordinary captures use at least a 2x pixel ratio and may follow high-density displays up to 3x. Dimension and total-pixel limits may proportionally reduce extreme long captures so the full panel remains present without exceeding the renderer budget.
+
+`statsScreenshot` lazily loads html-to-image; `statsScreenshotClipboard` uses Tauri `Image.new` with explicit RGBA dimensions and `writeImage`, then closes the native resource in `finally`. The only added permission is clipboard-manager write-image. No filesystem export, upload or clipboard read is needed. The button owns its in-flight guard, disables duplicate clicks and localizes all feedback.
+
+Tests: `node --test scripts/statsScreenshot.test.mjs`; `node scripts/statsScreenshot.browser.mjs` produces a standalone file fixture whose `statsScreenshotTests.runScreenshotRegression()` exercises dark/light themes, three scroll positions, SVG/canvas, snapshot stability and cleanup. This fixture does not start CLI-Manager services or Tauri. A human must still verify pasting the image from the actual desktop app and switching UI language.

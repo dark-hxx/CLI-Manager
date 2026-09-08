@@ -1,0 +1,1621 @@
+use log::{debug, error, info, warn};
+use serde::Serialize;
+use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
+
+use crate::pty::boundary::safe_emit_boundary;
+use crate::pty::osc_color::{filter_color_queries, parse_hex_rgb, TerminalColors};
+use crate::pty::platform::{self, PlatformPtyChild, PlatformPtyController, PtyLaunchOptions};
+use crate::shell_resolver::{resolve_git_bash_exe, GIT_BASH_NOT_FOUND_MESSAGE};
+use crate::ssh_launch::SshLaunchPlan;
+
+/// PTY 输出/状态事件出口（Issue #123 Phase 2 解耦点）：
+/// daemon 实现为尺寸化 replay + WebSocket 二进制推送。
+///
+/// 契约：`data` 已经过 `safe_emit_boundary` 切帧（UTF-8 + ANSI 序列安全边界），
+/// 实现方只允许整帧透传/存储，禁止再分片。
+pub trait PtyEventSink: Send + Sync + 'static {
+    // 接收指定会话的输出字节，由具体事件出口负责转发或保存。
+    fn on_output(&self, session_id: &str, data: &[u8]);
+    // 接收会话进程状态变更，由具体出口通知消费者。
+    fn on_status(&self, session_id: &str, status: PtyProcessStatus);
+}
+
+/// Reader 累积阈值：达到该阈值或下游显式没有更多数据时才 emit，避免高吞吐时
+/// 每次 read 都触发一次 IPC + Base64 编码。
+const READER_FLUSH_THRESHOLD: usize = 32 * 1024;
+const READER_BUF_SIZE: usize = 16 * 1024;
+const MIN_PTY_COLS: u16 = 40;
+const MIN_PTY_ROWS: u16 = 8;
+const MAX_PTY_DIMENSION: u16 = i16::MAX as u16;
+const GIT_BASH_INITIAL_OUTPUT_DELAY_MS: u64 = 250;
+const ORPHAN_CREATE_GRACE_SECS: u64 = 30;
+const ORPHAN_MISSING_GRACE_SECS: u64 = 90;
+
+/// Debug 诊断（CLI_MANAGER_DEBUG=1）：统计影响滚动条/回滚的关键 VT 序列，
+/// 用于排查 Codex 等 TUI 在不同机器上滚动条表现不一致的问题。
+/// 判定：出现 `?1049h` 说明 TUI 进了 alternate screen（xterm.js 备用缓冲区无
+/// scrollback，滚动条必然消失）；出现 `3J` 说明普通缓冲区回滚被主动清空；
+/// DECSTBM/RI 是区域滚动重绘路径（xterm.js 中不进 scrollback）的证据。
+#[derive(Default)]
+struct VtScrollDiag {
+    alt_enter: u64,
+    alt_exit: u64,
+    ed2: u64,
+    ed3: u64,
+    decstbm: u64,
+    ri: u64,
+}
+
+/// 调用方需保证 data 处于 ANSI 序列安全边界内（safe_emit_boundary 已保证），
+/// 否则跨块被切半的序列会漏计。
+// 扫描当前字节块中的屏幕切换、清屏和滚动控制序列，累计诊断计数。
+fn scan_vt_scroll_sequences(data: &[u8], diag: &mut VtScrollDiag, session_id: &str) {
+    let mut i = 0;
+    while i + 1 < data.len() {
+        if data[i] != 0x1b {
+            i += 1;
+            continue;
+        }
+        // ESC M = RI（reverse index），区域滚动插入历史的常用路径
+        if data[i + 1] == b'M' {
+            if diag.ri == 0 {
+                debug!("pty vt-diag: id={session_id}, first RI (ESC M)");
+            }
+            diag.ri += 1;
+            i += 2;
+            continue;
+        }
+        if data[i + 1] != b'[' {
+            i += 1;
+            continue;
+        }
+        let params_start = i + 2;
+        let mut j = params_start;
+        while j < data.len() && matches!(data[j], b'0'..=b'9' | b';' | b'?') {
+            j += 1;
+        }
+        if j >= data.len() {
+            break;
+        }
+        let params = &data[params_start..j];
+        let hit: Option<(&mut u64, &str)> = match (data[j], params) {
+            (b'h', b"?1049") => Some((&mut diag.alt_enter, "alt-screen enter (?1049h)")),
+            (b'l', b"?1049") => Some((&mut diag.alt_exit, "alt-screen exit (?1049l)")),
+            (b'J', b"2") => Some((&mut diag.ed2, "ED2 clear screen (2J)")),
+            (b'J', b"3") => Some((&mut diag.ed3, "ED3 clear scrollback (3J)")),
+            // 排除 `CSI ? Pm r`（DEC 私有模式 restore），其余 `CSI Ps;Ps r` 按 DECSTBM 计
+            (b'r', p) if !p.starts_with(b"?") => {
+                Some((&mut diag.decstbm, "DECSTBM scroll region (r)"))
+            }
+            _ => None,
+        };
+        if let Some((count, name)) = hit {
+            if *count == 0 {
+                debug!("pty vt-diag: id={session_id}, first {name}");
+            }
+            *count += 1;
+        }
+        i = j + 1;
+    }
+}
+
+pub struct PtySession {
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    terminal_colors: Arc<std::sync::RwLock<Option<TerminalColors>>>,
+    controller: Box<dyn PlatformPtyController>,
+    child: Arc<dyn PlatformPtyChild>,
+    diagnostics: Arc<Mutex<PtySessionDiagnostics>>,
+    reader_handle: Option<JoinHandle<()>>,
+    created_at: Instant,
+    missing_since: Option<Instant>,
+}
+
+#[derive(Clone)]
+struct PtySessionDiagnostics {
+    session_id: String,
+    shell: String,
+    exe: String,
+    cwd: Option<String>,
+    last_resize_cols: Option<u16>,
+    last_resize_rows: Option<u16>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct PtyProcessStatus {
+    pub status: String,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Clone, Serialize, serde::Deserialize)]
+pub struct PtyOrphanCleanupSummary {
+    pub active_count: usize,
+    pub tracked_count: usize,
+    pub marked_missing: usize,
+    pub protected_count: usize,
+    pub cleaned_count: usize,
+    pub skipped_empty_active_list: bool,
+}
+
+pub struct PtyManager {
+    sessions: RwLock<HashMap<String, Arc<Mutex<PtySession>>>>,
+    statuses: Arc<Mutex<HashMap<String, PtyProcessStatus>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct PtyProcessTraits {
+    pub uses_conpty_dll: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ShellLaunchLogContext {
+    requested_shell: Option<String>,
+    shell_key: String,
+    exe: String,
+    args: Vec<String>,
+    login_shell: bool,
+    cwd: Option<String>,
+}
+
+impl PtyManager {
+    // 创建空会话表与共享进程状态表。
+    pub fn new() -> Self {
+        Self {
+            sessions: RwLock::new(HashMap::new()),
+            statuses: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    // 按 Windows、macOS 和其他平台选择默认 shell 标识。
+    fn default_shell_key() -> &'static str {
+        if cfg!(target_os = "windows") {
+            "powershell"
+        } else if cfg!(target_os = "macos") {
+            "zsh"
+        } else {
+            "bash"
+        }
+    }
+
+    // 将看似路径的 shell 输入检查为现有文件；普通命令标识交给后续解析。
+    fn resolve_custom_shell_path(shell: &str) -> Result<Option<String>, String> {
+        let trimmed = shell.trim();
+        if trimmed.is_empty() {
+            return Ok(None);
+        }
+        let looks_like_path =
+            trimmed.contains('\\') || trimmed.contains('/') || Path::new(trimmed).is_absolute();
+        if !looks_like_path {
+            return Ok(None);
+        }
+        let path = Path::new(trimmed);
+        if path.is_file() {
+            return Ok(Some(trimmed.to_string()));
+        }
+        Err(format!("Shell executable not found: {trimmed}"))
+    }
+
+    // 解析已支持的 shell 标识或自定义文件路径，返回可执行项及默认参数。
+    fn resolve_shell(shell: &str) -> Result<(String, Vec<String>), String> {
+        if let Some(custom_shell) = Self::resolve_custom_shell_path(shell)? {
+            return Ok((custom_shell, Vec::new()));
+        }
+        match shell {
+            // Windows shells
+            "cmd" if cfg!(target_os = "windows") => {
+                Ok(("cmd.exe".to_string(), vec!["/Q".to_string()]))
+            }
+            "pwsh" => {
+                let exe = if cfg!(target_os = "windows") {
+                    "pwsh.exe"
+                } else {
+                    "pwsh"
+                };
+                Ok((exe.to_string(), vec!["-NoLogo".to_string()]))
+            }
+            "wsl" if cfg!(target_os = "windows") => Ok(("wsl.exe".to_string(), Vec::new())),
+            "gitbash" if cfg!(target_os = "windows") => resolve_git_bash_exe()
+                .map(|path| {
+                    (
+                        path.to_string_lossy().into_owned(),
+                        Self::git_bash_login_args(),
+                    )
+                })
+                .ok_or_else(|| GIT_BASH_NOT_FOUND_MESSAGE.to_string()),
+            // Unix shells (macOS, Linux)
+            "zsh" => Ok(("zsh".to_string(), Self::zsh_login_args())),
+            "fish" => Ok(("fish".to_string(), Vec::new())),
+            "sh" => Ok(("sh".to_string(), Vec::new())),
+            "bash" => {
+                // Windows: bash.exe（WSL/Git 自带）；Unix: bash
+                if cfg!(target_os = "windows") {
+                    Ok(("bash.exe".to_string(), Vec::new()))
+                } else {
+                    Ok(("bash".to_string(), Self::bash_login_args()))
+                }
+            }
+            // 默认：Windows 用 powershell；Unix 用用户的登录 shell（$SHELL），
+            // 回退到平台惯用默认（macOS=zsh，其它=bash）
+            _ => {
+                if cfg!(target_os = "windows") {
+                    Ok(("powershell.exe".to_string(), vec!["-NoLogo".to_string()]))
+                } else {
+                    let fallback = if cfg!(target_os = "macos") {
+                        "zsh"
+                    } else {
+                        "bash"
+                    };
+                    let shell = std::env::var("SHELL").unwrap_or_else(|_| fallback.to_string());
+                    Ok((shell, Vec::new()))
+                }
+            }
+        }
+    }
+
+    // 仅在传入环境中运行监控开关等于 1 时启用 shell 集成。
+    fn shell_runtime_monitoring_enabled(env_vars: Option<&HashMap<String, String>>) -> bool {
+        env_vars
+            .and_then(|vars| vars.get("CLI_MANAGER_SHELL_RUNTIME_MONITORING"))
+            .map(|value| value == "1")
+            .unwrap_or(false)
+    }
+
+    // 返回 Git Bash 的交互式登录参数。
+    fn git_bash_login_args() -> Vec<String> {
+        vec!["--login".to_string(), "-i".to_string()]
+    }
+
+    // macOS 下为 zsh 添加登录参数，其他平台保持空参数。
+    fn zsh_login_args() -> Vec<String> {
+        if cfg!(target_os = "macos") {
+            vec!["-l".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    // macOS 下为 bash 添加交互式登录参数，其他平台保持空参数。
+    fn bash_login_args() -> Vec<String> {
+        if cfg!(target_os = "macos") {
+            vec!["--login".to_string(), "-i".to_string()]
+        } else {
+            Vec::new()
+        }
+    }
+
+    // 检查参数列表是否显式包含 -l 或 --login。
+    fn shell_args_include_login(args: &[String]) -> bool {
+        args.iter().any(|arg| arg == "-l" || arg == "--login")
+    }
+
+    // 复制 shell 启动诊断字段，并根据参数标记是否登录 shell。
+    fn build_shell_launch_log_context(
+        requested_shell: Option<&str>,
+        shell_key: &str,
+        exe: &str,
+        args: &[String],
+        cwd: Option<&str>,
+    ) -> ShellLaunchLogContext {
+        ShellLaunchLogContext {
+            requested_shell: requested_shell.map(str::to_string),
+            shell_key: shell_key.to_string(),
+            exe: exe.to_string(),
+            args: args.to_vec(),
+            login_shell: Self::shell_args_include_login(args),
+            cwd: cwd.map(str::to_string),
+        }
+    }
+
+    /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
+    /// 既进 Linux shell，又能在 claude 经 interop 调 Windows 端 cli-manager.exe 时回传。
+    /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
+    // 合并已有 WSLENV，将本批存在的回调和颜色变量按名称去重后加入。
+    fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
+        const FORWARD: [&str; 4] = [
+            "CLI_MANAGER_TAB_ID",
+            "CLI_MANAGER_NOTIFY_PORT",
+            "CLI_MANAGER_NOTIFY_TOKEN",
+            "COLORTERM",
+        ];
+        let present: Vec<&str> = FORWARD
+            .iter()
+            .copied()
+            .filter(|key| env_vars.contains_key(*key))
+            .collect();
+        if present.is_empty() {
+            return;
+        }
+
+        let mut entries: Vec<String> = env_vars
+            .get("WSLENV")
+            .cloned()
+            .or_else(|| std::env::var("WSLENV").ok())
+            .map(|existing| {
+                existing
+                    .split(':')
+                    .filter(|item| !item.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for key in present {
+            // WSLENV 项可能带 /u /w 等 flag，比对名字部分去重
+            let already = entries
+                .iter()
+                .any(|entry| entry.split('/').next() == Some(key));
+            if !already {
+                entries.push(key.to_string());
+            }
+        }
+
+        env_vars.insert("WSLENV".to_string(), entries.join(":"));
+    }
+
+    // 缺省时补充真彩色能力，非 Windows 另补 TERM，不覆盖显式值。
+    fn apply_terminal_capabilities(env_vars: &mut HashMap<String, String>, is_windows: bool) {
+        env_vars
+            .entry("COLORTERM".to_string())
+            .or_insert_with(|| "truecolor".to_string());
+        if !is_windows {
+            env_vars
+                .entry("TERM".to_string())
+                .or_insert_with(|| "xterm-256color".to_string());
+        }
+    }
+
+    // 构造 PowerShell 启动参数，用 prompt 和读行包装脚本输出 OSC 133 运行标记。
+    fn powershell_runtime_monitor_args() -> Vec<String> {
+        // 标准 FinalTerm OSC 133 shell integration（前端 XTermTerminal 原始流解析）：
+        //   D[;exit] = 命令结束（无 exit 表示没跑命令：空回车 / prompt 处 Ctrl+C）
+        //   A = prompt 开始；B = prompt 结束
+        //   C = 命令开始执行（PSConsoleHostReadLine 提交非空行时发出）
+        // 是否真的跑过命令用 history id 判断，避免空回车误报 command_finished。
+        // 内嵌 global:prompt：保存上一命令状态，按历史 ID 输出 OSC 133 结束码并更新全局历史标记。
+        // 随后调用原 prompt 并包装 A/B 标记；原 prompt 异常未在此捕获，会沿 PowerShell 调用传播。
+        // 内嵌 global:PSConsoleHostReadLine：调用原读行函数，仅非空提交向控制台写 C 标记并原样返回输入；读行错误不吞掉。
+        let script = r#"
+$global:CliManagerLastHistoryId = $null
+$global:CliManagerPreviousPrompt = if (Test-Path function:\prompt) { (Get-Command prompt).ScriptBlock } else { $null }
+function global:prompt {
+  $success = $?
+  $nativeExitCode = $global:LASTEXITCODE
+  $esc = [char]27
+  $bel = [char]7
+  $lastHistory = Get-History -Count 1
+  $lastId = if ($lastHistory) { $lastHistory.Id } else { -1 }
+  $out = ""
+  if (($null -ne $global:CliManagerLastHistoryId) -and ($lastId -ne $global:CliManagerLastHistoryId)) {
+    $exitCode = if ($success) { 0 } elseif ($nativeExitCode -is [int] -and $nativeExitCode -ne 0) { $nativeExitCode } else { 1 }
+    $out += "$esc]133;D;$exitCode$bel"
+  } else {
+    $out += "$esc]133;D$bel"
+  }
+  $global:CliManagerLastHistoryId = $lastId
+  $out += "$esc]133;A$bel"
+  $promptText = if ($global:CliManagerPreviousPrompt) { & $global:CliManagerPreviousPrompt } else { 'PS ' + (Get-Location) + '> ' }
+  "$out$promptText$esc]133;B$bel"
+}
+if (-not (Get-Module -Name PSReadLine)) { Import-Module PSReadLine -ErrorAction SilentlyContinue }
+if (Test-Path function:\PSConsoleHostReadLine) {
+  $global:CliManagerOriginalReadLine = $function:PSConsoleHostReadLine
+  function global:PSConsoleHostReadLine {
+    $line = & $global:CliManagerOriginalReadLine
+    if (($null -ne $line) -and ($line.Trim().Length -gt 0)) {
+      [Console]::Write("$([char]27)]133;C$([char]7)")
+    }
+    $line
+  }
+}
+"#;
+        vec![
+            "-NoLogo".to_string(),
+            "-NoExit".to_string(),
+            "-Command".to_string(),
+            script.to_string(),
+        ]
+    }
+
+    /// Git Bash 的 OSC 133 集成 rcfile：先加载 Git for Windows /etc/profile 与用户 ~/.bashrc，
+    /// 再追加我们的钩子，保证 PROMPT_COMMAND / PS0 不被用户配置覆盖。
+    /// PS0 仅在交互式命令真正执行前展开（bash 4.4+），用 `${PS0:0:$((var=1,0))}`
+    /// 技巧完成无输出赋值，替代 DEBUG trap（trap 会被 PROMPT_COMMAND 自身误触发）。
+    // 向固定临时 bashrc 写入用户配置加载与 OSC 133 集成脚本，并返回规范分隔符路径。
+    fn write_bash_integration_rcfile() -> Result<String, String> {
+        // 内嵌 __cli_manager_prompt：保存上一退出码，按运行标记打印 D 或 D;exit，清零标记后打印 A；无独立错误处理。
+        let script = r#"[ -f /etc/profile ] && . /etc/profile
+[ -f ~/.bashrc ] && . ~/.bashrc
+__cli_manager_prompt() {
+  local exit_code=$?
+  if [ "${__cli_manager_ran:-0}" = "1" ]; then
+    printf '\033]133;D;%s\007' "$exit_code"
+    __cli_manager_ran=0
+  else
+    printf '\033]133;D\007'
+  fi
+  printf '\033]133;A\007'
+}
+PROMPT_COMMAND="__cli_manager_prompt${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
+PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
+"#;
+        let path = std::env::temp_dir().join("cli-manager-bash-integration.bashrc");
+        std::fs::write(&path, script).map_err(|e| e.to_string())?;
+        Ok(path.to_string_lossy().replace('\\', "/"))
+    }
+
+    /// cmd 经 PROMPT 环境变量注入 133 标记（$E=ESC，$E\ = ST 终止符）。
+    /// cmd 拿不到上一条命令的 exit code，D 恒不带参数；running 由前端输入侧
+    /// 猜测提供，prompt 重现（A）时收口为 done。
+    // 保留已有 CMD prompt 文本并在其前后加入 OSC 133 标记，不提供命令退出码。
+    fn apply_cmd_prompt_integration(env_vars: &mut HashMap<String, String>) {
+        let base = env_vars
+            .get("PROMPT")
+            .cloned()
+            .or_else(|| std::env::var("PROMPT").ok())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "$P$G".to_string());
+        env_vars.insert(
+            "PROMPT".to_string(),
+            format!("$E]133;D$E\\$E]133;A$E\\{base}$E]133;B$E\\"),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    // Windows 下调用 taskkill 强制终止指定根 PID 的进程树，失败返回输出摘要。
+    fn kill_process_tree(pid: u32) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let pid_arg = pid.to_string();
+        let output = Command::new("taskkill")
+            .args(["/PID", pid_arg.as_str(), "/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("taskkill start failed for pid {pid}: {e}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(format!(
+            "taskkill failed for pid {pid}: status={}, detail={}",
+            output.status, detail
+        ))
+    }
+
+    /// 批量终止多个 PTY 根进程树：taskkill 原生支持多 /PID，单次调用避免
+    /// 退出时逐会话 spawn taskkill 造成的串行等待。仅作用于本应用拥有的 PTY 根 PID。
+    #[cfg(target_os = "windows")]
+    // Windows 下用一次 taskkill 批量终止给定 PID 的进程树，空列表不执行命令。
+    fn kill_process_trees(pids: &[u32]) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        use std::process::Command;
+
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        if pids.is_empty() {
+            return Ok(());
+        }
+        let mut command = Command::new("taskkill");
+        for pid in pids {
+            command.arg("/PID").arg(pid.to_string());
+        }
+        let output = command
+            .args(["/T", "/F"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|e| format!("taskkill start failed for pids {pids:?}: {e}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(format!(
+            "taskkill failed for pids {pids:?}: status={}, detail={}",
+            output.status, detail
+        ))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    // 非 Windows 下拒绝零 PID，并调用 kill 向对应进程组发送 TERM。
+    fn kill_process_group(pid: u32) -> Result<(), String> {
+        if pid == 0 {
+            return Err("invalid_pid".to_string());
+        }
+        let pgid = format!("-{pid}");
+        let output = std::process::Command::new("kill")
+            .args(["-TERM", pgid.as_str()])
+            .output()
+            .map_err(|e| format!("kill start failed for process group {pgid}: {e}"))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if stderr.is_empty() { stdout } else { stderr };
+        Err(format!(
+            "kill failed for process group {pgid}: status={}, detail={}",
+            output.status, detail
+        ))
+    }
+
+    // 按监控开关生成 shell 参数；Git Bash 临时集成写入失败时回退普通启动参数。
+    fn build_shell_args(
+        shell: &str,
+        env_vars: Option<&HashMap<String, String>>,
+    ) -> Result<(String, Vec<String>), String> {
+        let monitoring_enabled = Self::shell_runtime_monitoring_enabled(env_vars);
+        if !monitoring_enabled {
+            return Self::resolve_shell(shell);
+        }
+        match shell {
+            "powershell" if cfg!(target_os = "windows") => Ok((
+                "powershell.exe".to_string(),
+                Self::powershell_runtime_monitor_args(),
+            )),
+            "pwsh" => {
+                let exe = if cfg!(target_os = "windows") {
+                    "pwsh.exe"
+                } else {
+                    "pwsh"
+                };
+                Ok((exe.to_string(), Self::powershell_runtime_monitor_args()))
+            }
+            // gitbash 是确定的 Windows 原生 bash，可安全注入 rcfile；
+            // "bash"（System32 的 WSL 启动器）与 wsl 一样无法可靠注入，
+            // 仅依赖前端识别用户自带的 OSC 133/633 集成。
+            "gitbash" if cfg!(target_os = "windows") => {
+                let (exe, args) = Self::resolve_shell(shell)?;
+                match Self::write_bash_integration_rcfile() {
+                    Ok(rcfile) => Ok((exe, vec!["--rcfile".to_string(), rcfile, "-i".to_string()])),
+                    Err(err) => {
+                        warn!(
+                            "bash integration rcfile write failed, fallback to plain shell: {err}"
+                        );
+                        Ok((exe, args))
+                    }
+                }
+            }
+            _ => Self::resolve_shell(shell),
+        }
+    }
+
+    // 以普通本机 shell 配置创建 PTY，不指定 SSH 计划或初始颜色。
+    pub fn create(
+        &self,
+        session_id: &str,
+        cwd: Option<&str>,
+        env_vars: Option<HashMap<String, String>>,
+        shell: Option<&str>,
+        sink: Arc<dyn PtyEventSink>,
+    ) -> Result<PtyProcessTraits, String> {
+        self.create_with_launch(session_id, cwd, env_vars, shell, None, None, sink)
+    }
+
+    // 解析本机或 SSH 启动计划并创建 PTY，注册会话及读线程；读线程过滤颜色查询并报告输出和结束状态。
+    pub fn create_with_launch(
+        &self,
+        session_id: &str,
+        cwd: Option<&str>,
+        env_vars: Option<HashMap<String, String>>,
+        shell: Option<&str>,
+        ssh_launch: Option<&SshLaunchPlan>,
+        terminal_colors: Option<(&str, &str)>,
+        sink: Arc<dyn PtyEventSink>,
+    ) -> Result<PtyProcessTraits, String> {
+        let env_count = env_vars.as_ref().map(|vars| vars.len()).unwrap_or(0);
+        info!(
+            "pty session create: id={}, shell={:?}, cwd={:?}, env_vars={}",
+            session_id, shell, cwd, env_count
+        );
+        let default_shell_key = Self::default_shell_key();
+        let shell_key = shell.unwrap_or(default_shell_key);
+        let mut env_vars = env_vars;
+        Self::apply_terminal_capabilities(
+            env_vars.get_or_insert_with(HashMap::new),
+            cfg!(target_os = "windows"),
+        );
+        if cfg!(target_os = "windows")
+            && shell_key == "cmd"
+            && Self::shell_runtime_monitoring_enabled(env_vars.as_ref())
+        {
+            Self::apply_cmd_prompt_integration(env_vars.get_or_insert_with(HashMap::new));
+        }
+        // WSL：wsl.exe 把 cwd 自动映射到 /mnt，但 cmd.env 设的是 Windows 进程环境，
+        // 不经 WSLENV 不会进 Linux shell，导致 hook 回调变量丢失。
+        if cfg!(target_os = "windows") && shell_key == "wsl" {
+            if let Some(vars) = env_vars.as_mut() {
+                Self::apply_wsl_env_forwarding(vars);
+            }
+        }
+        if cfg!(target_os = "windows") && shell_key == "gitbash" {
+            env_vars
+                .get_or_insert_with(HashMap::new)
+                .entry("CHERE_INVOKING".to_string())
+                .or_insert_with(|| "1".to_string());
+        }
+        let mut ssh_env = HashMap::new();
+        let (exe, mut args) = if let Some(ssh_launch) = ssh_launch {
+            let launch = ssh_launch.build_process_launch().map_err(|e| {
+                error!(
+                    "pty resolve ssh launch failed: id={}, error={}",
+                    session_id, e
+                );
+                e
+            })?;
+            ssh_env = launch.env;
+            (launch.executable, launch.args)
+        } else {
+            Self::build_shell_args(shell_key, env_vars.as_ref()).map_err(|e| {
+                error!(
+                    "pty resolve shell failed: id={}, shell={}, error={}",
+                    session_id, shell_key, e
+                );
+                e
+            })?
+        };
+        let host_cwd = if cfg!(target_os = "windows") && shell_key == "wsl" && ssh_launch.is_none() {
+            let (wsl_args, host_cwd) = super::wsl_launch::resolve_wsl_launch(cwd)?;
+            super::wsl_launch::validate_wsl_directory(&wsl_args)?;
+            args.extend(wsl_args);
+            host_cwd
+        } else {
+            cwd.map(str::to_string)
+        };
+        let launch_shell_key = if ssh_launch.is_some() {
+            "ssh"
+        } else {
+            shell_key
+        };
+        let log_args = if ssh_launch.is_some() {
+            vec!["<ssh-launch-redacted>".to_string()]
+        } else {
+            args.clone()
+        };
+        let launch_context =
+            Self::build_shell_launch_log_context(shell, launch_shell_key, &exe, &log_args, cwd);
+        debug!(
+            "pty shell launch: id={}, requested_shell={:?}, shell_key={}, exe={}, args={:?}, login_shell={}, cwd={:?}",
+            session_id,
+            launch_context.requested_shell,
+            launch_context.shell_key,
+            launch_context.exe,
+            launch_context.args,
+            launch_context.login_shell,
+            launch_context.cwd
+        );
+        let launch_env = merge_ssh_launch_environment(ssh_env, env_vars.unwrap_or_default());
+        let spawned = platform::spawn(PtyLaunchOptions {
+            exe: exe.clone(),
+            args: args.clone(),
+            cwd: if ssh_launch.is_some() {
+                None
+            } else {
+                host_cwd
+            },
+            env: launch_env,
+            cols: 80,
+            rows: 24,
+        })
+        .map_err(|e| {
+            error!(
+                "pty spawn failed: id={}, exe={}, error={}",
+                session_id, exe, e
+            );
+            e
+        })?;
+        let writer = Arc::new(Mutex::new(spawned.writer));
+        let terminal_colors = Arc::new(std::sync::RwLock::new(terminal_colors.and_then(
+            |(foreground, background)| {
+                Some(TerminalColors {
+                    foreground: parse_hex_rgb(foreground)?,
+                    background: parse_hex_rgb(background)?,
+                })
+            },
+        )));
+        let mut reader = spawned.reader;
+        let controller = spawned.controller;
+        let child = spawned.child;
+        let process_traits = PtyProcessTraits {
+            uses_conpty_dll: spawned.traits.uses_conpty_dll,
+        };
+        let diagnostics = Arc::new(Mutex::new(PtySessionDiagnostics {
+            session_id: session_id.to_string(),
+            shell: launch_shell_key.to_string(),
+            exe: exe.to_string(),
+            cwd: cwd.map(str::to_string),
+            last_resize_cols: None,
+            last_resize_rows: None,
+        }));
+        let status_map = self.statuses.clone();
+        let child_for_thread = child.clone();
+        let diagnostics_for_thread = diagnostics.clone();
+        let session_id_owned = session_id.to_string();
+        let writer_for_reader = Arc::clone(&writer);
+        let colors_for_reader = Arc::clone(&terminal_colors);
+        let color_replies_enabled = ssh_launch.is_none();
+        let defer_initial_output = cfg!(target_os = "windows") && launch_shell_key == "gitbash";
+
+        self.statuses.lock().unwrap().insert(
+            session_id.to_string(),
+            PtyProcessStatus {
+                status: "running".to_string(),
+                exit_code: None,
+            },
+        );
+
+        let reader_handle = std::thread::spawn(move || {
+            if defer_initial_output {
+                std::thread::sleep(std::time::Duration::from_millis(
+                    GIT_BASH_INITIAL_OUTPUT_DELAY_MS,
+                ));
+            }
+            let mut buf = [0u8; READER_BUF_SIZE];
+            let mut pending: Vec<u8> = Vec::with_capacity(READER_FLUSH_THRESHOLD * 2);
+            let mut reader_end_reason = "eof".to_string();
+            // 仅 debug 日志开启时扫描 VT 序列，正常运行零扫描开销
+            let vt_diag_enabled = log::log_enabled!(log::Level::Debug);
+            let mut vt_diag = VtScrollDiag::default();
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        pending.extend_from_slice(&buf[..n]);
+                        // 每次底层 read 后立即交付安全前缀。若恰好读满 16 KiB 后
+                        // 源端暂时停顿，下一次 read 可能长期阻塞，不能把这批输出
+                        // 留在本层等待；5ms 合并由 daemon event sink 统一负责。
+                        let safe = safe_emit_boundary(&pending);
+                        if safe > 0 {
+                            if vt_diag_enabled {
+                                scan_vt_scroll_sequences(
+                                    &pending[..safe],
+                                    &mut vt_diag,
+                                    &session_id_owned,
+                                );
+                            }
+                            let safe_output = &pending[..safe];
+                            if let Some(filtered) = filter_color_queries(
+                                safe_output,
+                                colors_for_reader.read().ok().and_then(|colors| *colors),
+                                color_replies_enabled,
+                            ) {
+                                if !filtered.reply.is_empty() {
+                                    let reply_result = writer_for_reader
+                                        .lock()
+                                        .map_err(|_| "pty writer poisoned".to_string())
+                                        .and_then(|mut writer| {
+                                            writer
+                                                .write_all(&filtered.reply)
+                                                .map_err(|error| error.to_string())?;
+                                            writer.flush().map_err(|error| error.to_string())
+                                        });
+                                    if let Err(error) = reply_result {
+                                        warn!(
+                                            "pty OSC color reply failed: id={}, error={}",
+                                            session_id_owned, error
+                                        );
+                                    }
+                                }
+                                if !filtered.output.is_empty() {
+                                    sink.on_output(&session_id_owned, &filtered.output);
+                                }
+                            } else {
+                                sink.on_output(&session_id_owned, safe_output);
+                            }
+                            pending.drain(..safe);
+                        } else if pending.len() > READER_FLUSH_THRESHOLD * 8 {
+                            // 极端兜底：未终结序列超 256KB（远大于任何正常 OSC/CSI），
+                            // 说明源端格式异常，强制 emit 避免内存无限增长。
+                            debug!(
+                                "pty pending buffer overflowed boundary protection: id={}, len={}",
+                                session_id_owned,
+                                pending.len()
+                            );
+                            if vt_diag_enabled {
+                                scan_vt_scroll_sequences(&pending, &mut vt_diag, &session_id_owned);
+                            }
+                            sink.on_output(&session_id_owned, &pending);
+                            pending.clear();
+                        }
+                    }
+                    Err(e) => {
+                        reader_end_reason = format!("read_error: {e}");
+                        break;
+                    }
+                }
+            }
+            // 进程退出，把剩余数据全部发出去（不再保护边界，最后一帧）
+            if !pending.is_empty() {
+                if vt_diag_enabled {
+                    scan_vt_scroll_sequences(&pending, &mut vt_diag, &session_id_owned);
+                }
+                sink.on_output(&session_id_owned, &pending);
+                pending.clear();
+            }
+
+            // Process exited — check exit status
+            let (new_status, child_exit_status, child_exit_code_raw, child_wait_error) =
+                match child_for_thread.try_wait() {
+                    Ok(Some(exit)) => (
+                        PtyProcessStatus {
+                            status: "exited".to_string(),
+                            exit_code: exit.code,
+                        },
+                        Some(exit.description),
+                        exit.code,
+                        None,
+                    ),
+                    Ok(None) => (
+                        PtyProcessStatus {
+                            status: "exited".to_string(),
+                            exit_code: None,
+                        },
+                        None,
+                        None,
+                        None,
+                    ),
+                    Err(e) => (
+                        PtyProcessStatus {
+                            status: "error".to_string(),
+                            exit_code: None,
+                        },
+                        None,
+                        None,
+                        Some(e),
+                    ),
+                };
+            let diagnostics = diagnostics_for_thread.lock().unwrap().clone();
+            info!(
+                "pty reader ended: reason={}, id={}, status={}, exit_code={:?}, child_exit_status={:?}, child_exit_code_raw={:?}, shell={}, exe={}, cwd={:?}, last_resize_cols={:?}, last_resize_rows={:?}, child_wait_error={:?}",
+                reader_end_reason,
+                diagnostics.session_id,
+                new_status.status,
+                new_status.exit_code,
+                child_exit_status,
+                child_exit_code_raw,
+                diagnostics.shell,
+                diagnostics.exe,
+                diagnostics.cwd,
+                diagnostics.last_resize_cols,
+                diagnostics.last_resize_rows,
+                child_wait_error
+            );
+            if vt_diag_enabled {
+                debug!(
+                    "pty vt-diag summary: id={}, alt_enter={}, alt_exit={}, ed2={}, ed3={}, decstbm={}, ri={}",
+                    session_id_owned,
+                    vt_diag.alt_enter,
+                    vt_diag.alt_exit,
+                    vt_diag.ed2,
+                    vt_diag.ed3,
+                    vt_diag.decstbm,
+                    vt_diag.ri
+                );
+            }
+
+            if let Ok(mut statuses) = status_map.lock() {
+                if let Some(entry) = statuses.get_mut(&session_id_owned) {
+                    *entry = new_status.clone();
+                }
+            }
+
+            sink.on_status(&session_id_owned, new_status);
+        });
+
+        let session = Arc::new(Mutex::new(PtySession {
+            writer,
+            terminal_colors,
+            controller,
+            child,
+            diagnostics,
+            reader_handle: Some(reader_handle),
+            created_at: Instant::now(),
+            missing_since: None,
+        }));
+        self.sessions
+            .write()
+            .unwrap()
+            .insert(session_id.to_string(), session);
+        debug!("pty session ready: id={}", session_id);
+        Ok(process_traits)
+    }
+
+    // 将字符串转换为字节写入指定 PTY。
+    pub fn write(&self, session_id: &str, data: &str) -> Result<(), String> {
+        self.write_bytes(session_id, data.as_bytes())
+    }
+
+    // 定位会话并串行完整写入、刷新输入，找不到会话或写入失败返回错误。
+    pub fn write_bytes(&self, session_id: &str, data: &[u8]) -> Result<(), String> {
+        let session_arc = {
+            let sessions = self.sessions.read().unwrap();
+            sessions.get(session_id).cloned()
+        }
+        .ok_or_else(|| {
+            let msg = format!("Session {session_id} not found");
+            error!("pty write failed: {}", msg);
+            msg
+        })?;
+        let writer = session_arc.lock().unwrap().writer.clone();
+        let mut writer = writer
+            .lock()
+            .map_err(|_| "pty writer poisoned".to_string())?;
+        writer.write_all(data).map_err(|e| {
+            error!("pty write failed: session_id={}, error={}", session_id, e);
+            e.to_string()
+        })?;
+        writer.flush().map_err(|e| {
+            error!("pty flush failed: session_id={}, error={}", session_id, e);
+            e.to_string()
+        })?;
+        Ok(())
+    }
+
+    // 校验前景和背景色，并更新供读线程回复颜色查询使用的共享颜色。
+    pub fn update_terminal_colors(
+        &self,
+        session_id: &str,
+        foreground: &str,
+        background: &str,
+    ) -> Result<(), String> {
+        let foreground = parse_hex_rgb(foreground)
+            .ok_or_else(|| "invalid terminal foreground color".to_string())?;
+        let background = parse_hex_rgb(background)
+            .ok_or_else(|| "invalid terminal background color".to_string())?;
+        let session = self
+            .sessions
+            .read()
+            .unwrap()
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| format!("Session {session_id} not found"))?;
+        let colors = session.lock().unwrap().terminal_colors.clone();
+        *colors
+            .write()
+            .map_err(|_| "terminal colors poisoned".to_string())? = Some(TerminalColors {
+            foreground,
+            background,
+        });
+        Ok(())
+    }
+
+    // 限制终端行列尺寸，记录调整诊断后交给平台控制器执行。
+    pub fn resize(
+        &self,
+        session_id: &str,
+        cols: u16,
+        rows: u16,
+        pixel_width: Option<u32>,
+        pixel_height: Option<u32>,
+    ) -> Result<(), String> {
+        let session_arc = {
+            let sessions = self.sessions.read().unwrap();
+            sessions.get(session_id).cloned()
+        }
+        .ok_or_else(|| {
+            let msg = format!("Session {session_id} not found");
+            error!("pty resize failed: {}", msg);
+            msg
+        })?;
+        let session = session_arc.lock().unwrap();
+        let cols = cols.clamp(MIN_PTY_COLS, MAX_PTY_DIMENSION);
+        let rows = rows.clamp(MIN_PTY_ROWS, MAX_PTY_DIMENSION);
+        debug!(
+            "pty resize: session_id={}, cols={}, rows={}",
+            session_id, cols, rows
+        );
+        if let Ok(mut diagnostics) = session.diagnostics.lock() {
+            diagnostics.last_resize_cols = Some(cols);
+            diagnostics.last_resize_rows = Some(rows);
+        }
+        session
+            .controller
+            .resize(cols, rows, pixel_width, pixel_height)
+            .map_err(|e| {
+                error!("pty resize failed: session_id={}, error={}", session_id, e);
+                e
+            })
+    }
+
+    // 尝试终止进程树或进程组并调用子进程终止，释放会话引用后等待读线程退出。
+    fn close_session_arc(session_id: &str, session_arc: Arc<Mutex<PtySession>>, reason: &str) {
+        // Kill child first, take reader handle out, then drop the Arc.
+        // Dropping the last Arc releases the master PTY, which causes the
+        // reader thread to observe EOF and exit promptly.
+        let (reader_handle, diagnostics) = {
+            let mut session = session_arc.lock().unwrap();
+            let diagnostics = session.diagnostics.lock().unwrap().clone();
+            let child = Arc::clone(&session.child);
+            #[cfg(target_os = "windows")]
+            {
+                let pid = child.process_id();
+                if let Err(err) = Self::kill_process_tree(pid) {
+                    warn!(
+                        "pty process tree kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
+                        session_id, pid, reason, err
+                    );
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let pid = child.process_id();
+                if let Err(err) = Self::kill_process_group(pid) {
+                    warn!(
+                        "pty process group kill failed, fallback to child kill: id={}, pid={}, reason={}, error={}",
+                        session_id, pid, reason, err
+                    );
+                }
+            }
+            let _ = child.kill();
+            (session.reader_handle.take(), diagnostics)
+        };
+        drop(session_arc);
+        if let Some(handle) = reader_handle {
+            let _ = handle.join();
+        }
+        info!(
+            "pty session killed: id={}, reason={}, shell={}, exe={}, cwd={:?}",
+            session_id, reason, diagnostics.shell, diagnostics.exe, diagnostics.cwd
+        );
+    }
+
+    // 移除指定会话并关闭其进程，最后移除缓存状态；缺失会话视为已关闭。
+    pub fn close(&self, session_id: &str) -> Result<(), String> {
+        let session_arc = {
+            let mut sessions = self.sessions.write().unwrap();
+            sessions.remove(session_id)
+        };
+        if let Some(session_arc) = session_arc {
+            Self::close_session_arc(session_id, session_arc, "close");
+        } else {
+            debug!("pty close requested for missing session: id={}", session_id);
+        }
+        self.statuses.lock().unwrap().remove(session_id);
+        Ok(())
+    }
+
+    // 根据非空活动列表跟踪缺席会话，经过创建和缺席宽限期后移除并关闭孤儿会话。
+    pub fn reconcile_active_sessions(
+        &self,
+        active_session_ids: Vec<String>,
+    ) -> PtyOrphanCleanupSummary {
+        let active_ids: HashSet<String> = active_session_ids
+            .into_iter()
+            .map(|id| id.trim().to_string())
+            .filter(|id| !id.is_empty())
+            .collect();
+        let active_count = active_ids.len();
+        let create_grace = Duration::from_secs(ORPHAN_CREATE_GRACE_SECS);
+        let missing_grace = Duration::from_secs(ORPHAN_MISSING_GRACE_SECS);
+
+        if active_ids.is_empty() {
+            let tracked_count = self.sessions.read().unwrap().len();
+            debug!(
+                "pty orphan reconcile skipped: active list empty, tracked={}",
+                tracked_count
+            );
+            return PtyOrphanCleanupSummary {
+                active_count,
+                tracked_count,
+                marked_missing: 0,
+                protected_count: 0,
+                cleaned_count: 0,
+                skipped_empty_active_list: true,
+            };
+        }
+
+        let now = Instant::now();
+        let mut marked_missing = 0usize;
+        let mut protected_count = 0usize;
+        let mut sessions_to_close: Vec<(String, Arc<Mutex<PtySession>>)> = Vec::new();
+        let tracked_count;
+
+        {
+            let mut sessions = self.sessions.write().unwrap();
+            tracked_count = sessions.len();
+            let session_ids: Vec<String> = sessions.keys().cloned().collect();
+
+            for session_id in session_ids {
+                if active_ids.contains(&session_id) {
+                    if let Some(session_arc) = sessions.get(&session_id) {
+                        let mut session = session_arc.lock().unwrap();
+                        if session.missing_since.take().is_some() {
+                            debug!("pty orphan candidate recovered: id={}", session_id);
+                        }
+                    }
+                    continue;
+                }
+
+                let mut should_close = false;
+                if let Some(session_arc) = sessions.get(&session_id) {
+                    let mut session = session_arc.lock().unwrap();
+                    let age = now.saturating_duration_since(session.created_at);
+                    if age < create_grace {
+                        protected_count += 1;
+                        debug!(
+                            "pty orphan reconcile protected new session: id={}, age_secs={}",
+                            session_id,
+                            age.as_secs()
+                        );
+                        continue;
+                    }
+
+                    if let Some(missing_since) = session.missing_since {
+                        let missing_for = now.saturating_duration_since(missing_since);
+                        if missing_for >= missing_grace {
+                            should_close = true;
+                        } else {
+                            protected_count += 1;
+                            debug!(
+                                "pty orphan reconcile waiting grace: id={}, missing_secs={}",
+                                session_id,
+                                missing_for.as_secs()
+                            );
+                        }
+                    } else {
+                        let diagnostics = session.diagnostics.lock().unwrap().clone();
+                        session.missing_since = Some(now);
+                        marked_missing += 1;
+                        debug!(
+                            "pty orphan candidate marked missing: id={}, age_secs={}, active_count={}, tracked_count={}, shell={}, exe={}, cwd={:?}",
+                            session_id,
+                            age.as_secs(),
+                            active_count,
+                            tracked_count,
+                            diagnostics.shell,
+                            diagnostics.exe,
+                            diagnostics.cwd
+                        );
+                    }
+                }
+
+                if should_close {
+                    if let Some(session_arc) = sessions.remove(&session_id) {
+                        sessions_to_close.push((session_id, session_arc));
+                    }
+                }
+            }
+        }
+
+        let cleaned_count = sessions_to_close.len();
+        for (session_id, session_arc) in sessions_to_close {
+            warn!(
+                "pty orphan cleanup closing missing session: id={}",
+                session_id
+            );
+            Self::close_session_arc(&session_id, session_arc, "orphan_reconcile");
+            self.statuses.lock().unwrap().remove(&session_id);
+        }
+
+        PtyOrphanCleanupSummary {
+            active_count,
+            tracked_count,
+            marked_missing,
+            protected_count,
+            cleaned_count,
+            skipped_empty_active_list: false,
+        }
+    }
+
+    /// 应用退出路径的批量关闭（Windows）：单次写锁取出全部会话 → 收集 PID 一次性
+    /// taskkill 全部进程树 → 逐会话 child.kill() 兜底并释放 master → 统一 join reader。
+    /// 单会话 `close()`（手动关 Tab 路径）保持不变。
+    #[cfg(target_os = "windows")]
+    // Windows 下取出全部会话，批量终止进程树后逐个终止子进程、等待读线程并清空状态。
+    pub fn close_all(&self) -> Result<(), String> {
+        let sessions: Vec<(String, Arc<Mutex<PtySession>>)> = {
+            let mut map = self.sessions.write().unwrap();
+            map.drain().collect()
+        };
+        if sessions.is_empty() {
+            self.statuses.lock().unwrap().clear();
+            return Ok(());
+        }
+
+        let pids: Vec<u32> = sessions
+            .iter()
+            .map(|(_, session_arc)| {
+                let session = session_arc.lock().unwrap();
+                session.child.process_id()
+            })
+            .collect();
+        if let Err(err) = Self::kill_process_trees(&pids) {
+            warn!(
+                "pty batch process tree kill failed, fallback to per-child kill: pids={:?}, error={}",
+                pids, err
+            );
+        }
+
+        // child.kill() 兜底 + 取出 reader handle；drop 最后一个 session Arc 释放 master，
+        // 让 reader 线程观察到 EOF（与单会话 close 的释放语义一致）。
+        let mut reader_handles: Vec<(String, JoinHandle<()>)> = Vec::with_capacity(sessions.len());
+        for (session_id, session_arc) in sessions {
+            let reader_handle = {
+                let mut session = session_arc.lock().unwrap();
+                let _ = session.child.kill();
+                session.reader_handle.take()
+            };
+            drop(session_arc);
+            if let Some(handle) = reader_handle {
+                reader_handles.push((session_id, handle));
+            } else {
+                debug!("pty session killed (close_all): id={}", session_id);
+            }
+        }
+
+        let closed = reader_handles.len();
+        for (session_id, handle) in reader_handles {
+            let _ = handle.join();
+            debug!("pty session killed (close_all): id={}", session_id);
+        }
+        info!(
+            "pty close_all: batch closed sessions, joined_readers={}",
+            closed
+        );
+
+        self.statuses.lock().unwrap().clear();
+        Ok(())
+    }
+
+    /// 非 Windows：无批量 taskkill 需求，维持逐个 close 的既有行为。
+    #[cfg(not(target_os = "windows"))]
+    // 非 Windows 下取得当前会话 ID 快照并逐一关闭。
+    pub fn close_all(&self) -> Result<(), String> {
+        let session_ids: Vec<String> = self.sessions.read().unwrap().keys().cloned().collect();
+        for session_id in session_ids {
+            self.close(&session_id)?;
+        }
+        Ok(())
+    }
+
+    // 克隆当前缓存的进程状态，不主动向子进程查询。
+    pub fn status_all(&self) -> HashMap<String, PtyProcessStatus> {
+        self.statuses.lock().unwrap().clone()
+    }
+}
+
+// 移除与 SSH 启动环境大小写冲突的用户键，再合并受保护的启动值。
+fn merge_ssh_launch_environment(
+    ssh_env: HashMap<String, String>,
+    mut user_env: HashMap<String, String>,
+) -> HashMap<String, String> {
+    let protected_keys: Vec<_> = ssh_env.keys().map(String::as_str).collect();
+    user_env.retain(|key, _| {
+        !protected_keys
+            .iter()
+            .any(|protected| key.eq_ignore_ascii_case(protected))
+    });
+    user_env.extend(ssh_env);
+    user_env
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "windows")]
+    struct TestPtySink {
+        output: Arc<Mutex<Vec<u8>>>,
+    }
+
+    #[cfg(target_os = "windows")]
+    impl PtyEventSink for TestPtySink {
+        // 将测试会话输出追加到共享字节缓冲。
+        fn on_output(&self, _session_id: &str, data: &[u8]) {
+            self.output.lock().unwrap().extend_from_slice(data);
+        }
+
+        // 测试出口忽略进程状态事件。
+        fn on_status(&self, _session_id: &str, _status: PtyProcessStatus) {}
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    // 启动真实 CMD ConPTY，调整尺寸并写入回显命令，验证输出标记后关闭会话。
+    fn direct_conpty_can_spawn_write_and_read_cmd() {
+        let manager = PtyManager::new();
+        let output = Arc::new(Mutex::new(Vec::new()));
+        manager
+            .create(
+                "conpty-test",
+                None,
+                None,
+                Some("cmd"),
+                Arc::new(TestPtySink {
+                    output: Arc::clone(&output),
+                }),
+            )
+            .unwrap();
+        manager
+            .resize("conpty-test", 120, 30, Some(1200), Some(600))
+            .unwrap();
+        manager
+            .write("conpty-test", "echo CLI_MANAGER_CONPTY_OK\r\n")
+            .unwrap();
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            let text = String::from_utf8_lossy(&output.lock().unwrap()).to_string();
+            if text.contains("CLI_MANAGER_CONPTY_OK") {
+                manager.close("conpty-test").unwrap();
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        let captured = String::from_utf8_lossy(&output.lock().unwrap()).to_string();
+        manager.close("conpty-test").unwrap();
+        panic!("ConPTY output marker not received: {captured:?}");
+    }
+
+    #[test]
+    // 验证空活动列表跳过孤儿清理，不关闭任何会话。
+    fn reconcile_active_sessions_skips_empty_active_list() {
+        let manager = PtyManager::new();
+
+        let summary = manager.reconcile_active_sessions(Vec::new());
+
+        assert!(summary.skipped_empty_active_list);
+        assert_eq!(summary.active_count, 0);
+        assert_eq!(summary.tracked_count, 0);
+        assert_eq!(summary.cleaned_count, 0);
+    }
+
+    #[test]
+    // 验证没有已跟踪会话时可处理非空活动列表。
+    fn reconcile_active_sessions_handles_no_tracked_sessions() {
+        let manager = PtyManager::new();
+
+        let summary = manager.reconcile_active_sessions(vec!["session-1".to_string()]);
+
+        assert!(!summary.skipped_empty_active_list);
+        assert_eq!(summary.active_count, 1);
+        assert_eq!(summary.tracked_count, 0);
+        assert_eq!(summary.cleaned_count, 0);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    // 验证 macOS 下 zsh 使用登录 shell 参数。
+    fn build_shell_args_starts_zsh_as_login_shell_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
+
+        assert_eq!(exe, "zsh");
+        assert_eq!(args, vec!["-l".to_string()]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    // 验证 macOS 下 bash 使用交互式登录参数。
+    fn build_shell_args_starts_bash_as_login_shell_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("bash", None).unwrap();
+
+        assert_eq!(exe, "bash");
+        assert_eq!(args, vec!["--login".to_string(), "-i".to_string()]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    // 验证 macOS 启动诊断保留请求 shell、路径和登录参数信息。
+    fn build_shell_launch_log_context_marks_login_shell_details_on_macos() {
+        let (exe, args) = PtyManager::build_shell_args("zsh", None).unwrap();
+
+        let context = PtyManager::build_shell_launch_log_context(
+            Some("zsh"),
+            "zsh",
+            &exe,
+            &args,
+            Some("/tmp/project"),
+        );
+
+        assert_eq!(context.requested_shell, Some("zsh".to_string()));
+        assert_eq!(context.shell_key, "zsh");
+        assert_eq!(context.exe, "zsh");
+        assert_eq!(context.args, vec!["-l".to_string()]);
+        assert!(context.login_shell);
+        assert_eq!(context.cwd, Some("/tmp/project".to_string()));
+    }
+
+    #[test]
+    // 验证 WSLENV 合并回调变量且保留已有带标志的条目。
+    fn wsl_env_forwarding_adds_callback_vars_and_keeps_existing() {
+        let mut vars = HashMap::new();
+        vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
+        vars.insert("CLI_MANAGER_NOTIFY_PORT".to_string(), "1".to_string());
+        vars.insert("CLI_MANAGER_NOTIFY_TOKEN".to_string(), "x".to_string());
+        // 预置 WSLENV，函数应合并而非覆盖（也避免读到进程环境，保证确定性）
+        vars.insert("WSLENV".to_string(), "FOO/u".to_string());
+
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+
+        let wslenv = vars.get("WSLENV").unwrap();
+        assert!(wslenv.contains("FOO/u"));
+        assert!(wslenv.contains("CLI_MANAGER_TAB_ID"));
+        assert!(wslenv.contains("CLI_MANAGER_NOTIFY_PORT"));
+        assert!(wslenv.contains("CLI_MANAGER_NOTIFY_TOKEN"));
+    }
+
+    #[test]
+    // 验证未提供任何待转发变量时 WSLENV 保持原样。
+    fn wsl_env_forwarding_is_noop_without_callback_vars() {
+        let mut vars = HashMap::new();
+        vars.insert("WSLENV".to_string(), "FOO/u".to_string());
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        // 无回调变量时不应改动 WSLENV
+        assert_eq!(vars.get("WSLENV").unwrap(), "FOO/u");
+    }
+
+    #[test]
+    // 验证已有回调变量条目不会重复加入 WSLENV。
+    fn wsl_env_forwarding_no_duplicate_when_already_listed() {
+        let mut vars = HashMap::new();
+        vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
+        vars.insert("WSLENV".to_string(), "CLI_MANAGER_TAB_ID".to_string());
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(vars.get("WSLENV").unwrap(), "CLI_MANAGER_TAB_ID");
+    }
+
+    #[test]
+    // 验证 Windows 默认只补充 COLORTERM，而不添加 TERM。
+    fn terminal_capabilities_on_windows_add_only_colorterm() {
+        let mut vars = HashMap::new();
+        PtyManager::apply_terminal_capabilities(&mut vars, true);
+
+        assert_eq!(vars.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert!(!vars.contains_key("TERM"));
+    }
+
+    #[test]
+    // 验证非 Windows 默认同时补充 TERM 和 COLORTERM。
+    fn terminal_capabilities_off_windows_add_term_and_colorterm() {
+        let mut vars = HashMap::new();
+        PtyManager::apply_terminal_capabilities(&mut vars, false);
+
+        assert_eq!(vars.get("COLORTERM").map(String::as_str), Some("truecolor"));
+        assert_eq!(vars.get("TERM").map(String::as_str), Some("xterm-256color"));
+    }
+
+    #[test]
+    // 验证终端能力默认值不覆盖显式设置。
+    fn terminal_capabilities_preserve_explicit_values() {
+        let mut vars = HashMap::from([
+            ("COLORTERM".to_string(), "24bit".to_string()),
+            ("TERM".to_string(), "screen-256color".to_string()),
+        ]);
+        PtyManager::apply_terminal_capabilities(&mut vars, false);
+
+        assert_eq!(vars.get("COLORTERM").map(String::as_str), Some("24bit"));
+        assert_eq!(
+            vars.get("TERM").map(String::as_str),
+            Some("screen-256color")
+        );
+    }
+
+    #[test]
+    // 验证 SSH 内部变量按大小写无关规则覆盖用户冲突项，保留无关项。
+    fn ssh_internal_environment_overrides_user_values_case_insensitively() {
+        let ssh_env = HashMap::from([
+            ("SSH_ASKPASS".to_string(), "trusted-helper".to_string()),
+            (
+                "CLI_MANAGER_SSH_ASKPASS_TOKEN".to_string(),
+                "trusted-token".to_string(),
+            ),
+        ]);
+        let user_env = HashMap::from([
+            ("ssh_askpass".to_string(), "user-helper".to_string()),
+            (
+                "cli_manager_ssh_askpass_token".to_string(),
+                "user-token".to_string(),
+            ),
+            ("APP_MODE".to_string(), "remote".to_string()),
+        ]);
+
+        let merged = merge_ssh_launch_environment(ssh_env, user_env);
+
+        assert_eq!(
+            merged.get("SSH_ASKPASS").map(String::as_str),
+            Some("trusted-helper")
+        );
+        assert_eq!(
+            merged
+                .get("CLI_MANAGER_SSH_ASKPASS_TOKEN")
+                .map(String::as_str),
+            Some("trusted-token")
+        );
+        assert_eq!(merged.get("APP_MODE").map(String::as_str), Some("remote"));
+        assert!(!merged.contains_key("ssh_askpass"));
+        assert!(!merged.contains_key("cli_manager_ssh_askpass_token"));
+    }
+
+    #[test]
+    // 验证已有带标志的 COLORTERM 转发条目不会重复追加。
+    fn wsl_env_forwarding_adds_colorterm_once() {
+        let mut vars = HashMap::from([
+            ("COLORTERM".to_string(), "truecolor".to_string()),
+            ("WSLENV".to_string(), "FOO/u:COLORTERM/u".to_string()),
+        ]);
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+
+        assert_eq!(
+            vars.get("WSLENV").map(String::as_str),
+            Some("FOO/u:COLORTERM/u")
+        );
+    }
+
+    #[test]
+    // 验证各类屏幕切换、清屏和滚动序列被准确累计。
+    fn vt_diag_counts_scroll_related_sequences() {
+        let mut diag = VtScrollDiag::default();
+        let data = b"\x1b[?1049hhello\x1b[2J\x1b[3J\x1b[1;24r\x1bMworld\x1b[2J\x1b[?1049l";
+        scan_vt_scroll_sequences(data, &mut diag, "test");
+        assert_eq!(diag.alt_enter, 1);
+        assert_eq!(diag.alt_exit, 1);
+        assert_eq!(diag.ed2, 2);
+        assert_eq!(diag.ed3, 1);
+        assert_eq!(diag.decstbm, 1);
+        assert_eq!(diag.ri, 1);
+    }
+
+    #[test]
+    // 验证无关 VT 序列不影响滚动诊断计数。
+    fn vt_diag_ignores_unrelated_sequences() {
+        let mut diag = VtScrollDiag::default();
+        // 光标隐藏、SGR、ED0、DEC 私有模式 restore（? 前缀的 r）、DECSCUSR 都不应计入
+        let data = b"\x1b[?25l\x1b[0m\x1b[J\x1b[?1000r\x1b[2 qplain text";
+        scan_vt_scroll_sequences(data, &mut diag, "test");
+        assert_eq!(diag.alt_enter, 0);
+        assert_eq!(diag.alt_exit, 0);
+        assert_eq!(diag.ed2, 0);
+        assert_eq!(diag.ed3, 0);
+        assert_eq!(diag.decstbm, 0);
+        assert_eq!(diag.ri, 0);
+    }
+
+    #[test]
+    // 验证无参数的滚动区域重置也计入 DECSTBM。
+    fn vt_diag_counts_full_screen_decstbm_reset() {
+        let mut diag = VtScrollDiag::default();
+        scan_vt_scroll_sequences(b"\x1b[r", &mut diag, "test");
+        assert_eq!(diag.decstbm, 1);
+    }
+
+    #[test]
+    // 用临时普通文件验证自定义 shell 路径解析，不实际执行该文件。
+    fn resolve_shell_accepts_custom_executable_path() {
+        let path = std::env::temp_dir().join(format!(
+            "cli-manager-test-shell-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::write(&path, b"test").unwrap();
+
+        let (exe, args) = PtyManager::resolve_shell(path.to_str().unwrap()).unwrap();
+
+        assert_eq!(exe, path.to_string_lossy().to_string());
+        assert!(args.is_empty());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    // 验证不存在的自定义 shell 文件路径被拒绝。
+    fn resolve_shell_rejects_missing_custom_path() {
+        let missing = std::env::temp_dir().join("cli-manager-missing-shell.exe");
+        let result = PtyManager::resolve_shell(missing.to_str().unwrap());
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Shell executable not found"));
+    }
+}

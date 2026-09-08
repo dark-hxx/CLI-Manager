@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-mouse-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/terminal/browser/TerminalMouseInteraction.ts", import.meta.url),
+  new URL("../src/features/terminal/browser/TerminalMouseInteraction.ts", import.meta.url),
   "utf8",
 );
 const transpiled = ts.transpileModule(source, {
@@ -35,7 +35,7 @@ test("mouse-aware TUIs receive unmodified click and drag reports", () => {
 
 test("XTermTerminal delegates mouse policy to the browser module", () => {
   const terminalComponentSource = readFileSync(
-    new URL("../src/components/XTermTerminal.tsx", import.meta.url),
+    new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url),
     "utf8",
   );
 

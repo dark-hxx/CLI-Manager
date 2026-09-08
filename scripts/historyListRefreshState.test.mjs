@@ -3,22 +3,23 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
   "utf8"
 );
 const workspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8"
 );
 const historySource = readFileSync(
-  new URL("../src-tauri/src/commands/history.rs", import.meta.url),
+  new URL("../src-tauri/src/features/history/conversion.rs", import.meta.url),
   "utf8"
 );
 const backupSource = readFileSync(
-  new URL("../src-tauri/src/commands/history_backup.rs", import.meta.url),
+  new URL("../src-tauri/src/features/history/backup.rs", import.meta.url),
   "utf8"
 );
 
+// 断言起止标记存在并提取两者之间的源码片段。
 function sourceBlock(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start + startMarker.length);
@@ -27,14 +28,16 @@ function sourceBlock(source, startMarker, endMarker) {
   return source.slice(start, end);
 }
 
+// 验证自动与手动历史刷新均保持已有列表挂载。
 test("automatic and manual history refreshes keep the rendered list mounted", () => {
-  const listener = sourceBlock(storeSource, "function ensureHistoryIndexListener", "const remoteHistorySyncRequests");
+  const listener = sourceBlock(storeSource, "function ensureHistoryIndexListener", "const automaticTitleQueueKeys");
   const refresh = sourceBlock(storeSource, "refreshIndex: async", "addConvertedSession: ");
 
   assert.match(listener, /loadSessions\(\{ background: true \}\)/);
   assert.equal(refresh.match(/loadSessions\(\{ background: true \}\)/g)?.length, 2);
 });
 
+// 验证后台刷新保留已加载范围且不进入阻塞加载状态。
 test("background refresh preserves the loaded range without entering the blocking state", () => {
   const loadSessions = sourceBlock(storeSource, "loadSessions: async", "loadMoreSessions: async");
 
@@ -45,6 +48,7 @@ test("background refresh preserves the loaded range without entering the blockin
   assert.match(loadSessions, /hasMoreSessions: allSummaries\.length > sessionLimit/);
 });
 
+// 验证刷新加载状态不再重置可见会话数量。
 test("refresh loading no longer resets the visible session count", () => {
   const resetEffect = sourceBlock(
     workspaceSource,
@@ -55,6 +59,7 @@ test("refresh loading no longer resets the visible session count", () => {
   assert.doesNotMatch(resetEffect, /loadingSessions/);
 });
 
+// 验证显式历史删除允许执行，而备份恢复保留进程运行保护。
 test("delete allows explicit history removal while backup restore remains guarded", () => {
   const deleteSessionTree = sourceBlock(
     historySource,

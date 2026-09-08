@@ -7,9 +7,10 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-ssh-tool-integration-"));
+// 退出时清理 SSH 工具集成测试的临时转译目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/sshToolIntegration.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/remote/api/sshToolIntegration.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
 }).outputText;
@@ -23,6 +24,7 @@ const {
   resolveSshToolSource,
 } = await import(pathToFileURL(modulePath).href);
 
+// 验证 Kimi 命令与带引号可执行路径解析及默认配置根。
 test("Kimi 命令和带引号路径解析为 Hook source", () => {
   assert.equal(resolveSshToolSource("kimi"), "kimi");
   assert.equal(resolveSshToolSource("kimi.exe --continue"), "kimi");
@@ -32,6 +34,7 @@ test("Kimi 命令和带引号路径解析为 Hook source", () => {
   assert.equal(DEFAULT_SSH_TOOL_CONFIG_ROOT.kimi, "$HOME/.kimi-code");
 });
 
+// 验证 Grok 命令与带引号可执行路径解析及默认配置根。
 test("Grok 命令和带引号路径解析为 Hook source", () => {
   assert.equal(resolveSshToolSource("grok"), "grok");
   assert.equal(resolveSshToolSource("grok.exe --resume abc"), "grok");
@@ -41,6 +44,7 @@ test("Grok 命令和带引号路径解析为 Hook source", () => {
   assert.equal(DEFAULT_SSH_TOOL_CONFIG_ROOT.grok, "$HOME/.grok");
 });
 
+// 验证 SSH 历史来源解析仅接受 Claude 与 Codex。
 test("history resolver 只接受 Claude 和 Codex", () => {
   assert.equal(resolveSshHistorySource("claude"), "claude");
   assert.equal(resolveSshHistorySource("codex resume"), "codex");
@@ -48,6 +52,7 @@ test("history resolver 只接受 Claude 和 Codex", () => {
   assert.equal(resolveSshHistorySource("grok"), null);
 });
 
+// 构造带来源及历史候选字段的持久化 Hook 报告。
 function report(source, historySourceCandidate) {
   return JSON.stringify({
     action: "installed",
@@ -61,6 +66,7 @@ function report(source, historySourceCandidate) {
   });
 }
 
+// 验证 Kimi Hook 报告禁止携带历史候选且 Claude 必须提供候选。
 test("stored Hook report 强制 Kimi 不携带 history candidate", () => {
   assert.equal(parseStoredSshHookReport(report("kimi", null))?.source, "kimi");
   assert.equal(parseStoredSshHookReport(report("kimi", { source: "kimi" })), null);
@@ -71,6 +77,7 @@ test("stored Hook report 强制 Kimi 不携带 history candidate", () => {
   assert.equal(parseStoredSshHookReport(report("claude", null)), null);
 });
 
+// 验证 Grok Hook 报告禁止携带历史候选。
 test("stored Hook report 强制 Grok 不携带 history candidate", () => {
   assert.equal(parseStoredSshHookReport(report("grok", null))?.source, "grok");
   assert.equal(parseStoredSshHookReport(report("grok", { source: "grok" })), null);

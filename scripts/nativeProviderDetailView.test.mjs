@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-provider-detail-view-"))
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/components/settings/providers/nativeProviderDetailView.ts", import.meta.url),
+  new URL("../src/features/settings/components/providers/nativeProviderDetailView.ts", import.meta.url),
   "utf8",
 );
 const output = ts.transpileModule(source, {

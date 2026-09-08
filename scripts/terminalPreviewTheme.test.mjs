@@ -24,11 +24,11 @@ function transpile(relativePath, fileName, replacements = []) {
   return modulePath;
 }
 
-transpile("../src/lib/terminalColor.ts", "terminalColor.ts");
-const themesPath = transpile("../src/lib/terminalThemes.ts", "terminalThemes.ts", [
+transpile("../src/shared/lib/terminalColor.ts", "terminalColor.ts");
+const themesPath = transpile("../src/shared/lib/terminalThemes.ts", "terminalThemes.ts", [
   ['from "./terminalColor"', 'from "./terminalColor.mjs"'],
 ]);
-const previewPath = transpile("../src/lib/terminalPreviewTheme.ts", "terminalPreviewTheme.ts", [
+const previewPath = transpile("../src/shared/lib/terminalPreviewTheme.ts", "terminalPreviewTheme.ts", [
   ['from "./terminalThemes"', 'from "./terminalThemes.mjs"'],
 ]);
 
@@ -110,10 +110,10 @@ test("panel style scopes the terminal panel variables the preview panels read", 
 
 test("preview panels resolve their theme through the shared hook only", () => {
   const panels = [
-    "../src/components/terminal/TerminalMarkdownPreview.tsx",
-    "../src/components/terminal/SubagentTranscriptView.tsx",
-    "../src/components/terminal/SessionReplayPanel.tsx",
-    "../src/components/git/diff/GitDiffViewer.tsx",
+    "../src/features/terminal/components/TerminalMarkdownPreview.tsx",
+    "../src/features/terminal/components/SubagentTranscriptView.tsx",
+    "../src/features/terminal/components/SessionReplayPanel.tsx",
+    "../src/features/git/components/diff/GitDiffViewer.tsx",
   ];
   for (const panel of panels) {
     const source = readFileSync(new URL(panel, import.meta.url), "utf8");
@@ -129,8 +129,8 @@ test("preview panels resolve their theme through the shared hook only", () => {
 });
 
 test("the preview theme setting is persisted, defaulted, and synced like the terminal theme", () => {
-  const settingsSource = readFileSync(new URL("../src/stores/settingsStore.ts", import.meta.url), "utf8");
-  const syncSource = readFileSync(new URL("../src/lib/syncSettings.ts", import.meta.url), "utf8");
+  const settingsSource = readFileSync(new URL("../src/shared/preferences/settingsStore.ts", import.meta.url), "utf8");
+  const syncSource = readFileSync(new URL("../src/features/sync/lib/syncSettings.ts", import.meta.url), "utf8");
 
   assert.match(settingsSource, /terminalPreviewThemeName: string;/u);
   assert.match(settingsSource, /terminalPreviewThemeName: FOLLOW_TERMINAL_PREVIEW_THEME/u);

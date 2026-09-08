@@ -9,6 +9,7 @@ const DEV_CONFIG = "src-tauri/tauri.dev.conf.json";
 const args = process.argv.slice(2);
 const CARGO_VALUE_OPTIONS = ["--target", "-t", "--profile", "--target-dir", "--features", "-F"];
 
+// 只检查首个分隔符前的 Tauri 参数是否已指定配置。
 function commandArgsContainConfig(argsToCheck) {
   const commandArgs = [];
   for (const arg of argsToCheck) {
@@ -17,10 +18,12 @@ function commandArgsContainConfig(argsToCheck) {
   }
 
   return commandArgs.some(
+    // 识别配置参数的长短名称及等号形式。
     (arg) => arg === "--config" || arg === "-c" || arg.startsWith("--config=") || arg.startsWith("-c="),
   );
 }
 
+// 提取预构建需要的目标、配置和特性参数，不读取第二个分隔符后的程序参数。
 function cargoBuildSelectionArgs(argsToCheck) {
   const selectionArgs = [];
   let separatorCount = 0;
@@ -39,6 +42,7 @@ function cargoBuildSelectionArgs(argsToCheck) {
     }
 
     const option = CARGO_VALUE_OPTIONS.find(
+      // 匹配 Cargo 支持的带值选项及其等号形式。
       (candidate) => arg === candidate || arg.startsWith(`${candidate}=`),
     );
     if (!option) continue;
@@ -76,6 +80,7 @@ function cargoBuildSelectionArgs(argsToCheck) {
   return selectionArgs;
 }
 
+// 仅为未显式指定配置的 dev 命令注入项目开发配置。
 function withDevConfig(argsToRun) {
   if (argsToRun[0] !== "dev" || commandArgsContainConfig(argsToRun)) {
     return argsToRun;
@@ -84,6 +89,7 @@ function withDevConfig(argsToRun) {
   return ["dev", "--config", DEV_CONFIG, ...argsToRun.slice(1)];
 }
 
+// 将 Tauri 配置文件参数解析为仓库绝对路径，内联 JSON 保持原值。
 function resolveConfigPaths(argsToRun) {
   const resolvedArgs = [...argsToRun];
 
@@ -100,6 +106,7 @@ function resolveConfigPaths(argsToRun) {
       continue;
     }
 
+    // 查找等号形式的配置参数前缀。
     const configPrefix = ["--config=", "-c="].find((prefix) => arg.startsWith(prefix));
     if (!configPrefix) continue;
 
@@ -112,6 +119,7 @@ function resolveConfigPaths(argsToRun) {
   return resolvedArgs;
 }
 
+// 按出现顺序收集首个分隔符前的配置合并参数。
 function configMergeValues(argsToCheck) {
   const values = [];
 
@@ -120,6 +128,7 @@ function configMergeValues(argsToCheck) {
     if (arg === "--") break;
 
     const option = ["--config", "-c"].find(
+      // 识别配置选项的独立值或等号赋值形式。
       (candidate) => arg === candidate || arg.startsWith(`${candidate}=`),
     );
     if (!option) continue;
@@ -136,6 +145,7 @@ function configMergeValues(argsToCheck) {
   return values;
 }
 
+// 递归合并对象，null 删除字段，数组和标量整体替换。
 function mergeConfigValue(target, patch) {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
     return patch;
@@ -156,6 +166,7 @@ function mergeConfigValue(target, patch) {
   return merged;
 }
 
+// 读取内联 JSON 或配置文件并解析，错误由调用方处理。
 function readConfigMergeValue(value) {
   const trimmedValue = value.trim();
   const configText = trimmedValue.startsWith("{")
@@ -164,6 +175,7 @@ function readConfigMergeValue(value) {
   return JSON.parse(configText);
 }
 
+// 将配置合并结果镜像到 Cargo 环境，失败时警告并保留基础环境。
 function tauriCargoEnv(argsToRun) {
   const environment = devSpawnEnv(argsToRun);
   const configValues = configMergeValues(argsToRun);
@@ -171,6 +183,7 @@ function tauriCargoEnv(argsToRun) {
 
   try {
     const mergedConfig = configValues.reduce(
+      // 按参数顺序读取并合并后续配置覆盖值。
       (merged, value) => mergeConfigValue(merged, readConfigMergeValue(value)),
       {},
     );
@@ -183,6 +196,7 @@ function tauriCargoEnv(argsToRun) {
   }
 }
 
+// 为 Windows dev 默认隔离 WebView 用户数据目录，尊重已有环境覆盖。
 function devSpawnEnv(argsToRun) {
   if (process.platform !== "win32" || argsToRun[0] !== "dev" || !process.env.LOCALAPPDATA) {
     return process.env;
@@ -285,6 +299,7 @@ async function stopLockedDevProcesses(executablePath) {
   await new Promise((resolve) => setTimeout(resolve, 500));
 }
 
+// 仅在 Windows dev 预构建主程序和 Codex 代理，并返回构建退出码。
 function buildWindowsDevProxy(argsToRun) {
   if (process.platform !== "win32" || argsToRun[0] !== "dev") {
     return Promise.resolve(0);
@@ -303,6 +318,7 @@ function buildWindowsDevProxy(argsToRun) {
   ];
   cargoArgs.push(...cargoBuildSelectionArgs(argsToRun));
 
+  // 把 Cargo 进程错误及退出事件汇合为预构建结果。
   return new Promise((resolve) => {
     const startedAt = Date.now();
     let settled = false;
@@ -311,6 +327,7 @@ function buildWindowsDevProxy(argsToRun) {
       "[tauri-dev] Preparing Rust dev binaries (Cargo fingerprint will reuse unchanged artifacts)...",
     );
 
+    // 只结算一次预构建，记录耗时和结果后完成 Promise。
     const finish = (code) => {
       if (settled) return;
       settled = true;
@@ -331,14 +348,17 @@ function buildWindowsDevProxy(argsToRun) {
       shell: true,
       env: tauriCargoEnv(argsToRun),
     });
+    // Cargo 启动错误打印诊断并将预构建标记失败。
     child.on("error", (error) => {
       console.error(`Failed to build Codex app-server proxy: ${error.message}`);
       finish(1);
     });
+    // 将 Cargo 退出码交给统一结算，缺少退出码按失败处理。
     child.on("exit", (code) => finish(code ?? 1));
   });
 }
 
+// 等待必要预构建成功后启动 Tauri，向包装进程传播失败或退出状态。
 async function main() {
   const proxyBuildCode = await buildWindowsDevProxy(tauriArgs);
   if (proxyBuildCode !== 0) {

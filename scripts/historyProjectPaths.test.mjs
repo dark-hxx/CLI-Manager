@@ -4,7 +4,7 @@ import {
   normalizeHistoryProjectPaths,
   resolveTodayProjectStatsScope,
   resolveTodayUsageProjectPaths,
-} from "../src/lib/historyProjectPaths.ts";
+} from "../src/features/history/api/historyProjectPaths.ts";
 
 test("normalizes, sorts, and deduplicates project paths", () => {
   assert.deepEqual(normalizeHistoryProjectPaths([

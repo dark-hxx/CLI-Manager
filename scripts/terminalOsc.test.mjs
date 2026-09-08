@@ -19,7 +19,7 @@ export function decodeOscPathValue(value) { return value; }
 writeFileSync(join(tempDir, "terminalColor.mjs"), `
 export function normalizeHexColor(value, fallback) { return value || fallback; }
 `);
-const parseSource = readFileSync(new URL("../src/lib/terminalOscParse.ts", import.meta.url), "utf8");
+const parseSource = readFileSync(new URL("../src/features/terminal/lib/terminalOscParse.ts", import.meta.url), "utf8");
 const transpiledParse = ts.transpileModule(parseSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -28,7 +28,7 @@ const transpiledParse = ts.transpileModule(parseSource, {
   fileName: "terminalOscParse.ts",
 }).outputText
   .replace('from "./terminalOscPath"', 'from "./terminalOscPath.mjs"')
-  .replace('from "./terminalColor"', 'from "./terminalColor.mjs"');
+  .replace('from "../../../shared/lib/terminalColor"', 'from "./terminalColor.mjs"');
 writeFileSync(join(tempDir, "terminalOscParse.mjs"), transpiledParse, "utf8");
 writeFileSync(join(tempDir, "terminalStore.mjs"), `
 export const useTerminalStore = {
@@ -41,7 +41,7 @@ export const useTerminalStore = {
   },
 };
 `);
-const source = readFileSync(new URL("../src/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -52,7 +52,7 @@ const transpiled = ts.transpileModule(source, {
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "../lib/terminalOscPath"', 'from "./terminalOscPath.mjs"')
   .replace('from "../lib/terminalOscParse"', 'from "./terminalOscParse.mjs"')
-  .replace('from "../stores/terminalStore"', 'from "./terminalStore.mjs"');
+  .replace('from "../state"', 'from "./terminalStore.mjs"');
 const hookPath = join(tempDir, "useTerminalOsc.mjs");
 writeFileSync(hookPath, transpiled, "utf8");
 
@@ -120,8 +120,8 @@ test("an interrupted managed OSC fails open before Pi output", () => {
 });
 
 test("frontend OSC pipeline does not own color-query replies", () => {
-  const oscSource = readFileSync(new URL("../src/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
-  const displaySource = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
+  const oscSource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalOsc.ts", import.meta.url), "utf8");
+  const displaySource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
   assert.doesNotMatch(oscSource, /terminalProcessManager\.write/u);
   assert.doesNotMatch(oscSource, /replyToColorQueries/u);
   assert.doesNotMatch(displaySource, /replyToColorQueries/u);

@@ -1,0 +1,630 @@
+.ui-workspace-shell {
+  background-color: var(--surface);
+  background-image:
+    radial-gradient(circle at 18% -12%, color-mix(in srgb, var(--primary) 9%, transparent) 0%, transparent 46%),
+    radial-gradient(circle at 102% 32%, color-mix(in srgb, var(--surface-container-high) 78%, transparent) 0%, transparent 44%);
+}
+
+[data-theme="dark"][data-dark-palette="investment-platform"] .ui-workspace-shell {
+  background-image:
+    radial-gradient(circle at 14% -10%, color-mix(in srgb, var(--primary) 18%, transparent) 0%, transparent 42%),
+    radial-gradient(circle at 100% 24%, color-mix(in srgb, #8b5cf6 10%, transparent) 0%, transparent 34%),
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-low) 68%, transparent), transparent 42%);
+}
+
+[data-theme="light"] .ui-workspace-shell,
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-workspace-shell {
+  background-image: none;
+  background-color: var(--surface);
+}
+
+[data-theme="light"] .ui-main-shell,
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-main-shell {
+  background-image: none;
+  background-color: var(--surface);
+}
+
+.ui-sidebar-shell {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container-high) 46%, transparent), transparent 18%),
+    var(--surface-container-low);
+  border-right: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+}
+
+[data-theme="light"] .ui-sidebar-shell {
+  background: var(--surface-container-lowest);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 12%, transparent);
+}
+
+[data-theme="dark"][data-dark-palette="investment-platform"] .ui-sidebar-shell,
+[data-theme="light"][data-light-palette="saas-analytics-dashboard"] .ui-sidebar-shell {
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--border) 24%, transparent);
+}
+
+.ui-sidebar-top,
+.ui-history-sidebar-top,
+.ui-history-detail-top {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 16%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-low) 82%, transparent);
+}
+
+.ui-sidebar-footer {
+  border-top: 1px solid color-mix(in srgb, var(--border) 16%, transparent);
+  background-color: color-mix(in srgb, var(--surface-container-low) 78%, transparent);
+}
+
+.ui-sidebar-search-shell,
+.ui-history-search-shell {
+  display: flex;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--border) 18%, transparent);
+  background-color: var(--surface-container-highest);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-container-lowest) 10%, transparent);
+  transition:
+    border-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    background-color var(--animate-duration-fast);
+}
+
+.ui-sidebar-search-shell {
+  border-radius: 14px;
+}
+
+.ui-history-search-shell {
+  border-radius: 12px;
+}
+
+.ui-file-search-input-shell,
+.ui-file-search-mode-inline {
+  transition:
+    border-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    background-color var(--animate-duration-fast);
+}
+
+.ui-file-search-input-shell {
+  min-height: 30px;
+  background-color: color-mix(in srgb, var(--surface-container-lowest) 88%, var(--on-surface) 12%);
+  border-color: color-mix(in srgb, var(--border) 42%, transparent);
+}
+
+.ui-file-search-mode-inline {
+  background-color: color-mix(in srgb, var(--surface-container-low) 84%, var(--on-surface) 16%);
+  border-color: color-mix(in srgb, var(--border) 48%, transparent);
+}
+
+.ui-file-explorer-title {
+  color: color-mix(in srgb, var(--on-surface) 92%, var(--primary) 8%);
+}
+
+.ui-file-explorer-root-icon {
+  color: color-mix(in srgb, var(--text-muted) 54%, var(--on-surface) 46%);
+}
+
+.ui-file-explorer-subtitle {
+  color: color-mix(in srgb, var(--text-muted) 78%, var(--on-surface) 22%);
+}
+
+.ui-file-search-input-shell input {
+  color: color-mix(in srgb, var(--on-surface) 90%, var(--primary) 10%);
+}
+
+.ui-file-search-input-shell input::placeholder {
+  color: color-mix(in srgb, var(--text-muted) 78%, var(--on-surface) 22%);
+  opacity: 1;
+}
+
+.ui-file-search-mode-option {
+  color: color-mix(in srgb, var(--text-muted) 72%, var(--on-surface) 28%);
+}
+
+.ui-file-search-input-shell:focus-within {
+  border-color: color-mix(in srgb, var(--border) 72%, var(--on-surface) 28%);
+  background-color: var(--surface-container-high);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 10%, transparent);
+}
+
+.ui-file-search-input-shell :where(input, select, textarea):focus-visible {
+  box-shadow: none;
+}
+
+.ui-file-search-mode-option[data-selected="true"] {
+  background-color: color-mix(in srgb, var(--primary) 22%, var(--surface-container-highest) 78%);
+  color: color-mix(in srgb, var(--on-surface) 92%, var(--primary) 8%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 30%, transparent);
+}
+
+.ui-file-search-mode-option:focus-visible {
+  outline: none !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--on-surface) 14%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--border) 86%, var(--on-surface) 14%);
+}
+
+.context-menu.file-explorer-menu {
+  background-color: color-mix(in srgb, var(--surface-container-low) 94%, transparent);
+  color: var(--on-surface);
+  outline-color: color-mix(in srgb, var(--border) 62%, transparent);
+  box-shadow:
+    0 12px 30px color-mix(in srgb, var(--surface-container-lowest) 58%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.context-menu.file-explorer-menu .context-menu-item {
+  color: var(--text-secondary);
+}
+
+.context-menu.file-explorer-menu .context-menu-item:hover,
+.context-menu.file-explorer-menu .context-menu-item[data-highlighted] {
+  background-color: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--on-surface);
+}
+
+.context-menu.file-explorer-menu .context-menu-item.danger {
+  color: var(--danger);
+}
+
+.context-menu.file-explorer-menu [role="separator"] {
+  background-color: color-mix(in srgb, var(--border) 48%, transparent);
+}
+
+/* Path format choices replace the parent menu in-place instead of opening a
+   second menu beside it. Remove the old siblings from layout so the parent
+   surface collapses to the replacement's height. */
+.context-menu:has(> .path-copy-menu-replacement) {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.context-menu:has(> .path-copy-menu-replacement) > :not(.path-copy-menu-replacement) {
+  display: none;
+}
+
+.context-menu.path-copy-menu-replacement {
+  position: static;
+  min-width: 148px;
+  width: 100%;
+  padding: 4px;
+  animation: none;
+}
+
+.ui-search-focus-shell {
+  transition:
+    box-shadow var(--animate-duration-fast),
+    border-color var(--animate-duration-fast),
+    background-color var(--animate-duration-fast);
+}
+
+.ui-sidebar-search-shell:focus-within,
+.ui-history-search-shell:focus-within,
+.ui-search-focus-shell:focus-within,
+.ui-input:focus-within {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border) 62%);
+  box-shadow: 0 0 0 2px var(--interactive-focus-ring);
+}
+
+.ui-sidebar-sync-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 28px;
+  border-radius: 10px;
+  padding: 0 6px;
+  white-space: nowrap;
+  transition:
+    background-color var(--animate-duration-fast),
+    color var(--animate-duration-fast);
+}
+
+.ui-sidebar-sync-link:hover {
+  background-color: var(--interactive-hover-bg);
+  color: var(--on-surface);
+}
+
+/* 侧边栏底部同步状态：图标固定尺寸，文案始终单行，空间不足时省略而不换行。 */
+.ui-sidebar-sync-link > svg {
+  flex: 0 0 auto;
+}
+
+.ui-sidebar-sync-link__label {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ui-sidebar-resize-handle,
+.ui-history-resize-handle {
+  background-color: transparent;
+}
+
+.ui-sidebar-resize-handle:hover,
+.ui-history-resize-handle:hover {
+  background-color: color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.ui-terminal-split-divider {
+  touch-action: none;
+  background-color: color-mix(in srgb, var(--terminal-theme-background, var(--surface)) 82%, var(--terminal-theme-foreground, var(--on-surface)) 18%);
+}
+
+.ui-terminal-split-child {
+  opacity: 1;
+  transition:
+    opacity var(--animate-duration-fast) var(--ease-standard),
+    transform var(--animate-duration-fast) var(--ease-standard),
+    visibility var(--animate-duration-fast) var(--ease-standard);
+}
+
+.ui-terminal-split-node[data-dragging="true"] .ui-terminal-split-child {
+  transition: none;
+}
+
+.ui-terminal-split-child[data-hidden="true"] {
+  visibility: hidden;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.985);
+}
+
+.ui-terminal-split-child[data-fullscreen="true"] {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 18%, transparent);
+}
+
+.ui-terminal-split-divider::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, var(--on-surface)) 34%, transparent);
+  transition:
+    background-color var(--animate-duration-fast),
+    box-shadow var(--animate-duration-fast),
+    opacity var(--animate-duration-fast);
+}
+
+.ui-terminal-split-divider[data-orientation="vertical"]::before {
+  top: 8px;
+  bottom: 8px;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+}
+
+.ui-terminal-split-divider[data-orientation="horizontal"]::before {
+  top: 50%;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  transform: translateY(-50%);
+}
+
+.ui-terminal-split-divider:hover,
+.ui-terminal-split-divider[data-dragging="true"] {
+  background-color: color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 24%, transparent);
+}
+
+.ui-terminal-split-divider:hover::before,
+.ui-terminal-split-divider[data-dragging="true"]::before {
+  background-color: color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 72%, var(--terminal-theme-foreground, var(--on-surface)) 28%);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--terminal-theme-accent, var(--primary)) 18%, transparent);
+}
+
+@keyframes terminal-side-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.ui-main-shell {
+  background-color: var(--surface);
+}
+
+.ui-terminal-chrome {
+  display: flex;
+  align-items: center;
+  height: 42px;
+  min-height: 42px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface-container) 90%, white 10%) 0%, color-mix(in srgb, var(--surface-container-low) 88%, var(--surface) 12%) 100%);
+  color: var(--on-surface);
+  border-radius: 10px;
+  margin: 4px 6px 0;
+  overflow: hidden;
+  outline: 1px solid color-mix(in srgb, var(--border) 52%, transparent);
+  box-shadow:
+    0 12px 28px color-mix(in srgb, var(--on-surface) 6%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 36%, transparent);
+}
+
+.ui-terminal-chrome .ui-tab-trigger {
+  height: 28px;
+  gap: 6px;
+  padding-inline: 11px;
+}
+
+.ui-terminal-chrome .ui-terminal-tab-close {
+  height: 20px;
+  width: 20px;
+}
+
+.ui-terminal-pane-chrome {
+  --terminal-tab-accent: color-mix(in srgb, var(--terminal-theme-accent, #60a5fa) 64%, var(--terminal-theme-foreground, #f8fafc) 36%);
+  --terminal-tab-accent-muted: color-mix(in srgb, var(--terminal-tab-accent) 42%, var(--terminal-theme-muted, #64748b) 58%);
+  --terminal-tab-border: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 48%, var(--terminal-theme-foreground, #f8fafc) 52%);
+  --terminal-tab-hover-bg: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 72%, black 28%);
+  --terminal-tab-selected-bg: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 62%, black 38%);
+  height: 42px;
+  min-height: 42px;
+  margin: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 72%, var(--terminal-theme-foreground, #f8fafc) 12%) 0%,
+      color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 88%, black 12%) 100%
+    );
+  color: var(--terminal-theme-foreground, #f8fafc);
+  outline-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 8%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 10%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, black 28%, transparent);
+}
+
+.ui-terminal-panel-header {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 72%, var(--terminal-theme-foreground, #f8fafc) 12%) 0%,
+      color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 88%, black 12%) 100%
+    );
+}
+
+.ui-workspan-tabbar {
+  height: 36px;
+  min-height: 36px;
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 38%, transparent);
+}
+
+.ui-workspan-detach-insertion {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  z-index: 20;
+  width: 2px;
+  height: 24px;
+  margin-left: -1px;
+  border-radius: 999px;
+  pointer-events: none;
+  opacity: 0;
+  background-color: var(--terminal-tab-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--terminal-tab-accent) 16%, transparent);
+  transition:
+    transform 140ms var(--ease-standard),
+    opacity 100ms var(--ease-standard);
+  will-change: transform, opacity;
+}
+
+.ui-workspan-detach-insertion[data-visible="true"] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-workspan-detach-insertion {
+    transition: none;
+  }
+}
+
+.ui-workspan-tab-scroll {
+  scrollbar-width: none;
+}
+
+.ui-workspan-tab-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.ui-workspan-tabbar .ui-workspan-tab {
+  border-width: 1px;
+}
+
+.ui-terminal-well .ui-terminal-pane {
+  border-radius: 8px;
+}
+
+.ui-terminal-pane-marker {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  color: var(--terminal-pane-marker-color);
+  opacity: var(--terminal-pane-marker-opacity);
+}
+
+.ui-terminal-pane-marker > span {
+  position: absolute;
+  display: block;
+  background: currentColor;
+}
+
+.ui-terminal-pane-marker__top,
+.ui-terminal-pane-marker__bottom {
+  right: 0;
+  left: 0;
+  height: var(--terminal-pane-marker-width);
+}
+
+.ui-terminal-pane-marker__top {
+  top: 0;
+}
+
+.ui-terminal-pane-marker__right,
+.ui-terminal-pane-marker__left {
+  top: 0;
+  width: var(--terminal-pane-marker-width);
+  height: var(--terminal-pane-marker-side-height, 2%);
+}
+
+.ui-terminal-pane-marker__right {
+  right: 0;
+}
+
+.ui-terminal-pane-marker__left {
+  left: 0;
+}
+
+.ui-terminal-pane-marker__bottom {
+  bottom: 0;
+  display: none !important;
+}
+
+.ui-terminal-pane-marker[data-marker-style="full"] .ui-terminal-pane-marker__right,
+.ui-terminal-pane-marker[data-marker-style="full"] .ui-terminal-pane-marker__left {
+  bottom: 0;
+  height: auto;
+}
+
+.ui-terminal-pane-marker[data-marker-style="full"] .ui-terminal-pane-marker__bottom {
+  display: block !important;
+}
+
+.ui-terminal-pane-chrome .ui-tab-trigger {
+  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 72%, var(--terminal-theme-muted, #64748b) 28%);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 34%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 68%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 5%, transparent);
+}
+
+.ui-terminal-pane-chrome .ui-tab-trigger:hover:not([data-selected="true"]) {
+  background-color: var(--terminal-tab-hover-bg);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 76%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-border) 34%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 10%, transparent);
+  transform: translateY(-1px);
+}
+
+.ui-terminal-pane-chrome .ui-tab-trigger[data-selected="true"] {
+  color: var(--terminal-theme-foreground, #f8fafc);
+  background-color: var(--terminal-tab-selected-bg);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 92%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-border) 42%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 16%, transparent);
+}
+
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-chrome,
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-panel-header {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--terminal-theme-background, #ffffff) 96%, var(--terminal-theme-foreground, #1e293b) 4%) 0%,
+      color-mix(in srgb, var(--terminal-theme-background, #ffffff) 90%, var(--terminal-theme-foreground, #1e293b) 10%) 100%
+    );
+  outline-color: color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 16%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 80%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 13%, transparent);
+}
+
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-pane-chrome {
+  --terminal-tab-accent: color-mix(in srgb, var(--terminal-theme-accent, #2563eb) 82%, #2563eb 18%);
+  --terminal-tab-border: color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 18%, var(--terminal-theme-background, #ffffff) 82%);
+  --terminal-tab-accent-muted: color-mix(in srgb, var(--terminal-tab-accent) 24%, var(--terminal-tab-border) 76%);
+  --terminal-tab-hover-bg: color-mix(in srgb, var(--terminal-theme-background, #ffffff) 86%, var(--terminal-theme-foreground, #1e293b) 14%);
+  --terminal-tab-selected-bg: var(--terminal-theme-background, #ffffff);
+  color: var(--terminal-theme-foreground, #1e293b);
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--terminal-theme-background, #ffffff) 96%, var(--terminal-theme-foreground, #1e293b) 4%) 0%,
+      color-mix(in srgb, var(--terminal-theme-background, #ffffff) 90%, var(--terminal-theme-foreground, #1e293b) 10%) 100%
+    );
+  outline-color: color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 14%, transparent);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 82%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 14%, transparent);
+}
+
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-pane-chrome .ui-tab-trigger {
+  color: color-mix(in srgb, var(--terminal-theme-foreground, #1e293b) 74%, var(--terminal-theme-muted, #64748b) 26%);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 64%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #ffffff) 86%, var(--terminal-theme-foreground, #1e293b) 14%);
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-pane-chrome .ui-tab-trigger:hover:not([data-selected="true"]) {
+  color: var(--terminal-theme-foreground, #1e293b);
+  border-color: color-mix(in srgb, var(--terminal-tab-border) 84%, transparent);
+  background-color: var(--terminal-tab-hover-bg);
+  box-shadow: none;
+  transform: none;
+}
+
+.ui-terminal-well[data-terminal-theme-tone="light"] .ui-terminal-pane-chrome .ui-tab-trigger[data-selected="true"] {
+  color: var(--terminal-theme-foreground, #1e293b);
+  border-color: color-mix(in srgb, var(--terminal-tab-accent) 42%, var(--terminal-tab-border) 58%);
+  background-color: var(--terminal-tab-selected-bg);
+  box-shadow:
+    0 1px 3px color-mix(in srgb, var(--terminal-tab-accent) 14%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--terminal-tab-accent) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, white 86%, transparent);
+  transform: none;
+}
+
+.ui-terminal-pane-chrome .ui-tab-trigger[data-session-kind="file-editor"] {
+  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 94%, var(--terminal-tab-accent) 6%);
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions {
+  gap: 6px;
+  padding-inline: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--terminal-tab-accent-muted) 24%, transparent);
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-toolbar-button,
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action {
+  min-height: 28px;
+  border-color: color-mix(in srgb, var(--terminal-tab-accent-muted) 30%, transparent);
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-tab-accent-muted) 18%);
+  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 88%, var(--terminal-tab-accent) 12%);
+  box-shadow: none;
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-toolbar-button svg,
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action svg {
+  color: var(--terminal-action-color, currentColor);
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action[data-active="true"] {
+  color: #fff;
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-icon-action[data-active="true"] svg {
+  color: currentColor;
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-primary-action {
+  background-image: none;
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 70%, var(--terminal-tab-accent) 30%);
+  color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 92%, white 8%);
+}
+
+.ui-terminal-pane-chrome .ui-terminal-actions .ui-primary-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 58%, var(--terminal-tab-accent) 42%);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  box-shadow: none;
+}

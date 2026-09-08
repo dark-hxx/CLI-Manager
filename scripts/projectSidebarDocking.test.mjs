@@ -2,18 +2,20 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const appSource = readFileSync(new URL("../src/App.tsx", import.meta.url), "utf8");
-const sidebarSource = readFileSync(new URL("../src/components/sidebar/index.tsx", import.meta.url), "utf8");
-const headerSource = readFileSync(new URL("../src/components/sidebar/SidebarHeader.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/app/App.tsx", import.meta.url), "utf8");
+const sidebarSource = readFileSync(new URL("../src/features/projects/components/SidebarView.tsx", import.meta.url), "utf8");
+const sidebarController = readFileSync(new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url), "utf8");
+const sidebarModel = readFileSync(new URL("../src/features/projects/lib/sidebarModel.ts", import.meta.url), "utf8");
+const headerSource = readFileSync(new URL("../src/features/projects/components/SidebarHeader.tsx", import.meta.url), "utf8");
 const controlsSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutControls.tsx", import.meta.url),
+  new URL("../src/features/workspace/api/WorkspaceLayoutControls.tsx", import.meta.url),
   "utf8",
 );
 const menuSource = readFileSync(
-  new URL("../src/components/layout/WorkspaceLayoutMenu.tsx", import.meta.url),
+  new URL("../src/features/workspace/components/WorkspaceLayoutMenu.tsx", import.meta.url),
   "utf8",
 );
-const layoutSource = readFileSync(new URL("../src/lib/workspaceLayout.ts", import.meta.url), "utf8");
+const layoutSource = readFileSync(new URL("../src/shared/lib/workspaceLayout.ts", import.meta.url), "utf8");
 const stylesSource = readFileSync(new URL("../src/styles/workspace-layout.css", import.meta.url), "utf8");
 
 test("project sidebar docking is persisted and applied to the main workspace order", () => {
@@ -27,8 +29,8 @@ test("project sidebar docking is persisted and applied to the main workspace ord
 });
 
 test("right-docked project sidebar keeps its resize affordance facing the terminal", () => {
-  assert.match(sidebarSource, /dockSide\?: WorkspaceDockSide/);
-  assert.match(sidebarSource, /dockSide === "right" \? window\.innerWidth - clientX : clientX/);
+  assert.match(sidebarModel, /dockSide\?: WorkspaceDockSide/);
+  assert.match(sidebarController, /dockSide === "right" \? window\.innerWidth - clientX : clientX/);
   assert.match(sidebarSource, /data-sidebar-side=\{dockSide\}/);
   assert.match(sidebarSource, /dockSide === "right" \? "left-0" : "right-0"/);
   assert.match(headerSource, /dockSide: WorkspaceDockSide/);

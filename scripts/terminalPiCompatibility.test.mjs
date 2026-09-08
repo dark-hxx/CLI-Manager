@@ -26,22 +26,22 @@ function transpile(relativePath, outputName, replacements = {}) {
 }
 
 const contextPath = transpile(
-  "../src/terminal/browser/TerminalCliContext.ts",
+  "../src/features/terminal/browser/TerminalCliContext.ts",
   "TerminalCliContext.mjs",
 );
 const ansiPath = transpile(
-  "../src/terminal/browser/TerminalPiAnsiTransform.ts",
+  "../src/features/terminal/browser/TerminalPiAnsiTransform.ts",
   "TerminalPiAnsiTransform.mjs",
 );
-transpile("../src/lib/terminalTui.ts", "terminalTui.mjs");
+transpile("../src/features/terminal/lib/terminalTui.ts", "terminalTui.mjs");
 transpile(
-  "../src/terminal/browser/TerminalPiIme.ts",
+  "../src/features/terminal/browser/TerminalPiIme.ts",
   "TerminalPiIme.mjs",
-  { "../../lib/terminalTui": "./terminalTui.mjs" },
+  { "../lib/terminalTui": "./terminalTui.mjs" },
 );
-transpile("../src/terminal/browser/TerminalPiDiagnostics.ts", "TerminalPiDiagnostics.mjs");
+transpile("../src/features/terminal/browser/TerminalPiDiagnostics.ts", "TerminalPiDiagnostics.mjs");
 const compatibilityPath = transpile(
-  "../src/terminal/browser/TerminalPiCompatibility.ts",
+  "../src/features/terminal/browser/TerminalPiCompatibility.ts",
   "TerminalPiCompatibility.mjs",
   {
     "./TerminalCliContext": "./TerminalCliContext.mjs",
@@ -272,8 +272,8 @@ test("Pi facade transforms active sessions and leaves non-Pi sessions byte-for-b
 });
 
 test("live, replay, reset, and serialized snapshot use the shared transform", () => {
-  const displaySource = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
-  const componentSource = readFileSync(new URL("../src/components/XTermTerminal.tsx", import.meta.url), "utf8");
+  const displaySource = readFileSync(new URL("../src/features/terminal/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
+  const componentSource = readFileSync(new URL("../src/features/terminal/hooks/useXTermController.ts", import.meta.url), "utf8");
   assert.match(displaySource, /const transformed = transformOutputRef\.current\(combined\);/);
   assert.match(displaySource, /const transformed = transformOutputRef\.current\(text\);/);
   assert.match(displaySource, /if \(first\.reset\) \{\s*outputDiagnosticsRef\?\.current\?\.reset\(\);/);

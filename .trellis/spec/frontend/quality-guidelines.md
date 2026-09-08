@@ -6,19 +6,7 @@
 
 ## Overview
 
-<!--
-Document your project's quality standards here.
-
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
-
-(To be filled by the team)
-
----
+The rules below capture project-specific performance, diagnostics, layout, and review constraints.
 
 ## Forbidden Patterns
 
@@ -51,7 +39,7 @@ for (const message of messages) {
 
 ### Gate diagnostic console output behind Debug Mode
 
-**What**: WebView-side diagnostic `console.log`, `console.info`, and `console.warn` output must go through `src/lib/debugConsole.ts`, not direct `console.*` calls.
+**What**: WebView-side diagnostic `console.log`, `console.info`, and `console.warn` output must go through `src/shared/platform/debugConsole.ts`, not direct `console.*` calls.
 
 **Why**: normal users should not get noisy console diagnostics; Debug Mode is the explicit switch for frontend console diagnostics. Keep real error reporting paths such as `console.error` separate unless the task explicitly changes error reporting.
 
@@ -187,6 +175,70 @@ The replacement keeps `context-menu file-explorer-menu`, removes the old sibling
 - Clipboard success and failure messages must use i18n keys in both supported UI languages.
 - Radix submenus must render through `ContextMenuPrimitive.Portal`; custom sidebar menu containers may have `overflow-x-hidden` and must not clip nested menus.
 
+### Convention: Preserve both Radix menu positioning boundaries
+
+**What**: A Radix context menu has two positioning contracts:
+
+1. Its Portal host must not be a descendant of an element that combines `transform` (or another
+   fixed-position containing-block property) with `overflow: hidden`. Put the host under
+   `document.body` and copy the owning surface's semantic CSS variables onto that host.
+2. `ContextMenuPrimitive.Content` and `SubContent` must remain in normal flow inside Radix's Popper
+   wrapper. If a shared visual class uses `position: fixed` for hand-positioned menus, override that
+   declaration with a Radix-only class such as `radix-context-menu-content { position: relative; }`.
+
+**Why**: Radix assigns fixed coordinates and collision middleware to its Popper wrapper. A clipped,
+transformed Portal ancestor changes the wrapper's containing block. Independently, fixing the
+content child removes it from the wrapper's normal flow, so the wrapper no longer measures the full
+menu width and height and cannot reliably flip or shift it at window edges. Escaping only the
+clipping ancestor does not repair the measurement contract.
+
+**Correct**:
+
+```tsx
+<Portal>
+  <div ref={setMenuPortalContainer} style={panelStyle} />
+</Portal>
+<ContextMenuPrimitive.Portal container={menuPortalContainer ?? undefined}>
+  <ContextMenuPrimitive.Content className="context-menu radix-context-menu-content" />
+</ContextMenuPrimitive.Portal>
+```
+
+```css
+.context-menu { position: fixed; } /* manual menus */
+.context-menu.radix-context-menu-content { position: relative; }
+```
+
+**Wrong**:
+
+```tsx
+<aside className="transform overflow-hidden">
+  <ContextMenuPrimitive.Content className="context-menu" />
+</aside>
+```
+
+**Tests**: Assert both contracts: the themed Portal host is separate from the visible clipped panel
+root, and both Radix `Content` variants carry the positioning override while the base class remains
+fixed for manual menus. Manually trigger the longest menu at every viewport edge in both left- and
+right-docked panel modes, and verify theme variables, keyboard focus, and replacement-menu behavior.
+
+### Convention: Keep a context-menu target visibly identified while the menu is open
+
+**What**: File-tree rows used as Radix `ContextMenuTrigger` elements must render their `data-state="open"`
+state with the same visual treatment as `data-selected="true"`. Include ignored/dimmed rows in the
+open-state opacity override.
+
+**Why**: Right-click does not imply opening a file or changing the editor's active-file state, but
+the user still needs an unambiguous visual link between a detached Portal menu and its target row.
+Using Radix's trigger state supplies that feedback only for the menu lifetime and restores the
+previous selection automatically when the menu closes.
+
+**Wrong**: Mutating `activeFile` on right-click just to obtain a highlight, or styling only hover;
+the former changes application state and the latter disappears when pointer focus moves into the
+Portal menu.
+
+**Tests**: Assert that every file-browser menu uses an `asChild` trigger and that selected/open rows,
+including ignored rows, share the highlight selectors.
+
 ---
 
 ## Testing Requirements
@@ -201,11 +253,3 @@ AI agents must not start CLI-Manager services or the Tauri desktop app to verify
 - Normal terminal layout has no unintended one-sided padding or outer gaps.
 - Fullscreen terminal layout still fills the available window.
 - Terminal background image mode still shows transparency, blur, darken, fit, and position correctly.
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)

@@ -1,0 +1,771 @@
+import { getVersion } from "@tauri-apps/api/app";
+import { invoke } from "@tauri-apps/api/core";
+import { Store } from "@tauri-apps/plugin-store";
+import { create } from "zustand";
+import { getCliManagerDataPaths } from "../../../shared/platform/appPaths";
+import { buildBatchInsertStatements, getDb, type DatabaseStatement } from "../../../shared/platform/db";
+import { normalizeNodeAccentToken, normalizeNodeIcon } from "../../projects/api/nodeAppearance";
+import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey, normalizeShellForOs } from "../../../shared/platform/shell";
+import { singleFlight } from "../../../shared/lib/singleFlight";
+import { isValidSshAttachmentRoot, normalizeSshAttachmentRoot } from "../../remote/api/sshAttachment";
+import { validateSshToolConfigRoot } from "../../remote/api/sshToolIntegration";
+import { pickSyncableSettings, SYNCABLE_SETTING_KEYS, type SyncableSettingKey } from "../lib/syncSettings";
+import { sanitizeThirdPartyHookTargets } from "../../../shared/lib/thirdPartyNotifications";
+import { useBackgroundOperationStore } from "../../terminal/api/backgroundOperationStore";
+import { useModelPricingStore } from "../../stats/api/modelPricingStore";
+import { useProjectStore } from "../../projects/api/projectStore";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { useSshHostStore } from "../../remote/api/sshHostStore";
+import { useWorktreeStore } from "../../projects/api/worktreeStore";
+
+export type BackupStatus = "idle" | "backing_up" | "restoring" | "queued" | "success" | "error";
+export type BackupMode = "cloud" | "local";
+export type BackupDomain = "workspace" | "preferences" | "model_prices" | "notifications" | "statusline";
+
+export interface BackupManifest {
+  snapshotId: string;
+  createdAt: string;
+  appVersion: string;
+  deviceId: string;
+  deviceName: string;
+  platform: string;
+  contentHash: string;
+}
+
+interface WorkspaceBackup {
+  groups: Record<string, unknown>[];
+  sshHostGroups?: Record<string, unknown>[];
+  sshHosts?: Record<string, unknown>[];
+  projects: Record<string, unknown>[];
+  worktrees: Record<string, unknown>[];
+  commandTemplates: Record<string, unknown>[];
+}
+
+interface NativeProviderBackupMetadata {
+  id: string;
+  appType: string;
+  name: string;
+  baseUrl: string | null;
+  model: string | null;
+  keyCount: number;
+  activeKeyLabel: string | null;
+  keyReentryRequired: boolean;
+}
+
+export interface BackupSnapshotV3 {
+  version: 3;
+  manifest: BackupManifest;
+  data: {
+    workspace: WorkspaceBackup;
+    preferences: Record<string, unknown>;
+    modelPrices: Record<string, unknown>[];
+    notifications: {
+      enabled: boolean;
+      targets: unknown[];
+    };
+    statusline: unknown;
+    nativeProviders?: NativeProviderBackupMetadata[];
+  };
+}
+
+export interface BackupSnapshotInfo {
+  remotePath: string;
+  manifest: BackupManifest;
+}
+
+interface SyncMeta {
+  device_id: string;
+  last_sync_at: string | null;
+}
+
+interface LegacySyncData {
+  version: number;
+  device_id?: string;
+  device_name?: string;
+  last_modified?: string;
+  data?: {
+    projects?: Record<string, unknown>[];
+    groups?: Record<string, unknown>[];
+    command_templates?: Record<string, unknown>[];
+    worktrees?: Record<string, unknown>[];
+    model_prices?: Record<string, unknown>[];
+    settings?: Record<string, unknown>;
+  };
+}
+
+interface BackupStore {
+  webdavUrl: string;
+  webdavUsername: string;
+  hasPassword: boolean;
+  status: BackupStatus;
+  lastBackupAt: string | null;
+  deviceId: string;
+  deviceName: string;
+  loaded: boolean;
+  backupMode: BackupMode;
+  localBackupDir: string;
+  remoteDir: string;
+  autoBackupOnClose: boolean;
+  snapshots: BackupSnapshotInfo[];
+  load: () => Promise<void>;
+  setConfig: (url: string, username: string, password?: string) => Promise<void>;
+  clearPassword: () => Promise<void>;
+  getSessionPassword: () => string;
+  testConnection: (url: string, username: string, password: string) => Promise<{ success: boolean; message: string }>;
+  setDeviceName: (name: string) => Promise<void>;
+  setBackupMode: (mode: BackupMode) => Promise<void>;
+  setLocalBackupDir: (dir: string) => Promise<void>;
+  setRemoteDir: (dir: string) => Promise<void>;
+  setAutoBackupOnClose: (enabled: boolean) => Promise<void>;
+  createBackup: (manual?: boolean) => Promise<string | null>;
+  listBackups: () => Promise<BackupSnapshotInfo[]>;
+  previewBackup: (remotePath: string) => Promise<BackupSnapshotV3>;
+  restoreBackup: (remotePath: string, domains: BackupDomain[]) => Promise<void>;
+  importLegacyCloud: (domains: BackupDomain[]) => Promise<void>;
+  deleteBackup: (remotePath: string) => Promise<void>;
+  localImport: (zipPath: string, domains: BackupDomain[]) => Promise<void>;
+  previewLocalImport: (zipPath: string) => Promise<BackupSnapshotV3>;
+  undoLastRestore: () => Promise<void>;
+  retryOutbox: () => Promise<void>;
+  runCloseAutoBackup: () => Promise<"skipped" | "success" | "queued" | "error">;
+}
+
+const ALL_DOMAINS: BackupDomain[] = ["workspace", "preferences", "model_prices", "notifications", "statusline"];
+const PROJECT_SELECT = "SELECT id, name, path, path_mode, group_id, sort_order, cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides, worktree_strategy, worktree_root, worktree_deps_prompt_enabled, environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at FROM projects ORDER BY sort_order";
+const GROUP_SELECT = "SELECT id, name, parent_id, sort_order, icon, color, bound_path, created_at FROM groups ORDER BY sort_order";
+const SSH_HOST_GROUP_SELECT = "SELECT id, name, parent_id, sort_order, created_at FROM ssh_host_groups ORDER BY sort_order";
+const SSH_HOST_SELECT = "SELECT id, name, group_name, group_id, host, port, username, config_alias, auth_mode, jump_mode, jump_host_id, proxy_type, proxy_host, proxy_port, connect_timeout_sec, server_alive_interval_sec, server_alive_count_max, terminal_encoding, attachment_root, startup_script, notes, sort_order, created_at, updated_at FROM ssh_hosts ORDER BY sort_order";
+const LOCAL_SSH_HOST_FIELDS_SELECT = "SELECT id, identity_file, credential_ref, config_file, proxy_command FROM ssh_hosts";
+const TEMPLATE_SELECT = "SELECT id, project_id, name, command, description, sort_order FROM command_templates ORDER BY sort_order";
+const WORKTREE_SELECT = "SELECT id, project_id, name, branch, path, base_branch, deps_prompt_dismissed, provider_overrides, status, created_at, updated_at FROM worktrees WHERE status = 'active' ORDER BY created_at DESC";
+const MODEL_PRICE_COLUMNS = ["model", "input_per_1m", "output_per_1m", "cache_read_per_1m", "cache_creation_per_1m", "source", "source_model_id", "raw_json", "updated_at_ms", "synced_at_ms"] as const;
+const MODEL_PRICE_SELECT = `SELECT ${MODEL_PRICE_COLUMNS.join(", ")} FROM model_prices ORDER BY model COLLATE NOCASE`;
+const SSH_HOST_GROUP_COLUMNS = ["id", "name", "parent_id", "sort_order", "created_at"] as const;
+const SSH_HOST_COLUMNS = [
+  "id", "name", "group_name", "group_id", "host", "port", "username", "config_alias", "config_file",
+  "auth_mode", "identity_file", "credential_ref", "jump_mode", "jump_host_id", "proxy_type", "proxy_host",
+  "proxy_port", "proxy_command", "connect_timeout_sec", "server_alive_interval_sec", "server_alive_count_max",
+  "terminal_encoding", "attachment_root", "startup_script", "notes", "sort_order", "created_at", "updated_at",
+] as const;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+
+interface LocalSshHostFields {
+  id: string;
+  identity_file: string;
+  credential_ref: string;
+  config_file: string;
+  proxy_command: string;
+}
+
+let configStore: Store | null = null;
+let sessionWebdavPassword = "";
+
+async function getConfigStore() {
+  if (!configStore) {
+    const paths = await getCliManagerDataPaths();
+    configStore = await Store.load(paths.syncStorePath, { autoSave: 0, defaults: {} });
+  }
+  return configStore;
+}
+
+function sanitizeDeviceName(value: string): string {
+  return value.trim().replace(/[ .]+/g, "-").replace(/[^\p{Script=Han}A-Za-z0-9_-]/gu, "").slice(0, 64);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (!isRecord(value)) return value;
+  return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonicalize(value[key])]));
+}
+
+async function sha256(value: unknown): Promise<string> {
+  const bytes = new TextEncoder().encode(JSON.stringify(canonicalize(value)));
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function webdavConfig(state: Pick<BackupStore, "webdavUrl" | "webdavUsername">) {
+  return { url: state.webdavUrl, username: state.webdavUsername, password: sessionWebdavPassword };
+}
+
+async function collectBackupData(db: Awaited<ReturnType<typeof getDb>>): Promise<BackupSnapshotV3["data"]> {
+  const [projects, groups, sshHostGroups, sshHosts, commandTemplates, worktrees, modelPrices, statusline] = await Promise.all([
+    db.select<Record<string, unknown>[]>(PROJECT_SELECT),
+    db.select<Record<string, unknown>[]>(GROUP_SELECT),
+    db.select<Record<string, unknown>[]>(SSH_HOST_GROUP_SELECT),
+    db.select<Record<string, unknown>[]>(SSH_HOST_SELECT),
+    db.select<Record<string, unknown>[]>(TEMPLATE_SELECT),
+    db.select<Record<string, unknown>[]>(WORKTREE_SELECT),
+    db.select<Record<string, unknown>[]>(MODEL_PRICE_SELECT),
+    invoke<unknown>("statusline_backup_export"),
+  ]);
+  const nativeProviders = await invoke<Array<{
+    id: string;
+    appType: string;
+    name: string;
+    baseUrl: string | null;
+    model: string | null;
+    keyCount: number;
+    activeKeyLabel: string | null;
+  }>>("provider_catalog_list", { appType: null }).catch(() => []);
+  const settings = useSettingsStore.getState();
+  return {
+    workspace: {
+      groups,
+      sshHostGroups,
+      sshHosts: sshHosts.map(sanitizePortableSshHost),
+      projects,
+      worktrees,
+      commandTemplates,
+    },
+    preferences: pickSyncableSettings(settings as unknown as Record<string, unknown>) as Record<string, unknown>,
+    modelPrices,
+    notifications: {
+      enabled: settings.thirdPartyHookNotificationsEnabled,
+      targets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
+    },
+    statusline,
+    nativeProviders: nativeProviders.map((provider) => ({
+      ...provider,
+      keyReentryRequired: provider.keyCount > 0,
+    })),
+  };
+}
+
+async function createSnapshot(deviceId: string, deviceName: string): Promise<BackupSnapshotV3> {
+  const db = await getDb();
+  const data = await collectBackupData(db);
+  return {
+    version: 3,
+    manifest: {
+      snapshotId: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      appVersion: await getVersion(),
+      deviceId,
+      deviceName,
+      platform: await getOsPlatform(),
+      contentHash: await sha256(data),
+    },
+    data,
+  };
+}
+
+async function normalizeImportedSnapshot(value: unknown, deviceId: string, deviceName: string): Promise<BackupSnapshotV3> {
+  if (isRecord(value) && value.version === 3 && isRecord(value.manifest) && isRecord(value.data)) {
+    const snapshot = value as unknown as BackupSnapshotV3;
+    const manifest = snapshot.manifest;
+    if (
+      typeof manifest.snapshotId !== "string" ||
+      typeof manifest.deviceId !== "string" ||
+      typeof manifest.deviceName !== "string" ||
+      typeof manifest.createdAt !== "string" ||
+      typeof manifest.appVersion !== "string" ||
+      typeof manifest.platform !== "string" ||
+      typeof manifest.contentHash !== "string" ||
+      !UUID_PATTERN.test(manifest.snapshotId) ||
+      !UUID_PATTERN.test(manifest.deviceId) ||
+      Number.isNaN(Date.parse(manifest.createdAt)) ||
+      !SHA256_PATTERN.test(manifest.contentHash) ||
+      !isRecord(snapshot.data.workspace) ||
+      !isRecord(snapshot.data.preferences) ||
+      !Array.isArray(snapshot.data.modelPrices) ||
+      !isRecord(snapshot.data.notifications) ||
+      !Object.prototype.hasOwnProperty.call(snapshot.data, "statusline") ||
+      await sha256(snapshot.data) !== manifest.contentHash.toLowerCase()
+    ) {
+      throw new Error("backup_validation_failed");
+    }
+    return snapshot;
+  }
+  const legacy = value as LegacySyncData;
+  if (!legacy || !isRecord(legacy.data)) throw new Error("backup_unsupported_format");
+  const settings = isRecord(legacy.data.settings) ? legacy.data.settings : {};
+  const data: BackupSnapshotV3["data"] = {
+    workspace: {
+      projects: Array.isArray(legacy.data.projects) ? legacy.data.projects : [],
+      groups: Array.isArray(legacy.data.groups) ? legacy.data.groups : [],
+      commandTemplates: Array.isArray(legacy.data.command_templates) ? legacy.data.command_templates : [],
+      worktrees: Array.isArray(legacy.data.worktrees) ? legacy.data.worktrees : [],
+    },
+    preferences: pickSyncableSettings(settings) as Record<string, unknown>,
+    modelPrices: Array.isArray(legacy.data.model_prices) ? legacy.data.model_prices : [],
+    notifications: {
+      enabled: settings.thirdPartyHookNotificationsEnabled === true,
+      targets: sanitizeThirdPartyHookTargets(settings.thirdPartyHookTargets),
+    },
+    statusline: await invoke("statusline_backup_export"),
+    nativeProviders: [],
+  };
+  return {
+    version: 3,
+    manifest: {
+      snapshotId: crypto.randomUUID(),
+      createdAt: typeof legacy.last_modified === "string" ? legacy.last_modified : new Date().toISOString(),
+      appVersion: await getVersion(),
+      deviceId: typeof legacy.device_id === "string" ? legacy.device_id : deviceId,
+      deviceName: typeof legacy.device_name === "string" ? legacy.device_name : deviceName,
+      platform: await getOsPlatform(),
+      contentHash: await sha256(data),
+    },
+    data,
+  };
+}
+
+function numberOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+function integerOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.trunc(value) : fallback;
+}
+
+function normalizeWorktreeStrategy(value: unknown): string {
+  return value === "prompt" || value === "autoParallel" || value === "always" ? value : "disabled";
+}
+
+function normalizeSshAuthMode(value: unknown, localFields: LocalSshHostFields | undefined): string {
+  if (value === "identity_file") return localFields?.identity_file ? value : "interactive";
+  if (value === "credential_ref") return localFields?.credential_ref ? value : "password_prompt";
+  return value === "ssh_config" || value === "agent" || value === "password_prompt" || value === "interactive"
+    ? value
+    : "interactive";
+}
+
+function normalizeSshJumpMode(value: unknown): string {
+  return value === "host" || value === "proxy_jump" ? value : "none";
+}
+
+function normalizeSshProxyType(value: unknown, localFields: LocalSshHostFields | undefined): string {
+  if (value === "http" || value === "socks5") return value;
+  return value === "proxy_command" && localFields?.proxy_command ? value : "none";
+}
+
+function sanitizePortableSshHost(host: Record<string, unknown>): Record<string, unknown> {
+  const attachmentRoot = typeof host.attachment_root === "string"
+    ? normalizeSshAttachmentRoot(host.attachment_root)
+    : "";
+  const sanitized = isValidSshAttachmentRoot(attachmentRoot)
+    ? { ...host, attachment_root: attachmentRoot }
+    : { ...host, attachment_root: "" };
+  if ((host.proxy_type === "http" || host.proxy_type === "socks5")
+    && typeof host.proxy_host === "string" && host.proxy_host.includes("@")) {
+    return { ...sanitized, proxy_type: "none", proxy_host: "", proxy_port: 0 };
+  }
+  return sanitized;
+}
+
+async function applyPreferences(preferences: Record<string, unknown>) {
+  for (const key of SYNCABLE_SETTING_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(preferences, key)) continue;
+    await useSettingsStore.getState().update(key as SyncableSettingKey, preferences[key] as never);
+  }
+  await useSettingsStore.getState().load();
+}
+
+async function buildWorkspaceRestoreStatements(workspace: WorkspaceBackup): Promise<DatabaseStatement[]> {
+  const now = Date.now().toString();
+  const os = await getOsPlatform();
+  const platformDefaultShell = defaultShellForOs(os);
+  const groups = Array.isArray(workspace.groups) ? workspace.groups : [];
+  const sshHostGroups = Array.isArray(workspace.sshHostGroups) ? workspace.sshHostGroups : [];
+  const sshHosts = Array.isArray(workspace.sshHosts) ? workspace.sshHosts : [];
+  const hasSshHostData = Array.isArray(workspace.sshHostGroups) && Array.isArray(workspace.sshHosts);
+  const projects = Array.isArray(workspace.projects) ? workspace.projects : [];
+  const worktrees = Array.isArray(workspace.worktrees) ? workspace.worktrees : [];
+  const templates = Array.isArray(workspace.commandTemplates) ? workspace.commandTemplates : [];
+  const groupIds = new Set(groups.map((item) => String(item.id)));
+  const sshHostGroupIds = new Set(sshHostGroups.map((item) => String(item.id)));
+  const sshHostIds = new Set(sshHosts.map((item) => String(item.id)));
+  const projectIds = new Set(projects.map((item) => String(item.id)));
+  const statements: DatabaseStatement[] = [
+    { sql: "DELETE FROM command_templates", values: [] },
+    { sql: "DELETE FROM worktrees", values: [] },
+    { sql: "DELETE FROM projects", values: [] },
+  ];
+  const localSshHostFields = new Map<string, LocalSshHostFields>();
+  if (hasSshHostData) {
+    const db = await getDb();
+    const localHosts = await db.select<LocalSshHostFields[]>(LOCAL_SSH_HOST_FIELDS_SELECT);
+    localHosts.forEach((host) => localSshHostFields.set(host.id, host));
+    statements.push(
+      { sql: "DELETE FROM ssh_hosts", values: [] },
+      { sql: "DELETE FROM ssh_host_groups", values: [] },
+    );
+  }
+  statements.push({ sql: "DELETE FROM groups", values: [] });
+  // 列清单必须与 src-tauri/src/commands/sync.rs 的 BACKUP_RESTORE_INSERT_COLUMNS 逐字一致，
+  // 否则恢复会被 validate_backup_database_statement 整批拒绝并回滚。
+  statements.push(...buildBatchInsertStatements("groups", ["id", "name", "parent_id", "sort_order", "icon", "color", "bound_path", "created_at"], groups, (item) => [
+    item.id, item.name, typeof item.parent_id === "string" && groupIds.has(item.parent_id) ? item.parent_id : null,
+    integerOr(item.sort_order, 0),
+    normalizeNodeIcon(item.icon), normalizeNodeAccentToken(item.color),
+    typeof item.bound_path === "string" ? item.bound_path : "",
+    item.created_at ?? now,
+  ]));
+  if (hasSshHostData) {
+    statements.push(...buildBatchInsertStatements("ssh_host_groups", SSH_HOST_GROUP_COLUMNS, sshHostGroups, (item) => [
+      item.id, item.name,
+      typeof item.parent_id === "string" && sshHostGroupIds.has(item.parent_id) ? item.parent_id : null,
+      integerOr(item.sort_order, 0), item.created_at ?? now,
+    ]));
+    statements.push(...buildBatchInsertStatements("ssh_hosts", SSH_HOST_COLUMNS, sshHosts, (item) => {
+      const hostId = typeof item.id === "string" ? item.id : "";
+      const localFields = localSshHostFields.get(hostId);
+      const jumpMode = normalizeSshJumpMode(item.jump_mode);
+      const proxyType = normalizeSshProxyType(item.proxy_type, localFields);
+      const rawAttachmentRoot = typeof item.attachment_root === "string" ? item.attachment_root : "";
+      const attachmentRoot = isValidSshAttachmentRoot(rawAttachmentRoot)
+        ? normalizeSshAttachmentRoot(rawAttachmentRoot)
+        : "";
+      return [
+        item.id, item.name, item.group_name ?? "",
+        typeof item.group_id === "string" && sshHostGroupIds.has(item.group_id) ? item.group_id : null,
+        item.host ?? "", integerOr(item.port, 22), item.username ?? "", item.config_alias ?? "",
+        localFields?.config_file ?? "", normalizeSshAuthMode(item.auth_mode, localFields),
+        localFields?.identity_file ?? "", localFields?.credential_ref ?? "", jumpMode,
+        jumpMode !== "none" && typeof item.jump_host_id === "string" && sshHostIds.has(item.jump_host_id)
+          ? item.jump_host_id
+          : null,
+        proxyType, proxyType === "none" ? "" : item.proxy_host ?? "",
+        proxyType === "none" ? 0 : integerOr(item.proxy_port, 0), localFields?.proxy_command ?? "",
+        integerOr(item.connect_timeout_sec, 15), integerOr(item.server_alive_interval_sec, 30),
+        integerOr(item.server_alive_count_max, 3), item.terminal_encoding ?? "UTF-8",
+        attachmentRoot,
+        item.startup_script ?? "",
+        item.notes ?? "", integerOr(item.sort_order, 0), item.created_at ?? now, item.updated_at ?? now,
+      ];
+    }));
+  }
+  statements.push(...buildBatchInsertStatements(
+    "projects",
+    ["id", "name", "path", "path_mode", "group_id", "sort_order", "cli_tool", "cli_args", "startup_cmd", "env_vars", "shell", "provider_overrides", "worktree_strategy", "worktree_root", "worktree_deps_prompt_enabled", "environment_type", "ssh_host_id", "remote_path", "cli_config_root", "icon", "color", "created_at", "updated_at"],
+    projects,
+    (item) => {
+      const environmentType = item.environment_type === "ssh" ? "ssh" : item.environment_type === "wsl" ? "wsl" : "local";
+      const isSshProject = environmentType === "ssh";
+      const rawShell = typeof item.shell === "string" ? item.shell.trim() : "";
+      const shell = isSshProject
+        ? ""
+        : normalizeShellForOs(rawShell, os)
+          ?? (rawShell && !(os !== "windows" && isWindowsOnlyShellKey(rawShell)) ? rawShell : platformDefaultShell);
+      const rawCliConfigRoot = isSshProject && typeof item.cli_config_root === "string"
+        ? item.cli_config_root.trim()
+        : "";
+      const cliConfigRoot = validateSshToolConfigRoot(rawCliConfigRoot) ? "" : rawCliConfigRoot;
+      return [
+        item.id, item.name, isSshProject ? "" : item.path,
+        !isSshProject && item.path_mode === "inherit" ? "inherit" : "custom",
+        typeof item.group_id === "string" && groupIds.has(item.group_id) ? item.group_id : null,
+        integerOr(item.sort_order, 0), item.cli_tool ?? "", item.cli_args ?? "", item.startup_cmd ?? "",
+        item.env_vars ?? "{}", shell, isSshProject ? "{}" : item.provider_overrides ?? "{}",
+        isSshProject ? "disabled" : normalizeWorktreeStrategy(item.worktree_strategy),
+        isSshProject ? "" : item.worktree_root ?? "", isSshProject ? 0 : integerOr(item.worktree_deps_prompt_enabled, 0),
+        environmentType,
+        isSshProject && hasSshHostData && typeof item.ssh_host_id === "string" && sshHostIds.has(item.ssh_host_id)
+          ? item.ssh_host_id
+          : null,
+        isSshProject && typeof item.remote_path === "string" ? item.remote_path : "",
+        cliConfigRoot,
+        normalizeNodeIcon(item.icon), normalizeNodeAccentToken(item.color),
+        item.created_at ?? now, item.updated_at ?? now,
+      ];
+    },
+  ));
+  statements.push(...buildBatchInsertStatements("worktrees", ["id", "project_id", "name", "branch", "path", "base_branch", "deps_prompt_dismissed", "provider_overrides", "status", "created_at", "updated_at"], worktrees.filter((item) => typeof item.project_id === "string" && projectIds.has(item.project_id)), (item) => [
+    item.id, item.project_id, item.name, item.branch, item.path, item.base_branch ?? "", integerOr(item.deps_prompt_dismissed, 0),
+    item.provider_overrides ?? "{}", item.status === "missing" ? "missing" : "active", item.created_at ?? now, item.updated_at ?? now,
+  ]));
+  statements.push(...buildBatchInsertStatements("command_templates", ["id", "project_id", "name", "command", "description", "sort_order"], templates, (item) => [
+    item.id, typeof item.project_id === "string" && projectIds.has(item.project_id) ? item.project_id : null,
+    item.name, item.command, item.description ?? "", integerOr(item.sort_order, 0),
+  ]));
+  return statements;
+}
+
+function buildModelPriceRestoreStatements(prices: Record<string, unknown>[]): DatabaseStatement[] {
+  const normalized = prices.filter(isRecord).map((item) => ({
+    model: typeof item.model === "string" ? item.model : "",
+    input_per_1m: numberOrZero(item.input_per_1m), output_per_1m: numberOrZero(item.output_per_1m),
+    cache_read_per_1m: numberOrZero(item.cache_read_per_1m), cache_creation_per_1m: numberOrZero(item.cache_creation_per_1m),
+    source: typeof item.source === "string" ? item.source : "manual", source_model_id: item.source_model_id ?? null,
+    raw_json: item.raw_json ?? null, updated_at_ms: integerOr(item.updated_at_ms, 0),
+    synced_at_ms: item.synced_at_ms == null ? null : integerOr(item.synced_at_ms, 0),
+  })).filter((item) => item.model);
+  return [
+    { sql: "DELETE FROM model_prices", values: [] },
+    ...buildBatchInsertStatements("model_prices", MODEL_PRICE_COLUMNS, normalized, (item) => MODEL_PRICE_COLUMNS.map((column) => item[column])),
+  ];
+}
+
+async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]) {
+  if (snapshot.version !== 3 || !isRecord(snapshot.data)) throw new Error("backup_invalid_v3");
+  const selected = new Set(domains);
+  const databaseStatements: DatabaseStatement[] = [];
+  if (selected.has("workspace")) {
+    databaseStatements.push(...await buildWorkspaceRestoreStatements(snapshot.data.workspace));
+  }
+  if (selected.has("model_prices")) {
+    databaseStatements.push(...buildModelPriceRestoreStatements(snapshot.data.modelPrices));
+  }
+  if (databaseStatements.length > 0) {
+    await invoke("backup_restore_database", { statements: databaseStatements });
+  }
+  if (selected.has("preferences")) await applyPreferences(snapshot.data.preferences);
+  if (selected.has("notifications")) {
+    await useSettingsStore.getState().update("thirdPartyHookNotificationsEnabled", snapshot.data.notifications.enabled);
+    await useSettingsStore.getState().update("thirdPartyHookTargets", sanitizeThirdPartyHookTargets(snapshot.data.notifications.targets));
+  }
+  if (selected.has("statusline")) await invoke("statusline_backup_restore", { bundle: snapshot.data.statusline });
+  if (selected.has("model_prices")) await useModelPricingStore.getState().load();
+  if (selected.has("workspace")) {
+    await useSshHostStore.getState().fetchHosts();
+    await useProjectStore.getState().fetchAll();
+    await useWorktreeStore.getState().loadWorktrees();
+    await useProjectStore.getState().refreshProjectDiagnostics();
+    await useWorktreeStore.getState().markMissingWorktrees();
+  }
+}
+
+export const useSyncStore = create<BackupStore>((set, get) => ({
+  webdavUrl: "", webdavUsername: "", hasPassword: false, status: "idle", lastBackupAt: null,
+  deviceId: "", deviceName: "", loaded: false, backupMode: "cloud", localBackupDir: "", remoteDir: "",
+  autoBackupOnClose: false, snapshots: [],
+
+  load: singleFlight(async () => {
+    const store = await getConfigStore();
+    const webdavUrl = (await store.get<string>("webdavUrl")) ?? "";
+    const webdavUsername = (await store.get<string>("webdavUsername")) ?? "";
+    sessionWebdavPassword = (await invoke<string | null>("sync_load_password").catch(() => null)) ?? "";
+    let deviceName = sanitizeDeviceName((await store.get<string>("deviceName")) ?? "");
+    if (!deviceName) {
+      const result = await invoke<{ device_name: string }>("sync_get_default_device_name").catch(() => ({ device_name: "当前设备" }));
+      deviceName = sanitizeDeviceName(result.device_name) || "当前设备";
+      await store.set("deviceName", deviceName);
+    }
+    const oldCloseAction = await store.get<string>("autoSyncOnClose");
+    const autoBackupOnClose = (await store.get<boolean>("autoBackupOnClose")) ?? oldCloseAction === "upload";
+    await store.set("autoBackupOnClose", autoBackupOnClose);
+    await store.set("autoSyncOnStartup", "off");
+    await store.set("autoSyncOnClose", "off");
+    const db = await getDb();
+    const meta = await db.select<SyncMeta[]>("SELECT device_id, last_sync_at FROM sync_meta WHERE id = 'singleton'");
+    set({
+      webdavUrl, webdavUsername, hasPassword: Boolean(sessionWebdavPassword), deviceName,
+      deviceId: meta[0]?.device_id ?? crypto.randomUUID(), lastBackupAt: meta[0]?.last_sync_at ?? null,
+      backupMode: ((await store.get<string>("syncMode")) === "local" ? "local" : "cloud"),
+      localBackupDir: (await store.get<string>("localSyncDir")) ?? "", remoteDir: (await store.get<string>("remoteDir")) ?? "",
+      autoBackupOnClose, loaded: true,
+    });
+  }),
+
+  setConfig: async (url, username, password) => {
+    const store = await getConfigStore();
+    await store.set("webdavUrl", url); await store.set("webdavUsername", username);
+    if (password !== undefined) {
+      await invoke(password ? "sync_save_password" : "sync_delete_password", password ? { password } : undefined);
+      sessionWebdavPassword = password;
+    }
+    set({ webdavUrl: url, webdavUsername: username, hasPassword: Boolean(sessionWebdavPassword) });
+  },
+  clearPassword: async () => { await invoke("sync_delete_password"); sessionWebdavPassword = ""; set({ hasPassword: false }); },
+  getSessionPassword: () => sessionWebdavPassword,
+  testConnection: (url, username, password) => invoke("sync_test_connection", { config: { url, username, password } }),
+  setDeviceName: async (name) => {
+    const value = sanitizeDeviceName(name); if (!value) throw new Error("backup_device_name_required");
+    await (await getConfigStore()).set("deviceName", value); set({ deviceName: value });
+  },
+  setBackupMode: async (mode) => { await (await getConfigStore()).set("syncMode", mode); set({ backupMode: mode }); },
+  setLocalBackupDir: async (dir) => { await (await getConfigStore()).set("localSyncDir", dir); set({ localBackupDir: dir }); },
+  setRemoteDir: async (dir) => { await (await getConfigStore()).set("remoteDir", dir); set({ remoteDir: dir }); },
+  setAutoBackupOnClose: async (enabled) => { await (await getConfigStore()).set("autoBackupOnClose", enabled); set({ autoBackupOnClose: enabled }); },
+
+  createBackup: async (manual = true) => {
+    const state = get();
+    const operationId = "data-sync:backup";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.backup",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "backing_up" });
+    try {
+      const snapshot = await createSnapshot(state.deviceId, state.deviceName);
+      const store = await getConfigStore();
+      const lastHash = (await store.get<string>("lastBackupContentHash")) ?? "";
+      if (!manual && lastHash === snapshot.manifest.contentHash) {
+        set({ status: "idle" });
+        useBackgroundOperationStore.getState().succeed(operationId);
+        return null;
+      }
+      let result: string;
+      if (state.backupMode === "local") {
+        if (!state.localBackupDir) throw new Error("backup_local_directory_required");
+        result = await invoke("backup_local_export", { dir: state.localBackupDir, snapshot });
+      } else {
+        if (!state.webdavUrl || !sessionWebdavPassword) throw new Error("backup_webdav_required");
+        const targetHash = await sha256([state.webdavUrl, state.webdavUsername, state.remoteDir]);
+        await invoke("backup_outbox_save", { targetHash, snapshot });
+        try {
+          result = await invoke("backup_upload", { config: webdavConfig(state), snapshot, remoteDir: state.remoteDir || undefined });
+          await invoke("backup_outbox_remove", { targetHash, snapshotId: snapshot.manifest.snapshotId });
+        } catch {
+          await store.set("lastBackupContentHash", snapshot.manifest.contentHash);
+          const db = await getDb();
+          await db.execute("INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)", [state.deviceId, snapshot.manifest.createdAt, snapshot.manifest.contentHash]);
+          set({ status: "queued", lastBackupAt: snapshot.manifest.createdAt });
+          throw new Error("backup_queued");
+        }
+      }
+      await store.set("lastBackupContentHash", snapshot.manifest.contentHash);
+      const db = await getDb();
+      await db.execute("INSERT OR REPLACE INTO sync_meta (id, device_id, last_sync_at, remote_version) VALUES ('singleton', ?, ?, ?)", [state.deviceId, snapshot.manifest.createdAt, snapshot.manifest.contentHash]);
+      set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+      useBackgroundOperationStore.getState().succeed(operationId);
+      return result;
+    } catch (error) {
+      if (!(error instanceof Error && error.message === "backup_queued")) set({ status: "error" });
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      throw error;
+    }
+  },
+
+  listBackups: async () => {
+    const state = get();
+    if (!state.webdavUrl || !sessionWebdavPassword) return [];
+    const snapshots = await invoke<BackupSnapshotInfo[]>("backup_list", { config: webdavConfig(state), remoteDir: state.remoteDir || undefined });
+    set({ snapshots }); return snapshots;
+  },
+  previewBackup: async (remotePath) => {
+    const state = get();
+    const raw = await invoke<unknown>("backup_download", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+    return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+  },
+  restoreBackup: async (remotePath, domains) => {
+    const state = get();
+    const operationId = "data-sync:restore";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.restore",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "restoring" });
+    let safety: BackupSnapshotV3 | null = null;
+    try {
+      safety = await createSnapshot(state.deviceId, state.deviceName);
+      await invoke("backup_restore_safety_save", { snapshot: safety });
+      const raw = await invoke<unknown>("backup_download", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
+      useBackgroundOperationStore.getState().succeed(operationId);
+    } catch (error) {
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Restore rollback failed", rollbackError));
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
+    }
+  },
+  importLegacyCloud: async (domains) => {
+    const state = get(); set({ status: "restoring" });
+    const safety = await createSnapshot(state.deviceId, state.deviceName);
+    await invoke("backup_restore_safety_save", { snapshot: safety });
+    try {
+      const raw = await invoke<unknown>("backup_import_legacy_cloud", {
+        config: webdavConfig(state), deviceName: state.deviceName, remoteDir: state.remoteDir || undefined,
+      });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success" });
+    } catch (error) {
+      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Legacy restore rollback failed", rollbackError));
+      set({ status: "error" }); throw error;
+    }
+  },
+  deleteBackup: async (remotePath) => {
+    const state = get();
+    await invoke("backup_delete", { config: webdavConfig(state), remotePath, remoteDir: state.remoteDir || undefined });
+    await get().listBackups();
+  },
+  localImport: async (zipPath, domains) => {
+    const state = get();
+    const operationId = "data-sync:import";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.import",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "restoring" });
+    let safety: BackupSnapshotV3 | null = null;
+    try {
+      safety = await createSnapshot(state.deviceId, state.deviceName);
+      await invoke("backup_restore_safety_save", { snapshot: safety });
+      const raw = await invoke<unknown>("backup_local_import", { zipPath });
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, domains); set({ status: "success" });
+      useBackgroundOperationStore.getState().succeed(operationId);
+    } catch (error) {
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Import rollback failed", rollbackError));
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
+    }
+  },
+  previewLocalImport: async (zipPath) => {
+    const state = get();
+    const raw = await invoke<unknown>("backup_local_import", { zipPath });
+    return normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+  },
+  undoLastRestore: async () => {
+    const state = get();
+    const operationId = "data-sync:undo";
+    useBackgroundOperationStore.getState().start({
+      id: operationId,
+      kind: "dataSync",
+      titleKey: "backgroundOperations.dataSync.title",
+      detailKey: "backgroundOperations.dataSync.undo",
+      contextLabel: state.deviceName,
+    });
+    set({ status: "restoring" });
+    try {
+      const raw = await invoke<unknown | null>("backup_restore_safety_load");
+      if (!raw) throw new Error("backup_no_restore_to_undo");
+      const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
+      await applySnapshot(snapshot, ALL_DOMAINS);
+      await invoke("backup_restore_safety_clear");
+      set({ status: "success" });
+      useBackgroundOperationStore.getState().succeed(operationId);
+    }
+    catch (error) {
+      useBackgroundOperationStore.getState().fail(operationId, error);
+      set({ status: "error" });
+      throw error;
+    }
+  },
+  retryOutbox: async () => {
+    const state = get();
+    if (!state.webdavUrl || !sessionWebdavPassword) return;
+    const targetHash = await sha256([state.webdavUrl, state.webdavUsername, state.remoteDir]);
+    const snapshots = await invoke<BackupSnapshotV3[]>("backup_outbox_list", { targetHash });
+    for (const snapshot of snapshots) {
+      try {
+        await invoke("backup_upload", { config: webdavConfig(state), snapshot, remoteDir: state.remoteDir || undefined });
+        await invoke("backup_outbox_remove", { targetHash, snapshotId: snapshot.manifest.snapshotId });
+      } catch (error) { console.warn("Backup outbox retry failed", error); break; }
+    }
+  },
+  runCloseAutoBackup: async () => {
+    const state = get();
+    if (!state.autoBackupOnClose) return "skipped";
+    try { const result = await get().createBackup(false); return result === null ? "skipped" : "success"; }
+    catch { return state.backupMode === "cloud" ? "queued" : "error"; }
+  },
+}));

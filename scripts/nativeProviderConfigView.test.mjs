@@ -10,11 +10,11 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-provider-config-view-"))
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/components/settings/providers/nativeProviderConfigView.ts", import.meta.url),
+  new URL("../src/features/settings/components/providers/nativeProviderConfigView.ts", import.meta.url),
   "utf8",
 );
 const advancedSource = readFileSync(
-  new URL("../src/components/settings/providers/nativeProviderAdvancedConfig.ts", import.meta.url),
+  new URL("../src/features/settings/components/providers/nativeProviderAdvancedConfig.ts", import.meta.url),
   "utf8",
 );
 const output = ts.transpileModule(source, {

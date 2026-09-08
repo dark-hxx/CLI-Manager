@@ -14,7 +14,7 @@
 
 ### 2. Signatures
 
-Backend commands in `src-tauri/src/commands/fs.rs`:
+Backend commands in `src-tauri/src/features/files/commands.rs`:
 
 ```rust
 file_watch_start(project_path: String) -> Result<(), String>
@@ -109,7 +109,7 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - Good: `file_search_content(rootPath, "invoke")` returns bounded `{ path, line_number, line_text, before, after }` snippets for UTF-8 project files, with duplicate hits in the same file collapsed to the first match.
 - Good: `file_watch_start(projectPath)` uses a debounced recursive watcher for local Windows paths and returns a stable error such as `wsl_watch_unsupported` when notify cannot be used.
 - Good: watcher events for `src/main.ts` emit `changedPaths: ["src/main.ts"]`, allowing the frontend to refresh `src` instead of every expanded directory.
-- Base: `file_write_text(rootPath, "src/App.tsx", content)` writes only if `src` remains inside `rootPath`.
+- Base: `file_write_text(rootPath, "src/app/App.tsx", content)` writes only if `src` remains inside `rootPath`.
 - Good: `file_read_project_text` opens GBK or UTF-16 BOM source files and `file_write_project_text` writes them back with the same encoding/BOM.
 - Good: local and SSH `src/main.ts` source files bypass video classification and return text; `clip.mp4` remains rejected before content reading on both paths.
 - Good: the frontend rejects a known oversized entry before invoking Rust; Rust repeats size and pixel checks for search results with unknown size and direct IPC calls.

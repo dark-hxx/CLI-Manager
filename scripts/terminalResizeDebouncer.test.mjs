@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-resize-debouncer-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const source = readFileSync(
-  new URL("../src/terminal/browser/TerminalResizeDebouncer.ts", import.meta.url),
+  new URL("../src/features/terminal/browser/TerminalResizeDebouncer.ts", import.meta.url),
   "utf8",
 );
 const transpiled = ts.transpileModule(source, {

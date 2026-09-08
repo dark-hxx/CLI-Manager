@@ -382,7 +382,17 @@ function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
       <button className="new-chat-button" type="button" onClick={() => props.onSelectSession(undefined)}><Plus size={18} /><span>{props.t("newConversation")}</span></button>
       <div className="project-tree">
         <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{props.workspace?.projects.length ?? 0}</span></div>
-        <ProjectTree t={props.t} workspace={props.workspace} projectContexts={props.projectContexts} selectedProjectContext={props.selectedProjectContext} dragEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} managementEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} onSelectProjectContext={props.onSelectProjectContext} onSubmit={props.onSubmitManagement} onReload={props.onRefresh} />
+        <ProjectTree
+          t={props.t}
+          workspace={props.workspace}
+          projectContexts={props.projectContexts}
+          selectedProjectContext={props.selectedProjectContext}
+          dragEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))}
+          managementEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))}
+          onSelectProjectContext={props.onSelectProjectContext}
+          onSubmit={props.onSubmitManagement}
+          onReload={props.onRefresh}
+        />
       </div>
       <div className="sidebar-footer"><button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button><button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
     </aside>
@@ -390,7 +400,14 @@ function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
 }
 
 function HistoryList({ t, items, selectedId, onSelect }: { t: T; items: HistorySessionSummary[]; selectedId?: string; onSelect: (id: string) => void }) {
-  return <div className="history-list"><div className="side-section-title"><span>{t("recent")}</span><span className="count">{items.length}</span></div>{items.length === 0 ? <p className="empty-copy">{t("noHistory")}</p> : items.map((session) => <button className={`history-row${selectedId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => onSelect(session.sessionId)}><MessageCircle size={18} /><span><strong>{session.title}</strong><small>{session.projectKey} · {formatServerTime(session.updatedAt)}</small></span><span className={`freshness-dot ${session.freshness}`} title={t(session.freshness === "live" ? "liveData" : session.freshness === "cached" ? "cachedData" : "staleData")} /></button>)}</div>;
+  return <div className="history-list">
+    <div className="side-section-title"><span>{t("recent")}</span><span className="count">{items.length}</span></div>
+    {items.length === 0 ? <p className="empty-copy">{t("noHistory")}</p> : items.map((session) =>
+      <button className={`history-row${selectedId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => onSelect(session.sessionId)}>
+        <MessageCircle size={18} />
+        <span><strong>{session.title}</strong><small>{session.projectKey} · {formatServerTime(session.updatedAt)}</small></span>
+        <span className={`freshness-dot ${session.freshness}`} title={t(session.freshness === "live" ? "liveData" : session.freshness === "cached" ? "cachedData" : "staleData")} />
+      </button>)}</div>;
 }
 
 function OverlayPanel({ title, closeLabel, onClose, children }: { title: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
@@ -424,7 +441,17 @@ function PairingForm({ t, state, onClaim }: { t: T; state: PairingState; onClaim
   const [code, setCode] = useState(state.status === "error" ? state.input : "");
   const submit = (event: FormEvent) => { event.preventDefault(); void onClaim(code); };
   if (state.status === "claimed") return <div className="pairing-result"><CheckCircle2 size={38} /><h3>{t("pairingClaimed")}</h3><p>{state.device.name}</p></div>;
-  return <form className="pairing-form" onSubmit={submit}><p>{t("pairingHint")}</p><label htmlFor="pairing-code">{t("pairingCode")}</label><input id="pairing-code" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} autoComplete="one-time-code" aria-describedby="pairing-help" /><small id="pairing-help">{t("pairingCodeHelp")}</small>{state.status === "error" && <p className="form-error" role="alert">{pairingError(t, state.code, state.message)}</p>}<button className="primary-button" type="submit" disabled={state.status === "submitting" || !code.trim()}>{state.status === "submitting" && <LoaderCircle className="spin" size={18} />}{t(state.status === "submitting" ? "pairingSubmitting" : "claimDevice")}</button></form>;
+  return <form className="pairing-form" onSubmit={submit}>
+    <p>{t("pairingHint")}</p>
+    <label htmlFor="pairing-code">{t("pairingCode")}</label>
+    <input id="pairing-code" value={code} onChange={(event) => setCode(event.target.value.toUpperCase())} autoComplete="one-time-code" aria-describedby="pairing-help" />
+    <small id="pairing-help">{t("pairingCodeHelp")}</small>
+    {state.status === "error" && <p className="form-error" role="alert">{pairingError(t, state.code, state.message)}</p>}
+    <button className="primary-button" type="submit" disabled={state.status === "submitting" || !code.trim()}>
+      {state.status === "submitting" && <LoaderCircle className="spin" size={18} />}
+      {t(state.status === "submitting" ? "pairingSubmitting" : "claimDevice")}
+    </button>
+  </form>;
 }
 
 function DeviceLine({ device, t, socketState }: { device?: Device; t: T; socketState: "connecting" | "open" | "closed" }) {
@@ -440,7 +467,14 @@ function EmptyDevice({ t, onPair }: { t: T; onPair: () => void }) {
 }
 
 function Welcome({ t, device, onDraft }: { t: T; device: Device; onDraft: (value: string) => void }) {
-  return <><div className="welcome-block"><AppLogo /><h1>{t("greeting")}</h1><p>{t("greetingQuestion")}</p></div><div className="suggestion-grid">{([["solveProject", "promptSolve", Folder], ["fixIssue", "promptFix", Shield], ["brainstorm", "promptBrainstorm", Bot]] as const).map(([label, prompt, Icon]) => <button className="suggestion-card" type="button" key={label} disabled={device.status !== "online"} onClick={() => onDraft(t(prompt))}><span className="feature-icon blue"><Icon size={24} /></span><span><strong>{t(label)}</strong><small>{device.status === "online" ? t("ready") : t("offlineDraftOnly")}</small></span></button>)}</div></>;
+  return <>
+    <div className="welcome-block"><AppLogo /><h1>{t("greeting")}</h1><p>{t("greetingQuestion")}</p></div>
+    <div className="suggestion-grid">{([["solveProject", "promptSolve", Folder], ["fixIssue", "promptFix", Shield], ["brainstorm", "promptBrainstorm", Bot]] as const).map(([label, prompt, Icon]) =>
+      <button className="suggestion-card" type="button" key={label} disabled={device.status !== "online"} onClick={() => onDraft(t(prompt))}>
+        <span className="feature-icon blue"><Icon size={24} /></span>
+        <span><strong>{t(label)}</strong><small>{device.status === "online" ? t("ready") : t("offlineDraftOnly")}</small></span>
+      </button>)}</div>
+  </>;
 }
 
 function ConversationTimeline({ t, items }: { t: T; items: TimelineItem[] }) {
@@ -450,12 +484,28 @@ function ConversationTimeline({ t, items }: { t: T; items: TimelineItem[] }) {
 function OperationCard({ t, item }: { t: T; item: Extract<TimelineItem, { type: "operation" }> }) {
   const operation = item.operation;
   const terminal = ["succeeded", "failed", "rejected", "timed_out", "canceled"].includes(operation.status);
-  return <article className={`timeline-item operation-item ${operation.status}`}><header>{operation.status === "succeeded" ? <CheckCircle2 size={18} /> : terminal ? <AlertTriangle size={18} /> : <LoaderCircle className="spin" size={18} />}<strong>{t("operation")}</strong><code>{operation.id}</code></header><div className="operation-grid"><span>{t("operationKind")}</span><strong>{operation.kind}</strong><span>{t("operationStatus")}</span><strong>{operationStatusLabel(t, operation.status)}</strong></div>{operation.error && <p className="form-error" role="alert">{operation.error.message}</p>}<small>{t("updatedAt")} {formatServerTime(operation.updatedAt)}</small></article>;
+  return <article className={`timeline-item operation-item ${operation.status}`}>
+    <header>{operation.status === "succeeded" ? <CheckCircle2 size={18} /> : terminal ? <AlertTriangle size={18} /> : <LoaderCircle className="spin" size={18} />}<strong>{t("operation")}</strong><code>{operation.id}</code></header>
+    <div className="operation-grid">
+      <span>{t("operationKind")}</span><strong>{operation.kind}</strong>
+      <span>{t("operationStatus")}</span><strong>{operationStatusLabel(t, operation.status)}</strong>
+    </div>
+    {operation.error && <p className="form-error" role="alert">{operation.error.message}</p>}
+    <small>{t("updatedAt")} {formatServerTime(operation.updatedAt)}</small>
+  </article>;
 }
 
 function Composer({ t, value, disabled, offline, message, onChange, onSend }: { t: T; value: string; disabled: boolean; offline: boolean; message: string; onChange: (value: string) => void; onSend: () => void }) {
   const submit = (event: FormEvent) => { event.preventDefault(); onSend(); };
-  return <form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="task-composer">{t("composerLabel")}</label><textarea id="task-composer" value={value} onChange={(event) => onChange(event.target.value)} placeholder={offline ? t("offlineComposerPlaceholder") : t("composerPlaceholder")} rows={3} /><div className="composer-toolbar"><span className={`composer-state ${offline ? "offline" : "online"}`}>{offline ? <WifiOff size={17} /> : <Radio size={17} />}{t(offline ? "offlineDraftOnly" : "ready")}</span><button className="send-button" type="submit" aria-label={t("send")} disabled={disabled}><Send size={20} /></button></div>{message && <p className="composer-feedback" role="alert">{localizedError(t, message)}</p>}</form>;
+  return <form className="composer" onSubmit={submit}>
+    <label className="sr-only" htmlFor="task-composer">{t("composerLabel")}</label>
+    <textarea id="task-composer" value={value} onChange={(event) => onChange(event.target.value)} placeholder={offline ? t("offlineComposerPlaceholder") : t("composerPlaceholder")} rows={3} />
+    <div className="composer-toolbar">
+      <span className={`composer-state ${offline ? "offline" : "online"}`}>{offline ? <WifiOff size={17} /> : <Radio size={17} />}{t(offline ? "offlineDraftOnly" : "ready")}</span>
+      <button className="send-button" type="submit" aria-label={t("send")} disabled={disabled}><Send size={20} /></button>
+    </div>
+    {message && <p className="composer-feedback" role="alert">{localizedError(t, message)}</p>}
+  </form>;
 }
 
 function capabilityValue(device: Device | undefined, prefix: string) {

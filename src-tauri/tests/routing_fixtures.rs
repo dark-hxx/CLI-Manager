@@ -8,10 +8,12 @@ const MODEL_MAPPING: &str = include_str!("fixtures/routing/model_mapping.json");
 const RECTIFIER_ERRORS: &str = include_str!("fixtures/routing/rectifier_errors.json");
 const REDACTED_REQUEST_LOGS: &str = include_str!("fixtures/routing/redacted_request_logs.json");
 
+// 解析编译时嵌入的 JSON 夹具，格式错误直接使测试失败。
 fn parse_fixture(raw: &str) -> Value {
     serde_json::from_str(raw).expect("routing fixture must be valid JSON")
 }
 
+// 在测试内模拟通用模型映射优先级，不调用生产路由实现。
 fn resolve_generic_model(case: &Value) -> String {
     let requested_model = case["requestedModel"].as_str().expect("requested model");
     if !case["routeEnabled"].as_bool().expect("route state") {
@@ -31,6 +33,7 @@ fn resolve_generic_model(case: &Value) -> String {
         .to_string()
 }
 
+// 递归检查夹具是否含指定敏感字段或密钥样式，不作为通用脱敏器。
 fn assert_sanitized(value: &Value) {
     match value {
         Value::Object(fields) => {
@@ -57,6 +60,7 @@ fn assert_sanitized(value: &Value) {
 }
 
 #[test]
+// 验证协议矩阵夹具覆盖十种应用格式、两类传输和指定语义特征。
 fn protocol_fixture_matrix_covers_supported_formats_and_semantics() {
     let manifest = parse_fixture(PROTOCOL_MATRIX);
     assert_eq!(manifest["schemaVersion"], 1);
@@ -152,6 +156,7 @@ fn protocol_fixture_matrix_covers_supported_formats_and_semantics() {
 }
 
 #[test]
+// 验证流式夹具声明的提交位置与提交后禁止故障转移约束。
 fn stream_fixture_defines_response_commit_boundary() {
     let manifest = parse_fixture(STREAM_COMMIT);
     assert_eq!(manifest["schemaVersion"], 1);
@@ -220,6 +225,7 @@ fn stream_fixture_defines_response_commit_boundary() {
 }
 
 #[test]
+// 验证模型映射夹具及测试内模拟规则，检查直连、路由、切换和角色样例。
 fn model_mapping_fixture_preserves_route_boundaries_and_final_pin() {
     let manifest = parse_fixture(MODEL_MAPPING);
     assert_eq!(manifest["schemaVersion"], 1);
@@ -332,6 +338,7 @@ fn model_mapping_fixture_preserves_route_boundaries_and_final_pin() {
 }
 
 #[test]
+// 验证纠错夹具的适用范围、重试声明和媒体、思考及 Bedrock 样例。
 fn rectifier_fixture_covers_exact_rules_and_route_scope() {
     let manifest = parse_fixture(RECTIFIER_ERRORS);
     assert_eq!(manifest["schemaVersion"], 1);
@@ -432,6 +439,7 @@ fn rectifier_fixture_covers_exact_rules_and_route_scope() {
 }
 
 #[test]
+// 验证日志夹具字段集合与脱敏约束，不读取或验证真实运行日志。
 fn route_request_log_fixture_excludes_sensitive_payload_fields() {
     let manifest = parse_fixture(REDACTED_REQUEST_LOGS);
     assert_eq!(manifest["schemaVersion"], 1);

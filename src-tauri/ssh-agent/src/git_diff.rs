@@ -36,6 +36,7 @@ pub struct GitDiffOptions {
 }
 
 impl Default for GitDiffOptions {
+    // 旧接口默认逐字比较空白并提供三行上下文。
     fn default() -> Self {
         Self {
             whitespace: GitDiffWhitespaceMode::Exact,
@@ -45,6 +46,7 @@ impl Default for GitDiffOptions {
 }
 
 impl GitDiffOptions {
+    // 只允许约定的 3/10/20 行上下文；空白模式已由枚举反序列化限制。
     fn validate(self) -> Result<Self, String> {
         if matches!(self.context_lines, 3 | 10 | 20) {
             Ok(self)
@@ -75,6 +77,7 @@ pub struct GitFileDiffPayload {
     pub line_count: usize,
 }
 
+// 统一检查最终 UTF-8 内容的字节数和 str::lines 行数，超限报错而不裁剪，并附带统计元数据。
 fn build_diff_payload(
     content: String,
     can_revert_hunks: bool,
@@ -92,10 +95,12 @@ fn build_diff_payload(
     })
 }
 
+// 以默认选项走旧接口路径，保留首次 Git diff 使用 HEAD 的行为。
 pub(super) fn legacy_diff(request: DiffRequest) -> Result<GitFileDiffPayload, String> {
     diff(request, GitDiffOptions::default(), true)
 }
 
+// 先校验显式选项，再转换为公共请求执行非 legacy 路径；不在此改变旧接口字段契约。
 pub(super) fn diff_with_options(
     request: DiffWithOptionsRequest,
 ) -> Result<GitFileDiffPayload, String> {
@@ -112,6 +117,8 @@ pub(super) fn diff_with_options(
     )
 }
 
+// 解析受限仓库和文件路径；U/?? 转为未跟踪文件展示，其余执行 Git Diff。
+// 首次 Git 调用返回任意错误时再尝试不带 HEAD 的差异命令，随后统一构造受限响应。
 fn diff(
     request: DiffRequest,
     options: GitDiffOptions,
@@ -133,6 +140,7 @@ fn diff(
     tracked_payload(output, options)
 }
 
+// 禁用外部 diff、textconv 和颜色，加入空白/上下文选项；legacy 或非 A 状态带 HEAD，路径置于 -- 后。
 fn diff_args(path: &str, status: &str, options: GitDiffOptions, legacy: bool) -> Vec<String> {
     let mut args = vec![
         "diff".to_string(),
@@ -153,6 +161,8 @@ fn diff_args(path: &str, status: &str, options: GitDiffOptions, legacy: bool) ->
     args
 }
 
+// 检查目标类型后整文件读取，再检查大小；含 NUL 时生成二进制提示，否则合成全部新增的文本补丁。
+// 两种结果都禁止分块回退并经过最终大小门禁；读取前后没有原子绑定文件身份。
 fn untracked_diff(repo: &Path, path: &str) -> Result<GitFileDiffPayload, String> {
     let target = repo.join(path);
     validate_untracked_target(&target)?;
@@ -181,6 +191,7 @@ fn untracked_diff(repo: &Path, path: &str) -> Result<GitFileDiffPayload, String>
     build_diff_payload(content, false)
 }
 
+// 限制原始输出并解码；精确模式空结果报错，只有精确、原生 UTF-8 且无二进制标记才允许分块回退。
 fn tracked_payload(
     output: GitOutput,
     options: GitDiffOptions,
@@ -202,6 +213,7 @@ fn tracked_payload(
     )
 }
 
+// 优先严格 UTF-8；否则探测编码并容错解码，布尔值仅表示原始字节是否严格 UTF-8。
 fn decode_diff_text(bytes: &[u8]) -> (String, bool) {
     if let Ok(text) = std::str::from_utf8(bytes) {
         return (text.to_string(), true);
@@ -213,6 +225,7 @@ fn decode_diff_text(bytes: &[u8]) -> (String, bool) {
     (text.into_owned(), false)
 }
 
+// 用不跟随末端符号链接的元数据检查拒绝链接及非普通文件；此处不单独校验祖先目录。
 fn validate_untracked_target(target: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(target).map_err(|_| "remote_git_file_read_failed")?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {

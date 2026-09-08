@@ -1768,3 +1768,77 @@ daemon 连接完成后自动协调持久化路由意图，复用手动启停逻�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 54: PR252 合并与全项目 AI 架构重构
+
+**Date**: 2026-09-07
+**Task**: PR252 合并与全项目 AI 架构重构
+**Branch**: `refactor/ai-architecture`
+
+### Summary
+
+PR252 冲突及协议、数据库、Git 恢复引用和交互安全问题修复后已合并。25 个超限文件清零，前端 app/features/shared 与 Rust features/infrastructure/shared 整理完成；946 个手写源文件严格检查零违规，规范和 TEMP 记录同步。TypeScript、生产构建、657 项 Node 回归、20 项启动桩检查、1237 项桌面 Rust 测试（1 项原有忽略）、100 项 SSH Agent 测试及 35 项共享库测试通过。本次 9 个子任务及父任务已归档，无关旧任务保留。重构仅本地提交未推送。未启动桌面或真实服务，人工验收待办见 docs/AI架构治理验收.md。GitNexus 重建因 lbug 拒绝访问失败，后续 detect_changes 返回数据库不可用；最终文档及任务归档以 Git 差异审查补充，未绕过权限。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `361edeb1` | (see git log) |
+| `78cd43ed` | (see git log) |
+| `33916085` | (see git log) |
+| `220564b5` | (see git log) |
+| `b9b00a04` | (see git log) |
+| `2d1eb7fe` | (see git log) |
+| `fc92405e` | (see git log) |
+| `6cf6222d` | (see git log) |
+| `9488d0be` | (see git log) |
+| `8cf2a86c` | (see git log) |
+| `8a5325df` | (see git log) |
+| `3914b123` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 55: 补全后端函数注释
+
+**Date**: 2026-09-08
+**Task**: 补全后端函数注释
+**Branch**: `refactor/ai-architecture`
+
+### Summary
+
+覆盖 5930 个 Rust 方法及后端脚本 callable，建立注释与可执行等价验证规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e7e44585` | (see git log) |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 56: 修复桌宠 ID 路径穿越
+
+**Date**: 2026-09-08
+**Task**: 修复桌宠 ID 路径穿越
+**Branch**: `refactor/ai-architecture`
+
+### Summary
+
+共享桌宠 ID 校验新增单个普通路径组件约束，拒绝点目录穿越；补齐 15 项桌宠模块回归、严格架构校验、TEMP 变更记录与文件安全规范。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c936751b` | (see git log) |
+
+### Status
+
+[OK] **Completed**

@@ -1,0 +1,243 @@
+/* Issue #227：忽略项不再抽离到「已折叠文件」分组，改为原位显示 + 整行淡化
+   （JetBrains 风：文件名、图标、Git 状态徽标一起变淡）。
+   hover / 选中时提亮，否则透明度会吃掉选中反馈。 */
+.ui-file-tree-row[data-ignored="true"] {
+  opacity: 0.45;
+}
+
+.ui-file-tree-row[data-ignored="true"]:hover,
+.ui-file-tree-row[data-ignored="true"][data-selected="true"],
+.ui-file-tree-row[data-ignored="true"][data-state="open"] {
+  opacity: 0.75;
+}
+
+.ui-file-drag-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 10000;
+  max-width: min(360px, calc(100vw - 24px));
+  pointer-events: none;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 6px;
+  background-color: color-mix(in srgb, var(--surface-container-high) 94%, transparent);
+  color: var(--on-surface);
+  box-shadow: 0 14px 34px color-mix(in srgb, #000 34%, transparent);
+  opacity: 0.94;
+  overflow: hidden;
+  contain: layout;
+  will-change: transform;
+}
+
+.ui-file-drag-preview[data-over-terminal="true"] {
+  border-color: color-mix(in srgb, var(--primary) 72%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 16%, var(--surface-container-high));
+  box-shadow:
+    0 14px 34px color-mix(in srgb, #000 34%, transparent),
+    0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+
+.ui-file-drag-preview .ui-file-tree-row {
+  width: 100%;
+  background-color: transparent;
+}
+
+.ui-file-explorer-sidebar .ui-icon-action {
+  border-color: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  background-color: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  color: color-mix(in srgb, var(--on-surface) 76%, var(--text-muted) 24%);
+}
+
+.ui-file-explorer-sidebar .ui-icon-action:hover:not(:disabled),
+.ui-file-explorer-sidebar .ui-icon-action:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--on-surface);
+  box-shadow: none;
+}
+
+.ui-file-editor-pane {
+  --file-editor-border: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 13%, transparent);
+  --file-editor-muted: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 62%, var(--terminal-theme-muted, #64748b) 38%);
+  background: var(--terminal-theme-background, var(--surface));
+  color: var(--terminal-theme-foreground, var(--on-surface));
+}
+
+.ui-file-editor-pane .text-on-surface,
+.ui-file-editor-pane .text-on-surface-variant {
+  color: var(--terminal-theme-foreground, var(--on-surface));
+}
+
+.ui-file-editor-pane .text-text-muted {
+  color: var(--file-editor-muted);
+}
+
+.ui-file-editor-pane .border-border {
+  border-color: var(--file-editor-border);
+}
+
+.ui-file-editor-header {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 84%, var(--terminal-theme-foreground, #f8fafc) 8%);
+  border-bottom-color: var(--file-editor-border);
+}
+
+.ui-file-editor-tabs {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 92%, var(--terminal-theme-foreground, #f8fafc) 5%);
+  border-bottom-color: var(--file-editor-border);
+}
+
+.ui-file-editor-tab {
+  color: var(--file-editor-muted);
+}
+
+.ui-file-editor-tab:hover {
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 10%, transparent);
+}
+
+.ui-file-editor-tab[data-active="true"] {
+  background: color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-theme-accent, #60a5fa)) 24%, var(--terminal-theme-background, #0c0e10) 76%) !important;
+  color: var(--terminal-theme-foreground, #f8fafc) !important;
+}
+
+.ui-file-editor-body,
+.ui-file-editor-image-preview {
+  background-color: var(--terminal-theme-background, var(--surface));
+  color: var(--terminal-theme-foreground, var(--on-surface));
+}
+
+.ui-file-editor-pane .ui-file-editor-search-line-highlight {
+  background: color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-theme-accent, #60a5fa)) 22%, transparent);
+}
+
+.ui-file-editor-pane .ui-file-editor-search-snippet-highlight {
+  background: color-mix(in srgb, var(--terminal-theme-accent, #60a5fa) 38%, transparent);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  border-radius: 2px;
+}
+
+.ui-file-tree-status-badge {
+  display: inline-flex;
+  min-width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid;
+  border-radius: 4px;
+  padding: 0 3px;
+  font-family: Consolas, "SFMono-Regular", monospace;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 14px;
+}
+
+.ui-file-editor-pane .ui-file-editor-git-line-added,
+.ui-file-editor-pane .ui-file-editor-git-line-modified,
+.ui-file-editor-pane .ui-file-editor-git-line-deleted {
+  width: 5px !important;
+  margin-left: 3px;
+  border-radius: 2px;
+}
+
+.ui-file-editor-pane .ui-file-editor-git-line-added {
+  background: #35c46b;
+}
+
+.ui-file-editor-pane .ui-file-editor-git-line-modified {
+  background: #4f8cff;
+}
+
+.ui-file-editor-pane .ui-file-editor-git-line-deleted {
+  background: #f7768e;
+}
+
+.ui-file-editor-markdown-preview {
+  background-color: var(--terminal-theme-background, var(--surface));
+  color: var(--terminal-theme-foreground, var(--on-surface));
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal {
+  font-size: var(--markdown-preview-font-size, var(--font-size-ui));
+  --md-text: var(--terminal-theme-foreground, #f8fafc);
+  --md-muted: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 78%, var(--terminal-theme-muted, #64748b) 22%);
+  --md-subtle: var(--file-editor-muted);
+  --md-border: var(--file-editor-border);
+  --md-border-muted: var(--file-editor-border);
+  --md-canvas-subtle: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, var(--terminal-theme-foreground, #f8fafc) 8%);
+  --md-canvas-muted: color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-theme-accent, #60a5fa)) 18%, transparent);
+  color: var(--terminal-theme-foreground, #f8fafc);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-h,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-p,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-strong,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-em,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-del,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table th,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table td {
+  color: var(--terminal-theme-foreground, #f8fafc);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-inline-code,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-link,
+.ui-file-editor-markdown-preview .ui-markdown-terminal li::marker {
+  color: var(--terminal-theme-accent, #60a5fa);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-h2,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-h3,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-hr {
+  border-color: var(--file-editor-border);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-inline-code,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table-wrap,
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-code-block {
+  border-color: var(--file-editor-border);
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-theme-foreground, #f8fafc) 7%);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 90%, var(--terminal-theme-foreground, #f8fafc) 5%);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table th {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 76%, var(--terminal-theme-accent, #60a5fa) 18%);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table tbody tr:nth-child(even) {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 86%, var(--terminal-theme-foreground, #f8fafc) 7%);
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table tbody tr:hover {
+  background-color: color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-theme-accent, #60a5fa)) 18%, var(--terminal-theme-background, #0c0e10) 82%);
+}
+
+.ui-file-editor-pane .ui-btn-outline {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 78%, var(--terminal-theme-foreground, #f8fafc) 8%);
+  border-color: var(--file-editor-border);
+  color: var(--terminal-theme-foreground, #f8fafc);
+}
+
+.ui-file-editor-pane .ui-btn-outline:hover:not(:disabled),
+.ui-file-editor-pane .ui-icon-action:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--terminal-theme-foreground, #f8fafc) 12%, transparent);
+}
+
+.ui-file-editor-segment {
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 80%, var(--terminal-theme-foreground, #f8fafc) 8%);
+  border-color: var(--file-editor-border);
+}
+
+.ui-file-editor-segment button {
+  color: var(--file-editor-muted);
+}
+
+.ui-file-editor-segment button[data-active="true"] {
+  background: color-mix(in srgb, var(--terminal-theme-selection, var(--terminal-theme-accent, #60a5fa)) 28%, transparent);
+  color: var(--terminal-theme-foreground, #f8fafc);
+}
+
+.ui-statusline-powerline-select-input {
+  font-family: "Symbols Nerd Font Mono", var(--font-ui-mono) !important;
+}

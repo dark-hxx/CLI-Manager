@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import ts from "typescript";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-replay-"));
+// 进程退出时删除本测试创建的临时模块目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 let nextTimerId = 1;
@@ -14,47 +15,60 @@ const timerCallbacks = new Map();
 const visibilityListeners = new Set();
 let documentVisibilityState = "visible";
 globalThis.window = {
+  // 保存模拟定时器回调，等待测试主动推进。
   setTimeout: (callback) => {
     const id = nextTimerId++;
     timerCallbacks.set(id, callback);
     return id;
   },
+  // 移除指定的模拟定时器。
   clearTimeout: (id) => timerCallbacks.delete(id),
 };
 globalThis.document = {
+  // 返回当前模拟的文档可见状态。
   get visibilityState() {
     return documentVisibilityState;
   },
+  // 仅登记可见性变化监听器。
   addEventListener: (type, callback) => {
     if (type === "visibilitychange") visibilityListeners.add(callback);
   },
+  // 仅移除可见性变化监听器。
   removeEventListener: (type, callback) => {
     if (type === "visibilitychange") visibilityListeners.delete(callback);
   },
 };
 let nextRafId = 1;
 const rafCallbacks = new Map();
+// 保存动画帧回调并返回可取消的标识。
 globalThis.requestAnimationFrame = (callback) => {
   const id = nextRafId++;
   rafCallbacks.set(id, callback);
   return id;
 };
+// 取消尚未执行的模拟动画帧。
 globalThis.cancelAnimationFrame = (id) => rafCallbacks.delete(id);
 globalThis.ResizeObserver = class {
+  // 提供不监听真实 DOM 的观察器占位方法。
   observe() {}
+  // 提供不操作真实观察器的清理占位方法。
   disconnect() {}
 };
 
+// 取出本轮动画帧并执行，不混入本轮新安排的帧。
 function flushNextAnimationFrame() {
   const callbacks = [...rafCallbacks.values()];
   rafCallbacks.clear();
+  // 将模拟时间传给本轮每个动画帧回调。
   callbacks.forEach((callback) => callback(performance.now()));
 }
 
+// 持续推进动画帧直到队列为空。
 function flushAnimationFrames() {
   while (rafCallbacks.size > 0) flushNextAnimationFrame();
 }
 
+// 取出并执行最早的模拟定时器，返回是否存在待执行项。
 function flushNextTimer() {
   const next = timerCallbacks.entries().next().value;
   if (!next) return false;
@@ -64,8 +78,10 @@ function flushNextTimer() {
   return true;
 }
 
+// 切换模拟文档状态并通知已注册的监听器。
 function setDocumentVisibility(state) {
   documentVisibilityState = state;
+  // 逐个触发可见性变化监听器。
   [...visibilityListeners].forEach((listener) => listener());
 }
 
@@ -140,7 +156,7 @@ export function resetManager() {
 }
 `);
 
-const source = readFileSync(new URL("../src/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/terminal/hooks/useTerminalDisplay.ts", import.meta.url), "utf8");
 const transpiled = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -151,14 +167,14 @@ const transpiled = ts.transpileModule(source, {
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "@xterm/addon-webgl"', 'from "./webgl.mjs"')
   .replace('from "../lib/terminalVisibility"', 'from "./visibility.mjs"')
-  .replace('from "../lib/terminalThemes"', 'from "./themes.mjs"')
-  .replace('from "../lib/logger"', 'from "./logger.mjs"')
-  .replace('from "../lib/sessionSnapshotPersistence"', 'from "./snapshot.mjs"')
-  .replace('from "../terminal/browser/TerminalResizeDebouncer"', 'from "./resize.mjs"')
-  .replace('from "../terminal/browser/TerminalResizeRenderBarrier"', 'from "./resizeBarrier.mjs"')
-  .replace('from "../terminal/core/TerminalProcessManager"', 'from "./manager.mjs"')
-  .replace('from "../stores/settingsStore"', 'from "./settings.mjs"')
-  .replace('from "../stores/terminalStore"', 'from "./terminalStore.mjs"');
+  .replace('from "../../../shared/lib/terminalThemes"', 'from "./themes.mjs"')
+  .replace('from "../../../shared/platform/logger"', 'from "./logger.mjs"')
+  .replace('from "../api/sessionSnapshotPersistence"', 'from "./snapshot.mjs"')
+  .replace('from "../browser/TerminalResizeDebouncer"', 'from "./resize.mjs"')
+  .replace('from "../browser/TerminalResizeRenderBarrier"', 'from "./resizeBarrier.mjs"')
+  .replace('from "../api/TerminalProcessManager"', 'from "./manager.mjs"')
+  .replace('from "../../../shared/preferences/settingsStore"', 'from "./settings.mjs"')
+  .replace('from "../state"', 'from "./terminalStore.mjs"');
 const modulePath = join(tempDir, "useTerminalDisplay.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 
@@ -168,6 +184,7 @@ const resizeStub = await import(pathToFileURL(join(tempDir, "resize.mjs")).href)
 const visibilityStub = await import(pathToFileURL(join(tempDir, "visibility.mjs")).href);
 
 class FakeTerminal {
+  // 初始化假终端缓冲区、回调队列和重排参数。
   constructor(events) {
     this.events = events;
     this.cols = 80;
@@ -184,17 +201,20 @@ class FakeTerminal {
     this.viewportMaxScrollLine = 0;
   }
 
+  // 记录写入内容并保留完成回调供测试主动确认。
   write(text, callback) {
     this.events.push(`write:${text}`);
     this.writeCallbacks.push(callback);
   }
 
+  // 执行下一次写入完成回调，缺少待写入项时失败。
   finishNextWrite() {
     const callback = this.writeCallbacks.shift();
     assert.ok(callback, "expected a pending xterm write callback");
     callback();
   }
 
+  // 模拟尺寸变化引起的缓冲区重排和异步视口更新。
   resize(cols, rows) {
     const colsChanged = this.cols !== cols;
     this.cols = cols;
@@ -205,24 +225,29 @@ class FakeTerminal {
       if (wasAtBottom) {
         this.buffer.active.viewportY = this.buffer.active.baseY;
       }
+      // 仅移动尚未释放的行标记。
       this.markers.forEach((marker) => {
         if (!marker.isDisposed) marker.line += this.reflowMarkerLineDelta;
       });
     }
     if (colsChanged) {
       const nextViewportMaxScrollLine = this.buffer.active.baseY;
+      // 在后续动画帧更新模拟视口的最大滚动行。
       requestAnimationFrame(() => {
         this.viewportMaxScrollLine = nextViewportMaxScrollLine;
       });
     }
     this.events.push(`resize:${cols}x${rows}`);
+    // 通知尺寸监听器新的列数和行数。
     this.resizeListeners.forEach((listener) => listener({ cols, rows }));
   }
 
+  // 按当前光标偏移创建可释放的行标记。
   registerMarker(cursorYOffset) {
     const marker = {
       line: this.buffer.active.baseY + this.buffer.active.cursorY + cursorYOffset,
       isDisposed: false,
+      // 将该标记置为已释放并从假终端集合移除。
       dispose: () => {
         marker.isDisposed = true;
         this.markers.delete(marker);
@@ -232,24 +257,30 @@ class FakeTerminal {
     return marker;
   }
 
+  // 将滚动目标限制在模拟视口范围并记录事件。
   scrollToLine(line) {
     this.buffer.active.viewportY = Math.max(0, Math.min(line, this.viewportMaxScrollLine));
     this.events.push(`scroll:${this.buffer.active.viewportY}`);
   }
 
+  // 滚动到缓冲区底部并记录事件。
   scrollToBottom() {
     this.buffer.active.viewportY = this.buffer.active.baseY;
     this.events.push(`scroll-bottom:${this.buffer.active.viewportY}`);
   }
 
+  // 登记尺寸监听器并返回解除订阅入口。
   onResize(listener) {
     this.resizeListeners.add(listener);
+    // 释放该尺寸监听器。
     return { dispose: () => this.resizeListeners.delete(listener) };
   }
 
+  // 提供不加载真实插件的占位入口。
   loadAddon() {}
 }
 
+// 组合假终端和替身依赖，返回可供测试驱动的显示控制器。
 function createDisplay(
   proposedDimensions = { cols: 120, rows: 30 },
   { sessionId = "session-1", isVisible = true } = {},
@@ -260,7 +291,9 @@ function createDisplay(
   const container = {
     offsetWidth: 1200,
     offsetHeight: 600,
+    // 提供不注册真实 DOM 事件的容器占位方法。
     addEventListener() {},
+    // 提供不移除真实 DOM 事件的容器占位方法。
     removeEventListener() {},
   };
   const terminalRef = { current: terminal };
@@ -268,6 +301,7 @@ function createDisplay(
     sessionId,
     containerRef: { current: container },
     terminalRef,
+    // 返回测试指定的适配尺寸。
     fitAddonRef: { current: { proposeDimensions: () => proposedDimensions } },
     isVisibleRef: { current: isVisible },
     isComposingRef: { current: false },
@@ -275,15 +309,19 @@ function createDisplay(
     disableHardwareAcceleration: true,
     linuxGraphicsDisableWebgl: true,
     isTransparentRef: { current: false },
+    // 原样返回输出，隔离规范化逻辑。
     normalizeOutputRef: { current: (text) => text },
+    // 原样返回输出，隔离变换逻辑。
     transformOutputRef: { current: (text) => text },
     afterTerminalWriteRef: { current: null },
+    // 使 PTY 监听失败直接暴露给测试。
     onPtyOutputListenError: (error) => { throw error; },
   });
   const detachViewport = display.attachViewport(terminal);
   return { display, terminal, terminalRef, events, detachViewport };
 }
 
+// 验证尺寸不变的立即适配不强制刷新视口。
 test("immediate fit does not force a viewport refresh when dimensions are unchanged", () => {
   const { display, terminal, detachViewport } = createDisplay();
   terminal.cols = 120;
@@ -296,6 +334,7 @@ test("immediate fit does not force a viewport refresh when dimensions are unchan
   detachViewport();
 });
 
+// 验证显式刷新在尺寸不变时仍重绘整个网格。
 test("explicit viewport refresh repaints the full grid when dimensions are unchanged", () => {
   const { display, terminal, detachViewport } = createDisplay();
   terminal.cols = 120;
@@ -308,6 +347,7 @@ test("explicit viewport refresh repaints the full grid when dimensions are uncha
   detachViewport();
 });
 
+// 验证连续适配帧保留横向调整节奏，取消时才清除。
 test("consecutive fit frames keep the live horizontal resize cadence pending", () => {
   resizeStub.resetResizeStub();
   const { display, detachViewport } = createDisplay({ cols: 100, rows: 24 });
@@ -322,6 +362,7 @@ test("consecutive fit frames keep the live horizontal resize cadence pending", (
   detachViewport();
 });
 
+// 验证横向重排后恢复普通缓冲区原先可见的行。
 test("horizontal reflow preserves the visible normal-buffer line", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
@@ -352,6 +393,7 @@ test("horizontal reflow preserves the visible normal-buffer line", () => {
   detachViewport();
 });
 
+// 验证延迟视口漂移后仍恢复跟随底部的意图。
 test("horizontal reflow restores live-bottom intent after asynchronous viewport drift", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
@@ -379,6 +421,7 @@ test("horizontal reflow restores live-bottom intent after asynchronous viewport 
   detachViewport();
 });
 
+// 验证仅纵向调整不强制滚动到底部。
 test("vertical resize does not force a live-bottom scroll", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 120, rows: 30 });
   terminal.cols = 120;
@@ -393,6 +436,7 @@ test("vertical resize does not force a live-bottom scroll", () => {
   detachViewport();
 });
 
+// 验证备用缓冲区调整不强制滚动到底部。
 test("alternate buffer resize does not force a live-bottom scroll", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
@@ -406,6 +450,7 @@ test("alternate buffer resize does not force a live-bottom scroll", () => {
   detachViewport();
 });
 
+// 验证取消适配释放待恢复的行标记。
 test("cancelling a scheduled fit disposes a pending viewport marker", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
@@ -430,6 +475,7 @@ test("cancelling a scheduled fit disposes a pending viewport marker", () => {
   detachViewport();
 });
 
+// 验证取消适配同时阻止待执行的底部恢复。
 test("cancelling a scheduled fit cancels pending live-bottom restoration", () => {
   const { display, terminal, events, detachViewport } = createDisplay({ cols: 60, rows: 24 });
   terminal.cols = 120;
@@ -450,6 +496,7 @@ test("cancelling a scheduled fit cancels pending live-bottom restoration", () =>
   detachViewport();
 });
 
+// 构造带历史尺寸与批次终点的回放或实时帧。
 function frame(sequence, text, cols, rows, replayBatchEnd = false) {
   return {
     kind: sequence < 3 ? "replay" : "output",
@@ -462,13 +509,16 @@ function frame(sequence, text, cols, rows, replayBatchEnd = false) {
   };
 }
 
+// 包装帧并收集消费确认，供测试检查顺序与字符数。
 function delivery(frameValue, commits) {
   return {
     frame: frameValue,
+    // 记录该帧序号和实际确认字符数。
     commit: (charCount) => commits.push({ sequence: frameValue.sequence, charCount }),
   };
 }
 
+// 验证初始回放适配当前容器后才释放缓存的实时输出。
 test("initial replay fits the current container before releasing buffered live output", async () => {
   managerStub.resetManager();
   const { display, terminal, events, detachViewport } = createDisplay();
@@ -508,6 +558,7 @@ test("initial replay fits the current container before releasing buffered live o
   detachViewport();
 });
 
+// 验证重连回放串行恢复历史尺寸，并在实时输出前适配当前尺寸。
 test("reconnect replay restores historical sizes serially and fits before live output", async () => {
   managerStub.resetManager();
   const { display, terminal, events, detachViewport } = createDisplay();
@@ -547,6 +598,7 @@ test("reconnect replay restores historical sizes serially and fits before live o
   detachViewport();
 });
 
+// 验证仅尺寸变化的回放先在本地应用再适配当前容器。
 test("resize-only reconnect replay is applied locally before current-size fit", async () => {
   managerStub.resetManager();
   const { display, terminal, events, detachViewport } = createDisplay();
@@ -576,6 +628,7 @@ test("resize-only reconnect replay is applied locally before current-size fit", 
   detachViewport();
 });
 
+// 验证连续实时输出在有界写入之间让出执行机会。
 test("continuous live output yields between bounded xterm writes", async () => {
   managerStub.resetManager();
   const { display, terminal, events, detachViewport } = createDisplay();
@@ -606,6 +659,7 @@ test("continuous live output yields between bounded xterm writes", async () => {
   detachViewport();
 });
 
+// 验证文档隐藏时由模拟定时器推进待消费的 PTY 输出。
 test("hidden document drains pending PTY output with timer fallback", async () => {
   managerStub.resetManager();
   setDocumentVisibility("hidden");
@@ -633,6 +687,7 @@ test("hidden document drains pending PTY output with timer fallback", async () =
   assert.equal(timerCallbacks.size, 0);
 });
 
+// 验证可见文档的动画帧停滞时看门狗仍推进输出。
 test("timer watchdog drains output if a visible rAF is stalled", async () => {
   managerStub.resetManager();
   setDocumentVisibility("visible");
@@ -656,6 +711,7 @@ test("timer watchdog drains output if a visible rAF is stalled", async () => {
   assert.equal(timerCallbacks.size, 0);
 });
 
+// 验证多个终端在同一动画帧只启动一次写入。
 test("multiple terminals start only one xterm write per animation frame", async () => {
   managerStub.resetManager();
   const first = createDisplay(undefined, { sessionId: "session-1" });
@@ -669,6 +725,7 @@ test("multiple terminals start only one xterm write per animation frame", async 
   flushNextAnimationFrame();
 
   const writeCount = [...first.events, ...second.events]
+    // 仅统计写入事件，不计尺寸与滚动事件。
     .filter((event) => event.startsWith("write:"))
     .length;
   assert.equal(writeCount, 1);
@@ -685,6 +742,7 @@ test("multiple terminals start only one xterm write per animation frame", async 
   second.detachViewport();
 });
 
+// 验证持续可见输出不会使隐藏终端一直得不到消费机会。
 test("hidden terminal is not starved by continuous visible output", async () => {
   managerStub.resetManager();
   const visible = createDisplay(undefined, { sessionId: "visible", isVisible: true });
@@ -710,6 +768,7 @@ test("hidden terminal is not starved by continuous visible output", async () => 
   }
   flushNextAnimationFrame();
   assert.deepEqual(
+    // 仅保留隐藏终端的写入事件供断言。
     hidden.events.filter((event) => event.startsWith("write:")),
     ["write:background"],
   );

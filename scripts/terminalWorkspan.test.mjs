@@ -21,9 +21,9 @@ function transpile(sourcePath, outputName, transform = (code) => code) {
   writeFileSync(join(tempDir, outputName), transform(output), "utf8");
 }
 
-transpile("../src/stores/terminalPaneTree.ts", "terminalPaneTree.mjs");
+transpile("../src/features/terminal/api/terminalPaneTree.ts", "terminalPaneTree.mjs");
 transpile(
-  "../src/stores/terminalWorkspan.ts",
+  "../src/features/terminal/api/terminalWorkspan.ts",
   "terminalWorkspan.mjs",
   (code) => code.replace('from "./terminalPaneTree"', 'from "./terminalPaneTree.mjs"')
 );

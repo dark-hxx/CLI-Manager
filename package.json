@@ -8,6 +8,8 @@
     "apps/web"
   ],
   "scripts": {
+    "check:architecture": "node ./scripts/architecture.mjs",
+    "report:architecture": "node ./scripts/architecture.mjs --report",
     "dev": "node ./scripts/dev-server.mjs",
     "build": "tsc && vite build",
     "test:codex-proxy:e2e": "node ./scripts/codexAppServerProxy.e2e.test.mjs",
@@ -63,6 +65,7 @@
     "clsx": "^2.1.1",
     "echarts": "^6.1.0",
     "emoji-mart": "^5.6.0",
+    "html-to-image": "^1.11.13",
     "ignore": "^7.0.6",
     "katex": "^0.16.47",
     "lucide-react": "^0.577.0",

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const panelSource = readFileSync(
-  new URL("../src/components/terminal/TerminalStatsPanel.tsx", import.meta.url),
+  new URL("../src/features/terminal/components/TerminalStatsPanel.tsx", import.meta.url),
   "utf8",
 );
 

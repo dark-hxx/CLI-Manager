@@ -1,0 +1,33 @@
+{
+  "id": "fix-file-explorer-context-menu-clipping",
+  "name": "fix-file-explorer-context-menu-clipping",
+  "title": "修复文件浏览器右键菜单遮挡",
+  "description": "Move the file explorer's themed context-menu portal host outside transformed overflow-clipping panel ancestors so Radix viewport collision handling remains effective.",
+  "status": "completed",
+  "dev_type": "bugfix",
+  "scope": "frontend",
+  "package": "single-repo",
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-09-07",
+  "completedAt": "2026-09-07",
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/components/files/FileExplorerSidebar.tsx",
+    "src/components/ui/Portal.tsx",
+    "scripts/fileExplorerPathActions.test.mjs",
+    ".trellis/spec/frontend/quality-guidelines.md",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "Automated checks passed. Runtime UI verification is intentionally left as a human handoff per frontend quality guidelines; AI did not start the Tauri app.",
+  "meta": {}
+}

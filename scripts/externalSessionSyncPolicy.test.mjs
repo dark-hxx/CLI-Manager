@@ -3,15 +3,15 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/externalSessionSyncStore.ts", import.meta.url),
+  new URL("../src/features/history/api/externalSessionSyncStore.ts", import.meta.url),
   "utf8"
 );
 const sidebarSource = readFileSync(
-  new URL("../src/components/sidebar/index.tsx", import.meta.url),
+  new URL("../src/features/projects/hooks/useSidebarController.tsx", import.meta.url),
   "utf8"
 );
 const terminalStoreSource = readFileSync(
-  new URL("../src/stores/terminalStore.ts", import.meta.url),
+  new URL("../src/features/terminal/store/terminalStore.ts", import.meta.url),
   "utf8"
 );
 

@@ -1,0 +1,1844 @@
+use super::server::DaemonHost;
+use crate::shell_resolver::silent_command;
+use crate::ssh_launch::SshLaunchPlan;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::{BufRead, BufReader, BufWriter, Read, Write};
+use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TryRecvError};
+use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+const MAX_FRAME_BYTES: usize = 1024 * 1024;
+const MAX_PREAMBLE_BYTES: usize = 8 * 1024;
+const MAX_STDERR_BYTES: usize = 8 * 1024;
+const DEDUP_EVENT_IDS: usize = 10_000;
+const READER_QUEUE_CAPACITY: usize = 32;
+const AGENT_REQUEST_QUEUE_CAPACITY: usize = 16;
+const MAX_CONCURRENT_BRIDGES: usize = 4;
+const MAX_CONCURRENT_CONNECTS: usize = 2;
+const MAX_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(60);
+const RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
+const HISTORY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(180);
+const MAX_HISTORY_DETAIL_CHUNKS: usize = 257;
+const MAX_HISTORY_DETAIL_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_FILE_GET_CHUNKS: usize = 64;
+const MAX_FILE_GET_RESPONSE_BYTES: usize = 20 * 1024 * 1024;
+const MAX_FILE_GET_BASE64_BYTES: usize = MAX_FILE_GET_RESPONSE_BYTES.div_ceil(3) * 4;
+const HOOK_DRAIN_WAIT_MS: u64 = 2_000;
+const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(10);
+const REQUEST_QUEUE_WAIT: Duration = Duration::from_millis(250);
+const STABLE_CONNECTION_RESET: Duration = Duration::from_secs(30);
+const RETRY_BASE_SECONDS: [u64; 6] = [1, 2, 5, 10, 30, 60];
+
+#[derive(Default)]
+struct PermitPool {
+    active: Mutex<usize>,
+    changed: Condvar,
+}
+
+struct CounterPermit {
+    pool: &'static PermitPool,
+}
+
+impl CounterPermit {
+    // 等待并取得全局并发名额；池满时周期检查停止标记，锁异常返回空。
+    fn acquire(
+        state: &'static OnceLock<PermitPool>,
+        limit: usize,
+        control: &BridgeControl,
+    ) -> Option<Self> {
+        let pool = state.get_or_init(PermitPool::default);
+        let mut active = pool.active.lock().ok()?;
+        while *active >= limit {
+            if control.stop.load(Ordering::Acquire) {
+                return None;
+            }
+            active = pool
+                .changed
+                .wait_timeout(active, Duration::from_millis(250))
+                .ok()?
+                .0;
+        }
+        *active += 1;
+        Some(Self { pool })
+    }
+}
+
+impl Drop for CounterPermit {
+    // 归还并发名额并唤醒一个等待者，锁异常时跳过回收。
+    fn drop(&mut self) {
+        if let Ok(mut active) = self.pool.active.lock() {
+            *active = active.saturating_sub(1);
+            self.pool.changed.notify_one();
+        }
+    }
+}
+
+static BRIDGE_LIMIT: OnceLock<PermitPool> = OnceLock::new();
+static CONNECT_LIMIT: OnceLock<PermitPool> = OnceLock::new();
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientFrame<'a> {
+    request_id: String,
+    kind: &'a str,
+    payload: Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ServerFrame {
+    request_id: String,
+    kind: String,
+    payload: Value,
+}
+
+enum ReaderMessage {
+    Ready,
+    Frame(ServerFrame),
+    Error(String),
+}
+
+struct BridgeRunError {
+    code: String,
+    connected_for: Option<Duration>,
+}
+
+// 将连接、认证及 Agent 身份字段拼接为桥接复用标识。
+fn bridge_identity(plan: &SshLaunchPlan) -> String {
+    format!(
+        "{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}\0{}",
+        plan.host,
+        plan.port,
+        plan.username,
+        plan.config_alias,
+        plan.auth_mode,
+        plan.identity_file,
+        plan.credential_ref,
+        plan.jump_target,
+        plan.proxy_type,
+        plan.proxy_host,
+        plan.proxy_port,
+        plan.proxy_command,
+        plan.agent_path,
+        plan.agent_installation_id,
+        plan.agent_remote_machine_id,
+        plan.client_instance_id,
+        plan.connect_timeout_sec,
+        plan.server_alive_interval_sec,
+        plan.server_alive_count_max,
+    )
+}
+
+struct BridgeControl {
+    stop: AtomicBool,
+    finished: AtomicBool,
+    connecting: AtomicBool,
+    connected: AtomicBool,
+    pending_requests: AtomicUsize,
+    child: Mutex<Option<Child>>,
+}
+
+impl BridgeControl {
+    // 初始化尚在连接的桥接控制状态及空子进程槽。
+    fn new() -> Self {
+        Self {
+            stop: AtomicBool::new(false),
+            finished: AtomicBool::new(false),
+            connecting: AtomicBool::new(true),
+            connected: AtomicBool::new(false),
+            pending_requests: AtomicUsize::new(0),
+            child: Mutex::new(None),
+        }
+    }
+
+    // 增加在途请求计数，阻止空闲活动抢占当前桥接。
+    fn reserve(&self) {
+        self.pending_requests.fetch_add(1, Ordering::AcqRel);
+    }
+
+    // 检查桥接可用状态并原子地将空闲计数占为一个请求。
+    fn try_reserve_idle(&self) -> bool {
+        if self.stop.load(Ordering::Acquire)
+            || self.finished.load(Ordering::Acquire)
+            || (!self.connecting.load(Ordering::Acquire) && !self.connected.load(Ordering::Acquire))
+        {
+            return false;
+        }
+        self.pending_requests
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    // 尝试取得空闲活动占位，成功后由返回值析构归还。
+    fn try_reserve_idle_activity(&self) -> Option<BridgeIdleReservation<'_>> {
+        self.try_reserve_idle()
+            .then_some(BridgeIdleReservation { control: self })
+    }
+
+    // 原子递减在途计数，并在调试构建中检查重复归还。
+    fn release_request(&self) {
+        let released =
+            self.pending_requests
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                    pending.checked_sub(1)
+                });
+        debug_assert!(released.is_ok());
+    }
+
+    // 设置停止标记并终止当前保存的 SSH 子进程。
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        self.terminate_current_child();
+    }
+
+    // 取出子进程后终止并等待退出，锁异常或空槽时跳过。
+    fn terminate_current_child(&self) {
+        if let Ok(mut child) = self.child.lock() {
+            if let Some(mut child) = child.take() {
+                terminate_child(&mut child);
+            }
+        }
+    }
+}
+
+struct BridgeIdleReservation<'a> {
+    control: &'a BridgeControl,
+}
+
+impl Drop for BridgeIdleReservation<'_> {
+    // 释放空闲活动占用的请求计数。
+    fn drop(&mut self) {
+        self.control.release_request();
+    }
+}
+
+// 尝试杀死子进程并等待退出，忽略清理阶段的错误。
+fn terminate_child(child: &mut Child) {
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+struct BridgeEntry {
+    identity: String,
+    sessions: HashSet<String>,
+    consumers: HashSet<String>,
+    request_sender: SyncSender<AgentBridgeRequest>,
+    control: Arc<BridgeControl>,
+    plan: SshLaunchPlan,
+    lane: BridgeLane,
+}
+
+struct AgentBridgeRequest {
+    kind: String,
+    payload: Value,
+    response: SyncSender<Result<Value, String>>,
+}
+
+struct BridgeHandle {
+    slot: String,
+    request_sender: SyncSender<AgentBridgeRequest>,
+    control: Arc<BridgeControl>,
+}
+
+impl BridgeHandle {
+    // 将桥接句柄转为请求占位，同时增加在途计数。
+    fn reserve(self) -> BridgeRequestReservation {
+        self.control.reserve();
+        BridgeRequestReservation {
+            slot: self.slot,
+            request_sender: self.request_sender,
+            control: self.control,
+        }
+    }
+}
+
+struct BridgeRequestReservation {
+    slot: String,
+    request_sender: SyncSender<AgentBridgeRequest>,
+    control: Arc<BridgeControl>,
+}
+
+impl Drop for BridgeRequestReservation {
+    // 在请求占位离开作用域时归还计数。
+    fn drop(&mut self) {
+        self.control.release_request();
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BridgeLane {
+    Primary,
+    Readonly,
+    Git,
+}
+
+impl BridgeLane {
+    // 按请求种类选择通道；Readonly 是通道名称，也承载文件写入操作。
+    fn for_request(kind: &str) -> Self {
+        if matches!(
+            kind,
+            "fileList"
+                | "fileRead"
+                | "fileSearch"
+                | "fileGet"
+                | "fileDelete"
+                | "fileAttachBegin"
+                | "fileAttachChunk"
+                | "fileAttachFinish"
+                | "fileAttachAbort"
+                | "fileAttachAnyBegin"
+                | "fileAttachAnyChunk"
+                | "fileAttachAnyFinish"
+                | "fileAttachAnyAbort"
+                | "filePutBegin"
+                | "filePutChunk"
+                | "filePutFinish"
+                | "filePutAbort"
+                | "fileAttachmentRoot"
+                | "agentCapabilitiesInspect"
+                | "agentCapabilitiesProbe"
+                | "gitListRepositories"
+                | "gitChanges"
+                | "gitDiff"
+                | "gitDiffWithOptions"
+                | "gitBranchStatus"
+                | "gitBranches"
+                | "gitStage"
+                | "gitUnstage"
+                | "gitStageAll"
+                | "gitUnstageAll"
+                | "gitDiscardFile"
+                | "gitDeleteUntracked"
+                | "gitRevertHunk"
+                | "gitRevertLines"
+                | "gitCommit"
+                | "gitCommitPaths"
+                | "gitFetch"
+                | "gitPush"
+                | "gitCheckout"
+                | "gitSmartCheckout"
+                | "gitCreateBranch"
+                | "gitPull"
+                | "gitPullAbort"
+                | "gitRebaseContinue"
+        ) {
+            if kind.starts_with("git") {
+                Self::Git
+            } else {
+                Self::Readonly
+            }
+        } else {
+            Self::Primary
+        }
+    }
+
+    // 判断通道是否仅处理请求与心跳而不主动轮询 Hook。
+    fn is_request_driven(self) -> bool {
+        self != Self::Primary
+    }
+
+    // 标识只有主通道要求启动计划携带工具来源。
+    fn requires_tool_source(self) -> bool {
+        self == Self::Primary
+    }
+}
+
+// 按主机和通道生成桥接槽键，辅助通道使用独立后缀。
+fn bridge_slot(host_id: &str, lane: BridgeLane) -> String {
+    match lane {
+        BridgeLane::Primary => host_id.to_string(),
+        BridgeLane::Readonly => format!("{host_id}\0readonly"),
+        BridgeLane::Git => format!("{host_id}\0git"),
+    }
+}
+
+// 复制启动计划并为辅助通道派生隔离的客户端实例标识。
+fn bridge_plan(plan: &SshLaunchPlan, lane: BridgeLane) -> SshLaunchPlan {
+    let mut plan = plan.clone();
+    if matches!(lane, BridgeLane::Readonly | BridgeLane::Git) {
+        plan.client_instance_id = if lane == BridgeLane::Readonly {
+            readonly_client_instance_id(&plan.host_id, &plan.client_instance_id)
+        } else {
+            isolated_client_instance_id(&plan.host_id, &plan.client_instance_id, lane)
+        };
+    }
+    plan
+}
+
+// 刷新 Agent 安装身份，必要时保留旧主通道的项目上下文。
+fn bridge_refresh_plan(
+    current_plan: &SshLaunchPlan,
+    stale_plan: &SshLaunchPlan,
+    lane: BridgeLane,
+) -> SshLaunchPlan {
+    let mut plan = if lane == BridgeLane::Primary && current_plan.project_id.is_empty() {
+        stale_plan.clone()
+    } else {
+        bridge_plan(current_plan, lane)
+    };
+    plan.agent_path = current_plan.agent_path.clone();
+    plan.agent_installation_id = current_plan.agent_installation_id.clone();
+    plan.agent_remote_machine_id = current_plan.agent_remote_machine_id.clone();
+    plan
+}
+
+// 为文件辅助通道派生客户端实例标识。
+fn readonly_client_instance_id(host_id: &str, client_instance_id: &str) -> String {
+    isolated_client_instance_id(host_id, client_instance_id, BridgeLane::Readonly)
+}
+
+// 按主机、实例和通道散列生成 UUIDv8，避免与原实例字符串相同。
+fn isolated_client_instance_id(
+    host_id: &str,
+    client_instance_id: &str,
+    lane: BridgeLane,
+) -> String {
+    let mut high = DefaultHasher::new();
+    match lane {
+        BridgeLane::Readonly => "cli-manager-readonly-high".hash(&mut high),
+        BridgeLane::Git => "cli-manager-git-high".hash(&mut high),
+        BridgeLane::Primary => "cli-manager-primary-high".hash(&mut high),
+    }
+    host_id.hash(&mut high);
+    client_instance_id.hash(&mut high);
+
+    let mut low = DefaultHasher::new();
+    match lane {
+        BridgeLane::Readonly => "cli-manager-readonly-low".hash(&mut low),
+        BridgeLane::Git => "cli-manager-git-low".hash(&mut low),
+        BridgeLane::Primary => "cli-manager-primary-low".hash(&mut low),
+    }
+    client_instance_id.hash(&mut low);
+    host_id.hash(&mut low);
+
+    let mut bytes = [0u8; 16];
+    bytes[..8].copy_from_slice(&high.finish().to_be_bytes());
+    bytes[8..].copy_from_slice(&low.finish().to_be_bytes());
+    // RFC 9562 UUIDv8: deterministic application-defined identity with RFC variant bits.
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let mut id = uuid::Uuid::from_bytes(bytes);
+    if id.to_string().eq_ignore_ascii_case(client_instance_id) {
+        bytes[15] ^= 1;
+        id = uuid::Uuid::from_bytes(bytes);
+    }
+    id.to_string()
+}
+
+// 按历史、Git 网络操作及其他请求类别选择响应等待时长。
+fn response_timeout(kind: &str) -> Duration {
+    if kind.starts_with("history") {
+        HISTORY_RESPONSE_TIMEOUT
+    } else if matches!(
+        kind,
+        "gitFetch" | "gitPush" | "gitPull" | "gitSmartCheckout"
+    ) {
+        Duration::from_secs(150)
+    } else if matches!(
+        kind,
+        "gitListRepositories"
+            | "gitChanges"
+            | "gitDiff"
+            | "gitDiffWithOptions"
+            | "gitBranchStatus"
+            | "gitBranches"
+    ) {
+        Duration::from_secs(40)
+    } else if kind.starts_with("git") {
+        Duration::from_secs(75)
+    } else {
+        Duration::from_secs(60)
+    }
+}
+
+#[derive(Default)]
+struct EventDedup {
+    order: VecDeque<String>,
+    ids: HashSet<String>,
+}
+
+impl EventDedup {
+    // 记录新事件标识并按插入顺序淘汰超出上限的去重条目。
+    fn insert(&mut self, event_id: &str) -> bool {
+        if !self.ids.insert(event_id.to_string()) {
+            return false;
+        }
+        self.order.push_back(event_id.to_string());
+        while self.order.len() > DEDUP_EVENT_IDS {
+            if let Some(removed) = self.order.pop_front() {
+                self.ids.remove(&removed);
+            }
+        }
+        true
+    }
+}
+
+#[derive(Default)]
+pub struct SshAgentBridgeManager {
+    bridges: Mutex<HashMap<String, BridgeEntry>>,
+    resume_claims: Mutex<HashMap<String, String>>,
+}
+
+impl SshAgentBridgeManager {
+    // 登记远程会话恢复占用；已有其他消费者时返回冲突。
+    fn claim_resume_session(&self, claim_key: &str, consumer_id: &str) -> Result<(), String> {
+        let mut claims = self
+            .resume_claims
+            .lock()
+            .map_err(|_| "history_resume_claims_unavailable".to_string())?;
+        if claims
+            .get(claim_key)
+            .is_some_and(|owner| owner != consumer_id)
+        {
+            return Err("remote_session_active_elsewhere".to_string());
+        }
+        claims.insert(claim_key.to_string(), consumer_id.to_string());
+        Ok(())
+    }
+
+    // 移除该消费者持有的全部恢复占用，当前实现不按主机筛选。
+    fn release_resume_claims(&self, _host_id: &str, consumer_id: &str) {
+        if let Ok(mut claims) = self.resume_claims.lock() {
+            claims.retain(|_, owner| owner != consumer_id);
+        }
+    }
+
+    // 为终端会话确保主桥接存在，忽略无法创建的返回值。
+    pub fn ensure(&self, host: Weak<DaemonHost>, session_id: &str, plan: &SshLaunchPlan) {
+        let _ = self.ensure_bridge(host, plan, BridgeLane::Primary, Some(session_id), None);
+    }
+
+    // 校验身份并复用或替换桥接，保留引用集合后在线程中运行连接循环。
+    fn ensure_bridge(
+        &self,
+        host: Weak<DaemonHost>,
+        plan: &SshLaunchPlan,
+        lane: BridgeLane,
+        session_id: Option<&str>,
+        consumer_id: Option<&str>,
+    ) -> Option<BridgeHandle> {
+        if plan.agent_path.is_empty()
+            || plan.agent_installation_id.is_empty()
+            || plan.agent_remote_machine_id.is_empty()
+            || plan.client_instance_id.is_empty()
+            || (lane == BridgeLane::Primary && plan.project_id.is_empty())
+            || plan.bridge_epoch.is_empty()
+            || (lane.requires_tool_source() && plan.tool_source.is_empty())
+        {
+            return None;
+        }
+        let identity = bridge_identity(plan);
+        let slot = bridge_slot(&plan.host_id, lane);
+        let mut bridges = match self.bridges.lock() {
+            Ok(bridges) => bridges,
+            Err(_) => return None,
+        };
+        let mut sessions = session_id
+            .map(|value| HashSet::from([value.to_string()]))
+            .unwrap_or_default();
+        let mut consumers = consumer_id
+            .map(|value| HashSet::from([value.to_string()]))
+            .unwrap_or_default();
+        let mut replaced_control = None;
+        if let Some(existing) = bridges.get_mut(&slot) {
+            if existing.identity == identity
+                && !existing.control.stop.load(Ordering::Acquire)
+                && !existing.control.finished.load(Ordering::Acquire)
+            {
+                if let Some(session_id) = session_id {
+                    existing.sessions.insert(session_id.to_string());
+                }
+                if let Some(consumer_id) = consumer_id {
+                    existing.consumers.insert(consumer_id.to_string());
+                }
+                return Some(BridgeHandle {
+                    slot: slot.clone(),
+                    request_sender: existing.request_sender.clone(),
+                    control: Arc::clone(&existing.control),
+                });
+            }
+            sessions.extend(existing.sessions.iter().cloned());
+            consumers.extend(existing.consumers.iter().cloned());
+            replaced_control = Some(Arc::clone(&existing.control));
+        }
+        let (request_sender, request_receiver) = mpsc::sync_channel(AGENT_REQUEST_QUEUE_CAPACITY);
+        let control = Arc::new(BridgeControl::new());
+        let thread_control = Arc::clone(&control);
+        let thread_plan = plan.clone();
+        bridges.insert(
+            slot.clone(),
+            BridgeEntry {
+                identity,
+                sessions,
+                consumers,
+                request_sender: request_sender.clone(),
+                control: Arc::clone(&control),
+                plan: plan.clone(),
+                lane,
+            },
+        );
+        drop(bridges);
+        if let Some(replaced_control) = replaced_control {
+            replaced_control.stop();
+        }
+        let thread_lane = lane;
+        thread::spawn(move || {
+            run_bridge_loop(
+                host,
+                thread_plan,
+                thread_control,
+                request_receiver,
+                thread_lane,
+            )
+        });
+        Some(BridgeHandle {
+            slot,
+            request_sender,
+            control,
+        })
+    }
+
+    // 在身份匹配且空闲时借用主通道，并登记消费者引用。
+    fn try_reserve_primary(
+        &self,
+        host_id: &str,
+        identity: &str,
+        consumer_id: &str,
+    ) -> Option<BridgeRequestReservation> {
+        let slot = bridge_slot(host_id, BridgeLane::Primary);
+        let mut bridges = self.bridges.lock().ok()?;
+        let entry = bridges.get_mut(&slot)?;
+        if entry.identity != identity || !entry.control.try_reserve_idle() {
+            return None;
+        }
+        entry.consumers.insert(consumer_id.to_string());
+        Some(BridgeRequestReservation {
+            slot,
+            request_sender: entry.request_sender.clone(),
+            control: Arc::clone(&entry.control),
+        })
+    }
+
+    // 仅终止仍对应当前占位控制对象的桥接，返回其计划供刷新。
+    fn invalidate_reservation(
+        &self,
+        reservation: &BridgeRequestReservation,
+    ) -> Option<(SshLaunchPlan, BridgeLane)> {
+        let stale = self.bridges.lock().ok().and_then(|bridges| {
+            let entry = bridges.get(&reservation.slot)?;
+            Arc::ptr_eq(&entry.control, &reservation.control)
+                .then(|| (Arc::clone(&entry.control), entry.plan.clone(), entry.lane))
+        });
+        if let Some((control, plan, lane)) = stale {
+            control.stop();
+            Some((plan, lane))
+        } else {
+            None
+        }
+    }
+
+    // 校验请求并取得通道占位，等待响应；缺失能力时最多刷新一次桥接。
+    pub fn request(
+        &self,
+        host: Weak<DaemonHost>,
+        consumer_id: &str,
+        plan: &SshLaunchPlan,
+        kind: &str,
+        payload: Value,
+    ) -> Result<Value, String> {
+        if consumer_id.is_empty()
+            || consumer_id.len() > 512
+            || consumer_id.contains(['\0', '\r', '\n'])
+            || !matches!(
+                kind,
+                "historySync"
+                    | "historySearch"
+                    | "historyGet"
+                    | "historyResumePreflight"
+                    | "fileList"
+                    | "fileRead"
+                    | "fileSearch"
+                    | "fileGet"
+                    | "fileDelete"
+                    | "fileAttachBegin"
+                    | "fileAttachChunk"
+                    | "fileAttachFinish"
+                    | "fileAttachAbort"
+                    | "fileAttachAnyBegin"
+                    | "fileAttachAnyChunk"
+                    | "fileAttachAnyFinish"
+                    | "fileAttachAnyAbort"
+                    | "filePutBegin"
+                    | "filePutChunk"
+                    | "filePutFinish"
+                    | "filePutAbort"
+                    | "fileAttachmentRoot"
+                    | "agentCapabilitiesInspect"
+                    | "agentCapabilitiesProbe"
+                    | "gitListRepositories"
+                    | "gitChanges"
+                    | "gitDiff"
+                    | "gitDiffWithOptions"
+                    | "gitBranchStatus"
+                    | "gitBranches"
+                    | "gitStage"
+                    | "gitUnstage"
+                    | "gitStageAll"
+                    | "gitUnstageAll"
+                    | "gitDiscardFile"
+                    | "gitDeleteUntracked"
+                    | "gitRevertHunk"
+                    | "gitRevertLines"
+                    | "gitCommit"
+                    | "gitCommitPaths"
+                    | "gitFetch"
+                    | "gitPush"
+                    | "gitCheckout"
+                    | "gitSmartCheckout"
+                    | "gitCreateBranch"
+                    | "gitPull"
+                    | "gitPullAbort"
+                    | "gitRebaseContinue"
+            )
+        {
+            return Err("ssh_agent_request_invalid".to_string());
+        }
+        let resume_claim_key = if kind == "historyResumePreflight" {
+            let source = payload
+                .get("source")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let session_id = payload
+                .get("sourceSessionId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let source_instance_id = payload
+                .get("expectedSourceInstanceId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if source.is_empty() || source_instance_id.is_empty() || session_id.is_empty() {
+                return Err("history_resume_request_invalid".to_string());
+            }
+            let claim_key = format!("{}\0{}\0{}", source_instance_id, source, session_id);
+            self.claim_resume_session(&claim_key, consumer_id)?;
+            Some(claim_key)
+        } else {
+            None
+        };
+        let result = (|| {
+            let lane = BridgeLane::for_request(kind);
+            let mut capability_refresh_attempted = false;
+            loop {
+                let reservation = if lane == BridgeLane::Readonly {
+                    self.try_reserve_primary(&plan.host_id, &bridge_identity(plan), consumer_id)
+                        .or_else(|| {
+                            let request_plan = bridge_plan(plan, lane);
+                            self.ensure_bridge(
+                                host.clone(),
+                                &request_plan,
+                                lane,
+                                None,
+                                Some(consumer_id),
+                            )
+                            .map(BridgeHandle::reserve)
+                        })
+                } else {
+                    self.ensure_bridge(
+                        host.clone(),
+                        &bridge_plan(plan, lane),
+                        lane,
+                        None,
+                        Some(consumer_id),
+                    )
+                    .map(BridgeHandle::reserve)
+                }
+                .ok_or_else(|| "ssh_agent_identity_required".to_string())?;
+                let (response_sender, response_receiver) = mpsc::sync_channel(1);
+                let timeout = response_timeout(kind);
+                reservation
+                    .request_sender
+                    .send(AgentBridgeRequest {
+                        kind: kind.to_string(),
+                        payload: payload.clone(),
+                        response: response_sender,
+                    })
+                    .map_err(|_| "ssh_agent_bridge_request_queue_closed".to_string())?;
+                let result = receive_agent_response(&response_receiver, timeout + RESPONSE_TIMEOUT);
+                if should_refresh_capability_error(capability_refresh_attempted, &result) {
+                    if let Some((refresh_plan, refresh_lane)) =
+                        self.invalidate_reservation(&reservation)
+                    {
+                        let refresh_plan = bridge_refresh_plan(plan, &refresh_plan, refresh_lane);
+                        let _ = self.ensure_bridge(
+                            host.clone(),
+                            &refresh_plan,
+                            refresh_lane,
+                            None,
+                            Some(consumer_id),
+                        );
+                    }
+                    capability_refresh_attempted = true;
+                    continue;
+                }
+                break result;
+            }
+        })();
+        if result.is_err() {
+            if let (Some(claim_key), Ok(mut claims)) =
+                (resume_claim_key.as_ref(), self.resume_claims.lock())
+            {
+                if claims
+                    .get(claim_key)
+                    .is_some_and(|owner| owner == consumer_id)
+                {
+                    claims.remove(claim_key);
+                }
+            }
+        }
+        result
+    }
+
+    // 释放主通道的会话引用，无其他引用时停止桥接。
+    pub fn release(&self, host_id: &str, session_id: &str) {
+        let mut bridges = match self.bridges.lock() {
+            Ok(bridges) => bridges,
+            Err(_) => return,
+        };
+        let slot = bridge_slot(host_id, BridgeLane::Primary);
+        let remove = bridges.get_mut(&slot).is_some_and(|entry| {
+            entry.sessions.remove(session_id);
+            entry.sessions.is_empty() && entry.consumers.is_empty()
+        });
+        let removed = remove.then(|| bridges.remove(&slot)).flatten();
+        drop(bridges);
+        if let Some(entry) = removed {
+            entry.control.stop();
+        }
+    }
+
+    // 释放消费者及关联文件、Git 引用，并停止不再使用的各通道。
+    pub fn release_consumer(&self, host_id: &str, consumer_id: &str) {
+        self.release_resume_claims(host_id, consumer_id);
+        let mut bridges = match self.bridges.lock() {
+            Ok(bridges) => bridges,
+            Err(_) => return,
+        };
+        let mut consumer_ids = HashSet::from([consumer_id.to_string()]);
+        if let Some(suffix) = consumer_id.strip_prefix("history:") {
+            consumer_ids.insert(format!("files:{suffix}"));
+            consumer_ids.insert(format!("git:{suffix}"));
+        }
+        let mut removed = Vec::new();
+        for lane in [BridgeLane::Primary, BridgeLane::Readonly, BridgeLane::Git] {
+            let slot = bridge_slot(host_id, lane);
+            let remove = bridges.get_mut(&slot).is_some_and(|entry| {
+                entry
+                    .consumers
+                    .retain(|value| !consumer_ids.contains(value));
+                entry.sessions.is_empty() && entry.consumers.is_empty()
+            });
+            if remove {
+                if let Some(entry) = bridges.remove(&slot) {
+                    removed.push(entry);
+                }
+            }
+        }
+        drop(bridges);
+        for entry in removed {
+            entry.control.stop();
+        }
+    }
+}
+
+// 按期限等待业务响应，将超时与通道断开映射为桥接错误。
+fn receive_agent_response(
+    receiver: &Receiver<Result<Value, String>>,
+    timeout: Duration,
+) -> Result<Value, String> {
+    match receiver.recv_timeout(timeout) {
+        Ok(result) => result,
+        Err(RecvTimeoutError::Timeout) => Err("ssh_agent_bridge_response_timeout".to_string()),
+        Err(RecvTimeoutError::Disconnected) => {
+            Err("ssh_agent_bridge_response_channel_closed".to_string())
+        }
+    }
+}
+
+// 排空当前已入队请求，并逐个尝试发送指定失败结果。
+fn fail_pending_requests(receiver: &Receiver<AgentBridgeRequest>, error: &str) {
+    while let Ok(request) = receiver.try_recv() {
+        let _ = request.response.send(Err(error.to_string()));
+    }
+}
+
+// 判断桥接协议或传输类错误是否要求断开当前连接。
+fn request_error_requires_disconnect(error: &str) -> bool {
+    error.starts_with("ssh_agent_bridge_")
+}
+
+// 判断是否尚未尝试过能力刷新且错误携带非空缺失能力名。
+fn should_refresh_capability_error(attempted: bool, result: &Result<Value, String>) -> bool {
+    !attempted
+        && result.as_ref().err().is_some_and(|error| {
+            error
+                .strip_prefix("ssh_agent_capability_missing:")
+                .is_some_and(|capability| !capability.is_empty())
+        })
+}
+
+// 除桥接已被占用外，连接失败时均通知已排队请求。
+fn bridge_failure_should_fail_pending(error: &str) -> bool {
+    error != "bridge_already_active"
+}
+
+// 查找特定业务请求所需的 Agent 能力，其他请求不额外检查。
+fn required_capability(kind: &str) -> Option<&'static str> {
+    match kind {
+        "gitDiffWithOptions" => Some("gitDiffOptions"),
+        "gitListCommits" | "gitCommitDetail" | "gitCommitFileDiff" => Some("gitHistory"),
+        "gitListCommitsFiltered"
+        | "gitTags"
+        | "gitCompareRefs"
+        | "gitCommitPatch"
+        | "gitExecuteOperation"
+        | "gitListStashes"
+        | "gitStashCreate"
+        | "gitStashAction"
+        | "gitListRemotes"
+        | "gitRemoteAction"
+        | "gitPushTag"
+        | "gitDeleteRemoteBranch"
+        | "gitForcePushWithLease"
+        | "gitListReflog"
+        | "gitRestoreReflog"
+        | "gitFileHistory"
+        | "gitBlameFile"
+        | "gitBisectStatus"
+        | "gitBisectAction"
+        | "gitListSubmodules"
+        | "gitSubmoduleAction"
+        | "gitRewriteCommits" => Some("gitWorkspaceTools"),
+        "fileAttachBegin" | "fileAttachChunk" | "fileAttachFinish" | "fileAttachAbort" => {
+            Some("fileAttach")
+        }
+        "fileAttachAnyBegin"
+        | "fileAttachAnyChunk"
+        | "fileAttachAnyFinish"
+        | "fileAttachAnyAbort" => Some("fileAttachAny"),
+        "filePutBegin" | "filePutChunk" | "filePutFinish" | "filePutAbort" => Some("filePut"),
+        "fileGet" => Some("fileGet"),
+        "fileDelete" => Some("fileDelete"),
+        "fileAttachmentRoot" => Some("fileAttachmentRoot"),
+        "agentCapabilitiesInspect" | "agentCapabilitiesProbe" => Some("agentCapabilitiesV1"),
+        _ => None,
+    }
+}
+
+// 判断附件开始请求是否显式指定了非空自定义根目录。
+fn custom_attachment_root_requested(kind: &str, payload: &Value) -> bool {
+    matches!(kind, "fileAttachBegin" | "fileAttachAnyBegin")
+        && payload
+            .get("attachmentRoot")
+            .and_then(Value::as_str)
+            .is_some_and(|root| !root.trim().is_empty())
+}
+
+// 校验能力后串行发送业务请求并回传结果，传输错误要求断线。
+fn handle_agent_request(
+    writer: &mut impl Write,
+    reader_receiver: &Receiver<ReaderMessage>,
+    host_id: &str,
+    request_number: &mut u64,
+    capabilities: &[Value],
+    agent_request: AgentBridgeRequest,
+) -> Result<(), String> {
+    if let Some(required) = required_capability(&agent_request.kind) {
+        let supported = capabilities
+            .iter()
+            .any(|value| value.as_str() == Some(required));
+        if !supported {
+            let error = format!("ssh_agent_capability_missing:{required}");
+            let _ = agent_request.response.send(Err(error.clone()));
+            return Err(error);
+        }
+    }
+    if custom_attachment_root_requested(&agent_request.kind, &agent_request.payload)
+        && !capabilities
+            .iter()
+            .any(|value| value.as_str() == Some("fileAttachCustomRoot"))
+    {
+        let error = "ssh_agent_capability_missing:fileAttachCustomRoot".to_string();
+        let _ = agent_request.response.send(Err(error.clone()));
+        return Err(error);
+    }
+    let request_id = format!("agent-request-{}", *request_number);
+    *request_number = request_number.saturating_add(1);
+    let kind = agent_request.kind.clone();
+    let started_at = Instant::now();
+    let result = request(
+        writer,
+        reader_receiver,
+        request_id,
+        &agent_request.kind,
+        agent_request.payload,
+        "response",
+        response_timeout(&kind),
+    );
+    let elapsed = started_at.elapsed();
+    if let Err(error) = &result {
+        log::warn!(
+            "SSH Agent request failed: host_id={} kind={} elapsed_ms={} error={}",
+            host_id,
+            kind,
+            elapsed.as_millis(),
+            error
+        );
+    } else {
+        log::debug!(
+            "SSH Agent request completed: host_id={} kind={} elapsed_ms={}",
+            host_id,
+            kind,
+            elapsed.as_millis()
+        );
+    }
+    let disconnect = result
+        .as_ref()
+        .err()
+        .is_some_and(|error| request_error_requires_disconnect(error));
+    let _ = agent_request.response.send(result);
+    if disconnect {
+        return Err("ssh_agent_bridge_request_failed".to_string());
+    }
+    Ok(())
+}
+
+// 心跳到期时发送 ping 并校验回显时间，成功后更新计时。
+fn send_heartbeat_if_due(
+    writer: &mut impl Write,
+    reader_receiver: &Receiver<ReaderMessage>,
+    request_number: &mut u64,
+    last_heartbeat: &mut Instant,
+) -> Result<(), String> {
+    if last_heartbeat.elapsed() < HEARTBEAT_INTERVAL {
+        return Ok(());
+    }
+    let ping_id = format!("ping-{}", *request_number);
+    *request_number = request_number.saturating_add(1);
+    let sent_at = now_ms();
+    let pong = request(
+        writer,
+        reader_receiver,
+        ping_id,
+        "ping",
+        json!({ "sentAt": sent_at }),
+        "pong",
+        RESPONSE_TIMEOUT,
+    )?;
+    if pong.get("sentAt").and_then(Value::as_u64) != Some(sent_at) {
+        return Err("ssh_agent_bridge_heartbeat_invalid".to_string());
+    }
+    *last_heartbeat = Instant::now();
+    Ok(())
+}
+
+impl Drop for SshAgentBridgeManager {
+    // 管理器析构时停止所有仍登记的桥接子进程。
+    fn drop(&mut self) {
+        if let Ok(bridges) = self.bridges.get_mut() {
+            for entry in bridges.values() {
+                entry.control.stop();
+            }
+        }
+    }
+}
+
+// 将 JSON 帧写为大端长度前缀和正文并刷新，拒绝空帧及超限帧。
+fn write_frame(writer: &mut impl Write, frame: &ClientFrame<'_>) -> Result<(), String> {
+    let bytes =
+        serde_json::to_vec(frame).map_err(|_| "ssh_agent_bridge_frame_invalid".to_string())?;
+    if bytes.is_empty() || bytes.len() > MAX_FRAME_BYTES {
+        return Err("ssh_agent_bridge_frame_too_large".to_string());
+    }
+    writer
+        .write_all(&(bytes.len() as u32).to_be_bytes())
+        .and_then(|_| writer.write_all(&bytes))
+        .and_then(|_| writer.flush())
+        .map_err(|_| "ssh_agent_bridge_write_failed".to_string())
+}
+
+// 校验大端长度前缀后读取限定大小正文，并反序列化服务端帧。
+fn read_frame(reader: &mut impl Read) -> Result<ServerFrame, String> {
+    let mut length = [0u8; 4];
+    reader
+        .read_exact(&mut length)
+        .map_err(|_| "ssh_agent_bridge_read_failed".to_string())?;
+    let length = u32::from_be_bytes(length) as usize;
+    if length == 0 || length > MAX_FRAME_BYTES {
+        return Err("ssh_agent_bridge_frame_too_large".to_string());
+    }
+    let mut bytes = vec![0u8; length];
+    reader
+        .read_exact(&mut bytes)
+        .map_err(|_| "ssh_agent_bridge_read_failed".to_string())?;
+    serde_json::from_slice(&bytes).map_err(|_| "ssh_agent_bridge_frame_invalid".to_string())
+}
+
+// 在总字节上限内跳过前导行，直到找到合法协议标记及十六进制随机串。
+fn read_preamble(reader: &mut BufReader<impl Read>) -> Result<(), String> {
+    let mut consumed = 0;
+    loop {
+        let mut line = Vec::new();
+        reader
+            .take((MAX_PREAMBLE_BYTES.saturating_sub(consumed) + 1) as u64)
+            .read_until(b'\n', &mut line)
+            .map_err(|_| "ssh_agent_bridge_preamble_read_failed".to_string())?;
+        if line.is_empty() || !line.ends_with(b"\n") {
+            return Err("ssh_agent_bridge_preamble_invalid".to_string());
+        }
+        consumed += line.len();
+        if consumed > MAX_PREAMBLE_BYTES {
+            return Err("ssh_agent_bridge_preamble_invalid".to_string());
+        }
+        let text = std::str::from_utf8(&line)
+            .map_err(|_| "ssh_agent_bridge_preamble_invalid".to_string())?;
+        if let Some(nonce) = text
+            .trim_end_matches(['\r', '\n'])
+            .strip_prefix("CLI_MANAGER_SSH_AGENT/1 ")
+        {
+            if nonce.len() == 32 && nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return Ok(());
+            }
+            return Err("ssh_agent_bridge_preamble_invalid".to_string());
+        }
+    }
+}
+
+// 在线程中读取协议前导和后续帧，通过有界通道发送状态或错误。
+fn spawn_reader(
+    reader: impl Read + Send + 'static,
+    sender: SyncSender<ReaderMessage>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        match read_preamble(&mut reader) {
+            Ok(()) => {
+                if sender.send(ReaderMessage::Ready).is_err() {
+                    return;
+                }
+            }
+            Err(error) => {
+                let _ = sender.send(ReaderMessage::Error(error));
+                return;
+            }
+        }
+        loop {
+            match read_frame(&mut reader) {
+                Ok(frame) => {
+                    if sender.send(ReaderMessage::Frame(frame)).is_err() {
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(ReaderMessage::Error(error));
+                    return;
+                }
+            }
+        }
+    })
+}
+
+// 持续排空标准错误流，仅保留上限内的前缀字节。
+fn spawn_stderr_reader(
+    mut reader: impl Read + Send + 'static,
+    captured: Arc<Mutex<Vec<u8>>>,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut buffer = [0u8; 4096];
+        while let Ok(read) = reader.read(&mut buffer) {
+            if read == 0 {
+                break;
+            }
+            if let Ok(mut output) = captured.lock() {
+                let remaining = MAX_STDERR_BYTES.saturating_sub(output.len());
+                output.extend_from_slice(&buffer[..read.min(remaining)]);
+            }
+        }
+    })
+}
+
+// 从标准错误文本识别交互认证或主机密钥确认需求。
+fn classify_bridge_stderr(bytes: &[u8]) -> Option<&'static str> {
+    let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
+    if [
+        "permission denied",
+        "authentication failed",
+        "no supported authentication methods",
+        "enter passphrase",
+        "keyboard-interactive",
+    ]
+    .iter()
+    .any(|pattern| text.contains(pattern))
+    {
+        return Some("ssh_interactive_auth_required");
+    }
+    if text.contains("host key verification failed")
+        || text.contains("remote host identification has changed")
+    {
+        return Some("ssh_host_key_verification_required");
+    }
+    None
+}
+
+// 等待读取线程确认前导有效，将超时或非预期消息映射为握手错误。
+fn receive_ready(receiver: &Receiver<ReaderMessage>, timeout: Duration) -> Result<(), String> {
+    match receiver.recv_timeout(timeout) {
+        Ok(ReaderMessage::Ready) => Ok(()),
+        Ok(ReaderMessage::Error(error)) => Err(error),
+        Ok(ReaderMessage::Frame(_)) => Err("ssh_agent_bridge_preamble_invalid".to_string()),
+        Err(RecvTimeoutError::Timeout) => Err("ssh_agent_bridge_handshake_timeout".to_string()),
+        Err(RecvTimeoutError::Disconnected) => Err("ssh_agent_bridge_read_failed".to_string()),
+    }
+}
+
+// 等待一帧消息，将读取错误、超时及意外就绪信号转为错误。
+fn receive_frame(
+    receiver: &Receiver<ReaderMessage>,
+    timeout: Duration,
+) -> Result<ServerFrame, String> {
+    match receiver.recv_timeout(timeout) {
+        Ok(ReaderMessage::Frame(frame)) => Ok(frame),
+        Ok(ReaderMessage::Error(error)) => Err(error),
+        Ok(ReaderMessage::Ready) => Err("ssh_agent_bridge_preamble_invalid".to_string()),
+        Err(RecvTimeoutError::Timeout) => Err("ssh_agent_bridge_response_timeout".to_string()),
+        Err(RecvTimeoutError::Disconnected) => Err("ssh_agent_bridge_read_failed".to_string()),
+    }
+}
+
+// 核对请求标识及响应种类，并仅接受受限字符集的远端错误码。
+fn checked_response(frame: ServerFrame, request_id: &str, kind: &str) -> Result<Value, String> {
+    if frame.request_id != request_id {
+        return Err("ssh_agent_bridge_response_mismatch".to_string());
+    }
+    if frame.kind == "error" {
+        return Err(frame
+            .payload
+            .get("code")
+            .and_then(Value::as_str)
+            .filter(|code| {
+                !code.is_empty()
+                    && code.len() <= 128
+                    && code
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            })
+            .unwrap_or("ssh_agent_bridge_remote_error")
+            .to_string());
+    }
+    if frame.kind != kind {
+        return Err("ssh_agent_bridge_response_invalid".to_string());
+    }
+    Ok(frame.payload)
+}
+
+// 校验 Hook 批次大小与递增序号，要求末条序号等于最新游标。
+fn validate_hook_batch(payload: &Value, cursor: u64) -> Result<(&[Value], u64), String> {
+    let events = payload
+        .get("events")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "ssh_agent_bridge_hook_batch_invalid".to_string())?;
+    let latest = payload
+        .get("latestSequence")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| "ssh_agent_bridge_hook_batch_invalid".to_string())?;
+    if events.len() > 128 || latest < cursor {
+        return Err("ssh_agent_bridge_hook_batch_invalid".to_string());
+    }
+    let mut previous = cursor;
+    for event in events {
+        let sequence = event
+            .get("sequence")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| "ssh_agent_bridge_hook_batch_invalid".to_string())?;
+        if sequence <= previous || sequence > latest {
+            return Err("ssh_agent_bridge_hook_batch_invalid".to_string());
+        }
+        previous = sequence;
+    }
+    if previous != latest {
+        return Err("ssh_agent_bridge_hook_batch_invalid".to_string());
+    }
+    Ok((events.as_slice(), latest))
+}
+
+// 发送请求并共用响应截止时间，历史详情和文件下载按分块协议接收。
+fn request(
+    writer: &mut impl Write,
+    receiver: &Receiver<ReaderMessage>,
+    request_id: String,
+    kind: &str,
+    payload: Value,
+    response_kind: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let deadline = Instant::now() + timeout;
+    write_frame(
+        writer,
+        &ClientFrame {
+            request_id: request_id.clone(),
+            kind,
+            payload,
+        },
+    )?;
+    let first = receive_frame(receiver, deadline.saturating_duration_since(Instant::now()))?;
+    if kind == "historyGet" && first.kind == "historyDetailChunk" {
+        return receive_history_detail_chunks(receiver, first, &request_id, deadline);
+    }
+    if kind == "fileGet" && first.kind == "fileGetChunk" {
+        return receive_file_get_chunks(receiver, first, &request_id, deadline);
+    }
+    checked_response(first, &request_id, response_kind)
+}
+
+// 按连续索引和稳定总数组装受限大小的历史 JSON，全部收齐后解析。
+fn receive_history_detail_chunks(
+    receiver: &Receiver<ReaderMessage>,
+    mut frame: ServerFrame,
+    request_id: &str,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let mut serialized = String::new();
+    let mut expected_index = 0usize;
+    let mut expected_total = None;
+    loop {
+        if frame.request_id != request_id || frame.kind != "historyDetailChunk" {
+            return Err("ssh_agent_bridge_history_chunk_invalid".to_string());
+        }
+        let index = frame
+            .payload
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| "ssh_agent_bridge_history_chunk_invalid".to_string())?;
+        let total = frame
+            .payload
+            .get("total")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| (1..=MAX_HISTORY_DETAIL_CHUNKS).contains(value))
+            .ok_or_else(|| "ssh_agent_bridge_history_chunk_invalid".to_string())?;
+        let data = frame
+            .payload
+            .get("data")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "ssh_agent_bridge_history_chunk_invalid".to_string())?;
+        if index != expected_index || expected_total.is_some_and(|value| value != total) {
+            return Err("ssh_agent_bridge_history_chunk_invalid".to_string());
+        }
+        expected_total = Some(total);
+        if serialized.len().saturating_add(data.len()) > MAX_HISTORY_DETAIL_RESPONSE_BYTES {
+            return Err("ssh_agent_bridge_history_chunk_too_large".to_string());
+        }
+        serialized.push_str(data);
+        expected_index += 1;
+        if expected_index == total {
+            return serde_json::from_str(&serialized)
+                .map_err(|_| "ssh_agent_bridge_history_chunk_invalid".to_string());
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("ssh_agent_bridge_response_timeout".to_string());
+        }
+        frame = receive_frame(receiver, remaining)?;
+    }
+}
+
+// 校验下载分块的索引、路径、声明大小和编码长度，拼接 Base64 结果。
+fn receive_file_get_chunks(
+    receiver: &Receiver<ReaderMessage>,
+    mut frame: ServerFrame,
+    request_id: &str,
+    deadline: Instant,
+) -> Result<Value, String> {
+    let mut data_base64 = String::new();
+    let mut expected_index = 0usize;
+    let mut expected_total = None;
+    let mut relative_path = None;
+    let mut size_bytes = None;
+    loop {
+        if frame.request_id != request_id || frame.kind != "fileGetChunk" {
+            return Err("ssh_agent_bridge_file_get_chunk_invalid".to_string());
+        }
+        let index = frame
+            .payload
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let total = frame
+            .payload
+            .get("total")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|value| (1..=MAX_FILE_GET_CHUNKS).contains(value))
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let chunk = frame
+            .payload
+            .get("dataBase64")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let path = frame
+            .payload
+            .get("relativePath")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        let size = frame
+            .payload
+            .get("sizeBytes")
+            .and_then(Value::as_u64)
+            .filter(|value| *value <= MAX_FILE_GET_RESPONSE_BYTES as u64)
+            .ok_or_else(|| "ssh_agent_bridge_file_get_chunk_invalid".to_string())?;
+        if index != expected_index
+            || expected_total.is_some_and(|value| value != total)
+            || relative_path.as_deref().is_some_and(|value| value != path)
+            || size_bytes.is_some_and(|value| value != size)
+        {
+            return Err("ssh_agent_bridge_file_get_chunk_invalid".to_string());
+        }
+        if chunk.len() > MAX_FILE_GET_BASE64_BYTES
+            || data_base64.len().saturating_add(chunk.len()) > MAX_FILE_GET_BASE64_BYTES
+        {
+            return Err("ssh_agent_bridge_file_get_chunk_too_large".to_string());
+        }
+        expected_total = Some(total);
+        relative_path = Some(path.to_string());
+        size_bytes = Some(size);
+        data_base64.push_str(chunk);
+        expected_index += 1;
+        if expected_index == total {
+            return Ok(json!({
+                "relativePath": relative_path.unwrap_or_default(),
+                "sizeBytes": size_bytes.unwrap_or_default(),
+                "dataBase64": data_base64,
+            }));
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("ssh_agent_bridge_response_timeout".to_string());
+        }
+        frame = receive_frame(receiver, remaining)?;
+    }
+}
+
+// 返回 Unix 毫秒时间，系统时间早于纪元时使用零时长。
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}
+
+// 按退避档位及主机种子计算带约百分之二十抖动的重试间隔。
+fn retry_delay(attempt: usize, seed: &str) -> Duration {
+    let base = RETRY_BASE_SECONDS[attempt.min(RETRY_BASE_SECONDS.len() - 1)] * 1_000;
+    let span = base / 5;
+    let mut hasher = DefaultHasher::new();
+    seed.hash(&mut hasher);
+    attempt.hash(&mut hasher);
+    let offset =
+        (hasher.finish() % (span.saturating_mul(2).saturating_add(1))) as i64 - span as i64;
+    Duration::from_millis((base as i64 + offset).max(1) as u64)
+}
+
+// 以最多四分之一秒的睡眠粒度等待重试期限，并响应停止标记。
+fn wait_for_retry(control: &BridgeControl, delay: Duration) -> bool {
+    let deadline = Instant::now() + delay;
+    while !control.stop.load(Ordering::Acquire) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return true;
+        }
+        thread::sleep(remaining.min(Duration::from_millis(250)));
+    }
+    false
+}
+
+// 识别身份、认证、协议及能力类不可自动重试错误。
+fn permanent_bridge_error(error: &str) -> bool {
+    if error.starts_with("ssh_agent_capability_missing:") {
+        return true;
+    }
+    matches!(
+        error,
+        "ssh_interactive_auth_required"
+            | "bridge_installation_id_mismatch"
+            | "ssh_agent_identity_changed"
+            | "ssh_agent_identity_required"
+            | "ssh_host_key_verification_required"
+            | "agent_installation_record_missing"
+            | "bridge_client_instance_invalid"
+            | "bridge_host_id_invalid"
+            | "bridge_installation_id_invalid"
+            | "ssh_agent_bridge_protocol_incompatible"
+    )
+}
+
+// 取得桥接并发名额后循环连接和退避，稳定连接后重置失败档位。
+fn run_bridge_loop(
+    host: Weak<DaemonHost>,
+    plan: SshLaunchPlan,
+    control: Arc<BridgeControl>,
+    request_receiver: Receiver<AgentBridgeRequest>,
+    lane: BridgeLane,
+) {
+    let Some(_bridge_permit) =
+        CounterPermit::acquire(&BRIDGE_LIMIT, MAX_CONCURRENT_BRIDGES, &control)
+    else {
+        let error = if control.stop.load(Ordering::Acquire) {
+            "ssh_agent_bridge_stopped"
+        } else {
+            "ssh_agent_bridge_capacity_exhausted"
+        };
+        fail_pending_requests(&request_receiver, error);
+        control.finished.store(true, Ordering::Release);
+        return;
+    };
+    let mut attempt = 0usize;
+    let mut dedup = EventDedup::default();
+    while !control.stop.load(Ordering::Acquire) {
+        match run_bridge_once(&host, &plan, &control, &mut dedup, &request_receiver, lane) {
+            Ok(()) => break,
+            Err(failure) => {
+                log::warn!(
+                    "SSH Agent bridge stopped for host {}: {}",
+                    plan.host_id,
+                    failure.code
+                );
+                if bridge_failure_should_fail_pending(&failure.code) {
+                    fail_pending_requests(&request_receiver, &failure.code);
+                }
+                if permanent_bridge_error(&failure.code) {
+                    break;
+                }
+                if failure
+                    .connected_for
+                    .is_some_and(|duration| duration >= STABLE_CONNECTION_RESET)
+                {
+                    attempt = 0;
+                }
+            }
+        }
+        if control.stop.load(Ordering::Acquire) {
+            break;
+        }
+        let delay = retry_delay(attempt, &plan.host_id);
+        attempt = attempt.saturating_add(1).min(RETRY_BASE_SECONDS.len() - 1);
+        if !wait_for_retry(&control, delay) {
+            break;
+        }
+    }
+    control.finished.store(true, Ordering::Release);
+}
+
+// 包装单次连接，更新连接中标记并记录失败前的在线时长。
+fn run_bridge_once(
+    host: &Weak<DaemonHost>,
+    plan: &SshLaunchPlan,
+    control: &Arc<BridgeControl>,
+    dedup: &mut EventDedup,
+    request_receiver: &Receiver<AgentBridgeRequest>,
+    lane: BridgeLane,
+) -> Result<(), BridgeRunError> {
+    control.connecting.store(true, Ordering::Release);
+    let mut connected_at = None;
+    let result = run_bridge_once_inner(
+        host,
+        plan,
+        control,
+        dedup,
+        request_receiver,
+        &mut connected_at,
+        lane,
+    );
+    control.connecting.store(false, Ordering::Release);
+    result.map_err(|code| BridgeRunError {
+        code,
+        connected_for: connected_at.map(|started: Instant| started.elapsed()),
+    })
+}
+
+// 启动 SSH 管道并握手，按通道处理请求、Hook 与心跳，退出时回收线程和进程。
+fn run_bridge_once_inner(
+    host: &Weak<DaemonHost>,
+    plan: &SshLaunchPlan,
+    control: &Arc<BridgeControl>,
+    dedup: &mut EventDedup,
+    request_receiver: &Receiver<AgentBridgeRequest>,
+    connected_at: &mut Option<Instant>,
+    lane: BridgeLane,
+) -> Result<(), String> {
+    let connect_permit = CounterPermit::acquire(&CONNECT_LIMIT, MAX_CONCURRENT_CONNECTS, control)
+        .ok_or_else(|| "ssh_agent_bridge_stopped".to_string())?;
+    let launch = plan.build_agent_bridge_launch()?;
+    let mut command = silent_command(&launch.executable);
+    command
+        .args(launch.args)
+        .envs(launch.env)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|_| "ssh_agent_bridge_spawn_failed".to_string())?;
+    let Some(stdin) = child.stdin.take() else {
+        terminate_child(&mut child);
+        return Err("ssh_agent_bridge_stdin_missing".to_string());
+    };
+    let Some(stdout) = child.stdout.take() else {
+        terminate_child(&mut child);
+        return Err("ssh_agent_bridge_stdout_missing".to_string());
+    };
+    let stderr = child.stderr.take();
+    let stderr_output = Arc::new(Mutex::new(Vec::new()));
+    let stderr_handle =
+        stderr.map(|stderr| spawn_stderr_reader(stderr, Arc::clone(&stderr_output)));
+    let Ok(mut child_slot) = control.child.lock() else {
+        terminate_child(&mut child);
+        return Err("ssh_agent_bridge_state_failed".to_string());
+    };
+    *child_slot = Some(child);
+    drop(child_slot);
+    if control.stop.load(Ordering::Acquire) {
+        control.terminate_current_child();
+        if let Some(stderr_handle) = stderr_handle {
+            let _ = stderr_handle.join();
+        }
+        return Err("ssh_agent_bridge_stopped".to_string());
+    }
+
+    let (reader_sender, reader_receiver) = mpsc::sync_channel(READER_QUEUE_CAPACITY);
+    let reader_handle = spawn_reader(stdout, reader_sender);
+    let result = (|| {
+        let mut writer = BufWriter::new(stdin);
+        let handshake_timeout = Duration::from_secs(plan.connect_timeout_sec.saturating_add(10))
+            .min(MAX_HANDSHAKE_TIMEOUT);
+        receive_ready(&reader_receiver, handshake_timeout)?;
+        let hello = request(
+            &mut writer,
+            &reader_receiver,
+            "hello-1".to_string(),
+            "hello",
+            json!({
+                "hostId": plan.host_id,
+                "clientInstanceId": plan.client_instance_id,
+                "installationId": plan.agent_installation_id,
+            }),
+            "helloOk",
+            RESPONSE_TIMEOUT,
+        )?;
+        if hello.get("protocolMajor").and_then(Value::as_u64) != Some(1) {
+            return Err("ssh_agent_bridge_protocol_incompatible".to_string());
+        }
+        let capabilities = hello
+            .get("capabilities")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "ssh_agent_bridge_protocol_incompatible".to_string())?;
+        let required_capabilities: &[&str] = if lane == BridgeLane::Git {
+            &[
+                "bridgeProtocol",
+                "heartbeat",
+                "requestCancellation",
+                "boundedBackpressure",
+                "gitFull",
+            ]
+        } else {
+            &[
+                "hookSpool",
+                "heartbeat",
+                "requestCancellation",
+                "boundedBackpressure",
+                "historyIndex",
+                "historySearch",
+                "historyDetail",
+                "historyDetailChunks",
+                "historyResumePreflight",
+            ]
+        };
+        if let Some(missing) = required_capabilities.iter().find(|required| {
+            !capabilities
+                .iter()
+                .any(|value| value.as_str() == Some(**required))
+        }) {
+            if lane == BridgeLane::Git {
+                return Err(format!("ssh_agent_capability_missing:{missing}"));
+            }
+            return Err("ssh_agent_bridge_protocol_incompatible".to_string());
+        }
+        if hello.get("remoteMachineId").and_then(Value::as_str)
+            != Some(plan.agent_remote_machine_id.as_str())
+        {
+            return Err("ssh_agent_identity_changed".to_string());
+        }
+        control.connected.store(true, Ordering::Release);
+        *connected_at = Some(Instant::now());
+        drop(connect_permit);
+        let mut cursor = 0u64;
+        let mut request_number = 2u64;
+        let mut last_heartbeat = Instant::now();
+        while !control.stop.load(Ordering::Acquire) {
+            match request_receiver.try_recv() {
+                Ok(agent_request) => {
+                    handle_agent_request(
+                        &mut writer,
+                        &reader_receiver,
+                        &plan.host_id,
+                        &mut request_number,
+                        capabilities,
+                        agent_request,
+                    )?;
+                    continue;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => return Ok(()),
+            }
+
+            if lane.is_request_driven() {
+                match request_receiver.recv_timeout(REQUEST_QUEUE_WAIT) {
+                    Ok(agent_request) => handle_agent_request(
+                        &mut writer,
+                        &reader_receiver,
+                        &plan.host_id,
+                        &mut request_number,
+                        capabilities,
+                        agent_request,
+                    )?,
+                    Err(RecvTimeoutError::Timeout) => send_heartbeat_if_due(
+                        &mut writer,
+                        &reader_receiver,
+                        &mut request_number,
+                        &mut last_heartbeat,
+                    )?,
+                    Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                }
+                continue;
+            }
+
+            let Some(_hook_poll_reservation) = control.try_reserve_idle_activity() else {
+                match request_receiver.recv_timeout(REQUEST_QUEUE_WAIT) {
+                    Ok(agent_request) => handle_agent_request(
+                        &mut writer,
+                        &reader_receiver,
+                        &plan.host_id,
+                        &mut request_number,
+                        capabilities,
+                        agent_request,
+                    )?,
+                    Err(RecvTimeoutError::Timeout) => send_heartbeat_if_due(
+                        &mut writer,
+                        &reader_receiver,
+                        &mut request_number,
+                        &mut last_heartbeat,
+                    )?,
+                    Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                }
+                continue;
+            };
+            let drain_id = format!("hook-drain-{request_number}");
+            request_number = request_number.saturating_add(1);
+            let payload = request(
+                &mut writer,
+                &reader_receiver,
+                drain_id,
+                "hookDrain",
+                json!({ "afterSequence": cursor, "limit": 128, "waitMs": HOOK_DRAIN_WAIT_MS }),
+                "hookBatch",
+                Duration::from_millis(HOOK_DRAIN_WAIT_MS) + RESPONSE_TIMEOUT,
+            )?;
+            let (events, latest) = validate_hook_batch(&payload, cursor)?;
+            for event in events {
+                if event.get("kind").and_then(Value::as_str) == Some("gap") {
+                    let Some(sequence) = event.get("sequence").and_then(Value::as_u64) else {
+                        continue;
+                    };
+                    if !dedup.insert(&format!("gap:{sequence}")) {
+                        continue;
+                    }
+                    let dropped = event
+                        .get("dropped")
+                        .and_then(Value::as_u64)
+                        .unwrap_or_default();
+                    log::warn!(
+                        "SSH Agent Hook spool gap for host {}: dropped={}",
+                        plan.host_id,
+                        dropped
+                    );
+                    if let Some(host) = host.upgrade() {
+                        host.broadcast_remote_hook_gap(plan.host_id.clone(), dropped);
+                    }
+                    continue;
+                }
+                let Some(event_id) = event.get("eventId").and_then(Value::as_str) else {
+                    continue;
+                };
+                if uuid::Uuid::parse_str(event_id).is_err() || !dedup.insert(event_id) {
+                    continue;
+                }
+                if let Some(host) = host.upgrade() {
+                    host.accept_remote_hook_event(event.clone());
+                } else {
+                    return Ok(());
+                }
+            }
+            if latest > cursor {
+                let ack_id = format!("hook-ack-{request_number}");
+                request_number = request_number.saturating_add(1);
+                let ack = request(
+                    &mut writer,
+                    &reader_receiver,
+                    ack_id,
+                    "hookAck",
+                    json!({ "throughSequence": latest }),
+                    "response",
+                    RESPONSE_TIMEOUT,
+                )?;
+                if ack.get("accepted").and_then(Value::as_bool) != Some(true)
+                    || ack.get("throughSequence").and_then(Value::as_u64) != Some(latest)
+                {
+                    return Err("ssh_agent_bridge_ack_invalid".to_string());
+                }
+                cursor = latest;
+            }
+            send_heartbeat_if_due(
+                &mut writer,
+                &reader_receiver,
+                &mut request_number,
+                &mut last_heartbeat,
+            )?;
+        }
+        Ok(())
+    })();
+
+    control.connected.store(false, Ordering::Release);
+    drop(reader_receiver);
+    control.terminate_current_child();
+    let _ = reader_handle.join();
+    if let Some(stderr_handle) = stderr_handle {
+        let _ = stderr_handle.join();
+    }
+    if result.is_err() && connected_at.is_none() {
+        if let Ok(stderr) = stderr_output.lock() {
+            if let Some(code) = classify_bridge_stderr(&stderr) {
+                return Err(code.to_string());
+            }
+        }
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests;

@@ -1,3 +1,44 @@
+# AI 架构治理与首批拆分验证（2026-09-07）
+
+- PR #252 已通过 GitHub CLI 合并：`78cd43ed08f78c641b61577cf36674d36e91b9d9`；修复 head 为 `361edeb146620a58c90c5089c471d0990e023052`，正常推送、未强推、未删除贡献者分支。
+- 当前重构分支 `refactor/ai-architecture`；治理脚本未绑定 build/dev，不新增依赖。
+- 架构边界测试 6 项通过；迁移检查无新增违规。首批拆分后超 2000 行文件从 25 个降至 23 个，基线已删除两个完成项；严格清零尚未完成。
+- 提取时逐项比较中英各 4472 个键值，CSS 1248 个顶层节点的内容与顺序完全一致；仅调整移动后的字体资源相对 URL。
+- 前端相关测试 72 项通过；`npx tsc --noEmit`、`npm run build` 通过。未启动桌面应用。
+- 人工待验：中英/繁体切换、深浅主题、背景图、普通/全屏/分屏终端、历史 Markdown、侧栏折叠；原 `FileEditorPane <= 300` 主线既有失败仍留待文件功能拆分处理。
+- 剩余工作：终端组件与 Store、其他前端领域、Rust 主程序/历史/服务、全目录 feature-first 收敛及最终严格检查。本阶段不宣称完整重构完成。
+
+---
+
+# PR #252 合并兼容与安全修复验证（2026-09-07）
+
+## 根因与发现清单
+
+- PR 分支基于旧 protocol `1.13`，把 Git history 占用了主线已经用于 SFTP download/delete 的 `1.14`；合并后统一为 Agent `0.1.14` / protocol `1.15`，保留 `fileGet`、`fileDelete` 并分别协商 `gitHistory`、`gitWorkspaceTools`。
+- 用量 Schema 的快速返回只检查少量表、视图、列和 marker，会把缺索引或旧视图误判为健康；现在验证全部必需对象和最终视图列，并可补齐索引、覆盖过期 marker。
+- Git rewrite 恢复引用原先只有秒级时间戳，重复操作可能覆盖恢复点；现在加入纳秒时间戳与原始提交前缀，并用 create-only `update-ref` 防止覆盖已有引用。
+- Git 引用收藏控件原先嵌套在按钮内，隐藏操作仅响应 hover，增强工具弹窗缺少 dialog/focus/Escape 契约；相关键盘和语义已补齐。
+
+## 验证结果
+
+- `npx tsc --noEmit`、`npm run build`：通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml`：通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml usage_schema --lib`：6 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml ssh_agent_bridge --lib`：28 项通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml git_tools --lib`：3 项通过。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml --lib`：97 项通过。
+- 桌面 Rust 全量单元测试：1237 项通过、1 项忽略；扩展后的 Git rewrite 连续恢复点与脏工作区测试另外通过。
+- 使用已安装的 Node 22.23.2 执行 `scripts/git*.test.mjs`：71 项中 70 项通过；唯一失败为既有 `FileEditorPane.tsx <= 300` 静态长度断言，`origin/master` 同文件已有 424 个非空行，不是本 PR 引入。保留断言，纳入结构拆分阶段修复。
+- 默认 Node 20.19.0 不支持部分已有测试直接导入 TypeScript；使用本机 Node 22 复核，不新增依赖。
+
+## 未覆盖与测试边界
+
+- 未连接真实 SSH Host 执行 Git/SFTP 混合协议端到端测试；发送前 capability 检查、协议报告与 Agent 全量单元测试已覆盖。
+- 未在 Tauri 窗口手动切换中英文、键盘遍历弹窗及操作真实仓库；生产构建已验证前端类型和打包入口。
+- 增强工具复用项目的 Modal、确认和输入弹窗；补充读取 generation、写操作互斥与仓库上下文过期检查。仍需人工验证仓库切换期间的确认取消、Tab/Shift+Tab、Escape 和焦点恢复。
+
+---
+
 # 桌面宠物渲染边界验证（2026-09-06）
 
 ## 根因与发现清单
@@ -1117,3 +1158,22 @@
 - `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`node_modules/.bin/tsc --noEmit`、`git diff --check`：通过。
 - Trellis context 校验通过。GitNexus `detect-changes` 因 MCP/本机离线 CLI 不可用而降级，最终范围使用契约、调用链、Rust 全套 cc-connect 测试与真实代理 E2E 复核。
 - `npm run tauri:build:local -- --bundles nsis`：通过，仅生成 NSIS 安装包；SHA256 `CF929410CA2C602DB43927D33C23B1D77F52EF5104A422518F40F3AD278C0429`。
+
+## Git 提交历史（2026-09-04）
+
+### 实现与边界
+
+- Git 面板新增“变更 / 历史”只读视图，按 50 条分页展示并支持提交标题、作者、邮箱和完整 SHA 搜索；提交默认收起且可再次点击折叠，详情与文件 Diff 均按需加载。历史 Diff 使用稳定加载器，父级 Git 状态刷新不会清空并重复请求当前 Diff。
+- 本地使用 libgit2，WSL/SSH 使用固定 argv 的 Git CLI；Merge 提交与第一父提交比较，根提交与空树比较，重命名 Diff 同时校验并传递新旧路径。
+- SSH Agent 升级为 `0.1.13` / protocol `1.14`，通过 `gitHistory` capability 协商；旧 Agent 在请求帧写入前被拒绝。
+- GitNexus MCP 未暴露，使用 codebase-memory moderate 索引、调用链影响分析与 `detect_changes`，并以源码、测试和最终 Git diff 复核。共享 Git Transport/SSH bridge 影响为 HIGH/CRITICAL，因此实现仅新增只读方法，未改已有 Git mutation 语义。
+
+### 验证结果
+
+- `npm run build`、`npx tsc --noEmit`：通过。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、`cargo check --manifest-path src-tauri/ssh-agent/Cargo.toml`：通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml git_history -- --nocapture`：10 项通过，覆盖空仓库、51+ 分页、搜索、Merge 第一父提交、重命名、新旧路径 Diff、二进制文件、OID/WSL 结构化解析和旧 Agent capability 拒绝。
+- `cargo test --manifest-path src-tauri/ssh-agent/Cargo.toml --lib`：92 项通过。
+- `node --test scripts/gitHistory.test.mjs scripts/gitStoreRemote.test.mjs scripts/gitDiffViewerArchitecture.test.mjs`：16 项通过，新增默认收起/点击切换与稳定 Diff 加载器回归检查。
+- Desktop 与 SSH Agent `cargo fmt --check`、`git diff --check`：通过。
+- 当前 Windows 环境无法枚举 WSL distro（`Wsl/EnumerateDistros/Service/E_ACCESSDENIED`），因此 WSL Linux 文件系统和真实 SSH 主机交互未做本机人工冒烟；相关固定 argv、解析、能力协商和路径校验由自动测试与编译覆盖。

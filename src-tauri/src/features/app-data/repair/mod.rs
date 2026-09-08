@@ -1,0 +1,1717 @@
+use crate::app_paths;
+use crate::{
+    MIGRATION_ADD_CLI_ARGS_DESCRIPTION, MIGRATION_ADD_CLI_ARGS_SQL, MIGRATION_ADD_CLI_ARGS_VERSION,
+    MIGRATION_ADD_GROUP_BOUND_PATH_DESCRIPTION, MIGRATION_ADD_GROUP_BOUND_PATH_SQL,
+    MIGRATION_ADD_GROUP_BOUND_PATH_VERSION, MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
+    MIGRATION_ADD_PROJECT_PATH_MODE_SQL, MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
+    MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL,
+    MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION,
+    MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
+    MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION, MIGRATION_ADD_WORKTREE_ISOLATION_SQL,
+    MIGRATION_ADD_WORKTREE_ISOLATION_VERSION, MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
+    MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
+    MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
+    MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION, MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
+    MIGRATION_CREATE_SSH_HOSTS_SQL, MIGRATION_CREATE_SSH_HOSTS_VERSION,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION, MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+    MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION, NODE_APPEARANCE_MIGRATION_DESCRIPTION,
+    NODE_APPEARANCE_MIGRATION_SQL, NODE_APPEARANCE_MIGRATION_VERSION,
+};
+use serde::Serialize;
+use serde_json::Value;
+use sha2::{Digest, Sha384};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
+use sqlx::{Connection, Row, SqliteConnection};
+use std::collections::{BTreeSet, HashSet};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
+use tauri::{AppHandle, Manager};
+
+const SQLX_MIGRATIONS_TABLE: &str = "_sqlx_migrations";
+const KNOWN_DRIFT_START_VERSION: i64 = 13;
+const KNOWN_DRIFT_END_VERSION: i64 = 15;
+const REPLAY_SNAPSHOT_PATCH_DIR: &str = "replay-snapshots";
+const REPLAY_SNAPSHOT_PATCH_STORAGE: &str = "file";
+const REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE: &str = "replay-snapshot-patch-cleanup.version";
+const LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE: &str = "legacy-model-prices-migration-v1.version";
+const DB_FILE_NAME: &str = "cli-manager.db";
+const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
+const USER_DATA_TABLES: [&str; 3] = ["projects", "groups", "command_templates"];
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_DESCRIPTION: &str = "backfill_request_log_project_path";
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE: i64 = 2_000;
+const REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS: u64 = 10;
+static REQUEST_LOG_PROJECT_PATH_BACKFILL_LOCK: tokio::sync::Mutex<()> =
+    tokio::sync::Mutex::const_new(());
+
+const FAVORITE_SNAPSHOT_COLUMNS: [&str; 11] = [
+    "session_key",
+    "session_id",
+    "source",
+    "project_key",
+    "file_path",
+    "title",
+    "created_at",
+    "updated_at",
+    "message_count",
+    "detail_json",
+    "snapshot_at",
+];
+
+const WORKTREE_PROJECT_COLUMNS: [&str; 2] = ["worktree_strategy", "worktree_root"];
+const WORKTREE_COLUMNS: [&str; 10] = [
+    "id",
+    "project_id",
+    "name",
+    "branch",
+    "path",
+    "base_branch",
+    "deps_prompt_dismissed",
+    "status",
+    "created_at",
+    "updated_at",
+];
+const SSH_PROJECT_COLUMNS: [&str; 3] = ["environment_type", "ssh_host_id", "remote_path"];
+const SSH_HOST_COLUMNS: [&str; 25] = [
+    "id",
+    "name",
+    "group_name",
+    "host",
+    "port",
+    "username",
+    "config_alias",
+    "auth_mode",
+    "identity_file",
+    "credential_ref",
+    "jump_mode",
+    "jump_host_id",
+    "proxy_type",
+    "proxy_host",
+    "proxy_port",
+    "proxy_command",
+    "connect_timeout_sec",
+    "server_alive_interval_sec",
+    "server_alive_count_max",
+    "terminal_encoding",
+    "startup_script",
+    "notes",
+    "sort_order",
+    "created_at",
+    "updated_at",
+];
+const SSH_HOST_GROUP_COLUMNS: [&str; 5] = ["id", "name", "parent_id", "sort_order", "created_at"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MigrationRow {
+    version: i64,
+    description: String,
+    checksum: Vec<u8>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ExpectedMigration {
+    version: i64,
+    description: &'static str,
+    sql: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SchemaState {
+    Absent,
+    Complete,
+    Partial,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SchemaFeatures {
+    favorite_snapshots: SchemaState,
+    cli_args: SchemaState,
+    worktree_isolation: SchemaState,
+    ssh_hosts: SchemaState,
+    ssh_host_groups: SchemaState,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbMigrationRepairResult {
+    repaired: bool,
+    status: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DbProjectPathBackfillResult {
+    updated_rows: u64,
+    mapped_project_keys: usize,
+}
+
+#[tauri::command]
+// 使用应用固定数据库路径恢复空库、修复已知迁移漂移并执行兼容清理。
+pub async fn db_repair_known_migration_drift(
+    app: AppHandle,
+) -> Result<DbMigrationRepairResult, String> {
+    let db_path = app_paths::db_path()?;
+    let legacy_db_path = app
+        .path()
+        .app_config_dir()
+        .ok()
+        .map(|old_db_dir| old_db_dir.join(DB_FILE_NAME));
+    let legacy_db_recovered = match legacy_db_path.as_ref() {
+        Some(legacy_db_path) => {
+            match recover_legacy_db_file_if_current_empty(legacy_db_path, &db_path).await {
+                Ok(recovered) => recovered,
+                Err(err) => {
+                    log::warn!("Legacy CLI-Manager DB recovery skipped: {err}");
+                    false
+                }
+            }
+        }
+        None => false,
+    };
+
+    if !db_path.is_file() {
+        return Ok(DbMigrationRepairResult {
+            repaired: legacy_db_recovered,
+            status: "db_missing".to_string(),
+        });
+    }
+
+    let mut conn = open_cli_manager_db(&db_path).await?;
+    let mut result = repair_known_migration_drift(&mut conn).await?;
+    if reconcile_legacy_node_appearance_v33_migration(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(
+            &result.status,
+            "reconciled_legacy_node_appearance_v33_migration",
+        );
+    }
+    if ensure_node_appearance_columns(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_node_appearance_columns");
+    }
+    if ensure_group_binding_columns(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_group_binding_columns");
+    }
+    if ensure_ssh_attachment_root_column(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_ssh_attachment_root_column");
+    }
+    if defer_request_log_project_path_backfill(&mut conn).await? {
+        result.repaired = true;
+        result.status =
+            append_repair_status(&result.status, "deferred_request_log_project_path_backfill");
+    }
+    conn.close()
+        .await
+        .map_err(|err| format!("db_close_failed: {err}"))?;
+    if legacy_db_recovered {
+        result.repaired = true;
+        result.status = if result.status == "already_consistent" {
+            "legacy_db_recovered".to_string()
+        } else {
+            format!("legacy_db_recovered;{}", result.status)
+        };
+    }
+    if let Some(legacy_db_path) = legacy_db_path.as_ref() {
+        match merge_legacy_model_prices_once(
+            legacy_db_path,
+            &db_path,
+            &app_paths::cli_manager_data_dir()?,
+        )
+        .await
+        {
+            Ok(merged) if merged > 0 => {
+                result.repaired = true;
+                result.status = if result.status == "already_consistent" {
+                    format!("legacy_model_prices_merged_{merged}")
+                } else {
+                    format!("{};legacy_model_prices_merged_{merged}", result.status)
+                };
+            }
+            Ok(_) => {}
+            Err(err) => log::warn!("Legacy model price migration skipped: {err}"),
+        }
+    }
+    let mut conn = open_cli_manager_db(&db_path).await?;
+    match cleanup_replay_snapshot_inline_patches_for_current_version(
+        &mut conn,
+        &app_paths::cli_manager_data_dir()?,
+    )
+    .await
+    {
+        Ok(migrated) if migrated > 0 => {
+            result.repaired = true;
+            result.status = if result.status == "already_consistent" {
+                format!("replay_snapshot_patch_cleanup_migrated_{migrated}")
+            } else {
+                format!(
+                    "{};replay_snapshot_patch_cleanup_migrated_{migrated}",
+                    result.status
+                )
+            };
+        }
+        Ok(_) => {}
+        Err(err) => {
+            log::warn!("Replay snapshot patch cleanup skipped: {err}");
+        }
+    }
+    Ok(result)
+}
+
+// 将新的修复状态追加到结果，替换无操作的 already_consistent 标记。
+fn append_repair_status(current: &str, next: &str) -> String {
+    if current == "already_consistent" {
+        next.to_string()
+    } else {
+        format!("{current};{next}")
+    }
+}
+
+/// 将本地旧版外观迁移 v33 迁移为远端的用量诊断 v33。
+///
+/// 两条分支曾独立占用 v33。仅把外观迁移改为 v34 会让已登记旧外观 v33 的数据库在 SQLx
+/// 校验 checksum 时启动失败。确认登记项确实是旧外观 SQL 后，先运行用量 schema bootstrap，
+/// 再把 v33 的登记项切换为用量诊断 SQL；随后由 v34 外观列修复登记当前外观迁移。
+// 仅识别旧外观 v33 的描述与校验和，补齐用量结构后改登记为用量诊断迁移。
+async fn reconcile_legacy_node_appearance_v33_migration(
+    conn: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? {
+        return Ok(false);
+    }
+
+    let legacy_marker = sqlx::query(
+        "SELECT description, checksum
+         FROM _sqlx_migrations
+         WHERE version = ?1 AND success = 1
+         LIMIT 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_query_failed: {err}"))?;
+    let Some(legacy_marker) = legacy_marker else {
+        return Ok(false);
+    };
+    let description: String = legacy_marker
+        .try_get("description")
+        .map_err(|err| format!("legacy_node_appearance_v33_description_failed: {err}"))?;
+    let checksum: Vec<u8> = legacy_marker
+        .try_get("checksum")
+        .map_err(|err| format!("legacy_node_appearance_v33_checksum_failed: {err}"))?;
+    if description != NODE_APPEARANCE_MIGRATION_DESCRIPTION
+        || checksum != migration_checksum(NODE_APPEARANCE_MIGRATION_SQL)
+    {
+        return Ok(false);
+    }
+
+    crate::usage_schema::ensure_usage_schema(conn)
+        .await
+        .map_err(|err| format!("legacy_node_appearance_v33_usage_schema_failed: {err}"))?;
+    sqlx::query(
+        "UPDATE _sqlx_migrations
+         SET description = ?1, checksum = ?2
+         WHERE version = ?3 AND success = 1",
+    )
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION)
+    .bind(migration_checksum(MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL))
+    .bind(MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION)
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("legacy_node_appearance_v33_update_failed: {err}"))?;
+    Ok(true)
+}
+
+/// 外观列缺失自愈（issue #213）。
+///
+/// migration 34 只做四条 `ADD COLUMN`。如果历史库出现"版本已登记但列不存在"或"列存在但版本未登记"
+/// 的漂移，前者会让外观读写一直报 `no such column: color`，后者会让 sqlx 重放 ALTER 撞
+/// `duplicate column name`。这里在每次打开数据库前主动把两种漂移都补齐：
+/// 缺列就补列，版本未登记时按同一 checksum 登记，让 sqlx 跳过重放。
+// 在短事务中补齐项目与分组外观列及对应迁移登记。
+async fn ensure_node_appearance_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "groups").await?
+        || !table_exists(conn, "projects").await?
+    {
+        return Ok(false);
+    }
+
+    let group_columns = table_columns(conn, "groups").await?;
+    let project_columns = table_columns(conn, "projects").await?;
+    let mut missing: Vec<&str> = Vec::new();
+    if !group_columns.contains("icon") {
+        missing.push("ALTER TABLE groups ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !group_columns.contains("color") {
+        missing.push("ALTER TABLE groups ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("icon") {
+        missing.push("ALTER TABLE projects ADD COLUMN icon TEXT NOT NULL DEFAULT ''");
+    }
+    if !project_columns.contains("color") {
+        missing.push("ALTER TABLE projects ADD COLUMN color TEXT NOT NULL DEFAULT ''");
+    }
+
+    let already_registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("node_appearance_migration_query_failed: {err}"))?;
+
+    // 列齐全且版本已登记：正常状态，什么都不做。
+    if missing.is_empty() && already_registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("node_appearance_repair_begin_failed: {err}"))?;
+    let result = async {
+        for statement in &missing {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_alter_failed: {err}"))?;
+        }
+        if already_registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(NODE_APPEARANCE_MIGRATION_VERSION)
+            .bind(NODE_APPEARANCE_MIGRATION_DESCRIPTION)
+            .bind(migration_checksum(NODE_APPEARANCE_MIGRATION_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("node_appearance_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("node_appearance_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+/// 文件夹绑定路径与项目路径模式的列缺失自愈。
+///
+/// 绑定路径迁移在 SQLx `Database.load` 前无法依赖插件自动执行：已存在的旧库可能已经
+/// 登记了后续迁移，或迁移登记与实际列发生漂移。先补齐列并登记对应 checksum，确保
+/// 前端首次写入分组时不会撞到 `no such column: bound_path`。
+// 在短事务中分别补齐分组绑定路径、项目路径模式及缺失迁移登记。
+async fn ensure_group_binding_columns(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "groups").await?
+        || !table_exists(conn, "projects").await?
+    {
+        return Ok(false);
+    }
+
+    let group_columns = table_columns(conn, "groups").await?;
+    let project_columns = table_columns(conn, "projects").await?;
+    let mut missing_statements: Vec<&str> = Vec::new();
+    if !group_columns.contains("bound_path") {
+        missing_statements.push(MIGRATION_ADD_GROUP_BOUND_PATH_SQL);
+    }
+    if !project_columns.contains("path_mode") {
+        missing_statements.push(MIGRATION_ADD_PROJECT_PATH_MODE_SQL);
+    }
+
+    let migrations = [
+        (
+            MIGRATION_ADD_GROUP_BOUND_PATH_VERSION,
+            MIGRATION_ADD_GROUP_BOUND_PATH_DESCRIPTION,
+            MIGRATION_ADD_GROUP_BOUND_PATH_SQL,
+        ),
+        (
+            MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
+            MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
+            MIGRATION_ADD_PROJECT_PATH_MODE_SQL,
+        ),
+    ];
+    let mut unregistered = Vec::new();
+    for (version, description, sql) in migrations {
+        let registered: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(
+                 SELECT 1 FROM _sqlx_migrations
+                 WHERE version = ?1 AND success = 1
+             )",
+        )
+        .bind(version)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| format!("group_binding_migration_query_failed: {err}"))?;
+        if registered == 0 {
+            unregistered.push((version, description, sql));
+        }
+    }
+
+    if missing_statements.is_empty() && unregistered.is_empty() {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("group_binding_repair_begin_failed: {err}"))?;
+    let result = async {
+        for statement in &missing_statements {
+            sqlx::query(statement)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("group_binding_repair_alter_failed: {err}"))?;
+        }
+        for (version, description, sql) in &unregistered {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(version)
+            .bind(description)
+            .bind(migration_checksum(sql))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("group_binding_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("group_binding_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+/// SSH Host 附件目录列缺失自愈。
+///
+/// migration 37 只有一条 `ADD COLUMN`。如果旧库在 migration 登记与实际 schema 之间发生漂移，
+/// 编辑 SSH Host 时读取 `attachment_root` 会直接失败；这里在 SQLx `Database.load` 前同时修复
+/// “列缺失但版本已登记”、“列存在但版本未登记”和“两者都缺失”三种状态。
+// 在短事务中独立修复 SSH 附件根列和迁移登记的缺失。
+async fn ensure_ssh_attachment_root_column(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? || !table_exists(conn, "ssh_hosts").await?
+    {
+        return Ok(false);
+    }
+
+    let columns = table_columns(conn, "ssh_hosts").await?;
+    let has_column = columns.contains("attachment_root");
+    let registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("ssh_attachment_root_migration_query_failed: {err}"))?;
+
+    if has_column && registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("ssh_attachment_root_repair_begin_failed: {err}"))?;
+    let result = async {
+        if !has_column {
+            sqlx::query(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("ssh_attachment_root_repair_alter_failed: {err}"))?;
+        }
+        if registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION)
+            .bind(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION)
+            .bind(migration_checksum(MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("ssh_attachment_root_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("ssh_attachment_root_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+// 确认存在历史用量及必要列后登记原始迁移校验和，将大批回填留到后台。
+async fn defer_request_log_project_path_backfill(
+    conn: &mut SqliteConnection,
+) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await?
+        || !table_exists(conn, "usage_records").await?
+        || !table_columns(conn, "usage_records")
+            .await?
+            .contains("project_path")
+    {
+        return Ok(false);
+    }
+
+    let already_applied: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_migration_query_failed: {err}"))?;
+    if already_applied != 0 {
+        return Ok(false);
+    }
+
+    let has_legacy_rows: i64 =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM usage_records LIMIT 1)")
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|err| format!("request_log_backfill_legacy_query_failed: {err}"))?;
+    if has_legacy_rows == 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_defer_begin_failed: {err}"))?;
+    let result = sqlx::query(
+        "INSERT INTO _sqlx_migrations
+             (version, description, installed_on, success, checksum, execution_time)
+         VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+    )
+    .bind(MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION)
+    .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_DESCRIPTION)
+    .bind(migration_checksum(
+        MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_SQL,
+    ))
+    .execute(&mut *conn)
+    .await;
+
+    match result {
+        Ok(_) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("request_log_backfill_defer_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(format!("request_log_backfill_defer_insert_failed: {err}"))
+        }
+    }
+}
+
+#[tauri::command]
+// 持单执行锁打开应用数据库并运行项目路径后台回填，完成后关闭连接。
+pub async fn db_backfill_request_log_project_paths() -> Result<DbProjectPathBackfillResult, String>
+{
+    let _guard = REQUEST_LOG_PROJECT_PATH_BACKFILL_LOCK.lock().await;
+    let db_path = app_paths::db_path()?;
+    if !db_path.is_file() {
+        return Ok(DbProjectPathBackfillResult {
+            updated_rows: 0,
+            mapped_project_keys: 0,
+        });
+    }
+
+    let mut conn = open_cli_manager_db(&db_path).await?;
+    let result = backfill_request_log_project_paths(&mut conn).await;
+    conn.close()
+        .await
+        .map_err(|err| format!("db_close_failed: {err}"))?;
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BackfillProject {
+    name: String,
+    path: String,
+}
+
+// 修剪路径、统一分隔符并转为小写，去除末尾斜杠。
+fn normalize_backfill_path(value: &str) -> String {
+    value
+        .trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
+}
+
+// 识别正斜杠根路径或盘符斜杠形式的绝对路径。
+fn is_absolute_backfill_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    value.starts_with('/') || (bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/')
+}
+
+// 直接保留归一化绝对路径，或将名称与后缀唯一匹配到项目路径。
+fn resolve_backfill_project_path(key: &str, projects: &[BackfillProject]) -> Option<String> {
+    let normalized_key = normalize_backfill_path(key);
+    if normalized_key.is_empty() {
+        return None;
+    }
+    if is_absolute_backfill_path(&normalized_key) {
+        return Some(normalized_key);
+    }
+
+    let project_name = key.trim().to_lowercase();
+    let suffix = format!("/{normalized_key}");
+    let candidates = projects
+        .iter()
+        .filter(|project| {
+            project.name == project_name
+                || project.path == normalized_key
+                || project.path.ends_with(&suffix)
+        })
+        .map(|project| project.path.clone())
+        .collect::<BTreeSet<_>>();
+    (candidates.len() == 1).then(|| candidates.into_iter().next().unwrap())
+}
+
+// 构建无歧义项目映射和临时队列，分批回填空路径后传播到路由记录。
+async fn backfill_request_log_project_paths(
+    conn: &mut SqliteConnection,
+) -> Result<DbProjectPathBackfillResult, String> {
+    if !table_exists(conn, "usage_records").await?
+        || !table_exists(conn, "projects").await?
+        || !table_columns(conn, "usage_records")
+            .await?
+            .contains("project_path")
+    {
+        return Ok(DbProjectPathBackfillResult {
+            updated_rows: 0,
+            mapped_project_keys: 0,
+        });
+    }
+
+    let project_rows = sqlx::query(
+        "SELECT name, path
+         FROM projects
+         WHERE COALESCE(environment_type, 'local') <> 'ssh'
+           AND NULLIF(TRIM(path), '') IS NOT NULL",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_projects_failed: {err}"))?;
+    let projects = project_rows
+        .into_iter()
+        .filter_map(|row| {
+            let name = row.try_get::<String, _>("name").ok()?.trim().to_lowercase();
+            let path = normalize_backfill_path(&row.try_get::<String, _>("path").ok()?);
+            (!path.is_empty()).then_some(BackfillProject { name, path })
+        })
+        .collect::<Vec<_>>();
+
+    let key_rows = sqlx::query(
+        "SELECT DISTINCT project_key
+         FROM usage_records
+         WHERE NULLIF(TRIM(project_path), '') IS NULL
+           AND NULLIF(TRIM(project_key), '') IS NOT NULL",
+    )
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_keys_failed: {err}"))?;
+
+    let mappings = key_rows
+        .into_iter()
+        .filter_map(|row| row.try_get::<String, _>("project_key").ok())
+        .filter_map(|key| resolve_backfill_project_path(&key, &projects).map(|path| (key, path)))
+        .collect::<Vec<_>>();
+
+    sqlx::query(
+        "CREATE TEMP TABLE IF NOT EXISTS request_log_project_path_backfill_queue (
+             record_rowid INTEGER PRIMARY KEY,
+             project_path TEXT NOT NULL
+         ) WITHOUT ROWID",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("request_log_backfill_queue_create_failed: {err}"))?;
+    sqlx::query("DELETE FROM request_log_project_path_backfill_queue")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_reset_failed: {err}"))?;
+    for (project_key, project_path) in &mappings {
+        sqlx::query(
+            "INSERT OR IGNORE INTO request_log_project_path_backfill_queue
+                 (record_rowid, project_path)
+             SELECT rowid, ?1
+             FROM usage_records
+             WHERE project_key = ?2
+               AND NULLIF(TRIM(project_path), '') IS NULL",
+        )
+        .bind(project_path)
+        .bind(project_key)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_fill_failed: {err}"))?;
+    }
+
+    let mut updated_rows = 0_u64;
+    loop {
+        let rowids = sqlx::query_scalar::<_, i64>(
+            "SELECT record_rowid
+             FROM request_log_project_path_backfill_queue
+             ORDER BY record_rowid
+             LIMIT ?1",
+        )
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_batch_query_failed: {err}"))?;
+        let Some(last_rowid) = rowids.last().copied() else {
+            break;
+        };
+        let affected = sqlx::query(
+            "UPDATE usage_records AS target
+             SET project_path = (
+                 SELECT queued.project_path
+                 FROM request_log_project_path_backfill_queue AS queued
+                 WHERE queued.record_rowid = target.rowid
+             )
+             WHERE target.rowid IN (
+                 SELECT record_rowid
+                 FROM request_log_project_path_backfill_queue
+                 ORDER BY record_rowid
+                 LIMIT ?1
+             )
+               AND NULLIF(TRIM(target.project_path), '') IS NULL",
+        )
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_batch_update_failed: {err}"))?
+        .rows_affected();
+        updated_rows += affected;
+        sqlx::query("DELETE FROM request_log_project_path_backfill_queue WHERE record_rowid <= ?1")
+            .bind(last_rowid)
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("request_log_backfill_queue_advance_failed: {err}"))?;
+        tokio::time::sleep(Duration::from_millis(
+            REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS,
+        ))
+        .await;
+    }
+    sqlx::query("DROP TABLE request_log_project_path_backfill_queue")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_backfill_queue_drop_failed: {err}"))?;
+
+    updated_rows += backfill_route_project_paths(conn).await?;
+    log::info!(
+        "Request-log project-path background backfill completed: updated_rows={updated_rows}, mapped_project_keys={}",
+        mappings.len()
+    );
+    Ok(DbProjectPathBackfillResult {
+        updated_rows,
+        mapped_project_keys: mappings.len(),
+    })
+}
+
+// 按行号分批为缺少路径的路由记录匹配同来源会话的最新已知项目路径。
+async fn backfill_route_project_paths(conn: &mut SqliteConnection) -> Result<u64, String> {
+    let mut after_rowid = 0_i64;
+    let mut updated_rows = 0_u64;
+    loop {
+        let rowids = sqlx::query_scalar::<_, i64>(
+            "SELECT rowid
+             FROM usage_records
+             WHERE rowid > ?1
+               AND data_source = 'route'
+               AND NULLIF(TRIM(project_path), '') IS NULL
+               AND NULLIF(TRIM(session_id), '') IS NOT NULL
+             ORDER BY rowid
+             LIMIT ?2",
+        )
+        .bind(after_rowid)
+        .bind(REQUEST_LOG_PROJECT_PATH_BACKFILL_BATCH_SIZE)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_route_backfill_query_failed: {err}"))?;
+        let Some(last_rowid) = rowids.last().copied() else {
+            break;
+        };
+        let first_rowid = rowids[0];
+        let affected = sqlx::query(
+            "UPDATE usage_records AS target
+             SET project_path = (
+                 SELECT session.project_path
+                 FROM usage_records AS session
+                 WHERE session.data_source = 'session_log'
+                   AND session.source = target.source
+                   AND session.session_id = target.session_id
+                   AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+                 ORDER BY session.updated_at_ms DESC
+                 LIMIT 1
+             )
+             WHERE target.rowid BETWEEN ?1 AND ?2
+               AND target.data_source = 'route'
+               AND NULLIF(TRIM(target.project_path), '') IS NULL
+               AND EXISTS (
+                   SELECT 1
+                   FROM usage_records AS session
+                   WHERE session.data_source = 'session_log'
+                     AND session.source = target.source
+                     AND session.session_id = target.session_id
+                     AND NULLIF(TRIM(session.project_path), '') IS NOT NULL
+               )",
+        )
+        .bind(first_rowid)
+        .bind(last_rowid)
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("request_log_route_backfill_update_failed: {err}"))?
+        .rows_affected();
+        updated_rows += affected;
+        after_rowid = last_rowid;
+        tokio::time::sleep(Duration::from_millis(
+            REQUEST_LOG_PROJECT_PATH_BACKFILL_YIELD_MS,
+        ))
+        .await;
+    }
+    Ok(updated_rows)
+}
+
+// 通过文件路径打开 SQLite，并设置十五秒忙等待超时。
+async fn open_cli_manager_db(path: &Path) -> Result<SqliteConnection, String> {
+    let options = SqliteConnectOptions::new()
+        .filename(path)
+        .busy_timeout(Duration::from_secs(15));
+    SqliteConnection::connect_with(&options)
+        .await
+        .map_err(|err| format!("db_open_failed: {err}"))
+}
+
+// 用当前毫秒时间生成数据库备份文件后缀。
+fn backup_suffix() -> String {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    format!("backup-{millis}")
+}
+
+// 在数据库完整文件名后追加 WAL 或 SHM 等侧文件后缀。
+fn sqlite_sidecar_path(path: &Path, suffix: &str) -> PathBuf {
+    let mut raw = path.as_os_str().to_os_string();
+    raw.push(suffix);
+    PathBuf::from(raw)
+}
+
+// 分别复制数据库、WAL 和 SHM 中现存的文件到带时间后缀的备份。
+fn backup_db_file_family(path: &Path) -> Result<(), String> {
+    for candidate in [
+        path.to_path_buf(),
+        sqlite_sidecar_path(path, "-wal"),
+        sqlite_sidecar_path(path, "-shm"),
+    ] {
+        if !candidate.is_file() {
+            continue;
+        }
+        let file_name = candidate
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| "legacy_db_backup_invalid_path".to_string())?;
+        let backup_path = candidate.with_file_name(format!("{file_name}.{}", backup_suffix()));
+        fs::copy(&candidate, backup_path)
+            .map_err(|err| format!("legacy_db_backup_failed: {err}"))?;
+    }
+    Ok(())
+}
+
+// 先备份目标数据库族，再复制源数据库及侧文件并移除源中缺失的目标侧文件。
+fn copy_db_file_family(source: &Path, target: &Path) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("legacy_db_parent_create_failed: {err}"))?;
+    }
+    backup_db_file_family(target)?;
+    fs::copy(source, target).map_err(|err| format!("legacy_db_copy_failed: {err}"))?;
+
+    for suffix in ["-wal", "-shm"] {
+        let source_sidecar = sqlite_sidecar_path(source, suffix);
+        let target_sidecar = sqlite_sidecar_path(target, suffix);
+        if source_sidecar.is_file() {
+            fs::copy(&source_sidecar, &target_sidecar)
+                .map_err(|err| format!("legacy_db_sidecar_copy_failed: {err}"))?;
+        } else if target_sidecar.exists() {
+            fs::remove_file(&target_sidecar)
+                .map_err(|err| format!("legacy_db_sidecar_remove_failed: {err}"))?;
+        }
+    }
+    Ok(())
+}
+
+// 统计数据库中项目、分组和命令模板的行数，缺失文件或表按零处理。
+async fn user_data_row_count(path: &Path) -> Result<i64, String> {
+    if !path.is_file() {
+        return Ok(0);
+    }
+    let mut conn = open_cli_manager_db(path).await?;
+    let mut total = 0_i64;
+    for table in USER_DATA_TABLES {
+        if !table_exists(&mut conn, table).await? {
+            continue;
+        }
+        let sql = format!("SELECT COUNT(*) AS count FROM {table}");
+        let row = sqlx::query(&sql)
+            .fetch_one(&mut conn)
+            .await
+            .map_err(|err| format!("legacy_db_count_failed: {err}"))?;
+        let count: i64 = row
+            .try_get("count")
+            .map_err(|err| format!("legacy_db_count_row_failed: {err}"))?;
+        total += count;
+    }
+    Ok(total)
+}
+
+// 仅当旧库有指定用户数据而当前库没有时，复制旧数据库族进行恢复。
+async fn recover_legacy_db_file_if_current_empty(
+    legacy_db_path: &Path,
+    current_db_path: &Path,
+) -> Result<bool, String> {
+    if !legacy_db_path.is_file() {
+        return Ok(false);
+    }
+
+    let legacy_rows = user_data_row_count(legacy_db_path).await?;
+    if legacy_rows == 0 {
+        return Ok(false);
+    }
+
+    let current_rows = user_data_row_count(current_db_path).await?;
+    if current_rows > 0 {
+        return Ok(false);
+    }
+
+    copy_db_file_family(legacy_db_path, current_db_path)?;
+    Ok(true)
+}
+
+// 返回旧模型价格迁移的一次性标记文件路径。
+fn legacy_model_prices_marker_path(data_dir: &Path) -> PathBuf {
+    data_dir.join(LEGACY_MODEL_PRICES_MIGRATION_MARKER_FILE)
+}
+
+// 备份当前库后合并旧模型价格，保留非内置现值并写入完成标记。
+async fn merge_legacy_model_prices_once(
+    legacy_db_path: &Path,
+    current_db_path: &Path,
+    data_dir: &Path,
+) -> Result<u64, String> {
+    let marker_path = legacy_model_prices_marker_path(data_dir);
+    if marker_path.is_file() || !legacy_db_path.is_file() || !current_db_path.is_file() {
+        return Ok(0);
+    }
+
+    let mut legacy = open_cli_manager_db(legacy_db_path).await?;
+    if !table_exists(&mut legacy, "model_prices").await? {
+        fs::create_dir_all(data_dir)
+            .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+        fs::write(&marker_path, APP_VERSION)
+            .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+        return Ok(0);
+    }
+    let rows = sqlx::query(
+        "SELECT model, input_per_1m, output_per_1m, cache_read_per_1m,
+                cache_creation_per_1m, source, source_model_id, raw_json,
+                updated_at_ms, synced_at_ms
+         FROM model_prices",
+    )
+    .fetch_all(&mut legacy)
+    .await
+    .map_err(|err| format!("legacy_model_prices_read_failed: {err}"))?;
+    legacy
+        .close()
+        .await
+        .map_err(|err| format!("legacy_model_prices_close_failed: {err}"))?;
+
+    if rows.is_empty() {
+        fs::create_dir_all(data_dir)
+            .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+        fs::write(&marker_path, APP_VERSION)
+            .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+        return Ok(0);
+    }
+
+    backup_db_file_family(current_db_path)?;
+    let mut current = open_cli_manager_db(current_db_path).await?;
+    if !table_exists(&mut current, "model_prices").await? {
+        return Err("current_model_prices_table_missing".to_string());
+    }
+    let mut transaction = current
+        .begin()
+        .await
+        .map_err(|err| format!("legacy_model_prices_transaction_failed: {err}"))?;
+    let mut merged = 0_u64;
+    for row in rows {
+        let result = sqlx::query(
+            "INSERT INTO model_prices (
+                model, input_per_1m, output_per_1m, cache_read_per_1m,
+                cache_creation_per_1m, source, source_model_id, raw_json,
+                updated_at_ms, synced_at_ms
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(model) DO UPDATE SET
+                input_per_1m = excluded.input_per_1m,
+                output_per_1m = excluded.output_per_1m,
+                cache_read_per_1m = excluded.cache_read_per_1m,
+                cache_creation_per_1m = excluded.cache_creation_per_1m,
+                source = excluded.source,
+                source_model_id = excluded.source_model_id,
+                raw_json = excluded.raw_json,
+                updated_at_ms = excluded.updated_at_ms,
+                synced_at_ms = excluded.synced_at_ms
+             WHERE model_prices.source = 'builtin' AND excluded.source <> 'builtin'",
+        )
+        .bind(
+            row.try_get::<String, _>("model")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("input_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("output_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("cache_read_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<f64, _>("cache_creation_per_1m")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<String, _>("source")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<String>, _>("source_model_id")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<String>, _>("raw_json")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<i64, _>("updated_at_ms")
+                .map_err(|err| err.to_string())?,
+        )
+        .bind(
+            row.try_get::<Option<i64>, _>("synced_at_ms")
+                .map_err(|err| err.to_string())?,
+        )
+        .execute(&mut *transaction)
+        .await
+        .map_err(|err| format!("legacy_model_prices_merge_failed: {err}"))?;
+        merged += result.rows_affected();
+    }
+    transaction
+        .commit()
+        .await
+        .map_err(|err| format!("legacy_model_prices_commit_failed: {err}"))?;
+    current
+        .close()
+        .await
+        .map_err(|err| format!("legacy_model_prices_current_close_failed: {err}"))?;
+
+    fs::create_dir_all(data_dir)
+        .map_err(|err| format!("legacy_model_prices_marker_dir_failed: {err}"))?;
+    fs::write(&marker_path, APP_VERSION)
+        .map_err(|err| format!("legacy_model_prices_marker_write_failed: {err}"))?;
+    Ok(merged)
+}
+
+// 依据物理结构生成预期已知迁移记录，仅在登记不一致时重写。
+async fn repair_known_migration_drift(
+    conn: &mut SqliteConnection,
+) -> Result<DbMigrationRepairResult, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? {
+        return Ok(DbMigrationRepairResult {
+            repaired: false,
+            status: "migration_table_missing".to_string(),
+        });
+    }
+
+    let features = detect_schema_features(conn).await?;
+    let expected = expected_migrations_for_features(&features)?;
+    let existing = read_known_migration_rows(conn).await?;
+
+    if existing == expected_rows(&expected) {
+        return Ok(DbMigrationRepairResult {
+            repaired: false,
+            status: "already_consistent".to_string(),
+        });
+    }
+
+    rewrite_known_migration_rows(conn, &expected).await?;
+    Ok(DbMigrationRepairResult {
+        repaired: true,
+        status: "repaired_known_migration_drift".to_string(),
+    })
+}
+
+// 查询内联快照补丁并在事务中迁出到文件，成功后尽力收缩数据库。
+async fn cleanup_replay_snapshot_inline_patches(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+) -> Result<usize, String> {
+    if !table_exists(conn, "ai_replay_events").await? {
+        return Ok(0);
+    }
+
+    let rows = sqlx::query(
+        "SELECT id, session_key, event_index, payload_json
+         FROM ai_replay_events
+         WHERE kind = 'snapshot' AND payload_json LIKE ?1
+         ORDER BY id",
+    )
+    .bind("%\"patch\"%")
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("replay_snapshot_cleanup_query_failed: {err}"))?;
+
+    if rows.is_empty() {
+        return Ok(0);
+    }
+
+    fs::create_dir_all(data_dir.join(REPLAY_SNAPSHOT_PATCH_DIR))
+        .map_err(|err| format!("replay_snapshot_cleanup_dir_failed: {err}"))?;
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("replay_snapshot_cleanup_begin_failed: {err}"))?;
+
+    let result = cleanup_replay_snapshot_inline_patches_in_transaction(conn, data_dir, &rows).await;
+    if result.is_ok() {
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("replay_snapshot_cleanup_commit_failed: {err}"))?;
+    } else {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+
+    let migrated = result?;
+    if migrated > 0 {
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut *conn)
+            .await;
+        if let Err(err) = sqlx::query("VACUUM").execute(&mut *conn).await {
+            log::warn!("Replay snapshot DB vacuum skipped: {err}");
+        }
+        let _ = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&mut *conn)
+            .await;
+    }
+
+    Ok(migrated)
+}
+
+// 按应用版本标记控制内联快照补丁清理，成功后记录当前版本。
+async fn cleanup_replay_snapshot_inline_patches_for_current_version(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+) -> Result<usize, String> {
+    if replay_snapshot_cleanup_marker_path(data_dir).is_file()
+        && fs::read_to_string(replay_snapshot_cleanup_marker_path(data_dir))
+            .map(|value| value.trim() == APP_VERSION)
+            .unwrap_or(false)
+    {
+        return Ok(0);
+    }
+
+    let migrated = cleanup_replay_snapshot_inline_patches(conn, data_dir).await?;
+    fs::create_dir_all(data_dir)
+        .map_err(|err| format!("replay_snapshot_cleanup_marker_dir_failed: {err}"))?;
+    fs::write(replay_snapshot_cleanup_marker_path(data_dir), APP_VERSION)
+        .map_err(|err| format!("replay_snapshot_cleanup_marker_write_failed: {err}"))?;
+    Ok(migrated)
+}
+
+// 返回快照补丁清理版本标记的应用数据路径。
+fn replay_snapshot_cleanup_marker_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join(REPLAY_SNAPSHOT_CLEANUP_MARKER_FILE)
+}
+
+// 在现有事务中逐条写出快照补丁文件，并将数据库载荷改为文件引用。
+async fn cleanup_replay_snapshot_inline_patches_in_transaction(
+    conn: &mut SqliteConnection,
+    data_dir: &Path,
+    rows: &[SqliteRow],
+) -> Result<usize, String> {
+    let mut migrated = 0usize;
+
+    for row in rows {
+        let id: i64 = row
+            .try_get("id")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let session_key: String = row
+            .try_get("session_key")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let event_index: i64 = row
+            .try_get("event_index")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+        let payload_json: String = row
+            .try_get("payload_json")
+            .map_err(|err| format!("replay_snapshot_cleanup_row_failed: {err}"))?;
+
+        let Ok(mut payload) = serde_json::from_str::<Value>(&payload_json) else {
+            log::warn!("Replay snapshot cleanup skipped malformed payload row id={id}");
+            continue;
+        };
+        let Some(object) = payload.as_object_mut() else {
+            continue;
+        };
+        let Some(patch) = object
+            .get("patch")
+            .and_then(Value::as_str)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+
+        let checkpoint_id = object
+            .get("checkpointId")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("event-{event_index}"));
+        let relative_path = replay_snapshot_patch_relative_path(&session_key, &checkpoint_id);
+        let target_path = data_dir.join(&relative_path);
+        if let Some(parent) = target_path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("replay_snapshot_cleanup_dir_failed: {err}"))?;
+        }
+        fs::write(&target_path, patch.as_bytes())
+            .map_err(|err| format!("replay_snapshot_cleanup_write_failed: {err}"))?;
+
+        let patch_bytes = patch.len() as u64;
+        object.remove("patch");
+        object.insert("patchPath".to_string(), Value::String(relative_path));
+        object.insert(
+            "patchStorage".to_string(),
+            Value::String(REPLAY_SNAPSHOT_PATCH_STORAGE.to_string()),
+        );
+        if object.get("patchBytes").and_then(Value::as_u64).is_none() {
+            object.insert(
+                "patchBytes".to_string(),
+                Value::Number(serde_json::Number::from(patch_bytes)),
+            );
+        }
+        object.insert(
+            "patchStoredAt".to_string(),
+            Value::String(chrono::Utc::now().to_rfc3339()),
+        );
+
+        let updated_payload_json = serde_json::to_string(&payload)
+            .map_err(|err| format!("replay_snapshot_cleanup_serialize_failed: {err}"))?;
+        sqlx::query("UPDATE ai_replay_events SET payload_json = ?1 WHERE id = ?2")
+            .bind(updated_payload_json)
+            .bind(id)
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("replay_snapshot_cleanup_update_failed: {err}"))?;
+        migrated += 1;
+    }
+
+    Ok(migrated)
+}
+
+// 用清理后的会话与检查点标识生成快照补丁相对路径。
+fn replay_snapshot_patch_relative_path(session_key: &str, checkpoint_id: &str) -> String {
+    format!(
+        "{}/{}/{}.patch",
+        REPLAY_SNAPSHOT_PATCH_DIR,
+        sanitize_snapshot_path_segment(session_key, "session"),
+        sanitize_snapshot_path_segment(checkpoint_id, "snapshot")
+    )
+}
+
+// 将路径片段限制为安全 ASCII 字符和最多 120 字节，空结果使用回退名称。
+fn sanitize_snapshot_path_segment(value: &str, fallback: &str) -> String {
+    let mut safe = String::with_capacity(value.len().min(120));
+    for ch in value.trim().chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            safe.push(ch);
+        } else {
+            safe.push('-');
+        }
+        if safe.len() >= 120 {
+            break;
+        }
+    }
+    let trimmed = safe.trim_matches(['.', '-']);
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+// 按完整物理功能结构生成当前迁移清单，拒绝部分存在的功能结构。
+fn expected_migrations_for_features(
+    features: &SchemaFeatures,
+) -> Result<Vec<ExpectedMigration>, String> {
+    let mut expected = Vec::new();
+
+    match features.favorite_snapshots {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_VERSION,
+            description: MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SESSION_FAVORITE_SNAPSHOTS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_favorite_schema".to_string()),
+    }
+
+    match features.cli_args {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_ADD_CLI_ARGS_VERSION,
+            description: MIGRATION_ADD_CLI_ARGS_DESCRIPTION,
+            sql: MIGRATION_ADD_CLI_ARGS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_cli_args_schema".to_string()),
+    }
+
+    match features.worktree_isolation {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_ADD_WORKTREE_ISOLATION_VERSION,
+            description: MIGRATION_ADD_WORKTREE_ISOLATION_DESCRIPTION,
+            sql: MIGRATION_ADD_WORKTREE_ISOLATION_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_worktree_schema".to_string()),
+    }
+
+    match features.ssh_hosts {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_CREATE_SSH_HOSTS_VERSION,
+            description: MIGRATION_CREATE_SSH_HOSTS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_HOSTS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_ssh_host_schema".to_string()),
+    }
+
+    match features.ssh_host_groups {
+        SchemaState::Complete => expected.push(ExpectedMigration {
+            version: MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION,
+            description: MIGRATION_CREATE_SSH_HOST_GROUPS_DESCRIPTION,
+            sql: MIGRATION_CREATE_SSH_HOST_GROUPS_SQL,
+        }),
+        SchemaState::Absent => {}
+        SchemaState::Partial => return Err("migration_repair_partial_ssh_group_schema".to_string()),
+    }
+
+    expected.sort_by_key(|migration| migration.version);
+    Ok(expected)
+}
+
+// 将预期迁移转换为包含当前 SQL 校验和的登记记录。
+fn expected_rows(expected: &[ExpectedMigration]) -> Vec<MigrationRow> {
+    expected
+        .iter()
+        .map(|migration| MigrationRow {
+            version: migration.version,
+            description: migration.description.to_string(),
+            checksum: migration_checksum(migration.sql),
+        })
+        .collect()
+}
+
+// 计算迁移 SQL 字节的 SHA-384 校验和。
+fn migration_checksum(sql: &str) -> Vec<u8> {
+    Sha384::digest(sql.as_bytes()).to_vec()
+}
+
+// 读取仅属于已知 13–15 和 SSH 兼容版本的迁移登记，并按版本排序。
+async fn read_known_migration_rows(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<MigrationRow>, String> {
+    let rows = sqlx::query(
+        "SELECT version, description, checksum FROM _sqlx_migrations
+         WHERE version BETWEEN ?1 AND ?2 OR version IN (?3, ?4)
+         ORDER BY version",
+    )
+    .bind(KNOWN_DRIFT_START_VERSION)
+    .bind(KNOWN_DRIFT_END_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|err| format!("migration_repair_query_failed: {err}"))?;
+
+    rows.iter().map(migration_row_from_sqlite).collect()
+}
+
+// 从 SQLite 行解码迁移版本、描述及校验和。
+fn migration_row_from_sqlite(row: &SqliteRow) -> Result<MigrationRow, String> {
+    Ok(MigrationRow {
+        version: row
+            .try_get("version")
+            .map_err(|err| format!("migration_repair_row_failed: {err}"))?,
+        description: row
+            .try_get("description")
+            .map_err(|err| format!("migration_repair_row_failed: {err}"))?,
+        checksum: row
+            .try_get("checksum")
+            .map_err(|err| format!("migration_repair_row_failed: {err}"))?,
+    })
+}
+
+// 开启立即事务重写已知迁移登记，步骤失败时尝试回滚。
+async fn rewrite_known_migration_rows(
+    conn: &mut SqliteConnection,
+    expected: &[ExpectedMigration],
+) -> Result<(), String> {
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("migration_repair_begin_failed: {err}"))?;
+
+    let result = rewrite_known_migration_rows_in_transaction(conn, expected).await;
+    if result.is_ok() {
+        sqlx::query("COMMIT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("migration_repair_commit_failed: {err}"))?;
+    } else {
+        let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+    }
+    result
+}
+
+// 在现有事务中删除已知版本登记，并插入按物理结构确认的预期记录。
+async fn rewrite_known_migration_rows_in_transaction(
+    conn: &mut SqliteConnection,
+    expected: &[ExpectedMigration],
+) -> Result<(), String> {
+    sqlx::query(
+        "DELETE FROM _sqlx_migrations
+         WHERE version BETWEEN ?1 AND ?2 OR version IN (?3, ?4)",
+    )
+    .bind(KNOWN_DRIFT_START_VERSION)
+    .bind(KNOWN_DRIFT_END_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOSTS_VERSION)
+    .bind(MIGRATION_CREATE_SSH_HOST_GROUPS_VERSION)
+    .execute(&mut *conn)
+    .await
+    .map_err(|err| format!("migration_repair_delete_failed: {err}"))?;
+
+    for migration in expected {
+        sqlx::query(
+            "INSERT INTO _sqlx_migrations
+             (version, description, success, checksum, execution_time)
+             VALUES (?1, ?2, TRUE, ?3, 0)",
+        )
+        .bind(migration.version)
+        .bind(migration.description)
+        .bind(migration_checksum(migration.sql))
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("migration_repair_insert_failed: {err}"))?;
+    }
+
+    Ok(())
+}
+
+// 读取相关表列，判定收藏快照、CLI 参数、工作树及 SSH 功能结构状态。
+async fn detect_schema_features(conn: &mut SqliteConnection) -> Result<SchemaFeatures, String> {
+    let projects_columns = table_columns(conn, "projects").await?;
+    let favorite_columns = table_columns(conn, "session_favorite_snapshots").await?;
+    let worktree_columns = table_columns(conn, "worktrees").await?;
+    let ssh_host_columns = table_columns(conn, "ssh_hosts").await?;
+    let ssh_group_columns = table_columns(conn, "ssh_host_groups").await?;
+
+    Ok(SchemaFeatures {
+        favorite_snapshots: classify_table_schema(&favorite_columns, &FAVORITE_SNAPSHOT_COLUMNS),
+        cli_args: if projects_columns.contains("cli_args") {
+            SchemaState::Complete
+        } else {
+            SchemaState::Absent
+        },
+        worktree_isolation: classify_worktree_schema(&projects_columns, &worktree_columns),
+        ssh_hosts: classify_ssh_host_schema(&projects_columns, &ssh_host_columns),
+        ssh_host_groups: classify_ssh_group_schema(&ssh_host_columns, &ssh_group_columns),
+    })
+}
+
+// 按列集合区分表缺失、所需列齐全和部分结构。
+fn classify_table_schema(columns: &HashSet<String>, required: &[&str]) -> SchemaState {
+    if columns.is_empty() {
+        return SchemaState::Absent;
+    }
+    if has_columns(columns, required) {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
+// 联合项目工作树列与工作树表列判断隔离结构状态。
+fn classify_worktree_schema(
+    projects_columns: &HashSet<String>,
+    worktree_columns: &HashSet<String>,
+) -> SchemaState {
+    let has_project_columns = has_columns(projects_columns, &WORKTREE_PROJECT_COLUMNS);
+    let has_worktree_table = !worktree_columns.is_empty();
+    let has_worktree_columns = has_columns(worktree_columns, &WORKTREE_COLUMNS);
+
+    if !has_project_columns && !has_worktree_table {
+        return SchemaState::Absent;
+    }
+    if has_project_columns && has_worktree_columns {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
+// 联合 SSH 主机分组引用列与分组表判断分组结构状态。
+fn classify_ssh_group_schema(
+    ssh_host_columns: &HashSet<String>,
+    ssh_group_columns: &HashSet<String>,
+) -> SchemaState {
+    let has_group_id = ssh_host_columns.contains("group_id");
+    let has_group_table = !ssh_group_columns.is_empty();
+
+    if !has_group_id && !has_group_table {
+        return SchemaState::Absent;
+    }
+    if has_group_id && has_columns(ssh_group_columns, &SSH_HOST_GROUP_COLUMNS) {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
+// 联合项目 SSH 列与主机表判断 SSH 主机结构状态。
+fn classify_ssh_host_schema(
+    projects_columns: &HashSet<String>,
+    ssh_host_columns: &HashSet<String>,
+) -> SchemaState {
+    let has_project_columns = has_columns(projects_columns, &SSH_PROJECT_COLUMNS);
+    let has_ssh_host_table = !ssh_host_columns.is_empty();
+
+    if !has_project_columns && !has_ssh_host_table {
+        return SchemaState::Absent;
+    }
+    if has_project_columns && has_columns(ssh_host_columns, &SSH_HOST_COLUMNS) {
+        SchemaState::Complete
+    } else {
+        SchemaState::Partial
+    }
+}
+
+// 检查列集合是否包含全部必需列名。
+fn has_columns(columns: &HashSet<String>, required: &[&str]) -> bool {
+    required.iter().all(|column| columns.contains(*column))
+}
+
+// 通过 sqlite_master 查询指定表是否存在。
+async fn table_exists(conn: &mut SqliteConnection, table: &str) -> Result<bool, String> {
+    let exists: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1 LIMIT 1")
+            .bind(table)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|err| format!("migration_repair_schema_query_failed: {err}"))?;
+    Ok(exists.is_some())
+}
+
+// 对支持的固定表执行 PRAGMA 并返回列名集合，缺失表返回空集合。
+async fn table_columns(
+    conn: &mut SqliteConnection,
+    table: &'static str,
+) -> Result<HashSet<String>, String> {
+    if !table_exists(conn, table).await? {
+        return Ok(HashSet::new());
+    }
+
+    let query = match table {
+        "groups" => "PRAGMA table_info(groups)",
+        "projects" => "PRAGMA table_info(projects)",
+        "session_favorite_snapshots" => "PRAGMA table_info(session_favorite_snapshots)",
+        "worktrees" => "PRAGMA table_info(worktrees)",
+        "ssh_hosts" => "PRAGMA table_info(ssh_hosts)",
+        "ssh_host_groups" => "PRAGMA table_info(ssh_host_groups)",
+        "usage_records" => "PRAGMA table_info(usage_records)",
+        _ => return Err("migration_repair_unsupported_table".to_string()),
+    };
+    let rows = sqlx::query(query)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(|err| format!("migration_repair_schema_query_failed: {err}"))?;
+
+    let mut columns = HashSet::new();
+    for row in rows {
+        let name: String = row
+            .try_get("name")
+            .map_err(|err| format!("migration_repair_schema_row_failed: {err}"))?;
+        columns.insert(name);
+    }
+    Ok(columns)
+}
+
+#[cfg(test)]
+mod tests;

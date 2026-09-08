@@ -5,13 +5,13 @@ import {
   mergeFontFamilyOptions,
   normalizeFontFamilyStack,
   withFontFallback,
-} from "../src/lib/systemFonts.ts";
+} from "../src/shared/platform/systemFonts.ts";
 
 const terminalNormalizer = (value) =>
   normalizeFontFamilyStack(value, '"Symbols Nerd Font Mono", monospace');
 
 const themeSettingsSource = readFileSync(
-  new URL("../src/components/settings/pages/ThemeSettingsPage.tsx", import.meta.url),
+  new URL("../src/features/settings/components/pages/ThemeSettingsPage.tsx", import.meta.url),
   "utf8"
 );
 

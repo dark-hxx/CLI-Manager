@@ -24,6 +24,7 @@ try {
     "https://downloads.example.com?channel=stable",
     "https://downloads.example.com#stable",
   ]) {
+    // 验证非 HTTPS、带认证信息或非根地址的发布域名被拒绝。
     assert.throws(() => normalizeR2PublicBaseUrl(invalid));
   }
 

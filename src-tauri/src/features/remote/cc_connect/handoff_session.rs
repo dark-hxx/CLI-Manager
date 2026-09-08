@@ -1,0 +1,832 @@
+use super::*;
+use serde_json::{json, Map, Value};
+
+pub(super) const HANDOFF_SCHEMA_VERSION: u32 = 2;
+const LEGACY_HANDOFF_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CcConnectHandoffTransport {
+    #[default]
+    Local,
+    Ssh,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectHandoffStartRequest {
+    pub agent: CcConnectAgent,
+    pub local_session_id: String,
+    pub cli_session_id: String,
+    pub platform: CcConnectPlatform,
+    pub project_id: String,
+    pub worktree_id: Option<String>,
+    pub work_dir: String,
+    pub session_title: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectHandoffPlatformTarget {
+    pub platform: CcConnectPlatform,
+    pub enabled: bool,
+    pub credentials_ready: bool,
+    pub session_ready: bool,
+    pub ready: bool,
+    pub unavailable_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectHandoffInfo {
+    pub agent: CcConnectAgent,
+    pub local_session_id: String,
+    pub cli_session_id: String,
+    pub project_id: String,
+    pub project_name: String,
+    pub worktree_id: Option<String>,
+    pub worktree_name: Option<String>,
+    pub work_dir: String,
+    pub provider_id: Option<String>,
+    pub provider_name: String,
+    pub platform: CcConnectPlatform,
+    pub started_at_ms: i64,
+    pub transport: CcConnectHandoffTransport,
+    pub ssh_host_id: Option<String>,
+    pub remote_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CcConnectHandoffStatus {
+    pub active: bool,
+    pub running: bool,
+    pub info: Option<CcConnectHandoffInfo>,
+    pub warning: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct PersistedHandoffRecord {
+    pub(super) schema_version: u32,
+    pub(super) agent: CcConnectAgent,
+    pub(super) local_session_id: String,
+    pub(super) cli_session_id: String,
+    pub(super) project_id: String,
+    pub(super) project_name: String,
+    pub(super) worktree_id: Option<String>,
+    pub(super) worktree_name: Option<String>,
+    pub(super) work_dir: String,
+    pub(super) provider_id: Option<String>,
+    pub(super) provider_name: String,
+    pub(super) provider_is_global: bool,
+    #[serde(default)]
+    pub(super) provider_snapshot_id: Option<String>,
+    pub(super) platform: CcConnectPlatform,
+    pub(super) platform_session_key: String,
+    pub(super) cc_session_id: String,
+    pub(super) session_file_path: String,
+    pub(super) previous_active_session_id: Option<String>,
+    pub(super) source_project_id: String,
+    pub(super) source_project_name: String,
+    pub(super) source_project_path: String,
+    pub(super) started_at_ms: i64,
+    #[serde(default)]
+    pub(super) transport: CcConnectHandoffTransport,
+    #[serde(default)]
+    pub(super) ssh_host_id: Option<String>,
+    #[serde(default)]
+    pub(super) remote_path: Option<String>,
+}
+
+impl From<&PersistedHandoffRecord> for CcConnectHandoffInfo {
+    // 将持久化接管记录投影为对外会话信息。
+    fn from(record: &PersistedHandoffRecord) -> Self {
+        Self {
+            agent: record.agent,
+            local_session_id: record.local_session_id.clone(),
+            cli_session_id: record.cli_session_id.clone(),
+            project_id: record.project_id.clone(),
+            project_name: record.project_name.clone(),
+            worktree_id: record.worktree_id.clone(),
+            worktree_name: record.worktree_name.clone(),
+            work_dir: record.work_dir.clone(),
+            provider_id: record.provider_id.clone(),
+            provider_name: record.provider_name.clone(),
+            platform: record.platform,
+            started_at_ms: record.started_at_ms,
+            transport: record.transport,
+            ssh_host_id: record.ssh_host_id.clone(),
+            remote_path: record.remote_path.clone(),
+        }
+    }
+}
+
+// 返回活动接管记录文件路径。
+pub(super) fn handoff_path() -> Result<PathBuf, String> {
+    Ok(remote_manager_dir()?.join("handoff.json"))
+}
+
+// 读取接管记录，缺失返回空而其他错误保留。
+pub(super) fn load_handoff_record() -> Result<Option<PersistedHandoffRecord>, String> {
+    let path = handoff_path()?;
+    let raw = match fs::read_to_string(&path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("read cc-connect handoff record failed: {err}")),
+    };
+    parse_handoff_record(&raw).map(Some)
+}
+
+// 校验记录版本并在内存将旧版缺省 Agent 迁移为 Codex。
+fn parse_handoff_record(raw: &str) -> Result<PersistedHandoffRecord, String> {
+    let mut value: Value = serde_json::from_str(raw)
+        .map_err(|err| format!("parse cc-connect handoff record failed: {err}"))?;
+    let schema_version = value
+        .get("schemaVersion")
+        .and_then(Value::as_u64)
+        .and_then(|version| u32::try_from(version).ok())
+        .ok_or_else(|| {
+            "parse cc-connect handoff record failed: schemaVersion is invalid".to_string()
+        })?;
+    if !matches!(
+        schema_version,
+        LEGACY_HANDOFF_SCHEMA_VERSION | HANDOFF_SCHEMA_VERSION
+    ) {
+        return Err(format!(
+            "unsupported cc-connect handoff record version: {}",
+            schema_version
+        ));
+    }
+    if schema_version == LEGACY_HANDOFF_SCHEMA_VERSION && value.get("agent").is_none() {
+        value
+            .as_object_mut()
+            .ok_or_else(|| {
+                "parse cc-connect handoff record failed: record must be an object".to_string()
+            })?
+            .insert("agent".to_string(), json!("codex"));
+    }
+    let record: PersistedHandoffRecord = serde_json::from_value(value)
+        .map_err(|err| format!("parse cc-connect handoff record failed: {err}"))?;
+    Ok(PersistedHandoffRecord {
+        schema_version: HANDOFF_SCHEMA_VERSION,
+        ..record
+    })
+}
+
+// 序列化接管记录并替换托管记录文件。
+pub(super) fn persist_handoff_record(record: &PersistedHandoffRecord) -> Result<(), String> {
+    let payload = serde_json::to_vec_pretty(record)
+        .map_err(|err| format!("serialize cc-connect handoff record failed: {err}"))?;
+    write_file_atomically(&handoff_path()?, &payload, "cc-connect handoff record")
+}
+
+// 删除活动接管记录文件，缺失视为成功。
+pub(super) fn remove_handoff_record() -> Result<(), String> {
+    remove_file_if_exists(&handoff_path()?)
+}
+
+// 返回活动接管持有的非空 Provider 快照标识。
+pub(crate) fn active_provider_snapshot_id() -> Result<Option<String>, String> {
+    Ok(load_handoff_record()?
+        .and_then(|record| record.provider_snapshot_id)
+        .filter(|snapshot_id| !snapshot_id.trim().is_empty()))
+}
+
+// 校验项目名和绝对工作目录后构造三种兼容会话文件位置。
+pub(super) fn cc_session_store_candidates(
+    root: &Path,
+    project_name: &str,
+    work_dir: &str,
+) -> Result<Vec<PathBuf>, String> {
+    if project_name.trim().is_empty()
+        || project_name
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | '\0'))
+    {
+        return Err("handoff_project_name_invalid".to_string());
+    }
+    let absolute_work_dir = PathBuf::from(work_dir);
+    if !absolute_work_dir.is_absolute() {
+        return Err("handoff_work_dir_not_absolute".to_string());
+    }
+    let digest = Sha256::digest(user_path_string(&absolute_work_dir).as_bytes());
+    let short_hash = format!("{digest:x}")[..8].to_string();
+    let filename = format!("{project_name}_{short_hash}.json");
+    let legacy = root.join(&filename);
+    let legacy_sessions = root.join(format!(
+        "{}.sessions.json",
+        filename.trim_end_matches(".json")
+    ));
+    Ok(vec![
+        legacy,
+        legacy_sessions,
+        root.join("sessions").join(filename),
+    ])
+}
+
+// 优先选择已存在的兼容会话文件，否则使用 sessions 子目录。
+pub(super) fn cc_session_store_path(
+    root: &Path,
+    project_name: &str,
+    work_dir: &str,
+) -> Result<PathBuf, String> {
+    let candidates = cc_session_store_candidates(root, project_name, work_dir)?;
+    Ok(candidates
+        .iter()
+        .find(|candidate| candidate.is_file())
+        .cloned()
+        .unwrap_or_else(|| candidates[2].clone()))
+}
+
+// 读取对象型会话文档，文件缺失时构造默认空会话结构。
+pub(super) fn read_session_document(path: &Path) -> Result<Value, String> {
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let value: Value = serde_json::from_str(&raw)
+                .map_err(|err| format!("parse cc-connect session file failed: {err}"))?;
+            if !value.is_object() {
+                return Err("cc-connect session file root must be an object".to_string());
+            }
+            Ok(value)
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(json!({
+            "sessions": {},
+            "active_session": {},
+            "user_sessions": {},
+            "counter": 0,
+            "past_id_tracking": true,
+            "legacy_data": false,
+            "version": 1
+        })),
+        Err(err) => Err(format!("read cc-connect session file failed: {err}")),
+    }
+}
+
+// 只读现有对象型会话文档，缺失时返回空。
+pub(super) fn read_existing_session_document(path: &Path) -> Result<Option<Value>, String> {
+    match fs::read_to_string(path) {
+        Ok(raw) => {
+            let value: Value = serde_json::from_str(&raw)
+                .map_err(|err| format!("parse cc-connect session file failed: {err}"))?;
+            if !value.is_object() {
+                return Err("cc-connect session file root must be an object".to_string());
+            }
+            Ok(Some(value))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("read cc-connect session file failed: {err}")),
+    }
+}
+
+// 序列化并替换指定 cc-connect 会话文件。
+pub(super) fn write_session_document(path: &Path, document: &Value) -> Result<(), String> {
+    let payload = serde_json::to_vec_pretty(document)
+        .map_err(|err| format!("serialize cc-connect session file failed: {err}"))?;
+    write_file_atomically(path, &payload, "cc-connect handoff session")
+}
+
+// 获取对象字段，缺失时创建空对象而类型不符时报错。
+fn object_field_mut<'a>(
+    root: &'a mut Map<String, Value>,
+    key: &str,
+) -> Result<&'a mut Map<String, Value>, String> {
+    root.entry(key.to_string())
+        .or_insert_with(|| Value::Object(Map::new()))
+        .as_object_mut()
+        .ok_or_else(|| format!("cc-connect session field {key} must be an object"))
+}
+
+// 分配未占用会话编号并绑定 Agent、用户和活动会话，返回旧活动标识。
+pub(super) fn inject_handoff_session(
+    document: &mut Value,
+    platform_session_key: &str,
+    agent: CcConnectAgent,
+    cli_session_id: &str,
+    session_title: Option<&str>,
+) -> Result<(String, Option<String>), String> {
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| "cc-connect session file root must be an object".to_string())?;
+    let mut counter = root
+        .get("counter")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0);
+    let cc_session_id = {
+        let sessions = object_field_mut(root, "sessions")?;
+        loop {
+            counter += 1;
+            let candidate = format!("s{counter}");
+            if !sessions.contains_key(&candidate) {
+                break candidate;
+            }
+        }
+    };
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let name = session_title
+        .map(single_line)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "CLI-Manager remote handoff".to_string());
+    object_field_mut(root, "sessions")?.insert(
+        cc_session_id.clone(),
+        json!({
+            "id": cc_session_id,
+            "name": name,
+            "agent_session_id": cli_session_id,
+            "agent_type": agent.session_type(),
+            "history": [],
+            "created_at": now,
+            "updated_at": now
+        }),
+    );
+    let previous_active_session_id = object_field_mut(root, "active_session")?
+        .insert(
+            platform_session_key.to_string(),
+            Value::String(cc_session_id.clone()),
+        )
+        .and_then(|value| value.as_str().map(str::to_string));
+    let user_sessions = object_field_mut(root, "user_sessions")?
+        .entry(platform_session_key.to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let user_sessions = user_sessions
+        .as_array_mut()
+        .ok_or_else(|| "cc-connect user_sessions entry must be an array".to_string())?;
+    user_sessions.retain(|value| value.as_str() != Some(cc_session_id.as_str()));
+    user_sessions.push(Value::String(cc_session_id.clone()));
+    root.insert("counter".to_string(), Value::Number(counter.into()));
+    root.insert("past_id_tracking".to_string(), Value::Bool(true));
+    let version = root
+        .get("version")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(1);
+    root.insert("version".to_string(), Value::Number(version.into()));
+    Ok((cc_session_id, previous_active_session_id))
+}
+
+// 校验原始或后继 CLI 身份后移除托管会话并恢复仍存在的旧活动项。
+pub(super) fn cleanup_handoff_session(
+    document: &mut Value,
+    platform_session_key: &str,
+    cc_session_id: &str,
+    cli_session_id: &str,
+    previous_active_session_id: Option<&str>,
+) -> Result<bool, String> {
+    let root = document
+        .as_object_mut()
+        .ok_or_else(|| "cc-connect session file root must be an object".to_string())?;
+    let mut changed = false;
+    let previous_exists = root
+        .get("sessions")
+        .and_then(Value::as_object)
+        .is_some_and(|sessions| {
+            previous_active_session_id.is_some_and(|previous| sessions.contains_key(previous))
+        });
+    if let Some(sessions) = root.get_mut("sessions").and_then(Value::as_object_mut) {
+        if let Some(existing) = sessions.get(cc_session_id) {
+            let recorded_cli_session_id = existing
+                .get("agent_session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let descended_from_handoff = existing
+                .get("past_agent_session_ids")
+                .and_then(Value::as_array)
+                .is_some_and(|session_ids| {
+                    session_ids
+                        .iter()
+                        .any(|value| value.as_str() == Some(cli_session_id))
+                });
+            if recorded_cli_session_id != cli_session_id && !descended_from_handoff {
+                return Err("handoff_session_identity_mismatch".to_string());
+            }
+        }
+        changed |= sessions.remove(cc_session_id).is_some();
+    }
+    if let Some(user_sessions) = root
+        .get_mut("user_sessions")
+        .and_then(Value::as_object_mut)
+        .and_then(|sessions| sessions.get_mut(platform_session_key))
+    {
+        let values = user_sessions
+            .as_array_mut()
+            .ok_or_else(|| "cc-connect user_sessions entry must be an array".to_string())?;
+        let original_len = values.len();
+        values.retain(|value| value.as_str() != Some(cc_session_id));
+        changed |= values.len() != original_len;
+    }
+    if let Some(active_sessions) = root
+        .get_mut("active_session")
+        .and_then(Value::as_object_mut)
+    {
+        let owns_active = active_sessions
+            .get(platform_session_key)
+            .and_then(Value::as_str)
+            == Some(cc_session_id);
+        if owns_active {
+            if previous_exists {
+                active_sessions.insert(
+                    platform_session_key.to_string(),
+                    Value::String(previous_active_session_id.unwrap_or_default().to_string()),
+                );
+            } else {
+                active_sessions.remove(platform_session_key);
+            }
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+// 按消息平台判断会话键前缀是否匹配。
+fn platform_key_prefix_matches(platform: CcConnectPlatform, key: &str) -> bool {
+    match platform {
+        CcConnectPlatform::Telegram => key.starts_with("telegram:"),
+        CcConnectPlatform::Feishu => key.starts_with("feishu:") || key.starts_with("lark:"),
+        CcConnectPlatform::Weixin => key.starts_with("weixin:dm:"),
+        CcConnectPlatform::Wecom => key.starts_with("wecom:"),
+    }
+}
+
+// 验证平台前缀及会话键中用户是否在允许清单。
+fn key_matches_allowed_user(
+    platform: CcConnectPlatform,
+    key: &str,
+    allowed_users: &[&str],
+) -> bool {
+    if !platform_key_prefix_matches(platform, key) {
+        return false;
+    }
+    match platform {
+        CcConnectPlatform::Weixin => allowed_users
+            .iter()
+            .any(|user| key == format!("weixin:dm:{user}")),
+        _ => key
+            .rsplit(':')
+            .next()
+            .is_some_and(|tail| allowed_users.contains(&tail)),
+    }
+}
+
+// 解析指定会话更新时间，缺失或格式错误返回零。
+fn session_updated_at(root: &Map<String, Value>, session_id: &str) -> i64 {
+    root.get("sessions")
+        .and_then(Value::as_object)
+        .and_then(|sessions| sessions.get(session_id))
+        .and_then(|session| session.get("updated_at"))
+        .and_then(Value::as_str)
+        .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+        .map(|value| value.timestamp_millis())
+        .unwrap_or(0)
+}
+
+// 按最近更新选择授权用户会话，无候选时为支持平台构造直接会话键。
+pub(super) fn resolve_platform_session_key(
+    document: &Value,
+    platform: CcConnectPlatform,
+    allow_from: &str,
+) -> Result<String, String> {
+    let allowed_users = allow_from
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    if allowed_users.is_empty() {
+        return Err("handoff_platform_user_missing".to_string());
+    }
+    let root = document
+        .as_object()
+        .ok_or_else(|| "cc-connect session file root must be an object".to_string())?;
+    let mut candidates = HashSet::new();
+    if let Some(active_sessions) = root.get("active_session").and_then(Value::as_object) {
+        candidates.extend(active_sessions.keys().cloned());
+    }
+    if let Some(user_sessions) = root.get("user_sessions").and_then(Value::as_object) {
+        candidates.extend(user_sessions.keys().cloned());
+    }
+    let active_sessions = root.get("active_session").and_then(Value::as_object);
+    let mut ranked = candidates
+        .into_iter()
+        .filter(|key| key_matches_allowed_user(platform, key, &allowed_users))
+        .map(|key| {
+            let rank = active_sessions
+                .and_then(|sessions| sessions.get(&key))
+                .and_then(Value::as_str)
+                .map(|session_id| session_updated_at(root, session_id))
+                .unwrap_or(0);
+            (key, rank)
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+    if let Some((key, _)) = ranked.into_iter().next() {
+        return Ok(key);
+    }
+    let user = allowed_users[0];
+    match platform {
+        CcConnectPlatform::Telegram => Ok(format!("telegram:{user}:{user}")),
+        CcConnectPlatform::Weixin => Ok(format!("weixin:dm:{user}")),
+        CcConnectPlatform::Wecom => Ok(format!("wecom:{user}:{user}")),
+        CcConnectPlatform::Feishu => Err("handoff_platform_session_missing".to_string()),
+    }
+}
+
+// 向对象型微信上下文文档写入指定用户令牌。
+pub(super) fn merge_context_token(
+    document: &mut Value,
+    user_id: &str,
+    token: &str,
+) -> Result<(), String> {
+    if !document.is_object() {
+        return Err("Weixin context token file root must be an object".to_string());
+    }
+    document
+        .as_object_mut()
+        .unwrap()
+        .insert(user_id.to_string(), Value::String(token.to_string()));
+    Ok(())
+}
+
+// 读取指定用户非空的微信上下文令牌。
+pub(super) fn context_token(document: &Value, user_id: &str) -> Option<String> {
+    document
+        .as_object()
+        .and_then(|tokens| tokens.get(user_id))
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .filter(|token| !token.trim().is_empty())
+}
+
+// 构造空 JSON 对象供缺省会话或上下文使用。
+pub(super) fn empty_json_object() -> Value {
+    Value::Object(Map::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    // 验证注入及清理接管保留原会话和无关字段。
+    fn inject_and_cleanup_handoff_session_preserves_existing_state() {
+        let mut document = json!({
+            "sessions": {
+                "s2": {
+                    "id": "s2",
+                    "agent_session_id": "old-thread",
+                    "updated_at": "2026-07-18T12:00:00Z"
+                }
+            },
+            "active_session": {"telegram:10:10": "s2"},
+            "user_sessions": {"telegram:10:10": ["s2"]},
+            "counter": 2,
+            "custom_field": {"keep": true}
+        });
+        let (session_id, previous) = inject_handoff_session(
+            &mut document,
+            "telegram:10:10",
+            CcConnectAgent::Codex,
+            "thread-123",
+            Some("Dinner task"),
+        )
+        .unwrap();
+        assert_eq!(session_id, "s3");
+        assert_eq!(previous.as_deref(), Some("s2"));
+        assert_eq!(
+            document["sessions"]["s3"]["agent_session_id"],
+            Value::String("thread-123".to_string())
+        );
+        assert_eq!(document["active_session"]["telegram:10:10"], "s3");
+
+        assert!(cleanup_handoff_session(
+            &mut document,
+            "telegram:10:10",
+            "s3",
+            "thread-123",
+            previous.as_deref(),
+        )
+        .unwrap());
+        assert!(document["sessions"].get("s3").is_none());
+        assert_eq!(document["active_session"]["telegram:10:10"], "s2");
+        assert_eq!(document["user_sessions"]["telegram:10:10"], json!(["s2"]));
+        assert_eq!(document["custom_field"]["keep"], true);
+    }
+
+    #[test]
+    // 验证注入会话使用各 Agent 对应的类型标识。
+    fn injected_handoff_session_uses_the_selected_agent_type() {
+        for (agent, expected) in [
+            (CcConnectAgent::Claude, "claudecode"),
+            (CcConnectAgent::Codex, "codex"),
+            (CcConnectAgent::Pi, "pi"),
+            (CcConnectAgent::Opencode, "opencode"),
+        ] {
+            let mut document = json!({});
+            let (session_id, _) = inject_handoff_session(
+                &mut document,
+                "telegram:10:10",
+                agent,
+                "agent-session",
+                None,
+            )
+            .unwrap();
+            assert_eq!(
+                document["sessions"][&session_id]["agent_type"].as_str(),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    // 验证旧版记录迁移为 Codex 且不产生快照标识。
+    fn legacy_handoff_record_defaults_to_codex_without_a_snapshot() {
+        let record = parse_handoff_record(
+            &json!({
+                "schemaVersion": 1,
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap();
+        assert_eq!(record.agent, CcConnectAgent::Codex);
+        assert_eq!(record.provider_snapshot_id, None);
+    }
+
+    #[test]
+    // 验证当前版本记录必须显式包含 Agent。
+    fn current_handoff_record_requires_an_explicit_agent() {
+        let error = parse_handoff_record(
+            &json!({
+                "schemaVersion": HANDOFF_SCHEMA_VERSION,
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap_err();
+        assert!(error.contains("missing field `agent`"));
+    }
+
+    #[test]
+    // 验证当前版本记录拒绝未知 Agent。
+    fn current_handoff_record_rejects_an_unknown_agent() {
+        let error = parse_handoff_record(
+            &json!({
+                "schemaVersion": HANDOFF_SCHEMA_VERSION,
+                "agent": "unknown",
+                "localSessionId": "local-session",
+                "cliSessionId": "cli-session",
+                "projectId": "project-1",
+                "projectName": "Project",
+                "worktreeId": null,
+                "worktreeName": null,
+                "workDir": "F:/repo",
+                "providerId": null,
+                "providerName": "Global",
+                "providerIsGlobal": true,
+                "platform": "telegram",
+                "platformSessionKey": "telegram:1:1",
+                "ccSessionId": "s1",
+                "sessionFilePath": "F:/data/session.json",
+                "previousActiveSessionId": null,
+                "sourceProjectId": "source-1",
+                "sourceProjectName": "Source",
+                "sourceProjectPath": "F:/source",
+                "startedAtMs": 1
+            })
+            .to_string(),
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown variant"));
+    }
+
+    #[test]
+    // 验证被其他 CLI 线程复用的会话编号不会被清理。
+    fn cleanup_refuses_to_remove_a_reused_session_id() {
+        let mut document = json!({
+            "sessions": {"s1": {"agent_session_id": "other-thread"}},
+            "active_session": {"weixin:dm:user@im.wechat": "s1"},
+            "user_sessions": {"weixin:dm:user@im.wechat": ["s1"]}
+        });
+        assert_eq!(
+            cleanup_handoff_session(
+                &mut document,
+                "weixin:dm:user@im.wechat",
+                "s1",
+                "expected-thread",
+                None,
+            ),
+            Err("handoff_session_identity_mismatch".to_string())
+        );
+    }
+
+    #[test]
+    // 验证能清理由原接管线程派生的后继会话。
+    fn cleanup_accepts_a_fallback_thread_descended_from_the_handoff() {
+        let mut document = json!({
+            "sessions": {
+                "s1": {
+                    "agent_session_id": "fallback-thread",
+                    "past_agent_session_ids": ["expected-thread"]
+                }
+            },
+            "active_session": {"telegram:10:10": "s1"},
+            "user_sessions": {"telegram:10:10": ["s1"]}
+        });
+
+        assert!(cleanup_handoff_session(
+            &mut document,
+            "telegram:10:10",
+            "s1",
+            "expected-thread",
+            None,
+        )
+        .unwrap());
+        assert!(document["sessions"].get("s1").is_none());
+        assert!(document["active_session"].get("telegram:10:10").is_none());
+    }
+
+    #[test]
+    // 验证优先最近授权聊天及微信构造、飞书缺失行为。
+    fn platform_session_resolution_prefers_latest_matching_chat() {
+        let document = json!({
+            "sessions": {
+                "s1": {"updated_at": "2026-07-18T10:00:00Z"},
+                "s2": {"updated_at": "2026-07-18T12:00:00Z"}
+            },
+            "active_session": {
+                "telegram:-100:42": "s1",
+                "telegram:42:42": "s2",
+                "telegram:99:99": "s1"
+            },
+            "user_sessions": {}
+        });
+        assert_eq!(
+            resolve_platform_session_key(&document, CcConnectPlatform::Telegram, "42").unwrap(),
+            "telegram:42:42"
+        );
+        assert_eq!(
+            resolve_platform_session_key(
+                &empty_json_object(),
+                CcConnectPlatform::Weixin,
+                "abc@im.wechat",
+            )
+            .unwrap(),
+            "weixin:dm:abc@im.wechat"
+        );
+        assert_eq!(
+            resolve_platform_session_key(
+                &empty_json_object(),
+                CcConnectPlatform::Feishu,
+                "ou_user",
+            ),
+            Err("handoff_platform_session_missing".to_string())
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    // 验证 Windows 工作路径哈希与 cc-connect 会话命名兼容。
+    fn session_store_path_matches_cc_connect_windows_hashing() {
+        let root = Path::new(r"C:\cc-connect-data");
+        let path = cc_session_store_path(root, "CLIProxyAPI", r"F:\codex\CLIProxyAPI").unwrap();
+        assert_eq!(
+            path,
+            root.join("sessions").join("CLIProxyAPI_0b0ad4c3.json")
+        );
+    }
+}

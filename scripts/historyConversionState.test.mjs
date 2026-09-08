@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const storeSource = readFileSync(
-  new URL("../src/stores/historyStore.ts", import.meta.url),
+  new URL("../src/features/history/store/historyStore.ts", import.meta.url),
   "utf8"
 );
 const workspaceSource = readFileSync(
-  new URL("../src/components/HistoryWorkspace.tsx", import.meta.url),
+  new URL("../src/features/history/api/HistoryWorkspace.tsx", import.meta.url),
   "utf8"
 );
 

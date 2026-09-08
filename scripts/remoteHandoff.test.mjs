@@ -10,7 +10,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-remote-handoff-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 const capabilitiesSource = readFileSync(
-  new URL("../src/lib/agentCapabilities.ts", import.meta.url),
+  new URL("../src/features/agents/api/agentCapabilities.ts", import.meta.url),
   "utf8",
 );
 const capabilitiesOutput = ts.transpileModule(capabilitiesSource, {
@@ -22,7 +22,7 @@ const capabilitiesOutput = ts.transpileModule(capabilitiesSource, {
 }).outputText;
 writeFileSync(join(tempDir, "agentCapabilities.mjs"), capabilitiesOutput, "utf8");
 
-const source = readFileSync(new URL("../src/lib/remoteHandoff.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/remote/api/remoteHandoff.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -35,7 +35,7 @@ const output = ts.transpileModule(source, {
     "const invoke = () => { throw new Error('invoke is not used by this test'); };",
   )
   .replace(
-    'from "./agentCapabilities";',
+    'from "../../agents/api/agentCapabilities";',
     'from "./agentCapabilities.mjs";',
   );
 const outputPath = join(tempDir, "remoteHandoff.mjs");
@@ -227,7 +227,7 @@ test("unsupported, mismatched, and non-Codex SSH agents fail closed", () => {
 
 test("remote connection settings do not select a project or directory", () => {
   const settingsSource = readFileSync(
-    new URL("../src/components/settings/pages/CcConnectSettingsPage.tsx", import.meta.url),
+    new URL("../src/features/settings/components/pages/CcConnectSettingsPage.tsx", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(settingsSource, /useProjectStore/);

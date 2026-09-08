@@ -1,0 +1,602 @@
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SshTransportSpec {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub config_alias: String,
+    #[serde(default)]
+    pub config_file: String,
+    pub auth_mode: String,
+    pub identity_file: String,
+    #[serde(default)]
+    pub credential_ref: String,
+    pub jump_target: String,
+    #[serde(default)]
+    pub proxy_type: String,
+    #[serde(default)]
+    pub proxy_host: String,
+    #[serde(default)]
+    pub proxy_port: u16,
+    #[serde(default)]
+    pub proxy_command: String,
+    pub connect_timeout_sec: u64,
+    pub server_alive_interval_sec: u64,
+    pub server_alive_count_max: u32,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SshOneShotOptions {
+    pub verbose: bool,
+    pub accept_new_host_key: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshTransportLaunch {
+    pub executable: String,
+    pub args: Vec<String>,
+    pub env: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshRemoteHomePathError {
+    Invalid,
+    ParentTraversal,
+}
+
+// 仅接受绝对 POSIX 或 ~/ 简写，拒绝父目录段及指定扩展/控制字符；不访问远端文件系统。
+pub fn validate_remote_home_path(path: &str) -> Result<(), SshRemoteHomePathError> {
+    if path.contains(['\0', '\r', '\n', '\\', '$', '`'])
+        || !(path.starts_with('/') || path == "~" || path.starts_with("~/"))
+    {
+        return Err(SshRemoteHomePathError::Invalid);
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err(SshRemoteHomePathError::ParentTraversal);
+    }
+    Ok(())
+}
+
+// 将 ~ 前缀转为受引号保护的远端 HOME，其他路径单引号转义；调用方需先校验路径。
+pub fn format_remote_home_path(path: &str) -> String {
+    if path == "~" {
+        return "\"${HOME}\"".to_string();
+    }
+    if let Some(suffix) = path.strip_prefix("~/") {
+        return format!("\"${{HOME}}\"/{}", posix_quote(suffix));
+    }
+    posix_quote(path)
+}
+
+// 用 POSIX 单引号包装字符串，并通过退出/重进引号表达其中的单引号字符。
+pub fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+impl SshTransportSpec {
+    // 校验连接必填项、认证模式、时间参数、配置文件及单行/代理形态；不测试网络或凭据是否可用。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.config_alias.trim().is_empty() && self.host.trim().is_empty() {
+            return Err("ssh_host_address_required".to_string());
+        }
+        if self.config_alias.trim().is_empty() && self.port == 0 {
+            return Err("ssh_host_port_invalid".to_string());
+        }
+        validate_config_file(&self.config_file)?;
+        if self.connect_timeout_sec == 0 || self.connect_timeout_sec > 300 {
+            return Err("ssh_connect_timeout_invalid".to_string());
+        }
+        if self.server_alive_count_max > 100 {
+            return Err("ssh_server_alive_count_invalid".to_string());
+        }
+        if !matches!(
+            self.auth_mode.as_str(),
+            "ssh_config"
+                | "agent"
+                | "identity_file"
+                | "password_prompt"
+                | "interactive"
+                | "credential_ref"
+        ) {
+            return Err("ssh_auth_mode_invalid".to_string());
+        }
+        if self.auth_mode == "identity_file" && self.identity_file.trim().is_empty() {
+            return Err("ssh_identity_file_required".to_string());
+        }
+        if self.auth_mode == "credential_ref" && self.credential_ref.trim().is_empty() {
+            return Err("ssh_credential_ref_required".to_string());
+        }
+        for value in [
+            &self.config_alias,
+            &self.config_file,
+            &self.host,
+            &self.username,
+            &self.identity_file,
+            &self.credential_ref,
+            &self.jump_target,
+            &self.proxy_type,
+            &self.proxy_host,
+            &self.proxy_command,
+        ] {
+            validate_single_line(value)?;
+        }
+        if contains_url_credentials(&self.proxy_command) {
+            return Err("ssh_proxy_credentials_forbidden".to_string());
+        }
+        crate::ssh_proxy::build_proxy_command(
+            &self.proxy_type,
+            &self.proxy_host,
+            self.proxy_port,
+            &self.proxy_command,
+        )?;
+        Ok(())
+    }
+
+    // 优先使用去空白的 Config alias，否则组成 user@host 或裸 host，不在此另行校验。
+    pub fn target(&self) -> String {
+        if !self.config_alias.trim().is_empty() {
+            return self.config_alias.trim().to_string();
+        }
+        if self.username.trim().is_empty() {
+            self.host.trim().to_string()
+        } else {
+            format!("{}@{}", self.username.trim(), self.host.trim())
+        }
+    }
+
+    // 构造强制分配 PTY 的 ssh -tt 参数，远端命令由调用方提供；凭据模式会启动允许终端回退的 broker。
+    pub fn build_interactive_launch(
+        &self,
+        remote_command: String,
+    ) -> Result<SshTransportLaunch, String> {
+        self.validate()?;
+        let mut args = vec!["-tt".to_string()];
+        self.append_connection_args(&mut args, false);
+        self.append_auth_args(&mut args, false);
+        self.append_route_args(&mut args)?;
+        args.push(self.target());
+        args.push(remote_command);
+        Ok(SshTransportLaunch {
+            executable: "ssh".to_string(),
+            args,
+            env: self.askpass_environment(true)?,
+        })
+    }
+
+    // 构造无 PTY 的 ssh -T 单次连接，可开启 verbose/accept-new；仅凭据模式禁用 BatchMode。
+    // 不启动 SSH，但凭据模式会准备一次性 broker，且显式禁用终端回退。
+    pub fn build_one_shot_launch(
+        &self,
+        remote_command: String,
+        options: SshOneShotOptions,
+    ) -> Result<SshTransportLaunch, String> {
+        self.validate()?;
+        let mut args = vec!["-T".to_string()];
+        if options.verbose {
+            args.push("-v".to_string());
+        }
+        if options.accept_new_host_key {
+            args.extend([
+                "-o".to_string(),
+                "StrictHostKeyChecking=accept-new".to_string(),
+            ]);
+        }
+        args.extend([
+            "-o".to_string(),
+            if self.auth_mode == "credential_ref" {
+                "BatchMode=no".to_string()
+            } else {
+                "BatchMode=yes".to_string()
+            },
+        ]);
+        self.append_connection_args(&mut args, true);
+        self.append_auth_args(&mut args, true);
+        self.append_route_args(&mut args)?;
+        args.push(self.target());
+        args.push(remote_command);
+        Ok(SshTransportLaunch {
+            executable: "ssh".to_string(),
+            args,
+            env: self.askpass_environment(false)?,
+        })
+    }
+
+    // 追加配置、超时与 KeepAlive；无 alias/jump/显式配置的指定认证模式使用 -F none，其他模式保留默认配置。
+    // 单次连接只尝试一次，有 alias 时不追加端口覆盖，交由 SSH Config 解析。
+    fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
+        if !self.config_file.trim().is_empty() {
+            args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        } else if self.config_alias.trim().is_empty()
+            && self.jump_target.trim().is_empty()
+            && matches!(
+                self.auth_mode.as_str(),
+                "identity_file" | "password_prompt" | "credential_ref" | "interactive"
+            )
+        {
+            // These modes fully describe authentication in CLI-Manager. Agent and ssh_config
+            // must retain the default Config for settings such as IdentityAgent and Host *.
+            args.extend(["-F".to_string(), "none".to_string()]);
+        }
+        args.extend([
+            "-o".to_string(),
+            format!("ConnectTimeout={}", self.connect_timeout_sec),
+            "-o".to_string(),
+            format!("ServerAliveInterval={}", self.server_alive_interval_sec),
+            "-o".to_string(),
+            format!("ServerAliveCountMax={}", self.server_alive_count_max),
+        ]);
+        if one_shot {
+            args.extend(["-o".to_string(), "ConnectionAttempts=1".to_string()]);
+        }
+        if self.config_alias.trim().is_empty() {
+            args.extend(["-p".to_string(), self.port.to_string()]);
+        }
+    }
+
+    // 按认证模式生成互不沿用的密钥/密码/交互选项；密码类单次请求最多一次提示，ssh_config 不额外覆盖。
+    fn append_auth_args(&self, args: &mut Vec<String>, one_shot: bool) {
+        if self.auth_mode == "identity_file" && !self.identity_file.trim().is_empty() {
+            args.extend(["-i".to_string(), self.identity_file.trim().to_string()]);
+        }
+        match self.auth_mode.as_str() {
+            "agent" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "identity_file" => args.extend([
+                "-o".to_string(),
+                "IdentitiesOnly=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "password_prompt" | "credential_ref" => {
+                args.extend([
+                    "-o".to_string(),
+                    "PubkeyAuthentication=no".to_string(),
+                    "-o".to_string(),
+                    "PasswordAuthentication=yes".to_string(),
+                    "-o".to_string(),
+                    "KbdInteractiveAuthentication=yes".to_string(),
+                    "-o".to_string(),
+                    "PreferredAuthentications=password,keyboard-interactive".to_string(),
+                ]);
+                if one_shot {
+                    args.extend(["-o".to_string(), "NumberOfPasswordPrompts=1".to_string()]);
+                }
+            }
+            "interactive" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=no".to_string(),
+                "-o".to_string(),
+                "PasswordAuthentication=no".to_string(),
+                "-o".to_string(),
+                "KbdInteractiveAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=keyboard-interactive".to_string(),
+            ]),
+            _ => {}
+        }
+    }
+
+    // 显式代理命令优先于 jump host；只有代理为空才追加 -J，避免同时配置两条路由。
+    fn append_route_args(&self, args: &mut Vec<String>) -> Result<(), String> {
+        let proxy_command = crate::ssh_proxy::build_proxy_command(
+            &self.proxy_type,
+            &self.proxy_host,
+            self.proxy_port,
+            &self.proxy_command,
+        )?;
+        if proxy_command.is_empty() && !self.jump_target.trim().is_empty() {
+            args.extend(["-J".to_string(), self.jump_target.trim().to_string()]);
+        }
+        if !proxy_command.is_empty() {
+            args.extend(["-o".to_string(), format!("ProxyCommand={proxy_command}")]);
+        }
+        Ok(())
+    }
+
+    // 仅凭据模式读取系统凭据并准备 broker 环境，再设置终端回退开关；其他认证模式返回空映射。
+    fn askpass_environment(
+        &self,
+        allow_terminal_fallback: bool,
+    ) -> Result<HashMap<String, String>, String> {
+        if self.auth_mode == "credential_ref" {
+            let mut env = crate::ssh_askpass::prepare(&self.credential_ref)?;
+            configure_askpass_terminal_fallback(&mut env, allow_terminal_fallback);
+            Ok(env)
+        } else {
+            Ok(HashMap::new())
+        }
+    }
+}
+
+// 在环境映射中显式写入允许或禁止回退值，覆盖任何旧值但不修改当前进程环境。
+fn configure_askpass_terminal_fallback(
+    env: &mut HashMap<String, String>,
+    allow_terminal_fallback: bool,
+) {
+    let value = if allow_terminal_fallback {
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENABLED
+    } else {
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_DISABLED
+    };
+    env.insert(
+        crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV.to_string(),
+        value.to_string(),
+    );
+}
+
+// 拒绝 NUL、CR、LF，允许空值和其他字符；不代替具体字段的语法校验。
+fn validate_single_line(value: &str) -> Result<(), String> {
+    if value.contains(['\0', '\r', '\n']) {
+        return Err("ssh_launch_argument_invalid".to_string());
+    }
+    Ok(())
+}
+
+// 空值表示沿用默认配置；非空值要求本机绝对文件路径，跟随符号链接但不检查文件内容或读取权限。
+fn validate_config_file(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.contains(['\0', '\r', '\n']) || !std::path::Path::new(trimmed).is_absolute() {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    if !std::path::Path::new(trimmed).is_file() {
+        return Err("ssh_config_file_not_found".to_string());
+    }
+    Ok(())
+}
+
+// 对空白分隔 token 做启发式检测：URL authority 中的 userinfo 含冒号才视为凭据，不是完整 URL 解析器。
+fn contains_url_credentials(value: &str) -> bool {
+    value.split_whitespace().any(|token| {
+        let Some((_, remainder)) = token.split_once("://") else {
+            return false;
+        };
+        let authority = remainder.split('/').next().unwrap_or(remainder);
+        authority
+            .split_once('@')
+            .is_some_and(|(userinfo, _)| userinfo.contains(':'))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        configure_askpass_terminal_fallback, format_remote_home_path, validate_remote_home_path,
+        SshOneShotOptions, SshRemoteHomePathError, SshTransportSpec,
+    };
+    use std::collections::HashMap;
+
+    // 创建带固定示例主机、jump 和超时参数的测试配置，不包含真实凭据引用。
+    fn spec(auth_mode: &str) -> SshTransportSpec {
+        SshTransportSpec {
+            host: "example.com".into(),
+            port: 2222,
+            username: "dev".into(),
+            config_alias: String::new(),
+            config_file: String::new(),
+            auth_mode: auth_mode.into(),
+            identity_file: "/home/dev/.ssh/id key".into(),
+            credential_ref: String::new(),
+            jump_target: "bastion".into(),
+            proxy_type: "none".into(),
+            proxy_host: String::new(),
+            proxy_port: 0,
+            proxy_command: String::new(),
+            connect_timeout_sec: 12,
+            server_alive_interval_sec: 30,
+            server_alive_count_max: 3,
+        }
+    }
+
+    #[test]
+    // 验证交互与单次 launch 共用连接路由参数，同时分别使用 -tt/-T 和单次重试限制。
+    fn interactive_and_one_shot_share_connection_routing() {
+        let value = spec("identity_file");
+        let interactive = value.build_interactive_launch("shell".into()).unwrap();
+        let one_shot = value
+            .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+            .unwrap();
+        for expected in [
+            "ConnectTimeout=12",
+            "ServerAliveInterval=30",
+            "-J",
+            "bastion",
+        ] {
+            assert!(interactive.args.iter().any(|arg| arg == expected));
+            assert!(one_shot.args.iter().any(|arg| arg == expected));
+        }
+        assert_eq!(interactive.args.first().map(String::as_str), Some("-tt"));
+        assert_eq!(one_shot.args.first().map(String::as_str), Some("-T"));
+        assert!(one_shot
+            .args
+            .iter()
+            .any(|arg| arg == "ConnectionAttempts=1"));
+    }
+
+    #[test]
+    // 验证只有 identity_file 模式添加 -i，其他模式不沿用残留密钥路径。
+    fn auth_modes_do_not_leak_stale_identity_arguments() {
+        for mode in ["ssh_config", "agent", "password_prompt", "interactive"] {
+            let launch = spec(mode).build_interactive_launch("shell".into()).unwrap();
+            assert!(!launch.args.iter().any(|arg| arg == "-i"), "mode={mode}");
+        }
+        let identity = spec("identity_file")
+            .build_interactive_launch("shell".into())
+            .unwrap();
+        assert!(identity.args.iter().any(|arg| arg == "-i"));
+    }
+
+    #[test]
+    // 验证凭据引用必填、密码与键盘交互参数及一次提示限制，不实际读取凭据库。
+    fn credential_mode_uses_password_auth_and_one_prompt() {
+        let mut value = spec("credential_ref");
+        assert_eq!(value.validate().unwrap_err(), "ssh_credential_ref_required");
+        value.credential_ref = "credential-ref".into();
+        let mut args = Vec::new();
+        value.append_auth_args(&mut args, true);
+        assert!(args.iter().any(|arg| arg == "PasswordAuthentication=yes"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "KbdInteractiveAuthentication=yes"));
+        assert!(args.iter().any(|arg| arg == "NumberOfPasswordPrompts=1"));
+        assert_eq!(args.iter().filter(|arg| arg.as_str() == "-i").count(), 0);
+    }
+
+    #[test]
+    // 验证交互模式明确启用 AskPass 回退，单次模式会覆盖旧值为禁用。
+    fn askpass_terminal_fallback_is_explicit_for_each_launch_mode() {
+        let key = crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV;
+        let mut interactive = HashMap::new();
+        configure_askpass_terminal_fallback(&mut interactive, true);
+        assert_eq!(
+            interactive.get(key).map(String::as_str),
+            Some(crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENABLED)
+        );
+
+        let mut one_shot = interactive.clone();
+        configure_askpass_terminal_fallback(&mut one_shot, false);
+        assert_eq!(
+            one_shot.get(key).map(String::as_str),
+            Some(crate::ssh_askpass::ASKPASS_TTY_FALLBACK_DISABLED)
+        );
+    }
+
+    #[test]
+    // 验证 alias 可替代空 host/零 port，且启动参数不强制覆盖端口或默认 Config。
+    fn config_alias_owns_host_and_port_resolution() {
+        let mut value = spec("ssh_config");
+        value.config_alias = "prod".into();
+        value.host.clear();
+        value.port = 0;
+        let launch = value
+            .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+            .unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-p"));
+        assert!(!launch.args.iter().any(|arg| arg == "-F"));
+        assert_eq!(launch.args[launch.args.len() - 2], "prod");
+    }
+
+    #[test]
+    // 验证无 alias/jump 时指定认证模式使用 -F none；凭据模式只测试参数追加，不启动 broker。
+    fn explicit_authentication_modes_ignore_the_default_ssh_config() {
+        for mode in ["identity_file", "password_prompt", "interactive"] {
+            let mut value = spec(mode);
+            value.jump_target.clear();
+            for launch in [
+                value.build_interactive_launch("shell".into()).unwrap(),
+                value
+                    .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                    .unwrap(),
+            ] {
+                assert!(
+                    launch.args.windows(2).any(|pair| pair == ["-F", "none"]),
+                    "mode={mode} args={:?}",
+                    launch.args
+                );
+            }
+        }
+
+        let mut credential_args = Vec::new();
+        let mut credential = spec("credential_ref");
+        credential.jump_target.clear();
+        credential.append_connection_args(&mut credential_args, true);
+        assert!(credential_args
+            .windows(2)
+            .any(|pair| pair == ["-F", "none"]));
+    }
+
+    #[test]
+    // 验证 agent 与 ssh_config 即使使用显式地址也不追加 -F none。
+    fn agent_and_ssh_config_modes_keep_the_default_config_for_explicit_addresses() {
+        for mode in ["agent", "ssh_config"] {
+            let mut value = spec(mode);
+            value.jump_target.clear();
+            for launch in [
+                value.build_interactive_launch("shell".into()).unwrap(),
+                value
+                    .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                    .unwrap(),
+            ] {
+                assert!(
+                    !launch.args.iter().any(|arg| arg == "-F"),
+                    "mode={mode} args={:?}",
+                    launch.args
+                );
+            }
+        }
+    }
+
+    #[test]
+    // 验证使用命名跳板时保留默认 SSH Config，并添加预期 -J 参数。
+    fn config_alias_jump_keeps_the_default_ssh_config_enabled() {
+        let launch = spec("agent")
+            .build_interactive_launch("shell".into())
+            .unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-F"));
+        assert!(launch.args.windows(2).any(|pair| pair == ["-J", "bastion"]));
+    }
+
+    #[test]
+    // 用临时文件验证自定义 -F 配置同时进入交互和单次参数，不执行 SSH。
+    fn custom_config_file_is_shared_by_interactive_and_one_shot_launches() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        let mut value = spec("ssh_config");
+        value.config_file = temp.path().to_string_lossy().into_owned();
+        for launch in [
+            value.build_interactive_launch("shell".into()).unwrap(),
+            value
+                .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+                .unwrap(),
+        ] {
+            assert!(launch
+                .args
+                .windows(2)
+                .any(|pair| pair == ["-F", value.config_file.as_str()]));
+        }
+    }
+
+    #[test]
+    // 验证 SOCKS5 直接代理生成 ProxyCommand 并抑制已有 jump 参数。
+    fn direct_proxy_takes_precedence_over_jump_host() {
+        let mut value = spec("agent");
+        value.proxy_type = "socks5".into();
+        value.proxy_host = "127.0.0.1".into();
+        value.proxy_port = 1080;
+        let launch = value
+            .build_one_shot_launch("true".into(), SshOneShotOptions::default())
+            .unwrap();
+        assert!(!launch.args.iter().any(|arg| arg == "-J"));
+        assert!(launch
+            .args
+            .iter()
+            .any(|arg| arg.contains("ProxyCommand=") && arg.contains("__ssh_proxy --type socks5")));
+    }
+
+    #[test]
+    // 验证 HOME 简写格式化和绝对路径引号，并拒绝父目录逃逸及直接 $HOME 扩展输入。
+    fn remote_home_paths_expand_only_the_supported_shorthand() {
+        assert_eq!(format_remote_home_path("~"), "\"${HOME}\"");
+        assert_eq!(
+            format_remote_home_path("~/agent path"),
+            "\"${HOME}\"/'agent path'"
+        );
+        assert_eq!(format_remote_home_path("/opt/agent"), "'/opt/agent'");
+        assert_eq!(
+            validate_remote_home_path("~/../secret"),
+            Err(SshRemoteHomePathError::ParentTraversal)
+        );
+        assert_eq!(
+            validate_remote_home_path("$HOME/agent"),
+            Err(SshRemoteHomePathError::Invalid)
+        );
+    }
+}

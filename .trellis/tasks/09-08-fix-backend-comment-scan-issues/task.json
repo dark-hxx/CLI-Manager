@@ -1,0 +1,29 @@
+{
+  "id": "fix-backend-comment-scan-issues",
+  "name": "fix-backend-comment-scan-issues",
+  "title": "修复后端注释扫描发现的问题",
+  "description": "复核并修复后端方法注释扫描记录的已确认缺陷，并系统实施可验证的安全性、可靠性和一致性加固。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "CLI-Manager",
+  "assignee": "CLI-Manager",
+  "createdAt": "2026-09-08",
+  "completedAt": null,
+  "branch": "fix/backend-comment-scan-issues",
+  "base_branch": "refactor/ai-architecture",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "09-08-fix-confirmed-backend-findings",
+    "09-08-harden-backend-observations"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

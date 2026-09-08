@@ -9,11 +9,19 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-agent-capabilities-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/agentCapabilities.ts", import.meta.url), "utf8");
-const cardSource = readFileSync(new URL("../src/components/terminal/AgentCapabilitiesCard.tsx", import.meta.url), "utf8");
+const emitModule = (name, path) => {
+  const source = readFileSync(new URL(path, import.meta.url), "utf8");
+  const output = ts.transpileModule(source, {compilerOptions: {module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022}}).outputText
+    .replaceAll('"../../../shared/lib/wslPaths"', '"./wslPaths.mjs"');
+  writeFileSync(join(tempDir, name + ".mjs"), output);
+};
+emitModule("wslPaths", "../src/shared/lib/wslPaths.ts");
+
+const source = readFileSync(new URL("../src/features/agents/api/agentCapabilities.ts", import.meta.url), "utf8");
+const cardSource = readFileSync(new URL("../src/features/terminal/components/AgentCapabilitiesCard.tsx", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.ES2022, target: ts.ScriptTarget.ES2022 },
-}).outputText;
+}).outputText.replaceAll('"../../../shared/lib/wslPaths"', '"./wslPaths.mjs"');
 const modulePath = join(tempDir, "agentCapabilities.mjs");
 writeFileSync(modulePath, output, "utf8");
 const {

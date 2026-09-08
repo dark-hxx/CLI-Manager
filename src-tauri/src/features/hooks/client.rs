@@ -1,0 +1,617 @@
+// 隐藏子命令 `__hook` 的实现：作为 Claude/Codex/Grok 的 hook 命令被高频调用。
+// 取代旧版 PowerShell 脚本，做到 Windows / macOS / Linux 跨平台一致。
+//
+// 流程：读取回调环境变量（或回退到 daemon 发现文件）+ stdin 事件 JSON，
+// 向本地通知服务 POST 一条事件，然后无条件退出。失败只写脱敏诊断日志，绝不打断 CLI。
+use std::env;
+use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::PathBuf;
+use std::process::exit;
+use std::thread;
+use std::time::Duration;
+
+use cli_manager_hook_schema::{non_empty_trimmed, normalize_hook_input};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use uuid::Uuid;
+
+const NOTIFY_ATTEMPTS: usize = 2;
+const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
+const HOOK_STDIN_MAX_BYTES: u64 = 64 * 1024;
+
+/// `main` 在初始化 Tauri runtime 之前调用本函数并退出，因此这里
+/// 不依赖任何 Tauri/WebView 状态，冷启动开销极小。
+// 尝试投递 Hook，失败仅记录脱敏诊断，并始终以成功退出隐藏进程。
+pub fn run_and_exit(source: &str, event: &str) -> ! {
+    if let Err(err) = try_notify(source, event) {
+        write_failure_diagnostic(source, event, err.code());
+    }
+    exit(0);
+}
+
+// 序列化既有载荷并按目标列表最多重试两轮，返回是否收到成功响应。
+pub(crate) fn try_notify_prepared_payload(payload: &Value) -> bool {
+    let Ok(body) = serde_json::to_vec(payload) else {
+        return false;
+    };
+    for attempt in 0..NOTIFY_ATTEMPTS {
+        for target in resolve_notify_targets() {
+            if post(&target.port, &target.token, &body).is_ok() {
+                return true;
+            }
+        }
+        if attempt + 1 < NOTIFY_ATTEMPTS {
+            thread::sleep(NOTIFY_RETRY_DELAY);
+        }
+    }
+    false
+}
+
+#[derive(Debug, Clone, Copy)]
+enum HookNotifyError {
+    MissingPort,
+    MissingToken,
+    StdinRead,
+    InvalidInput,
+    UnsupportedPayload,
+    PayloadSerialize,
+    InvalidPort,
+    BridgeConnect,
+    BridgeWrite,
+    BridgeResponse,
+}
+
+impl HookNotifyError {
+    // 将通知失败类型映射为稳定诊断码。
+    fn code(self) -> &'static str {
+        match self {
+            Self::MissingPort => "missing_port",
+            Self::MissingToken => "missing_token",
+            Self::StdinRead => "stdin_read_failed",
+            Self::InvalidInput => "invalid_input",
+            Self::UnsupportedPayload => "unsupported_payload",
+            Self::PayloadSerialize => "payload_serialize_failed",
+            Self::InvalidPort => "invalid_port",
+            Self::BridgeConnect => "bridge_connect_failed",
+            Self::BridgeWrite => "bridge_write_failed",
+            Self::BridgeResponse => "bridge_response_failed",
+        }
+    }
+}
+
+// 读取并规范化标准输入，生成同次重试共用的事件 ID 后投递 Hook。
+fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
+    let tab_id =
+        non_empty_env("CLI_MANAGER_TAB_ID").unwrap_or_else(|| format!("external:{source}"));
+
+    let hook_input = read_hook_input(std::io::stdin().lock())?;
+    if should_suppress_codex_permission_request(source, event, &hook_input) {
+        return Ok(());
+    }
+
+    let normalized =
+        normalize_hook_input(event, &hook_input).ok_or(HookNotifyError::UnsupportedPayload)?;
+    // Prefer explicit env tab id; if external, include session id for uniqueness.
+    let tab_id = if tab_id.starts_with("external:") {
+        normalized
+            .session_id
+            .as_deref()
+            .map(|session| format!("external:{source}:{session}"))
+            .unwrap_or(tab_id)
+    } else {
+        tab_id
+    };
+
+    let reasoning_effort = normalized
+        .reasoning_effort
+        .or_else(|| non_empty_env("CLAUDE_EFFORT").and_then(|value| non_empty_trimmed(&value)));
+    let transcript_bytes = approval_transcript_bytes(
+        normalized.agent_transcript_path.as_deref(),
+        normalized.transcript_path.as_deref(),
+    );
+    let wsl_distro_name = non_empty_env("WSL_DISTRO_NAME");
+    let cwd = env::current_dir()
+        .ok()
+        .map(|path| path.to_string_lossy().to_string());
+
+    // 字段名为 camelCase，对应 claude_hook::ClaudeHookRequest 的 serde(rename_all = "camelCase")。
+    let payload = json!({
+        "tabId": tab_id,
+        "source": source,
+        "event": event,
+        "title": title_for(source, event),
+        "message": normalized.message,
+        "sessionId": normalized.session_id,
+        "cwd": cwd,
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "agentId": normalized.agent_id,
+        "toolUseId": normalized.tool_use_id,
+        "toolName": normalized.tool_name,
+        "mcpServer": normalized.mcp_server,
+        "skillName": normalized.skill_name,
+        "agentType": normalized.agent_type,
+        "agentTranscriptPath": normalized.agent_transcript_path,
+        "transcriptPath": normalized.transcript_path,
+        "transcriptBytes": transcript_bytes,
+        "reasoningEffort": reasoning_effort,
+        "wslDistroName": wsl_distro_name,
+        // 同一次 Hook 进程内的重试复用该 ID，daemon 可幂等去重。
+        "remoteEventId": Uuid::new_v4().to_string(),
+    });
+    let body = serde_json::to_vec(&payload).map_err(|_| HookNotifyError::PayloadSerialize)?;
+
+    let mut last_error = if non_empty_env("CLI_MANAGER_NOTIFY_PORT").is_some() {
+        HookNotifyError::MissingToken
+    } else {
+        HookNotifyError::MissingPort
+    };
+    for attempt in 0..NOTIFY_ATTEMPTS {
+        let targets = resolve_notify_targets();
+        for target in targets {
+            match post(&target.port, &target.token, &body) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = error,
+            }
+        }
+        if attempt + 1 < NOTIFY_ATTEMPTS {
+            thread::sleep(NOTIFY_RETRY_DELAY);
+        }
+    }
+    Err(last_error)
+}
+
+fn read_hook_input(reader: impl Read) -> Result<Value, HookNotifyError> {
+    let mut stdin_raw = String::new();
+    reader
+        .take(HOOK_STDIN_MAX_BYTES + 1)
+        .read_to_string(&mut stdin_raw)
+        .map_err(|_| HookNotifyError::StdinRead)?;
+    if stdin_raw.len() as u64 > HOOK_STDIN_MAX_BYTES {
+        return Err(HookNotifyError::InvalidInput);
+    }
+    serde_json::from_str(stdin_raw.trim()).map_err(|_| HookNotifyError::InvalidInput)
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NotifyTarget {
+    port: String,
+    token: String,
+}
+
+// 优先使用完整回调环境，再补充首个有效且不同的 daemon 发现目标。
+fn resolve_notify_targets() -> Vec<NotifyTarget> {
+    let mut targets = Vec::with_capacity(2);
+    if let (Some(port), Some(token)) = (
+        non_empty_env("CLI_MANAGER_NOTIFY_PORT"),
+        non_empty_env("CLI_MANAGER_NOTIFY_TOKEN"),
+    ) {
+        targets.push(NotifyTarget { port, token });
+    }
+
+    // 外部 CLI 没有注入环境；旧终端也可能仍持有重启前的端口，始终补充当前 daemon 发现目标。
+    if let Ok(data_dir) = crate::app_paths::cli_manager_data_dir() {
+        for name in ["daemon.dev.json", "daemon.json"] {
+            if let Some(target) = read_daemon_notify_target(&data_dir.join(name)) {
+                if !targets.contains(&target) {
+                    targets.push(target);
+                }
+                break;
+            }
+        }
+    }
+    targets
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DaemonInfoLite {
+    hook_port: u16,
+    token: String,
+    #[serde(default)]
+    pid: u32,
+}
+
+// 解析发现文件，排除无效端口、空令牌及明确已退出的 daemon。
+fn read_daemon_notify_target(path: &PathBuf) -> Option<NotifyTarget> {
+    let raw = fs::read_to_string(path).ok()?;
+    let info: DaemonInfoLite = serde_json::from_str(&raw).ok()?;
+    if info.hook_port == 0 || info.token.trim().is_empty() {
+        return None;
+    }
+    if info.pid != 0 && !crate::daemon::discovery::is_pid_alive(info.pid) {
+        return None;
+    }
+    Some(NotifyTarget {
+        port: info.hook_port.to_string(),
+        token: info.token,
+    })
+}
+
+// 向回环端口发送带 Bearer 的 HTTP 请求，并检查首段响应是否为 2xx。
+fn post(port: &str, token: &str, body: &[u8]) -> Result<(), HookNotifyError> {
+    let port: u16 = port.parse().map_err(|_| HookNotifyError::InvalidPort)?;
+    let mut stream =
+        TcpStream::connect(("127.0.0.1", port)).map_err(|_| HookNotifyError::BridgeConnect)?;
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+
+    let head = format!(
+        "POST /api/claude-hook HTTP/1.1\r\n\
+         Host: 127.0.0.1\r\n\
+         Authorization: Bearer {token}\r\n\
+         Content-Type: application/json\r\n\
+         Content-Length: {}\r\n\
+         Connection: close\r\n\r\n",
+        body.len()
+    );
+    stream
+        .write_all(head.as_bytes())
+        .and_then(|_| stream.write_all(body))
+        .and_then(|_| stream.flush())
+        .map_err(|_| HookNotifyError::BridgeWrite)?;
+
+    // 读掉响应，确保服务端已接收；只校验 HTTP 成功状态，不记录响应内容。
+    let mut sink = [0u8; 256];
+    let size = stream
+        .read(&mut sink)
+        .map_err(|_| HookNotifyError::BridgeResponse)?;
+    let response = std::str::from_utf8(&sink[..size]).unwrap_or_default();
+    if !response.starts_with("HTTP/1.1 2") && !response.starts_with("HTTP/1.0 2") {
+        return Err(HookNotifyError::BridgeResponse);
+    }
+    Ok(())
+}
+
+// 尽力追加白名单诊断行，日志达到一 MiB 时尝试清空后继续写入。
+fn write_failure_diagnostic(source: &str, event: &str, code: &str) {
+    let Ok(log_dir) = crate::app_paths::logs_dir() else {
+        return;
+    };
+    if fs::create_dir_all(&log_dir).is_err() {
+        return;
+    }
+    let path = log_dir.join("hook-client.log");
+    let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .write(true)
+        .open(path)
+    else {
+        return;
+    };
+    if file
+        .metadata()
+        .is_ok_and(|metadata| metadata.len() >= 1024 * 1024)
+    {
+        let _ = file.set_len(0);
+    }
+    let line = failure_diagnostic_line(source, event, code);
+    let _ = file.write_all(line.as_bytes());
+}
+
+// 将来源、事件和错误码白名单化，生成带 UTC 时间的单行日志。
+fn failure_diagnostic_line(source: &str, event: &str, code: &str) -> String {
+    format!(
+        "{} source={} event={} error={}\n",
+        chrono::Utc::now().to_rfc3339(),
+        diagnostic_source(source),
+        diagnostic_event(event),
+        diagnostic_error(code)
+    )
+}
+
+// 仅保留已知 Hook 来源名称，其余映射为 unknown。
+fn diagnostic_source(value: &str) -> &'static str {
+    match value {
+        "claude" => "claude",
+        "codex" => "codex",
+        "pi" => "pi",
+        "grok" => "grok",
+        "kimi" => "kimi",
+        "opencode" => "opencode",
+        _ => "unknown",
+    }
+}
+
+// 仅保留已知生命周期和工具事件名称，其余映射为 unknown。
+fn diagnostic_event(value: &str) -> &'static str {
+    match value {
+        "SessionStart" => "SessionStart",
+        "UserPromptSubmit" => "UserPromptSubmit",
+        "Notification" => "Notification",
+        "PermissionRequest" => "PermissionRequest",
+        "PermissionResult" => "PermissionResult",
+        "Stop" => "Stop",
+        "StopFailure" => "StopFailure",
+        "Interrupt" => "Interrupt",
+        "SubagentStart" => "SubagentStart",
+        "SubagentStop" => "SubagentStop",
+        "AgentToolStart" => "AgentToolStart",
+        "AgentToolStop" => "AgentToolStop",
+        "ToolStart" => "ToolStart",
+        "ToolStop" => "ToolStop",
+        _ => "unknown",
+    }
+}
+
+// 仅保留已知通知错误码，其余映射为 unknown。
+fn diagnostic_error(value: &str) -> &'static str {
+    match value {
+        "missing_port" => "missing_port",
+        "missing_token" => "missing_token",
+        "stdin_read_failed" => "stdin_read_failed",
+        "invalid_input" => "invalid_input",
+        "unsupported_payload" => "unsupported_payload",
+        "payload_serialize_failed" => "payload_serialize_failed",
+        "invalid_port" => "invalid_port",
+        "bridge_connect_failed" => "bridge_connect_failed",
+        "bridge_write_failed" => "bridge_write_failed",
+        "bridge_response_failed" => "bridge_response_failed",
+        _ => "unknown",
+    }
+}
+
+// 读取有效 Unicode 且非全空白的环境变量，保留原值。
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.trim().is_empty())
+}
+
+// 优先读取子转录路径的元数据长度，无子路径时才选择父转录。
+fn approval_transcript_bytes(
+    agent_transcript_path: Option<&str>,
+    transcript_path: Option<&str>,
+) -> Option<u64> {
+    agent_transcript_path
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or_else(|| {
+            transcript_path
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+        })
+        .and_then(|path| fs::metadata(path).ok())
+        .map(|metadata| metadata.len())
+}
+
+// 仅抑制 Codex 非交互审批模式及 Grok bypassPermissions 的审批事件。
+fn should_suppress_codex_permission_request(source: &str, event: &str, hook_input: &Value) -> bool {
+    if event != "PermissionRequest" {
+        return false;
+    }
+    match source {
+        "codex" => matches!(
+            hook_input.get("permission_mode").and_then(Value::as_str),
+            Some("dontAsk" | "bypassPermissions")
+        ),
+        "grok" => {
+            hook_input
+                .get("permissionMode")
+                .or_else(|| hook_input.get("permission_mode"))
+                .and_then(Value::as_str)
+                == Some("bypassPermissions")
+        }
+        _ => false,
+    }
+}
+/// 与旧 PowerShell 脚本保持一致的标题文案；新增 source 由前端按当前语言生成标题。
+// 按来源和事件提供兼容标题；Kimi 返回空值交由前端本地化。
+fn title_for(source: &str, event: &str) -> Option<&'static str> {
+    if source == "kimi" {
+        return None;
+    }
+    Some(match (source, event) {
+        ("codex", "SessionStart") => "Codex CLI session started",
+        ("codex", "UserPromptSubmit") => "Codex CLI running",
+        ("codex", "Stop") => "Codex CLI done",
+        ("codex", "SubagentStart") => "Codex CLI subagent started",
+        ("codex", "SubagentStop") => "Codex CLI subagent done",
+        ("codex", _) => "Codex CLI needs attention", // PermissionRequest
+        ("pi", "SessionStart") => "Pi Agent session started",
+        ("pi", "UserPromptSubmit") => "Pi Agent running",
+        ("pi", "Stop") => "Pi Agent done",
+        ("pi", _) => "Pi Agent needs attention",
+        ("grok", "SessionStart") => "Grok Build session started",
+        ("grok", "UserPromptSubmit") => "Grok Build running",
+        ("grok", "Stop") => "Grok Build done",
+        ("grok", "StopFailure") => "Grok Build failed",
+        ("grok", "SubagentStart") => "Grok Build subagent started",
+        ("grok", "SubagentStop") => "Grok Build subagent done",
+        ("grok", "AgentToolStart") => "Grok Build Agent tool started",
+        ("grok", "AgentToolStop") => "Grok Build Agent tool done",
+        ("grok", "ToolStart") => "Grok Build tool started",
+        ("grok", "ToolStop") => "Grok Build tool done",
+        ("grok", _) => "Grok Build needs attention",
+        ("opencode", "SessionStart") => "OpenCode session started",
+        ("opencode", "UserPromptSubmit") => "OpenCode running",
+        ("opencode", "Stop") => "OpenCode done",
+        ("opencode", "StopFailure") => "OpenCode failed",
+        ("opencode", _) => "OpenCode needs attention",
+        (_, "SessionStart") => "Claude Code session started",
+        (_, "UserPromptSubmit") => "Claude Code running",
+        (_, "Stop") => "Claude Code done",
+        (_, "StopFailure") => "Claude Code failed",
+        (_, "SubagentStart") => "Claude Code subagent started",
+        (_, "SubagentStop") => "Claude Code subagent done",
+        (_, "AgentToolStart") => "Claude Code Agent tool started",
+        (_, "AgentToolStop") => "Claude Code Agent tool done",
+        (_, "ToolStart") => "Claude Code tool started",
+        (_, "ToolStop") => "Claude Code tool done",
+        (_, _) => "Claude Code needs attention", // Notification
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        approval_transcript_bytes, failure_diagnostic_line, read_hook_input,
+        should_suppress_codex_permission_request, title_for,
+    };
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    // 验证 Kimi 审批结果与中断事件不携带固定英文标题。
+    fn kimi_titles_defer_to_localized_frontend() {
+        assert_eq!(title_for("kimi", "PermissionResult"), None);
+        assert_eq!(title_for("kimi", "Interrupt"), None);
+    }
+
+    #[test]
+    fn hook_stdin_reader_rejects_oversized_payloads() {
+        let oversized = vec![b'x'; super::HOOK_STDIN_MAX_BYTES as usize + 1];
+        assert_eq!(
+            read_hook_input(oversized.as_slice()).unwrap_err().code(),
+            "invalid_input"
+        );
+        assert_eq!(
+            read_hook_input(br#"{"event":"Stop"}"#.as_slice()).unwrap()["event"],
+            "Stop"
+        );
+    }
+
+    #[test]
+    // 验证共享规范化能提取并裁剪 Claude 嵌套思考强度。
+    fn extract_reasoning_effort_reads_claude_hook_effort_level() {
+        let input = json!({
+            "session_id": "abc",
+            "effort": { "level": " high " }
+        });
+
+        assert_eq!(
+            cli_manager_hook_schema::extract_reasoning_effort(&input).as_deref(),
+            Some("high")
+        );
+    }
+
+    #[test]
+    // 验证兼容旧式扁平 reasoning_effort 字段。
+    fn extract_reasoning_effort_reads_flat_legacy_keys() {
+        let input = json!({
+            "session_id": "abc",
+            "reasoning_effort": "xhigh"
+        });
+
+        assert_eq!(
+            cli_manager_hook_schema::extract_reasoning_effort(&input).as_deref(),
+            Some("xhigh")
+        );
+    }
+
+    #[test]
+    // 验证 MCP 工具名可提取服务器，而普通工具返回空值。
+    fn extract_mcp_server_reads_claude_tool_name() {
+        assert_eq!(
+            cli_manager_hook_schema::extract_mcp_server("mcp__exa__web_search_exa").as_deref(),
+            Some("exa")
+        );
+        assert_eq!(cli_manager_hook_schema::extract_mcp_server("Read"), None);
+    }
+
+    #[test]
+    // 用临时转录文件验证子路径优先及父路径回退的字节基线。
+    fn transcript_baseline_prefers_child_rollout() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("parent.jsonl");
+        let child = temp.path().join("child.jsonl");
+        fs::write(&parent, b"parent").unwrap();
+        fs::write(&child, b"child-rollout").unwrap();
+        assert_eq!(
+            approval_transcript_bytes(child.to_str(), parent.to_str()),
+            Some(13)
+        );
+        assert_eq!(approval_transcript_bytes(None, parent.to_str()), Some(6));
+    }
+
+    #[test]
+    // 验证 Codex 两类免交互审批模式会抑制审批通知。
+    fn suppresses_codex_permission_request_without_interactive_approval() {
+        for permission_mode in ["dontAsk", "bypassPermissions"] {
+            let input = json!({ "permission_mode": permission_mode });
+            assert!(should_suppress_codex_permission_request(
+                "codex",
+                "PermissionRequest",
+                &input
+            ));
+        }
+    }
+
+    #[test]
+    // 验证交互或未知模式、其他来源和非审批事件不被错误抑制。
+    fn preserves_permission_request_for_interactive_or_unknown_modes() {
+        for input in [
+            json!({ "permission_mode": "default" }),
+            json!({ "permission_mode": "acceptEdits" }),
+            json!({ "permission_mode": "plan" }),
+            json!({}),
+        ] {
+            assert!(!should_suppress_codex_permission_request(
+                "codex",
+                "PermissionRequest",
+                &input
+            ));
+        }
+
+        let bypass = json!({ "permission_mode": "bypassPermissions" });
+        assert!(!should_suppress_codex_permission_request(
+            "claude",
+            "PermissionRequest",
+            &bypass
+        ));
+        assert!(!should_suppress_codex_permission_request(
+            "codex", "Stop", &bypass
+        ));
+    }
+
+    #[test]
+    // 验证恶意换行及敏感输入被白名单替换，诊断保持单行。
+    fn hook_failure_diagnostic_is_redacted_and_single_line() {
+        let line = failure_diagnostic_line(
+            "codex\nAuthorization: Bearer secret",
+            "SessionStart\nprompt=private",
+            "bridge_connect_failed\ntoken=secret",
+        );
+
+        assert!(line.contains("source=unknown"));
+        assert!(line.contains("event=unknown"));
+        assert!(line.contains("error=unknown"));
+        assert_eq!(line.lines().count(), 1);
+        assert!(!line.contains("Bearer secret"));
+        assert!(!line.contains("prompt=private"));
+        assert!(!line.contains("token=secret"));
+    }
+
+    #[test]
+    // 验证 Grok 仅在 bypassPermissions 模式抑制审批事件。
+    fn suppresses_only_bypassed_grok_permission_request() {
+        assert!(should_suppress_codex_permission_request(
+            "grok",
+            "PermissionRequest",
+            &json!({ "permissionMode": "bypassPermissions" })
+        ));
+        for input in [
+            json!({ "permissionMode": "auto" }),
+            json!({ "permissionMode": "default" }),
+            json!({}),
+        ] {
+            assert!(!should_suppress_codex_permission_request(
+                "grok",
+                "PermissionRequest",
+                &input
+            ));
+        }
+    }
+
+    #[test]
+    // 验证 OpenCode 四类生命周期事件均不进入审批抑制。
+    fn opencode_events_never_enter_permission_suppression() {
+        for event in ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure"] {
+            assert!(!should_suppress_codex_permission_request(
+                "opencode",
+                event,
+                &json!({})
+            ));
+        }
+    }
+}

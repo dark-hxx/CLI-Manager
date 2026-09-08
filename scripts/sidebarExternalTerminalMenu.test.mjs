@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-const sidebar = readFileSync(new URL("../src/components/sidebar/index.tsx", import.meta.url), "utf8");
+const sidebar = readFileSync(new URL("../src/features/projects/components/SidebarView.tsx", import.meta.url), "utf8");
 const projectMenu = sidebar.match(
   /\{contextMenu\.kind === "project"[\s\S]*?\{contextMenu\.kind === "worktree"/,
 )?.[0];

@@ -9,7 +9,7 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-history-resume-command-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/historyResumeCommand.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/features/history/api/historyResumeCommand.ts", import.meta.url), "utf8");
 writeFileSync(
   join(tempDir, "cliTools.mjs"),
   `export const resolveCliToolHistorySourceId = (tool) => {
@@ -44,8 +44,8 @@ assert.deepEqual(
   [],
 );
 const output = transpiled.outputText
-  .replace('from "./cliTools"', 'from "./cliTools.mjs"')
-  .replace('from "./projectStartupCommand"', 'from "./projectStartupCommand.mjs"')
+  .replace('from "../../../shared/lib/cliTools"', 'from "./cliTools.mjs"')
+  .replace('from "../../projects/api/projectStartupCommand"', 'from "./projectStartupCommand.mjs"')
   .replace('from "./resumeCliArgs"', 'from "./resumeCliArgs.mjs"');
 const outputPath = join(tempDir, "historyResumeCommand.mjs");
 writeFileSync(outputPath, output, "utf8");

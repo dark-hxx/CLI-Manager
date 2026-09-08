@@ -9,7 +9,7 @@ import ts from "typescript";
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-cli-args-history-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/lib/cliArgsHistory.ts", import.meta.url), "utf8");
+const source = readFileSync(new URL("../src/shared/lib/cliArgsHistory.ts", import.meta.url), "utf8");
 const output = ts.transpileModule(source, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -25,7 +25,7 @@ const {
   recordCliArgsUsage,
 } = await import(pathToFileURL(outputPath).href);
 
-const syncSource = readFileSync(new URL("../src/lib/syncSettings.ts", import.meta.url), "utf8");
+const syncSource = readFileSync(new URL("../src/features/sync/lib/syncSettings.ts", import.meta.url), "utf8");
 const syncOutput = ts.transpileModule(syncSource, {
   compilerOptions: {
     module: ts.ModuleKind.ES2022,
@@ -90,7 +90,7 @@ test("keeps OSC 52 host clipboard query permission local", () => {
 });
 
 test("records non-clone CLI arguments after either create or edit succeeds", () => {
-  const modalSource = readFileSync(new URL("../src/components/ConfigModal.tsx", import.meta.url), "utf8");
+  const modalSource = readFileSync(new URL("../src/features/projects/components/ConfigModal.tsx", import.meta.url), "utf8");
   const editBranchStart = modalSource.indexOf("if (isEdit && project) {");
   const sharedRecordStart = modalSource.indexOf("if (!isClone && trimmedCliArgs) {", editBranchStart);
   const closeAfterSave = modalSource.indexOf("onClose();", sharedRecordStart);

@@ -1,0 +1,3 @@
+# Design
+
+Follow parent design.md. Build a syntax-aware or independently cross-checked named-method inventory across backend packages/scripts; regex counts alone do not prove completeness. Include methods behind cfg, attributes/modifiers, traits, nested functions and tests. Classify existing explanations for accuracy before adding prose. Describe obligations, units, side effects and failure/synchronization behavior only where meaningful. Avoid boilerplate and fabricated guarantees. Verify executable equivalence, accounting for doc-attribute semantics. Any extraction required for physical line limits is separately reviewed.

@@ -8,7 +8,10 @@
 
 | Guide | Description | Status |
 |-------|-------------|--------|
+| [Directory Structure](./directory-structure.md) | Domain/infrastructure owners and namespace-preserving module routes | Active |
+| [Backend Code Comment Contracts](./code-comment-contracts.md) | AI 友好的函数注释范围、内容、放置与可执行等价验证 | Active |
 | [WebDAV Sync Contracts](./webdav-sync-contracts.md) | WebDAV sync request/response boundaries, size checks, and validation cases | Active |
+| [AI Architecture Contracts](../frontend/ai-architecture-contracts.md) | Handwritten Rust/agent/script limits, module boundaries and migration checks | Active |
 | [Terminal Runtime Monitoring Contracts](./terminal-runtime-monitoring-contracts.md) | PTY env keys, shell OSC markers, tab runtime status, and resource growth diagnostics | Active |
 | [PTY Daemon Contracts](./pty-daemon-contracts.md) | Detached PtyHost transport, routing control-plane capability, protocol safety, and lifecycle contracts | Active |
 | [Terminal Output Scheduling Contracts](./terminal-output-scheduling-contracts.md) | Daemon live-frame budget, cross-terminal xterm fairness, Replay/Reset and ACK ordering | Active |
@@ -23,6 +26,7 @@
 | [ccusage Contracts](./ccusage-contracts.md) | ccusage 运行环境显式开关、缓存 scope 与前后端 WSL 判定合约 | Active |
 | [Project File Command Contracts](./project-file-command-contracts.md) | 项目根目录内文件浏览、读写、复制移动和路径边界校验命令合约 | Active |
 | [App Startup Contracts](./app-startup-contracts.md) | 应用启动链路、单实例约束与主窗口唤醒行为 | Active |
+| [Crash Reporting Contracts](./crash-reporting-contracts.md) | 独立崩溃日志、未清洁退出标记、脱敏与多进程边界 | Active |
 | [Linux Graphics Contracts](./linux-graphics-contracts.md) | WebKitGTK/NVIDIA/Wayland 分级兼容、诊断与 AUR 渠道 | Active |
 | [Worktree Isolation Contracts](./worktree-isolation-contracts.md) | Git worktree 并行任务隔离、生命周期和安全边界合约 | Active |
 | [Git Status Contracts](./git-status-contracts.md) | Git 状态收集三条链路（面板/Replay/WSL）的过滤合约与嵌套子仓库处理 | Active |
@@ -32,6 +36,7 @@
 | [Statusline Contracts](./statusline-contracts.md) | 内置 Claude 状态栏子命令、配置存储、预览、旧配置导入与安装边界 | Active |
 | [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约 | Active |
 | [Local Path Opening Contracts](./local-path-opening-contracts.md) | WebView 本地路径打开、Rust command 参数与 opener scope 边界 | Active |
+| [Desktop Pet File Safety Contracts](./desktop-pet-file-safety-contracts.md) | 桌宠 ID、包清单与受管理目录文件操作的路径安全边界 | Active |
 | [SSH Remote Terminal Contracts](./ssh-remote-terminal-contracts.md) | SSH 主机、远程项目、OpenSSH Launch Plan、PTY/daemon、能力路由与同步安全边界 | Active |
 | [Web Service Contracts](./web-service-contracts.md) | 独立 Web 服务、认证配对、双 WebSocket、事件回放、SQLite 与 operation 状态机 | Active |
 | [SSH Agent Contracts](./ssh-agent-contracts.md) | `cli-manager-ssh-agent`、共享 SSH transport、probe/安装、远端 Hook 配置、spool bridge 与身份边界 | Active |

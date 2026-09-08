@@ -1,0 +1,24 @@
+[
+  {
+    "file": "src-tauri/src/commands/cc_connect.rs",
+    "preserveAll": true,
+    "groups": [
+      { "name": "model", "first": "CcConnectAgent", "last": "SharedLogWriter" },
+      { "name": "paths", "first": "now_millis", "last": "path_string" },
+      { "name": "executable", "first": "detect_binary_uncached", "last": "sha256_file" },
+      { "name": "config_types", "first": "ManagedConfig", "last": "ProviderCatalogEntry" },
+      { "name": "platform_config", "first": "platform_type", "last": "merge_weixin_allow_from" },
+      { "name": "project_commands", "first": "build_remote_project_commands", "last": "single_line" },
+      { "name": "file_io", "first": "user_path_string", "last": "write_managed_config_with_agent_launch" },
+      { "name": "profile", "first": "copy_profile_state_file_if_missing", "last": "profile_issue_codes" },
+      { "name": "launcher", "first": "user_home_dir", "last": "managed_project_environment" },
+      { "name": "codex_launch", "first": "RemoteCodexProviderLaunch", "last": "redact_remote_codex_probe_output" },
+      { "name": "project_catalog", "first": "load_provider_catalog", "last": "load_registered_projects" },
+      { "name": "ssh_launch", "first": "sqlite_u16", "last": "registered_project_by_token" },
+      { "name": "credentials", "first": "set_credential", "last": "platform_statuses" },
+      { "name": "process_environment", "first": "ProxySource", "last": "apply_git_safe_directory_environment" },
+      { "name": "rollback", "first": "CredentialSnapshot", "last": "FileSnapshot" },
+      { "name": "logging", "first": "format_and_check_config_syntax", "last": "redact_log_line" }
+    ]
+  }
+]

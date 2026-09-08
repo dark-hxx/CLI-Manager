@@ -118,6 +118,9 @@ pub struct HookConfigReport {
     pub installation: Option<HookInstallationRecord>,
 }
 
+// 将不同 CLI 的 Hook 字段别名及嵌套工具输入/结果收敛为共享载荷，不修改原始 JSON。
+// Agent/Task 的普通 ToolStart/ToolStop 返回 None，避免与专用子代理事件重复处理。
+// 本函数只提取字段，不验证来源、会话绑定或路径可信性；这些边界由调用方负责。
 pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<NormalizedHookInput> {
     let tool_input = hook_input.get("tool_input");
     let tool_response = hook_input
@@ -230,11 +233,13 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
     })
 }
 
+// 按给定键的优先级取本层首个字符串；不递归、不裁剪，也不会跳过空字符串。
 fn first_string(value: &Value, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| value.get(*key).and_then(Value::as_str).map(str::to_string))
 }
 
+// 优先查当前对象的候选键，再按 JSON 容器迭代顺序深度查找子节点，找到首个字符串即停止。
 fn deep_first_string(value: &Value, keys: &[&str]) -> Option<String> {
     match value {
         Value::Object(map) => {
@@ -254,12 +259,14 @@ fn deep_first_string(value: &Value, keys: &[&str]) -> Option<String> {
     }
 }
 
+// 从 mcp__服务器__工具 格式取服务器段并裁剪空白；不验证工具段内容。
 pub fn extract_mcp_server(value: &str) -> Option<String> {
     let rest = value.strip_prefix("mcp__")?;
     let (server, _) = rest.split_once("__")?;
     non_empty_trimmed(server)
 }
 
+// 依次兼容 effort 字符串、effort.level 和旧版扁平别名，返回首个非空级别，不限制级别枚举。
 pub fn extract_reasoning_effort(hook_input: &Value) -> Option<String> {
     let candidates = [
         hook_input.get("effort").and_then(Value::as_str),
@@ -275,6 +282,7 @@ pub fn extract_reasoning_effort(hook_input: &Value) -> Option<String> {
     candidates.into_iter().flatten().find_map(non_empty_trimmed)
 }
 
+// 去掉首尾空白后复制字符串；纯空白或空字符串表示没有有效值。
 pub fn non_empty_trimmed(value: &str) -> Option<String> {
     let trimmed = value.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
@@ -286,6 +294,7 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    // 验证工具结果中的子代理身份/转录路径与嵌套 effort.level 均可提取。
     fn normalizes_nested_subagent_fields() {
         let input = json!({
             "session_id": "session",
@@ -307,6 +316,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Grok 的 sessionId 驼峰字段不会在共享归一化时丢失。
     fn normalizes_grok_camel_case_session_id() {
         // Grok Build hook stdin uses camelCase field names (see Grok hooks docs).
         let input = json!({
@@ -324,6 +334,7 @@ mod tests {
     }
 
     #[test]
+    // 验证 Kimi 子代理显示名称、完成响应及失败消息映射到通用展示字段。
     fn normalizes_kimi_subagent_display_and_failure_message() {
         let subagent = normalize_hook_input(
             "SubagentStop",
@@ -347,12 +358,14 @@ mod tests {
     }
 
     #[test]
+    // 验证 Agent 普通工具事件被过滤，而 Read 普通工具事件仍保留。
     fn ignores_generic_tool_events_for_agent_tools() {
         assert!(normalize_hook_input("ToolStart", &json!({ "tool_name": "Agent" })).is_none());
         assert!(normalize_hook_input("ToolStart", &json!({ "tool_name": "Read" })).is_some());
     }
 
     #[test]
+    // 验证提问工具名称随 Notification 保留，供通知层区分等待用户回答的事件。
     fn preserves_question_tool_name_for_notification_bridge() {
         let normalized = normalize_hook_input(
             "Notification",
@@ -364,6 +377,7 @@ mod tests {
     }
 
     #[test]
+    // 锁定旧 reasoning_effort 字段与标准 MCP 工具名称的解析结果。
     fn shared_extractors_keep_existing_contracts() {
         assert_eq!(
             extract_reasoning_effort(&json!({ "reasoning_effort": "xhigh" })).as_deref(),

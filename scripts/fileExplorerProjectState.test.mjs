@@ -4,11 +4,12 @@ import { readFileSync } from "node:fs";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-const fileStore = read("../src/stores/fileExplorerStore.ts");
-const terminalStore = read("../src/stores/terminalStore.ts");
-const terminalTabs = read("../src/components/TerminalTabs.tsx");
-const sidebar = read("../src/components/sidebar/index.tsx");
-const fileEditorPane = read("../src/components/files/FileEditorPane.tsx");
+const fileStore = read("../src/features/files/api/fileExplorerStore.ts");
+const terminalStore = read("../src/features/terminal/store/terminalStore.ts");
+const terminalTabs = read("../src/features/terminal/hooks/useTerminalTabsController.tsx");
+const paneLeafSource = read("../src/features/terminal/components/PaneLeafView.tsx");
+const sidebar = read("../src/features/projects/hooks/useSidebarController.tsx");
+const fileEditorPane = read("../src/features/files/hooks/useFileEditorController.ts");
 
 function sliceBetween(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -69,7 +70,7 @@ test("project synchronization effects read the latest store without subscribing 
 });
 
 test("hidden Workspans do not activate their file editors", () => {
-  const paneLeaf = sliceBetween(terminalTabs, "function PaneLeafView", "const MemoPaneLeafView");
+  const paneLeaf = sliceBetween(paneLeafSource, "function PaneLeafView", "const MemoPaneLeafView");
   assert.match(
     paneLeaf,
     /<FileEditorPane[\s\S]*?isActive=\{!historyActive && isLayoutVisible && session\.id === activeSessionId\}/,
