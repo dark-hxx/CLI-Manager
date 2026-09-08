@@ -290,7 +290,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     <button
       type="button"
       onClick={handleToggleGitWorkspace}
-      className="ui-focus-ring ui-icon-action shrink-0 data-[active=true]:bg-accent/15 data-[active=true]:text-accent"
+      className="ui-focus-ring ui-icon-action ui-sidebar-action-git shrink-0"
       data-active={gitWorkspaceOpen ? "true" : "false"}
       title={t("sidebar.gitWorkspace")}
       aria-label={t("sidebar.gitWorkspace")}

@@ -944,6 +944,14 @@
   color: color-mix(in srgb, var(--primary) 82%, var(--on-surface) 18%);
 }
 
+[data-theme="light"] .ui-icon-action.ui-sidebar-action-git[data-active="true"] {
+  border-color: var(--primary);
+  background-color: color-mix(in srgb, var(--surface-container-highest) 72%, white 28%);
+  background-image: none;
+  box-shadow: none;
+  color: var(--primary);
+}
+
 [data-theme="light"] .ui-icon-action.ui-sidebar-action-hook {
   color: color-mix(in srgb, var(--on-surface-variant) 92%, var(--on-surface) 8%);
 }
