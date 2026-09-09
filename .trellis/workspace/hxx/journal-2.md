@@ -1553,3 +1553,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 113: Codex Goal Hook 状态与通知修复
+
+**Date**: 2026-09-09
+**Task**: Codex Goal Hook 状态与通知修复
+**Branch**: `master`
+
+### Summary
+
+修复阶段性 Stop 提前完成与旧 Hook 空 goal 载荷导致完成通知遗漏；只读查询 Codex goal 状态并贯通 daemon、前端及通知出口。用户实测验证成功。Hook 34 项测试、cargo check、architecture strict 与 diff-check 通过；V1.4.0 记录及协议契约已更新。保留无关终端面板改动，未推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3bf53d31` | (see git log) |
+
+### Status
+
+[OK] **Completed**
