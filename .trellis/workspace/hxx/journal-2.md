@@ -1532,3 +1532,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 112: Git 双组件布局验收与提交
+
+**Date**: 2026-09-09
+**Task**: Git 双组件布局验收与提交
+**Branch**: `master`
+
+### Summary
+
+用户已验收：历史在底部三栏工作区，变更在终端侧栏，Tab 双向切换独立组件；统一 Git 入口、滚动条并优化拖拽。记录归入 V1.4.0，仅提交 12 个相关文件；保留 Codex Goal/Hook 等其他工作。12 项定向测试、tsc 和严格架构检查通过，未推送。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc039078` | (see git log) |
+
+### Status
+
+[OK] **Completed**
