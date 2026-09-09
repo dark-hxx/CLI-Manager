@@ -139,30 +139,49 @@
 }
 
 .diff-code-scroll,
-.ui-thin-scroll,
 .ui-terminal-bg-layer .xterm .xterm-viewport {
   scrollbar-width: thin;
   scrollbar-color: var(--ui-scrollbar-thumb) var(--ui-scrollbar-track);
 }
 
 .diff-code-scroll::-webkit-scrollbar,
-.ui-thin-scroll::-webkit-scrollbar,
 .ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar {
   width: var(--ui-scrollbar-size);
   height: var(--ui-scrollbar-size);
 }
 
 .diff-code-scroll::-webkit-scrollbar-track,
-.ui-thin-scroll::-webkit-scrollbar-track,
 .ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar-track {
   background: var(--ui-scrollbar-track);
 }
 
 .diff-code-scroll::-webkit-scrollbar-thumb,
-.ui-thin-scroll::-webkit-scrollbar-thumb,
 .ui-terminal-bg-layer .xterm .xterm-viewport::-webkit-scrollbar-thumb {
   background-color: var(--ui-scrollbar-thumb);
   border-radius: 999px;
+}
+
+.ui-thin-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 32%, transparent) transparent;
+}
+
+.ui-thin-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.ui-thin-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.ui-thin-scroll::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--text-muted) 28%, transparent);
+}
+
+.ui-thin-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 48%, transparent);
 }
 
 .ui-terminal-bg-layer .xterm .xterm-viewport {

@@ -300,13 +300,15 @@ function ToolCountList({
   label,
   color,
   items,
+  expanded = false,
 }: {
   label: string;
   color: string;
   items: HistoryToolCount[];
+  expanded?: boolean;
 }) {
   const { t } = useI18n();
-  const top = items.slice(0, TOOL_LIST_LIMIT);
+  const top = expanded ? items : items.slice(0, TOOL_LIST_LIMIT);
   const restCount = items.length - top.length;
   return (
     <div className="mt-1.5 first:mt-0">
@@ -336,7 +338,13 @@ function ToolCountList({
   );
 }
 
-export function ToolsCard({ session }: { session: HistorySessionDetail | null }) {
+export function ToolsCard({
+  session,
+  scrollableDetails = false,
+}: {
+  session: HistorySessionDetail | null;
+  scrollableDetails?: boolean;
+}) {
   const inferred = inferredToolActivity(session?.tool_events);
   const { t } = useI18n();
   const usage = session?.usage;
@@ -360,28 +368,35 @@ export function ToolsCard({ session }: { session: HistorySessionDetail | null })
         ) : undefined
       }
     >
-      {inferred.total > 0 && (
-        <div title={t("termStats.inferredHelp")}>
-          <div className="text-[11px]">{t("termStats.inferredCount", { count: inferred.total })}</div>
-          <ToolCountList label={t("termStats.inferredTools")} color={TERM_PANEL.dim} items={inferred.builtin} />
-          <ToolCountList label={t("termStats.inferredMcp")} color={TERM_PANEL.cyan} items={inferred.mcp} />
-        </div>
-      )}
-      {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
-        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
-          {t("termStats.noToolCalls")}
-        </div>
-      ) : (
-        <>
-          {builtinCalls.length > 0 && (
-            <ToolCountList label={t("termStats.builtinTools")} color={TERM_PANEL.green} items={builtinCalls} />
-          )}
-          {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM_PANEL.cyan} items={mcpCalls} />}
-          {skillCalls.length > 0 && (
-            <ToolCountList label={t("termStats.skillCommand")} color={TERM_PANEL.magenta} items={skillCalls} />
-          )}
-        </>
-      )}
+      <div
+        className={scrollableDetails ? "ui-thin-scroll max-h-64 overflow-y-auto pr-1" : undefined}
+        data-stats-screenshot-expand={scrollableDetails ? "true" : undefined}
+        role={scrollableDetails ? "region" : undefined}
+        aria-label={scrollableDetails ? t("termStats.tools") : undefined}
+        tabIndex={scrollableDetails ? 0 : undefined}
+      >
+        {inferred.total > 0 && (
+          <div title={t("termStats.inferredHelp")}>
+            <ToolCountList label={t("termStats.inferredTools")} color={TERM_PANEL.dim} items={inferred.builtin} expanded={scrollableDetails} />
+            <ToolCountList label={t("termStats.inferredMcp")} color={TERM_PANEL.cyan} items={inferred.mcp} expanded={scrollableDetails} />
+          </div>
+        )}
+        {mcpCalls.length === 0 && skillCalls.length === 0 && builtinCalls.length === 0 ? (
+          <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
+            {t("termStats.noToolCalls")}
+          </div>
+        ) : (
+          <>
+            {builtinCalls.length > 0 && (
+              <ToolCountList label={t("termStats.builtinTools")} color={TERM_PANEL.green} items={builtinCalls} expanded={scrollableDetails} />
+            )}
+            {mcpCalls.length > 0 && <ToolCountList label="MCP" color={TERM_PANEL.cyan} items={mcpCalls} expanded={scrollableDetails} />}
+            {skillCalls.length > 0 && (
+              <ToolCountList label={t("termStats.skillCommand")} color={TERM_PANEL.magenta} items={skillCalls} expanded={scrollableDetails} />
+            )}
+          </>
+        )}
+      </div>
     </StatCard>
   );
 }

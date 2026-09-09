@@ -6,9 +6,8 @@ export const zh = {
   "termStats.screenshotTooLarge": "统计长图过大，请隐藏部分卡片后重试",
 
   "termStats.inferred": "推断",
-  "termStats.inferredCount": "另识别 {count} 处嵌套调用（推断）",
-  "termStats.inferredTools": "嵌套工具（推断）",
-  "termStats.inferredMcp": "MCP（推断）",
+  "termStats.inferredTools": "嵌套工具",
+  "termStats.inferredMcp": "MCP",
   "termStats.inferredHelp": "根据编排脚本中的调用位置识别，不代表实际执行次数，也不用于判定健康状态。",
   "termStats.agentCapabilities.health.unknownReason": "尚无可验证的调用结果或原生健康状态；推断调用不能证明连接健康。",
   "terminal.backgroundTasks.title": "后台任务",

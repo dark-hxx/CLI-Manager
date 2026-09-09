@@ -806,7 +806,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           />
         );
       case "tools":
-        return <ToolsCard key={cardKey} session={boundSession} />;
+        return <ToolsCard key={cardKey} session={boundSession} scrollableDetails />;
       case "agentCapabilities":
         return (
           <AgentCapabilitiesCard

@@ -48,6 +48,9 @@ function snapshotPanel(source: HTMLElement): { host: HTMLDivElement; panel: HTML
   const scroll = panel.querySelector<HTMLElement>("[data-stats-screenshot-scroll]");
   if (!scroll) throw new Error("stats_screenshot_unavailable");
   Object.assign(scroll.style, { height: "auto", minHeight: "0", maxHeight: "none", overflow: "visible", flex: "none" });
+  panel.querySelectorAll<HTMLElement>("[data-stats-screenshot-expand]").forEach((node) => {
+    Object.assign(node.style, { height: "auto", maxHeight: "none", overflow: "visible" });
+  });
   const host = document.createElement("div");
   host.setAttribute("aria-hidden", "true");
   host.inert = true;

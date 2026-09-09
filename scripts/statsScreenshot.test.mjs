@@ -54,6 +54,9 @@ test("clipboard failure still releases resources and remains retryable", async (
   await assert.rejects(copyStatsImage({...canvas, width: 0}), /unavailable/);
 });
 test("capture is scoped and uses only native write-image permission", () => {
+  const capture = source("src/features/stats/api/statsScreenshot.ts");
+  assert.match(capture, /\[data-stats-screenshot-expand\]/);
+  assert.match(capture, /maxHeight: "none", overflow: "visible"/);
   const permissions = JSON.parse(source("src-tauri/capabilities/default.json")).permissions;
   assert.ok(permissions.includes("clipboard-manager:allow-write-image"));
   const button = source("src/features/terminal/components/StatsScreenshotButton.tsx");
