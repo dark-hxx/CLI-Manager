@@ -1574,3 +1574,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 114: Worktree 强制合并按钮
+
+**Date**: 2026-09-09
+**Task**: Worktree 强制合并按钮
+**Branch**: `master`
+
+### Summary
+
+新增 Worktree 强制保存并合并流程：原子化 stash、精确 OID 恢复并保留 stash；补充恢复冲突保护、不可外部关闭的二次确认框、双语文案、契约与交付记录。通过 Rust 全量测试、TypeScript、架构严格检查。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `7ad2134a` | (see git log) |
+
+### Status
+
+[OK] **Completed**
