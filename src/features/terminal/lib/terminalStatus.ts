@@ -4,7 +4,7 @@ import { useProjectStore } from "../../projects/api/projectStore";
 import { translateCurrent } from "../../../shared/i18n/index";
 import { findProjectByPath, findWorktreeByPath } from "../api/terminalProject";
 import {
-  type CliHookEventName, type TabNotificationState, type ShellRuntimeEventName,
+  type CliHookEventName, type CliHookPayload, type CodexGoalStatus, type TabNotificationState, type ShellRuntimeEventName,
   type DaemonSessionState, type TabStatusSourceName, type TabStatusSources, type TabStatusDetails,
   type SplitState, type PtyStatusPayload, type TerminalStore,
 } from "../types/terminalStoreTypes";
@@ -183,6 +183,76 @@ export function mapCliHookEvent(event: CliHookEventName): TabNotificationState |
   if (event === "StopFailure") return "failed";
   if (event === "Stop") return "done";
   return null;
+}
+
+export interface CliHookStatusDecision {
+  status: TabNotificationState | null;
+  isCodexGoalStop: boolean;
+  goalStatus: CodexGoalStatus | null;
+  goalId: string | null;
+  goalKey: string | null;
+  suppressCompletionNotification: boolean;
+}
+
+const CODEX_GOAL_STATUSES: readonly CodexGoalStatus[] = [
+  "none",
+  "active",
+  "paused",
+  "blocked",
+  "budgetLimited",
+  "usageLimited",
+  "complete",
+  "unknown",
+];
+
+function normalizeCodexGoalStatus(value: string | null | undefined): CodexGoalStatus | null {
+  return typeof value === "string" && CODEX_GOAL_STATUSES.includes(value as CodexGoalStatus)
+    ? value as CodexGoalStatus
+    : null;
+}
+
+function normalizeHookIdentity(value: string | null | undefined): string | null {
+  const normalized = value?.trim();
+  return normalized && normalized.length <= 256 ? normalized : null;
+}
+
+export function isCodexGoalTerminalStatus(status: CodexGoalStatus | undefined): boolean {
+  return status === "complete" || status === "budgetLimited" || status === "usageLimited";
+}
+
+// 将 Codex Stop 的数据库状态转换为 Tab 状态；旧/异常载荷按 unknown 处理，禁止提前显示完成。
+export function resolveCliHookStatus(payload: Pick<CliHookPayload, "tabId" | "source" | "event" | "sessionId" | "goalId" | "goalStatus" | "environmentType">): CliHookStatusDecision {
+  const isCodexGoalStop = payload.source === "codex" && payload.event === "Stop";
+  if (!isCodexGoalStop) {
+    return {
+      status: mapCliHookEvent(payload.event),
+      isCodexGoalStop: false,
+      goalStatus: null,
+      goalId: null,
+      goalKey: null,
+      suppressCompletionNotification: false,
+    };
+  }
+
+  const goalStatus = normalizeCodexGoalStatus(payload.goalStatus) ?? "unknown";
+  const goalId = normalizeHookIdentity(payload.goalId);
+  const sessionId = normalizeHookIdentity(payload.sessionId);
+  const goalKey = `codex:${goalId ? `goal:${goalId}` : `session:${sessionId ?? payload.tabId}`}`;
+  const status = goalStatus === "paused" || goalStatus === "blocked"
+    ? "attention"
+    : goalStatus === "budgetLimited" || goalStatus === "usageLimited"
+      ? "failed"
+      : goalStatus === "active" || goalStatus === "unknown"
+        ? "running"
+        : "done";
+  return {
+    status,
+    isCodexGoalStop: true,
+    goalStatus,
+    goalId,
+    goalKey,
+    suppressCompletionNotification: goalStatus === "active" || goalStatus === "unknown",
+  };
 }
 
 export function mapShellRuntimeEvent(event: ShellRuntimeEventName, exitCode?: number | null): TabNotificationState {

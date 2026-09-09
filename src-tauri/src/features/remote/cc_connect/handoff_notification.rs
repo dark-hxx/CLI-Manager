@@ -7,6 +7,7 @@ use super::handoff_session::CcConnectHandoffTransport;
 use super::handoff_session::{load_handoff_record, PersistedHandoffRecord};
 use super::*;
 use crate::daemon::discovery::{daemon_info_path, is_pid_alive, read_daemon_info, DaemonInfo};
+use crate::codex_goal::{classify_codex_stop, CodexGoalHookState};
 use log::{debug, warn};
 use serde_json::Value;
 use std::collections::hash_map::DefaultHasher;
@@ -98,6 +99,7 @@ struct RemoteHookEvent {
     source: String,
     event: String,
     cli_session_id: Option<String>,
+    goal_status: Option<String>,
     permission_fingerprint: Option<u64>,
 }
 
@@ -108,6 +110,7 @@ impl RemoteHookEvent {
         let source = string_field(payload, &["source"])?;
         let event = string_field(payload, &["event"])?;
         let cli_session_id = string_field(payload, &["sessionId", "session_id"]);
+        let goal_status = string_field(payload, &["goalStatus", "goal_status"]);
         let fingerprint_source = string_field(payload, &["toolUseId", "tool_use_id", "message"]);
         let permission_fingerprint = fingerprint_source.map(|value| {
             let mut hasher = DefaultHasher::new();
@@ -119,6 +122,7 @@ impl RemoteHookEvent {
             source,
             event,
             cli_session_id,
+            goal_status,
             permission_fingerprint,
         })
     }
@@ -392,6 +396,23 @@ fn handle_hook_payload(
             let current = state.get_or_insert_with(|| TaskState::new(&record, now));
             let kind = if event.event == "StopFailure" {
                 NotificationKind::Failed
+            } else if event.source == "codex" {
+                match classify_codex_stop(event.goal_status.as_deref()) {
+                    CodexGoalHookState::Running => {
+                        if current.phase != TaskPhase::Terminal {
+                            current.phase = TaskPhase::Running;
+                        }
+                        return;
+                    }
+                    CodexGoalHookState::Attention => {
+                        if current.phase != TaskPhase::Terminal {
+                            current.phase = TaskPhase::Attention;
+                        }
+                        return;
+                    }
+                    CodexGoalHookState::Completed => NotificationKind::Completed,
+                    CodexGoalHookState::Failed => NotificationKind::Failed,
+                }
             } else {
                 NotificationKind::Completed
             };

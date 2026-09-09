@@ -63,6 +63,8 @@ struct ClaudeHookRequest {
     title: Option<String>,
     message: Option<String>,
     session_id: Option<String>,
+    goal_status: Option<String>,
+    goal_id: Option<String>,
     cwd: Option<String>,
     timestamp: Option<String>,
     // 仅 SubagentStart 等子 Agent 事件携带：用于定位子 Agent 转录 jsonl。
@@ -95,6 +97,8 @@ pub struct ClaudeHookPayload {
     title: Option<String>,
     message: Option<String>,
     session_id: Option<String>,
+    goal_status: Option<String>,
+    goal_id: Option<String>,
     cwd: Option<String>,
     timestamp: Option<String>,
     agent_id: Option<String>,
@@ -218,6 +222,9 @@ impl ClaudeHookPayload {
         HookNotificationJob {
             source: self.source.clone(),
             event: self.event.clone(),
+            session_id: self.session_id.clone(),
+            goal_id: self.goal_id.clone(),
+            goal_status: self.goal_status.clone(),
             cwd: (!is_ssh).then(|| self.cwd.clone()).flatten(),
             project: is_ssh.then(|| self.remote_project_name.clone()).flatten(),
             timestamp: self.timestamp.clone(),
@@ -607,7 +614,10 @@ pub fn spawn_hook_listener(listener: TcpListener, token: String, sink: HookPaylo
     });
 }
 
-// 读取请求并检查路由、Bearer 和载荷，去重后交给出口并回复成功。
+#[path = "legacy_goal.rs"]
+mod legacy_goal;
+
+// 校验及去重后补全旧本机 Codex Stop 的 goal 元数据，再向所有出口分发。
 fn handle_stream(
     mut stream: TcpStream,
     sink: HookPayloadSink,
@@ -639,7 +649,7 @@ fn handle_stream(
         return;
     }
 
-    let payload = match serde_json::from_slice::<ClaudeHookRequest>(&request.body) {
+    let mut payload = match serde_json::from_slice::<ClaudeHookRequest>(&request.body) {
         Ok(payload) => payload,
         Err(err) => {
             debug!("cli hook bridge payload parse failed: {}", err);
@@ -662,6 +672,9 @@ fn handle_stream(
         return;
     }
 
+    legacy_goal::enrich(&mut payload, |session_id| {
+        crate::codex_goal::lookup_stop_goal(Some(session_id), None)
+    });
     log_hook_payload_diagnostic(&payload);
 
     let payload = ClaudeHookPayload {
@@ -671,6 +684,8 @@ fn handle_stream(
         title: payload.title,
         message: payload.message,
         session_id: payload.session_id,
+        goal_status: payload.goal_status,
+        goal_id: payload.goal_id,
         cwd: payload.cwd,
         timestamp: payload.timestamp,
         agent_id: payload.agent_id,
@@ -717,6 +732,7 @@ pub fn remote_hook_payload_from_spool(
         "hostId",
         "projectId",
         "eventId",
+        "goalId",
     ] {
         if value
             .get(key)
@@ -725,6 +741,13 @@ pub fn remote_hook_payload_from_spool(
         {
             return Err("remote_hook_payload_invalid".to_string());
         }
+    }
+    if value
+        .get("goalStatus")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|status| !crate::codex_goal::is_valid_wire_status(status))
+    {
+        return Err("remote_hook_payload_invalid".to_string());
     }
     for key in ["remoteCwd", "remoteTranscriptRef", "agentTranscriptPath"] {
         if value
@@ -752,6 +775,8 @@ pub fn remote_hook_payload_from_spool(
         title: None,
         message: None,
         session_id: string("sessionId"),
+        goal_status: string("goalStatus"),
+        goal_id: string("goalId"),
         cwd: string("remoteCwd"),
         timestamp: chrono::DateTime::<chrono::Utc>::from_timestamp_millis(occurred_at as i64)
             .map(|value| value.to_rfc3339()),
@@ -784,6 +809,8 @@ pub fn remote_hook_payload_from_spool(
         title: request.title,
         message: request.message,
         session_id: request.session_id,
+        goal_status: request.goal_status,
+        goal_id: request.goal_id,
         cwd: request.cwd,
         timestamp: request.timestamp,
         agent_id: request.agent_id,
@@ -898,6 +925,20 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
         .remote_event_id
         .as_deref()
         .is_some_and(|value| value.trim().is_empty() || value.len() > 128)
+    {
+        return false;
+    }
+    if payload
+        .goal_status
+        .as_deref()
+        .is_some_and(|value| !crate::codex_goal::is_valid_wire_status(value))
+    {
+        return false;
+    }
+    if payload
+        .goal_id
+        .as_deref()
+        .is_some_and(|value| !crate::codex_goal::is_valid_wire_goal_id(value))
     {
         return false;
     }
@@ -1331,6 +1372,8 @@ mod approval_tests {
             title: None,
             message: message.map(str::to_string),
             session_id: Some("session-1".to_string()),
+            goal_status: None,
+            goal_id: None,
             cwd: None,
             timestamp: None,
             agent_id: agent_id.map(str::to_string),

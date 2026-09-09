@@ -6,6 +6,7 @@ import { debugConsoleInfo, debugConsoleWarn } from "../../../shared/platform/deb
 import { translateCurrent } from "../../../shared/i18n/index";
 import { logError, logWarn } from "../../../shared/platform/logger";
 import type { CliHookPayload, CliHookEventName } from "../state";
+import { resolveCliHookStatus } from "../lib/terminalStatus";
 
 export type ReplayEventKind =
   | "session"
@@ -473,6 +474,21 @@ function classifyPayload(payload: CliHookPayload): Pick<ReplayEvent, "kind" | "t
       durationMs: null,
     },
   };
+
+  const stopDecision = resolveCliHookStatus(payload);
+  if (event === "Stop" && stopDecision.isCodexGoalStop && stopDecision.goalStatus) {
+    tags.push(`goal:${stopDecision.goalStatus}`);
+    eventMap.Stop = {
+      ...eventMap.Stop,
+      status: stopDecision.status === "running"
+        ? "running"
+        : stopDecision.status === "attention"
+          ? "attention"
+          : stopDecision.status === "failed"
+            ? "failed"
+            : "completed",
+    };
+  }
 
   return { ...eventMap[event], tags };
 }

@@ -15,6 +15,9 @@ pub const SUPPORTED_EVENTS: [&str; 6] = [
 pub struct HookNotificationJob {
     pub source: String,
     pub event: String,
+    pub session_id: Option<String>,
+    pub goal_id: Option<String>,
+    pub goal_status: Option<String>,
     pub cwd: Option<String>,
     pub project: Option<String>,
     pub timestamp: Option<String>,

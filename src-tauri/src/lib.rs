@@ -59,6 +59,8 @@ mod file_watcher;
 mod git_watcher;
 #[path = "features/hooks/client.rs"]
 pub mod hook_client;
+#[path = "features/hooks/codex_goal.rs"]
+mod codex_goal;
 #[path = "infrastructure/system/linux_graphics.rs"]
 mod linux_graphics;
 #[path = "features/files/live_server/mod.rs"]

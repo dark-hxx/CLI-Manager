@@ -5,19 +5,24 @@ use super::model::{
     ThirdPartyTarget,
 };
 use crate::app_paths;
+use crate::codex_goal::{parse_wire_status, CodexGoalStatus};
 use chrono::{DateTime, Local, Utc};
 use log::{debug, warn};
 use reqwest::Client;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::{sync_channel, SyncSender, TrySendError};
 use std::thread;
+use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use uuid::Uuid;
 
 const QUEUE_CAPACITY: usize = 64;
 const MAX_TARGETS_PER_JOB: usize = 20;
 const MAX_CONCURRENCY: usize = 4;
+const GOAL_NOTIFICATION_TTL: Duration = Duration::from_secs(30 * 60);
+const GOAL_NOTIFICATION_CACHE_LIMIT: usize = 256;
 
 #[derive(Clone)]
 pub struct DispatcherHandle {
@@ -39,8 +44,9 @@ impl DispatcherHandle {
                     return;
                 }
             };
+            let mut goal_notifications = GoalNotificationDeduper::default();
             while let Ok(job) = receiver.recv() {
-                runtime.block_on(process_job(label, job));
+                runtime.block_on(process_job(label, job, &mut goal_notifications));
             }
         });
         Self { sender }
@@ -68,7 +74,12 @@ pub async fn test_send(target: ThirdPartyTarget) -> Result<TestSendResult, Strin
 }
 
 // 构造消息并读取当前设置，筛选已启用事件目标，以最多四路并发发送；仅记录失败，不重试。
-async fn process_job(label: &'static str, job: HookNotificationJob) {
+async fn process_job(
+    label: &'static str,
+    job: HookNotificationJob,
+    goal_notifications: &mut GoalNotificationDeduper,
+) {
+    let goal_notification_key = goal_notification_key(&job);
     let Some(message) = message_from_job(job) else {
         return;
     };
@@ -85,6 +96,11 @@ async fn process_job(label: &'static str, job: HookNotificationJob) {
         .collect::<Vec<_>>();
     if targets.is_empty() {
         return;
+    }
+    if let Some(key) = goal_notification_key {
+        if !goal_notifications.claim(key) {
+            return;
+        }
     }
 
     let client = match build_client() {
@@ -124,6 +140,53 @@ async fn process_job(label: &'static str, job: HookNotificationJob) {
             Some(Err(err)) => warn!("third-party notification task join failed: {err}"),
             None => break,
         }
+    }
+}
+
+// 为已知 Codex goal 关注/终态构造有界去重键；普通 Codex Stop 不改变既有通知语义。
+fn goal_notification_key(job: &HookNotificationJob) -> Option<String> {
+    if job.source != "codex" || job.event != "Stop" {
+        return None;
+    }
+    let status = parse_wire_status(job.goal_status.as_deref())?;
+    if matches!(status, CodexGoalStatus::None | CodexGoalStatus::Active | CodexGoalStatus::Unknown)
+    {
+        return None;
+    }
+    let identity = job
+        .goal_id
+        .as_deref()
+        .or(job.session_id.as_deref())
+        .unwrap_or("unknown");
+    Some(format!("codex|{identity}|{}", status.wire_name()))
+}
+
+#[derive(Default)]
+struct GoalNotificationDeduper {
+    seen: HashMap<String, Instant>,
+}
+
+impl GoalNotificationDeduper {
+    // 在有界 TTL 缓存中只允许同一 goal 终态/关注状态通知一次。
+    fn claim(&mut self, key: String) -> bool {
+        let now = Instant::now();
+        self.seen
+            .retain(|_, seen_at| now.duration_since(*seen_at) <= GOAL_NOTIFICATION_TTL);
+        if self.seen.contains_key(&key) {
+            return false;
+        }
+        if self.seen.len() >= GOAL_NOTIFICATION_CACHE_LIMIT {
+            if let Some(oldest) = self
+                .seen
+                .iter()
+                .min_by_key(|(_, seen_at)| **seen_at)
+                .map(|(key, _)| key.clone())
+            {
+                self.seen.remove(&oldest);
+            }
+        }
+        self.seen.insert(key, now);
+        true
     }
 }
 
@@ -264,6 +327,15 @@ fn message_from_job(job: HookNotificationJob) -> Option<HookNotificationMessage>
     if !super::model::is_supported_event(&job.event) {
         return None;
     }
+    let goal_status = if job.source == "codex" && job.event == "Stop" {
+        let status = parse_wire_status(job.goal_status.as_deref())?;
+        if matches!(status, CodexGoalStatus::Active | CodexGoalStatus::Unknown) {
+            return None;
+        }
+        Some(status)
+    } else {
+        None
+    };
     let id = Uuid::new_v4().to_string();
     let source = normalize_source(&job.source);
     let project = job
@@ -281,8 +353,20 @@ fn message_from_job(job: HookNotificationJob) -> Option<HookNotificationMessage>
         })
         .unwrap_or_else(|| "Unknown Project".to_string());
     let time = local_time_text(job.timestamp.as_deref());
-    let event_label = event_label(&job.event);
-    let summary = event_summary(&job.event, &source, &project);
+    let event_label = match goal_status {
+        Some(CodexGoalStatus::Paused | CodexGoalStatus::Blocked) => "🔔 需要关注",
+        Some(CodexGoalStatus::BudgetLimited | CodexGoalStatus::UsageLimited) => "❌ 执行错误",
+        _ => event_label(&job.event),
+    };
+    let summary = match goal_status {
+        Some(CodexGoalStatus::Paused | CodexGoalStatus::Blocked) => {
+            format!("{source} - {project} 需要关注")
+        }
+        Some(CodexGoalStatus::BudgetLimited | CodexGoalStatus::UsageLimited) => {
+            format!("{source} - {project} 执行失败")
+        }
+        _ => event_summary(&job.event, &source, &project),
+    };
     let title = format!("CLI-Manager {event_label}");
     let body = format!(
         "🏷️ 类型：{event_label}\n🧰 CLI：{source}\n📁 项目：{project}\n🕒 时间：{time}\n🆔 通知：{id}\n📌 内容：{summary}"
@@ -382,6 +466,9 @@ mod tests {
         let message = message_from_job(HookNotificationJob {
             source: "codex".to_string(),
             event: "Stop".to_string(),
+            session_id: Some("session-1".to_string()),
+            goal_id: Some("goal-1".to_string()),
+            goal_status: Some("none".to_string()),
             cwd: Some("C:\\work\\secret\\demo".to_string()),
             project: None,
             timestamp: Some("2026-07-14T10:00:00Z".to_string()),
@@ -402,6 +489,9 @@ mod tests {
         let message = message_from_job(HookNotificationJob {
             source: "claude".to_string(),
             event: "StopFailure".to_string(),
+            session_id: None,
+            goal_id: None,
+            goal_status: None,
             cwd: None,
             project: None,
             timestamp: Some("2026-07-14T11:35:35Z".to_string()),
@@ -424,6 +514,9 @@ mod tests {
         let message = message_from_job(HookNotificationJob {
             source: "claude".to_string(),
             event: "PermissionRequest".to_string(),
+            session_id: None,
+            goal_id: None,
+            goal_status: None,
             cwd: Some("C:\\work\\law-promotion".to_string()),
             project: None,
             timestamp: None,
@@ -444,6 +537,9 @@ mod tests {
         let message = message_from_job(HookNotificationJob {
             source: "codex".to_string(),
             event: "Stop".to_string(),
+            session_id: Some("session-1".to_string()),
+            goal_id: Some("goal-1".to_string()),
+            goal_status: Some("none".to_string()),
             cwd: None,
             project: Some("remote-demo".to_string()),
             timestamp: None,
@@ -459,10 +555,40 @@ mod tests {
         assert!(message_from_job(HookNotificationJob {
             source: "claude".to_string(),
             event: "ToolStart".to_string(),
+            session_id: None,
+            goal_id: None,
+            goal_status: None,
             cwd: None,
             project: None,
             timestamp: None,
         })
         .is_none());
+    }
+
+    #[test]
+    // 验证 Codex goal 尚未完成或状态不明时，第三方完成通知不会误发。
+    fn codex_goal_stop_requires_a_terminal_status_for_notification() {
+        for status in [None, Some("active".to_string()), Some("unknown".to_string())] {
+            assert!(message_from_job(HookNotificationJob {
+                source: "codex".to_string(),
+                event: "Stop".to_string(),
+                session_id: Some("session-1".to_string()),
+                goal_id: Some("goal-1".to_string()),
+                goal_status: status,
+                cwd: None,
+                project: Some("demo".to_string()),
+                timestamp: None,
+            })
+            .is_none());
+        }
+    }
+
+    #[test]
+    // 验证同一 goal 的已知终态和关注态在第三方队列内只领取一次。
+    fn codex_goal_notifications_are_bounded_and_deduplicated() {
+        let mut deduper = GoalNotificationDeduper::default();
+        assert!(deduper.claim("codex|goal-1|complete".to_string()));
+        assert!(!deduper.claim("codex|goal-1|complete".to_string()));
+        assert!(deduper.claim("codex|goal-1|blocked".to_string()));
     }
 }

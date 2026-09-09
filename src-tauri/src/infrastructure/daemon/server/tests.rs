@@ -41,6 +41,8 @@ fn test_session(session_id: &str, buffer: SessionBuffer, next_sequence: u64) -> 
         rows: 24,
         next_sequence,
         ssh_hook_binding: None,
+        hook_goal_key: None,
+        hook_goal_status: None,
     }))
 }
 
@@ -1070,6 +1072,22 @@ fn hook_events_map_to_task_status() {
     assert_eq!(map_hook_event_to_task_status("Stop"), Some("done"));
     assert_eq!(map_hook_event_to_task_status("StopFailure"), Some("failed"));
     assert_eq!(map_hook_event_to_task_status("SessionStart"), None);
+    assert_eq!(
+        map_hook_event_to_task_status_for_payload("codex", "Stop", Some("active")),
+        Some("running")
+    );
+    assert_eq!(
+        map_hook_event_to_task_status_for_payload("codex", "Stop", Some("complete")),
+        Some("done")
+    );
+    assert_eq!(
+        map_hook_event_to_task_status_for_payload("codex", "Stop", Some("budgetLimited")),
+        Some("failed")
+    );
+    assert_eq!(
+        map_hook_event_to_task_status_for_payload("codex", "Stop", None),
+        Some("running")
+    );
 }
 #[test]
 fn websocket_origin_requires_an_exact_loopback_authority() {

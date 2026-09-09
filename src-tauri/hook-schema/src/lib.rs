@@ -8,6 +8,8 @@ pub mod kimi;
 pub struct NormalizedHookInput {
     pub message: Option<String>,
     pub session_id: Option<String>,
+    pub goal_status: Option<String>,
+    pub goal_id: Option<String>,
     pub agent_id: Option<String>,
     pub tool_use_id: Option<String>,
     pub tool_name: Option<String>,
@@ -221,6 +223,8 @@ pub fn normalize_hook_input(event: &str, hook_input: &Value) -> Option<Normalize
         message,
         // Claude/Codex use snake_case; Grok Build emits camelCase (sessionId).
         session_id: first_string(hook_input, &["session_id", "sessionId"]),
+        goal_status: first_string(hook_input, &["goal_status", "goalStatus"]),
+        goal_id: first_string(hook_input, &["goal_id", "goalId"]),
         agent_id,
         tool_use_id,
         tool_name,

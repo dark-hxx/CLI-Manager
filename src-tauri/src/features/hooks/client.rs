@@ -17,6 +17,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::codex_goal::lookup_stop_goal;
+
 const NOTIFY_ATTEMPTS: usize = 2;
 const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
 const HOOK_STDIN_MAX_BYTES: u64 = 64 * 1024;
@@ -115,6 +117,11 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
     let cwd = env::current_dir()
         .ok()
         .map(|path| path.to_string_lossy().to_string());
+    let goal_metadata = (source == "codex" && event == "Stop")
+        .then(|| lookup_stop_goal(normalized.session_id.as_deref(), wsl_distro_name.as_deref()));
+    if let Some(diagnostic) = goal_metadata.as_ref().and_then(|metadata| metadata.diagnostic) {
+        log::debug!("codex goal lookup returned unknown: code={diagnostic}");
+    }
 
     // 字段名为 camelCase，对应 claude_hook::ClaudeHookRequest 的 serde(rename_all = "camelCase")。
     let payload = json!({
@@ -137,6 +144,8 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
         "transcriptBytes": transcript_bytes,
         "reasoningEffort": reasoning_effort,
         "wslDistroName": wsl_distro_name,
+        "goalStatus": goal_metadata.as_ref().map(|metadata| metadata.status.wire_name()),
+        "goalId": goal_metadata.and_then(|metadata| metadata.goal_id),
         // 同一次 Hook 进程内的重试复用该 ID，daemon 可幂等去重。
         "remoteEventId": Uuid::new_v4().to_string(),
     });

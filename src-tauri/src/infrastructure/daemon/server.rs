@@ -10,6 +10,11 @@ mod client_transport;
 use client_transport::{frame_payload_bytes, ClientTransport, ClientWriter};
 mod pty_events;
 use pty_events::DaemonPtyEventSink;
+mod hook_status;
+#[cfg(test)]
+use hook_status::{
+    map_hook_event_to_task_status, map_hook_event_to_task_status_for_payload,
+};
 
 use super::discovery::{remove_daemon_info, write_daemon_info_exclusive, DaemonInfo};
 use super::protocol::{
@@ -89,6 +94,8 @@ struct SessionEntry {
     rows: u16,
     next_sequence: u64,
     ssh_hook_binding: Option<SshHookBinding>,
+    hook_goal_key: Option<String>,
+    hook_goal_status: Option<String>,
 }
 
 struct SshHookBinding {
@@ -407,6 +414,8 @@ impl DaemonHost {
                         source: plan.tool_source.clone(),
                     })
                 }),
+                hook_goal_key: None,
+                hook_goal_status: None,
             })),
         );
         Ok(())
@@ -457,36 +466,6 @@ impl DaemonHost {
         }
         for client in clients.values() {
             let _ = client.writer.send_frame(&frame);
-        }
-    }
-
-    // 按 Hook 事件映射更新会话的任务状态和本机接收时间。
-    fn update_task_status_from_hook(&self, payload: &serde_json::Value) {
-        let Some(session_id) = payload
-            .get("tabId")
-            .or_else(|| payload.get("tab_id"))
-            .and_then(|value| value.as_str())
-        else {
-            return;
-        };
-        let Some(event) = payload.get("event").and_then(|value| value.as_str()) else {
-            return;
-        };
-        let Some(task_status) = map_hook_event_to_task_status(event) else {
-            return;
-        };
-        let updated_at_ms = now_ms();
-        if let Some(session) = self.get_session(session_id) {
-            if let Ok(mut entry) = session.lock() {
-                entry.meta.task_status = Some(task_status.to_string());
-                entry.meta.task_updated_at_ms = Some(updated_at_ms);
-                log::debug!(
-                    "daemon task status updated: session_id={}, event={}, status={}",
-                    session_id,
-                    event,
-                    task_status
-                );
-            }
         }
     }
 
@@ -895,17 +874,6 @@ fn is_valid_session_id(session_id: &str) -> bool {
         && session_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
-// 将支持的 Hook 事件映射为 running、attention、done 或 failed。
-fn map_hook_event_to_task_status(event: &str) -> Option<&'static str> {
-    match event {
-        "UserPromptSubmit" => Some("running"),
-        "Notification" | "PermissionRequest" => Some("attention"),
-        "Stop" => Some("done"),
-        "StopFailure" => Some("failed"),
-        _ => None,
-    }
 }
 
 // 构造带指定状态和正文的 WebSocket 握手错误响应。

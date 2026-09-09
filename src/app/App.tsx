@@ -62,6 +62,10 @@ import { startRuntimeDiagnostics } from "../features/terminal/api/runtimeDiagnos
 import { getTerminalTheme, isLightTerminalTheme } from "../shared/lib/terminalThemes";
 import { resolveProjectForSession } from "../features/terminal/api/terminalProject";
 import { terminalProcessManager } from "../features/terminal/api/TerminalProcessManager";
+import {
+  resolveCliHookStatus,
+  type CliHookStatusDecision,
+} from "../features/terminal/lib/terminalStatus";
 import type { TerminalScope } from "../shared/types/index";
 import "../App.css";
 
@@ -121,6 +125,9 @@ const CLAUDE_HOOK_TOAST_PREFIX = "claude-hook-notification";
 const SYSTEM_NOTIFICATION_ACTION_EVENT = "system-notification-action";
 const MAX_SYSTEM_NOTIFICATION_DETAIL_LENGTH = 72;
 let claudeHookToastSequence = 0;
+const CODEX_GOAL_NOTIFICATION_TTL_MS = 30 * 60 * 1000;
+const CODEX_GOAL_NOTIFICATION_CACHE_LIMIT = 256;
+const codexGoalNotificationSeen = new Map<string, number>();
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 type StartupStage = "settings" | "sessions" | "database" | "projects";
 
@@ -217,6 +224,37 @@ function createClaudeHookToastId(tabId: string): string {
   return `${CLAUDE_HOOK_TOAST_PREFIX}-${tabId}-${claudeHookToastSequence}`;
 }
 
+function resetCodexGoalNotificationCache(tabId: string): void {
+  for (const key of codexGoalNotificationSeen.keys()) {
+    if (key.startsWith(`${tabId}|`)) codexGoalNotificationSeen.delete(key);
+  }
+}
+
+function claimCodexGoalNotification(
+  payload: CliHookPayload,
+  tabId: string,
+  decision: CliHookStatusDecision,
+): boolean {
+  if (payload.event === "UserPromptSubmit") {
+    resetCodexGoalNotificationCache(tabId);
+  }
+  if (decision.suppressCompletionNotification) return false;
+  if (!decision.isCodexGoalStop || decision.goalStatus === "none" || !decision.goalStatus) return true;
+
+  const now = Date.now();
+  for (const [key, seenAt] of codexGoalNotificationSeen) {
+    if (now - seenAt > CODEX_GOAL_NOTIFICATION_TTL_MS) codexGoalNotificationSeen.delete(key);
+  }
+  const key = `${tabId}|${decision.goalKey ?? "codex:unknown"}|${decision.goalStatus}`;
+  if (codexGoalNotificationSeen.has(key)) return false;
+  if (codexGoalNotificationSeen.size >= CODEX_GOAL_NOTIFICATION_CACHE_LIMIT) {
+    const oldest = codexGoalNotificationSeen.keys().next().value;
+    if (oldest) codexGoalNotificationSeen.delete(oldest);
+  }
+  codexGoalNotificationSeen.set(key, now);
+  return true;
+}
+
 function isQuestionRequestNotification(payload: CliHookPayload): boolean {
   return (
     payload.event === "Notification" &&
@@ -225,7 +263,10 @@ function isQuestionRequestNotification(payload: CliHookPayload): boolean {
   );
 }
 
-function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle {
+function getClaudeHookToastStyle(
+  payload: CliHookPayload,
+  decision = resolveCliHookStatus(payload),
+): ClaudeHookToastStyle {
   if (isQuestionRequestNotification(payload)) {
     return {
       variant: "attention",
@@ -235,6 +276,12 @@ function getClaudeHookToastStyle(payload: CliHookPayload): ClaudeHookToastStyle 
     };
   }
   if (payload.event === "Stop") {
+    if (decision.goalStatus === "paused" || decision.goalStatus === "blocked") {
+      return { variant: "attention", icon: Info, eyebrow: translateCurrent("notifications.hookToast.attention"), actionLabel: translateCurrent("notifications.hookToast.view") };
+    }
+    if (decision.goalStatus === "budgetLimited" || decision.goalStatus === "usageLimited") {
+      return { variant: "failed", icon: CircleAlert, eyebrow: translateCurrent("notifications.hookToast.failed"), actionLabel: translateCurrent("notifications.hookToast.view") };
+    }
     return { variant: "finished", icon: CircleCheck, eyebrow: translateCurrent("notifications.hookToast.finished"), actionLabel: translateCurrent("notifications.hookToast.view") };
   }
   if (payload.event === "StopFailure") {
@@ -255,13 +302,25 @@ function getCliHookSourceName(payload: CliHookPayload): string {
   return "Claude Code";
 }
 
-function getClaudeHookToastTitle(payload: CliHookPayload, tabTitle: string): string {
+function getClaudeHookToastTitle(
+  payload: CliHookPayload,
+  tabTitle: string,
+  decision = resolveCliHookStatus(payload),
+): string {
   const sourceName = getCliHookSourceName(payload);
   if (isQuestionRequestNotification(payload)) {
     return translateCurrent("notifications.hookToast.title.question", { sourceName });
   }
   if (payload.title) return payload.title;
-  if (payload.event === "Stop") return translateCurrent("notifications.hookToast.title.finished", { tabTitle });
+  if (payload.event === "Stop") {
+    if (decision.goalStatus === "paused" || decision.goalStatus === "blocked") {
+      return translateCurrent("notifications.hookToast.title.attention", { sourceName });
+    }
+    if (decision.goalStatus === "budgetLimited" || decision.goalStatus === "usageLimited") {
+      return translateCurrent("notifications.hookToast.title.failed", { tabTitle });
+    }
+    return translateCurrent("notifications.hookToast.title.finished", { tabTitle });
+  }
   if (payload.event === "StopFailure") return translateCurrent("notifications.hookToast.title.failed", { tabTitle });
   if (payload.event === "PermissionRequest") return translateCurrent("notifications.hookToast.title.approval", { sourceName });
   return translateCurrent("notifications.hookToast.title.attention", { sourceName });
@@ -297,7 +356,11 @@ function truncateSystemNotificationDetail(detail: string): string {
   return `${detail.slice(0, MAX_SYSTEM_NOTIFICATION_DETAIL_LENGTH - 3).trimEnd()}...`;
 }
 
-function getSystemNotificationBody(payload: CliHookPayload, projectName: string): string {
+function getSystemNotificationBody(
+  payload: CliHookPayload,
+  projectName: string,
+  decision = resolveCliHookStatus(payload),
+): string {
   const sourceName = getCliHookSourceName(payload);
   const detail = payload.message?.trim();
   const suffix = detail ? `: ${truncateSystemNotificationDetail(detail)}` : "";
@@ -308,6 +371,12 @@ function getSystemNotificationBody(payload: CliHookPayload, projectName: string)
 
   switch (payload.event) {
     case "Stop":
+      if (decision.goalStatus === "paused" || decision.goalStatus === "blocked") {
+        return translateCurrent("notifications.system.notification", { sourceName, projectName, suffix });
+      }
+      if (decision.goalStatus === "budgetLimited" || decision.goalStatus === "usageLimited") {
+        return translateCurrent("notifications.system.stopFailure", { sourceName, projectName, suffix });
+      }
       return translateCurrent("notifications.system.stop", { sourceName, projectName, suffix });
     case "StopFailure":
       return translateCurrent("notifications.system.stopFailure", { sourceName, projectName, suffix });
@@ -356,8 +425,12 @@ async function clearTaskbarAttention(): Promise<void> {
   }
 }
 
-async function sendTaskbarAttention(payload: CliHookPayload): Promise<void> {
+async function sendTaskbarAttention(
+  payload: CliHookPayload,
+  decision = resolveCliHookStatus(payload),
+): Promise<void> {
   if (!IN_TAURI || !isSystemNotificationEvent(payload.event)) return;
+  if (decision.suppressCompletionNotification) return;
   const settings = useSettingsStore.getState();
   if (!settings.taskbarAttentionEnabled || !settings.systemNotificationEvents[payload.event]) return;
   if (await isMainWindowFocused()) return;
@@ -376,11 +449,17 @@ async function sendTaskbarAttention(payload: CliHookPayload): Promise<void> {
 
 type HookNotificationTargetActivator = (tabId: string) => void | Promise<void>;
 
-async function sendSystemNotification(payload: CliHookPayload, tabId: string | null, tabTitle?: string | null): Promise<void> {
+async function sendSystemNotification(
+  payload: CliHookPayload,
+  tabId: string | null,
+  tabTitle?: string | null,
+  decision = resolveCliHookStatus(payload),
+): Promise<void> {
   try {
     const settings = useSettingsStore.getState();
     if (!isSystemNotificationEvent(payload.event)) return;
     if (!tabId) return;
+    if (decision.suppressCompletionNotification) return;
     // 后台任务模式下通知必发：绕过总开关/事件开关/聚焦抑制，
     // 否则用户无从得知任务已完成或卡在等待确认（Issue #123 Phase 1）。
     if (!backgroundTaskModeActive) {
@@ -391,8 +470,8 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
 
     const projectName = getHookProjectName(payload, tabTitle);
     const title = "CLI-Manager";
-    const body = getSystemNotificationBody(payload, projectName);
-    const actionLabel = getClaudeHookToastStyle(payload).actionLabel;
+    const body = getSystemNotificationBody(payload, projectName, decision);
+    const actionLabel = getClaudeHookToastStyle(payload, decision).actionLabel;
 
     const { isPermissionGranted, requestPermission } = await import(
       "@tauri-apps/plugin-notification"
@@ -427,7 +506,12 @@ async function sendSystemNotification(payload: CliHookPayload, tabId: string | n
   }
 }
 
-function showClaudeHookToast(payload: CliHookPayload, tabId: string, onActivateTarget: HookNotificationTargetActivator): void {
+function showClaudeHookToast(
+  payload: CliHookPayload,
+  tabId: string,
+  onActivateTarget: HookNotificationTargetActivator,
+  decision = resolveCliHookStatus(payload),
+): void {
   const settings = useSettingsStore.getState();
   if (!settings.hookPopupNotificationsEnabled) return;
 
@@ -435,10 +519,10 @@ function showClaudeHookToast(payload: CliHookPayload, tabId: string, onActivateT
   const tabTitle = terminalStore.sessions.find((session) => session.id === tabId)?.title ?? getCliHookSourceName(payload);
   const item: ClaudeHookToastItem = {
     id: createClaudeHookToastId(tabId),
-    title: getClaudeHookToastTitle(payload, tabTitle),
+    title: getClaudeHookToastTitle(payload, tabTitle, decision),
     message: payload.message ?? undefined,
     tabTitle,
-    style: getClaudeHookToastStyle(payload),
+    style: getClaudeHookToastStyle(payload, decision),
   };
   const Icon = item.style.icon;
 
@@ -839,38 +923,42 @@ function App() {
   useEffect(() => {
     if (!IN_TAURI) return;
     const unlistenHook = listen<CliHookPayload>("claude-hook-notification", (event) => {
-      void useReplayStore.getState().recordCliHookEvent(event.payload);
+      const payload = event.payload;
+      const decision = resolveCliHookStatus(payload);
+      void useReplayStore.getState().recordCliHookEvent(payload);
       const isClaudeToolSubagentEvent =
-        event.payload.source === "claude" &&
-        (event.payload.event === "ToolStart" || event.payload.event === "ToolStop") &&
-        Boolean(event.payload.agentId?.trim());
-      const supportsLocalSubagentTranscript = event.payload.environmentType !== "ssh" && event.payload.source !== "kimi";
+        payload.source === "claude" &&
+        (payload.event === "ToolStart" || payload.event === "ToolStop") &&
+        Boolean(payload.agentId?.trim());
+      const supportsLocalSubagentTranscript = payload.environmentType !== "ssh" && payload.source !== "kimi";
 
       // SubagentStart / AgentToolStart：开/更新子 Agent 转录分屏，独立于 Tab 状态机与 toast。
-      if (supportsLocalSubagentTranscript && (event.payload.event === "SubagentStart" || event.payload.event === "AgentToolStart" || isClaudeToolSubagentEvent)) {
-        void useTerminalStore.getState().openSubagentTranscript(event.payload);
+      if (supportsLocalSubagentTranscript && (payload.event === "SubagentStart" || payload.event === "AgentToolStart" || isClaudeToolSubagentEvent)) {
+        void useTerminalStore.getState().openSubagentTranscript(payload);
         return;
       }
-      if (supportsLocalSubagentTranscript && event.payload.event === "AgentToolStop") {
-        void useTerminalStore.getState().openSubagentTranscript(event.payload);
+      if (supportsLocalSubagentTranscript && payload.event === "AgentToolStop") {
+        void useTerminalStore.getState().openSubagentTranscript(payload);
         return;
       }
-      if (supportsLocalSubagentTranscript && event.payload.event === "SubagentStop") {
-        if (event.payload.agentTranscriptPath?.trim() || event.payload.source === "codex") {
-          void useTerminalStore.getState().openSubagentTranscript(event.payload).finally(() => {
-            useTerminalStore.getState().finishSubagentTranscript(event.payload);
+      if (supportsLocalSubagentTranscript && payload.event === "SubagentStop") {
+        if (payload.agentTranscriptPath?.trim() || payload.source === "codex") {
+          void useTerminalStore.getState().openSubagentTranscript(payload).finally(() => {
+            useTerminalStore.getState().finishSubagentTranscript(payload);
           });
         } else {
-          useTerminalStore.getState().finishSubagentTranscript(event.payload);
+          useTerminalStore.getState().finishSubagentTranscript(payload);
         }
         return;
       }
-      const boundTabId = useTerminalStore.getState().handleCliHookEvent(event.payload);
+      const boundTabId = useTerminalStore.getState().handleCliHookEvent(payload);
+      // Goal Stop 可能在同一 goal 的多个阶段重复到达；状态仍交给终端状态机，通知只保留一次。
+      const tabId = boundTabId ?? payload.tabId?.trim() ?? null;
+      if (!tabId || !claimCodexGoalNotification(payload, tabId, decision)) return;
       // 任务栏提醒独立于 Tab 绑定和系统 Toast；外部 Hook 也可以提醒。
-      void sendTaskbarAttention(event.payload);
+      void sendTaskbarAttention(payload, decision);
       // External hooks (no PTY tab env) still carry a synthetic tabId like external:grok:<session>.
       // Prefer bound session when present; otherwise fall back so toast/system notifications still fire.
-      const tabId = boundTabId ?? event.payload.tabId?.trim() ?? null;
       const terminalStore = useTerminalStore.getState();
       const tabTitle = boundTabId
         ? terminalStore.sessions.find((session) => session.id === boundTabId)?.title ?? null
@@ -878,17 +966,17 @@ function App() {
       // SessionStart/UserPromptSubmit 只更新状态；普通工具生命周期事件不打扰用户。
       if (
         tabId &&
-        event.payload.event !== "UserPromptSubmit" &&
-        event.payload.event !== "SessionStart" &&
-        event.payload.event !== "PermissionResult" &&
-        event.payload.event !== "Interrupt" &&
-        event.payload.event !== "ToolStart" &&
-        event.payload.event !== "ToolStop"
+        payload.event !== "UserPromptSubmit" &&
+        payload.event !== "SessionStart" &&
+        payload.event !== "PermissionResult" &&
+        payload.event !== "Interrupt" &&
+        payload.event !== "ToolStart" &&
+        payload.event !== "ToolStop"
       ) {
-        showClaudeHookToast(event.payload, tabId, handleActivateHookNotificationTarget);
+        showClaudeHookToast(payload, tabId, handleActivateHookNotificationTarget, decision);
       }
       // 系统通知：并行发送（不影响应用内通知）
-      void sendSystemNotification(event.payload, tabId, tabTitle);
+      void sendSystemNotification(payload, tabId, tabTitle, decision);
     });
     const unlistenSystemNotification = listen<SystemNotificationActionPayload>(SYSTEM_NOTIFICATION_ACTION_EVENT, (event) => {
       void handleActivateHookNotificationTarget(event.payload.tabId);

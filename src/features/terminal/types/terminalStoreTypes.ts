@@ -36,6 +36,16 @@ export type CliHookEventName =
   | "ToolStart"
   | "ToolStop";
 
+export type CodexGoalStatus =
+  | "none"
+  | "active"
+  | "paused"
+  | "blocked"
+  | "budgetLimited"
+  | "usageLimited"
+  | "complete"
+  | "unknown";
+
 export type TabNotificationState = TerminalExitNotificationState;
 
 export type ShellRuntimeEventName = "command_started" | "command_finished" | "prompt_shown";
@@ -63,6 +73,8 @@ export interface TabStatusSources {
   shell?: TabNotificationState;
   hookUpdatedAt?: string;
   shellUpdatedAt?: string;
+  hookGoalKey?: string;
+  hookGoalStatus?: CodexGoalStatus;
 }
 
 export interface TabStatusDetails {
@@ -88,6 +100,8 @@ export interface CliHookPayload {
   sessionId?: string | null;
   cwd?: string | null;
   timestamp?: string | null;
+  goalStatus?: CodexGoalStatus | null;
+  goalId?: string | null;
   // 仅 SubagentStart 携带：定位子 Agent 转录 jsonl。
   agentId?: string | null;
   toolUseId?: string | null;

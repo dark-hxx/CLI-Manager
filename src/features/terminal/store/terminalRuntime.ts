@@ -32,7 +32,8 @@ import { isShellRuntimeMonitoringEnabled, HOOK_RUNNING_TIMEOUT_MS } from "../lib
 import {
   SUBAGENT_TRANSCRIPT_MAX_CHARS, SUBAGENT_CLOSE_DELAY_MS, SUBAGENT_CHILD_JSONL_CLOSE_DELAY_MS,
   SUBAGENT_DISCOVERY_INTERVAL_MS, SUBAGENT_DISCOVERY_FAST_WINDOW_MS,
-  SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS, SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS, mapCliHookEvent,
+  SUBAGENT_DISCOVERY_SLOW_INTERVAL_MS, SUBAGENT_DIRECTORY_DISCOVERY_TTL_MS, isCodexGoalTerminalStatus,
+  resolveCliHookStatus,
   mapShellRuntimeEvent, resolvePrimaryTabId, getTabStatusEntry, getTabStatusDetails,
   buildTabStatusUpdate,
 } from "../lib/terminalStatus";
@@ -441,7 +442,8 @@ export function createTerminalRuntime(
         }
       }
       const updatedAt = payload.timestamp ?? new Date().toISOString();
-      const status = mapCliHookEvent(payload.event);
+      const decision = resolveCliHookStatus(payload);
+      const status = decision.status;
       // SessionStart 绑定 id、回合结束/失败时立刻踢侧栏重拉用量，避免等 10s 轮询才「闪一下」出来。
       if (
         boundNewCliSessionId ||
@@ -461,13 +463,35 @@ export function createTerminalRuntime(
         const existing = Date.parse(previousAt);
         if (Number.isFinite(incoming) && Number.isFinite(existing) && incoming < existing) return tabId;
       }
+      const previousStatus = get().tabStatuses[tabId];
+      if (
+        decision.isCodexGoalStop &&
+        decision.goalKey &&
+        previousStatus?.hookGoalKey === decision.goalKey &&
+        isCodexGoalTerminalStatus(previousStatus.hookGoalStatus) &&
+        previousStatus.hookGoalStatus !== decision.goalStatus
+      ) {
+        return tabId;
+      }
       if (status === "running") {
         scheduleHookRunningTimeout(tabId, updatedAt);
       } else {
         clearHookRunningTimeout(tabId);
       }
       set((state) => {
-        const next = buildTabStatusUpdate(state, tabId, "hook", status, updatedAt);
+        const base = buildTabStatusUpdate(state, tabId, "hook", status, updatedAt);
+        const resolvedStatus = { ...(base.tabStatuses[tabId] ?? {}) };
+        if (decision.isCodexGoalStop && decision.goalKey && decision.goalStatus) {
+          resolvedStatus.hookGoalKey = decision.goalKey;
+          resolvedStatus.hookGoalStatus = decision.goalStatus;
+        } else if (payload.event === "UserPromptSubmit" || payload.event === "SessionStart") {
+          delete resolvedStatus.hookGoalKey;
+          delete resolvedStatus.hookGoalStatus;
+        }
+        const next = {
+          ...base,
+          tabStatuses: { ...base.tabStatuses, [tabId]: resolvedStatus },
+        };
         const terminalOutputStopped = status === "done" || status === "failed";
         const ptyOutputActivityAt = terminalOutputStopped
           ? { ...state.ptyOutputActivityAt }

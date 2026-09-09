@@ -4,11 +4,15 @@ use std::time::Duration;
 use uuid::Uuid;
 
 const SNAPSHOT_SCRIPT: &str = r#"
-import sqlite3, sys
+import os, sqlite3, sys
+if not os.path.isfile(sys.argv[1]):
+    print("missing")
+    raise SystemExit(0)
 source = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True, timeout=15)
 target = sqlite3.connect(sys.argv[2], timeout=15)
 try:
     source.backup(target)
+    print("ok")
 finally:
     target.close()
     source.close()
@@ -88,8 +92,13 @@ pub(crate) fn wsl_file_exists(path: &Path) -> Result<bool, String> {
         .map_err(|err| format!("wsl_db_check_failed: {err}"))
 }
 
-// 在指定 WSL 发行版执行 Python 脚本并限时等待，返回去除首尾空白的输出或包含标准错误的失败信息。
-fn run_wsl_python(distro: &str, script: &str, args: &[&str]) -> Result<String, String> {
+// 在固定超时内运行只读 WSL Python 脚本，并限制保留的标准输出大小。
+fn run_wsl_python_bounded(
+    distro: &str,
+    script: &str,
+    args: &[&str],
+    timeout: Duration,
+) -> Result<String, String> {
     let wsl = crate::wsl::find_wsl_exe().ok_or_else(|| "wsl_unavailable".to_string())?;
     let mut command = crate::shell_resolver::silent_command(wsl.to_string_lossy().as_ref());
     command
@@ -97,18 +106,16 @@ fn run_wsl_python(distro: &str, script: &str, args: &[&str]) -> Result<String, S
         .arg(distro)
         .args(["--exec", "python3", "-c", script])
         .args(args);
-    let output = crate::shell_resolver::output_with_timeout(command, Duration::from_secs(15))
-        .map_err(|err| format!("wsl_sqlite_failed: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.contains("python3") && stderr.contains("not found") {
-            return Err("wsl_sqlite_runtime_unavailable".to_string());
-        }
-        return Err(if stderr.is_empty() {
-            "wsl_sqlite_failed".to_string()
-        } else {
-            format!("wsl_sqlite_failed: {stderr}")
-        });
+    let output = crate::shell_resolver::output_with_timeout_bounded(command, timeout, 8 * 1024)
+        .map_err(|err| {
+            if err.kind() == std::io::ErrorKind::TimedOut {
+                "wsl_sqlite_timeout".to_string()
+            } else {
+                "wsl_sqlite_failed".to_string()
+            }
+        })?;
+    if output.stdout_truncated || !output.status.success() {
+        return Err("wsl_sqlite_failed".to_string());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
@@ -156,6 +163,14 @@ fn run_wsl_python_with_stdin(
 
 // 本机路径原样保留；WSL 数据库通过只读连接的 SQLite backup 生成本机临时快照，成功后由返回对象负责清理。
 pub(crate) async fn prepare_read_path(path: &Path) -> Result<PreparedReadPath, String> {
+    prepare_read_path_with_timeout(path, Duration::from_secs(15)).await
+}
+
+// 为短生命周期调用准备 WSL SQLite 快照，底层 wsl.exe 超时后会终止子进程。
+pub(crate) async fn prepare_read_path_with_timeout(
+    path: &Path,
+    timeout: Duration,
+) -> Result<PreparedReadPath, String> {
     if !crate::wsl::is_wsl_config_dir(&path.to_string_lossy()) {
         return Ok(PreparedReadPath {
             path: path.to_path_buf(),
@@ -168,13 +183,25 @@ pub(crate) async fn prepare_read_path(path: &Path) -> Result<PreparedReadPath, S
     let snapshot_wsl = crate::wsl::windows_path_to_wsl(&snapshot.to_string_lossy())
         .ok_or_else(|| "wsl_snapshot_path_unavailable".to_string())?;
     let result = tokio::task::spawn_blocking(move || {
-        run_wsl_python(&distro, SNAPSHOT_SCRIPT, &[&linux_path, &snapshot_wsl])
+        run_wsl_python_bounded(
+            &distro,
+            SNAPSHOT_SCRIPT,
+            &[&linux_path, &snapshot_wsl],
+            timeout,
+        )
     })
     .await
     .map_err(|err| format!("wsl_sqlite_failed: {err}"))?;
-    if let Err(err) = result {
+    let result = match result {
+        Ok(result) => result,
+        Err(err) => {
+            let _ = std::fs::remove_file(&snapshot);
+            return Err(err);
+        }
+    };
+    if result == "missing" {
         let _ = std::fs::remove_file(&snapshot);
-        return Err(err);
+        return Err("wsl_sqlite_not_found".to_string());
     }
     Ok(PreparedReadPath {
         path: snapshot,
@@ -230,10 +257,11 @@ mod tests {
     async fn wsl_database_snapshot_is_read_only() {
         let distro = std::env::var("CLI_MANAGER_TEST_WSL_DISTRO").unwrap();
         let linux_path = format!("/tmp/cli-manager-ccswitch-test-{}.db", Uuid::new_v4());
-        run_wsl_python(
+        run_wsl_python_bounded(
             &distro,
             "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT)'); c.execute('INSERT INTO settings VALUES (?, ?)', ('common_config_claude', 'before')); c.commit(); c.close()",
             &[&linux_path],
+            Duration::from_secs(15),
         )
         .unwrap();
         let unc = PathBuf::from(crate::wsl::linux_to_unc_wsl_path(&linux_path, &distro));
@@ -254,10 +282,11 @@ mod tests {
         drop(connection);
         drop(prepared);
 
-        let _ = run_wsl_python(
+        let _ = run_wsl_python_bounded(
             &distro,
             "import os,sys; os.remove(sys.argv[1]) if os.path.exists(sys.argv[1]) else None",
             &[&linux_path],
+            Duration::from_secs(15),
         );
     }
 }

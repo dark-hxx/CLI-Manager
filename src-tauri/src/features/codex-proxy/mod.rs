@@ -1189,6 +1189,8 @@ fn ssh_handoff_hook_payload(
         "event": event,
         "sessionId": session_id,
         "toolUseId": tool_use_id,
+        "environmentType": "ssh",
+        "goalStatus": if event == "Stop" { json!("none") } else { Value::Null },
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "remoteEventId": uuid::Uuid::new_v4().to_string(),
     }))
