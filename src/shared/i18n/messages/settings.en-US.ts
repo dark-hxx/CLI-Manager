@@ -347,7 +347,7 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.general.toolbar.replay": "AI Replay",
   "settings.general.toolbar.files": "Files",
   "settings.general.toolbar.stats": "Realtime Stats",
-  "settings.general.toolbar.gitChanges": "Git Changes",
+  "settings.general.toolbar.gitChanges": "Git Workspace",
   "settings.general.toolbar.systemResources": "System Resource Monitor",
   "settings.general.toolbar.providers": "Providers",
   "settings.general.toolbar.hide": "Hide {item}",

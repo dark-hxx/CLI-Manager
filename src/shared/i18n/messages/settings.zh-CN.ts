@@ -331,7 +331,7 @@ export const zh = {
   "settings.general.toolbar.replay": "时间轴",
   "settings.general.toolbar.files": "文件",
   "settings.general.toolbar.stats": "实时统计",
-  "settings.general.toolbar.gitChanges": "Git 变更",
+  "settings.general.toolbar.gitChanges": "Git 工作区",
   "settings.general.toolbar.systemResources": "系统资源监控",
   "settings.general.toolbar.providers": "供应商",
   "settings.general.toolbar.hide": "隐藏{item}",

@@ -16,6 +16,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { GitRepositoryRef } from "../lib/gitTransport";
@@ -31,7 +32,6 @@ import type {
 import { useGitTransportLease } from "./useGitTransportLease";
 import { useI18n } from "../../../shared/i18n/index";
 import { TERM, EmptyHint, panelColorTint } from "../../stats/api/termStatsUi";
-import { GitChangesPanel } from "./GitChangesPanel";
 import { GitCommitDetails } from "../components/workspace/GitCommitDetails";
 import { GitLogTable, type GitCommitAction } from "../components/workspace/GitLogTable";
 import { GitRefTree, type GitBranchAction } from "../components/workspace/GitRefTree";
@@ -45,6 +45,7 @@ interface GitWorkspaceProps {
   project: Project | null;
   projectPath: string | null;
   onClose: () => void;
+  onOpenChanges: () => void;
   onOpenWorktreeSession?: (worktree: WorktreeRecord) => void | Promise<void>;
 }
 
@@ -94,11 +95,23 @@ function dateInputValue(value: number | null): string {
   return `${date.getFullYear()}-${month}-${day}`;
 }
 
+const TERMINAL_PANEL_SCROLLBAR_STYLE = {
+  "--ui-scrollbar-thumb": TERM.border,
+  "--ui-scrollbar-track": TERM.bg,
+} as CSSProperties;
+const GIT_WORKSPACE_RESIZE_HANDLE_WIDTH = 8;
+const GIT_WORKSPACE_MIN_LOG_WIDTH = 180;
+const GIT_WORKSPACE_LEFT_MIN_WIDTH = 176;
+const GIT_WORKSPACE_LEFT_MAX_WIDTH = 360;
+const GIT_WORKSPACE_RIGHT_MIN_WIDTH = 260;
+const GIT_WORKSPACE_RIGHT_MAX_WIDTH = 480;
+
 export function GitWorkspace({
   active,
   project,
   projectPath,
   onClose,
+  onOpenChanges,
   onOpenWorktreeSession,
 }: GitWorkspaceProps) {
   const { t } = useI18n();
@@ -144,6 +157,7 @@ export function GitWorkspace({
   const [favoriteBranches, setFavoriteBranches] = useState<string[]>([]);
   const [leftWidth, setLeftWidth] = useState(230);
   const [rightWidth, setRightWidth] = useState(330);
+  const workspaceGridRef = useRef<HTMLDivElement | null>(null);
   const repositoryGenerationRef = useRef(0);
   const refGenerationRef = useRef(0);
   const commitGenerationRef = useRef(0);
@@ -164,10 +178,6 @@ export function GitWorkspace({
     error: transportError,
   } = useGitTransportLease(resolvedProject, active && Boolean(projectPath));
   const transport = lease?.transport ?? null;
-  const selectedRepository = useMemo(
-    () => repositories.find((repository) => repository.absolutePath === repositoryId) ?? null,
-    [repositories, repositoryId],
-  );
   const selectedCommit = useMemo(
     () => commits.find((commit) => commit.id === selectedId) ?? null,
     [commits, selectedId],
@@ -871,30 +881,46 @@ export function GitWorkspace({
     (side: "left" | "right", event: ReactPointerEvent<HTMLDivElement>) => {
       event.preventDefault();
       resizeCleanupRef.current?.();
+      const handle = event.currentTarget;
+      const pointerId = event.pointerId;
+      handle.setPointerCapture(pointerId);
       const startX = event.clientX;
       const startWidth = side === "left" ? leftWidth : rightWidth;
       const onMove = (moveEvent: PointerEvent) => {
+        moveEvent.preventDefault();
         const delta = moveEvent.clientX - startX;
         const next = side === "left" ? startWidth + delta : startWidth - delta;
-        if (side === "left") setLeftWidth(Math.max(176, Math.min(360, next)));
-        else setRightWidth(Math.max(260, Math.min(480, next)));
+        const containerWidth = workspaceGridRef.current?.clientWidth ?? 0;
+        const availableWidth = containerWidth > 0
+          ? containerWidth - GIT_WORKSPACE_RESIZE_HANDLE_WIDTH * 2 - GIT_WORKSPACE_MIN_LOG_WIDTH
+          : Number.POSITIVE_INFINITY;
+        const minWidth = side === "left" ? GIT_WORKSPACE_LEFT_MIN_WIDTH : GIT_WORKSPACE_RIGHT_MIN_WIDTH;
+        const maxConfiguredWidth = side === "left" ? GIT_WORKSPACE_LEFT_MAX_WIDTH : GIT_WORKSPACE_RIGHT_MAX_WIDTH;
+        const otherMinWidth = side === "left" ? GIT_WORKSPACE_RIGHT_MIN_WIDTH : GIT_WORKSPACE_LEFT_MIN_WIDTH;
+        const maxWidth = Math.min(
+          maxConfiguredWidth,
+          Math.max(minWidth, availableWidth - otherMinWidth),
+        );
+        const boundedWidth = Math.max(minWidth, Math.min(maxWidth, next));
+        if (side === "left") setLeftWidth(boundedWidth);
+        else setRightWidth(boundedWidth);
       };
       const cleanup = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", cleanup);
+        window.removeEventListener("pointercancel", cleanup);
+        if (handle.hasPointerCapture(pointerId)) handle.releasePointerCapture(pointerId);
         resizeCleanupRef.current = null;
       };
       resizeCleanupRef.current = cleanup;
-      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointermove", onMove, { passive: false });
       window.addEventListener("pointerup", cleanup, { once: true });
+      window.addEventListener("pointercancel", cleanup, { once: true });
     },
     [leftWidth, rightWidth],
   );
 
   const submitSearch = () => setSearch(query.trim());
-  const selectedRepoForChanges = selectedRepository?.relativePath
-    ? selectedRepository.absolutePath
-    : null;
 
   return (
     <div
@@ -903,6 +929,7 @@ export function GitWorkspace({
         color: TERM.fg,
         backgroundColor: TERM.bg,
         borderColor: TERM.border,
+        ...TERMINAL_PANEL_SCROLLBAR_STYLE,
       }}
     >
       <header
@@ -922,7 +949,13 @@ export function GitWorkspace({
                 color: view === item ? TERM.fg : TERM.dim,
                 backgroundColor: view === item ? TERM.bg : "transparent",
               }}
-              onClick={() => setView(item)}
+              onClick={() => {
+                if (item === "changes") {
+                  onOpenChanges();
+                  return;
+                }
+                setView(item);
+              }}
               aria-pressed={view === item}
             >
               {t(item === "log" ? "git.workspace.log" : "git.view.changes")}
@@ -1228,22 +1261,13 @@ export function GitWorkspace({
               )}
             />
           </div>
-        ) : view === "changes" ? (
-          <GitChangesPanel
-            key={`${project.id}:${projectPath}:${refreshToken}`}
-            open={active}
-            projectPath={projectPath}
-            projectId={project.id}
-            embedded
-            workspaceMode
-            activeRepositoryPath={selectedRepoForChanges}
-          />
         ) : (
-          <div className="ui-thin-scroll h-full min-h-0 overflow-x-auto overflow-y-hidden">
+          <div className="h-full min-h-0 overflow-hidden">
             <div
-              className="grid h-full min-h-0 min-w-[760px]"
+              ref={workspaceGridRef}
+              className="grid h-full min-h-0 min-w-0"
               style={{
-                gridTemplateColumns: `${leftWidth}px 4px minmax(360px, 1fr) 4px ${rightWidth}px`,
+                gridTemplateColumns: `minmax(0, ${leftWidth}px) ${GIT_WORKSPACE_RESIZE_HANDLE_WIDTH}px minmax(0, 1fr) ${GIT_WORKSPACE_RESIZE_HANDLE_WIDTH}px minmax(0, ${rightWidth}px)`,
               }}
             >
               <GitRefTree
@@ -1294,13 +1318,21 @@ export function GitWorkspace({
                 onToggleFavorite={toggleFavoriteBranch}
               />
               <div
-                className="cursor-col-resize"
-                style={{ backgroundColor: TERM.border }}
+                className="group relative shrink-0 cursor-col-resize touch-none select-none"
+                style={{ backgroundColor: panelColorTint(TERM.border, 18) }}
                 onPointerDown={(event) => beginResize("left", event)}
                 role="separator"
                 aria-orientation="vertical"
                 aria-label={t("git.workspace.resizeRefs")}
-              />
+                aria-valuemin={GIT_WORKSPACE_LEFT_MIN_WIDTH}
+                aria-valuemax={GIT_WORKSPACE_LEFT_MAX_WIDTH}
+                aria-valuenow={Math.round(leftWidth)}
+              >
+                <span
+                  className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-[width] group-hover:w-0.5 group-active:w-0.5"
+                  style={{ backgroundColor: TERM.border }}
+                />
+              </div>
               <GitLogTable
                 commits={commits}
                 loading={loadingCommits}
@@ -1315,13 +1347,21 @@ export function GitWorkspace({
                 onLoadMore={loadMore}
               />
               <div
-                className="cursor-col-resize"
-                style={{ backgroundColor: TERM.border }}
+                className="group relative shrink-0 cursor-col-resize touch-none select-none"
+                style={{ backgroundColor: panelColorTint(TERM.border, 18) }}
                 onPointerDown={(event) => beginResize("right", event)}
                 role="separator"
                 aria-orientation="vertical"
                 aria-label={t("git.workspace.resizeDetails")}
-              />
+                aria-valuemin={GIT_WORKSPACE_RIGHT_MIN_WIDTH}
+                aria-valuemax={GIT_WORKSPACE_RIGHT_MAX_WIDTH}
+                aria-valuenow={Math.round(rightWidth)}
+              >
+                <span
+                  className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 transition-[width] group-hover:w-0.5 group-active:w-0.5"
+                  style={{ backgroundColor: TERM.border }}
+                />
+              </div>
               <GitCommitDetails
                 transport={transport}
                 repositoryId={repositoryId}

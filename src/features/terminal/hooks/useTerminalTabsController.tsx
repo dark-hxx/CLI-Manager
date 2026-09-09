@@ -188,6 +188,7 @@ export function useTerminalTabsController({
   const closeHistory = useHistoryStore((s) => s.closeHistory);
   const focusGlobalSearchSeq = useHistoryStore((s) => s.focusGlobalSearchSeq);
   const gitWorkspaceOpen = useGitWorkspaceStore((s) => s.isOpen);
+  const openGitWorkspace = useGitWorkspaceStore((s) => s.open);
   const closeGitWorkspace = useGitWorkspaceStore((s) => s.close);
   const [gitWorkspaceHeight, setGitWorkspaceHeight] = useState(420);
   const gitWorkspaceResizeCleanupRef = useRef<(() => void) | null>(null);
@@ -829,14 +830,8 @@ export function useTerminalTabsController({
     closeHistory();
     setActiveWorkspaceTab("terminal");
     setActive(sessionId);
-    ensureTerminalSidePanelVisible();
-    if (sidePanelMerged) {
-      setSidePanelTab("git");
-      setSidePanelOpen(true);
-      return;
-    }
-    setGitOpen(true);
-  }, [closeHistory, ensureTerminalSidePanelVisible, rejectMissingSessionWorktree, sessions, setActive, sidePanelMerged]);
+    openGitWorkspace();
+  }, [closeHistory, openGitWorkspace, rejectMissingSessionWorktree, sessions, setActive]);
 
   const handleOpenWorktreeHistory = useCallback((project: Project, worktree: WorktreeRecord) => {
     if (rejectMissingWorktree(worktree)) return;
@@ -1158,6 +1153,31 @@ export function useTerminalTabsController({
     }
   }, [closeHistory, ensureTerminalSidePanelVisible, providersPanelActive, sidePanelMerged, terminalSidePanelSingleOpen]);
 
+  const handleOpenGitChangesPanel = useCallback(() => {
+    const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
+    if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
+    closeGitWorkspace();
+    ensureTerminalSidePanelVisible();
+    if (terminalSidePanelSingleOpen) {
+      closeHistory();
+      setActiveWorkspaceTab("terminal");
+    }
+    if (sidePanelMerged) {
+      setSidePanelTab("git");
+      setSidePanelOpen(true);
+      return;
+    }
+    if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
+      setStatsOpen(false);
+      setGitOpen(false);
+      setReplayOpen(false);
+      setFilesOpen(false);
+      setSystemResourcesOpen(false);
+      setProvidersOpen(false);
+    }
+    setGitOpen(true);
+  }, [closeGitWorkspace, closeHistory, ensureTerminalSidePanelVisible, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
+
   const handleToggleGitChangesPanel = useCallback(() => {
     if (gitPanelActive) {
       if (ensureTerminalSidePanelVisible()) return;
@@ -1165,32 +1185,12 @@ export function useTerminalTabsController({
       else setGitOpen(false);
       return;
     }
-    const project = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
-    if (project?.environment_type !== "ssh" && rejectUnsupportedCapability(project, "git")) return;
-    closeGitWorkspace();
-    ensureTerminalSidePanelVisible();
-    if (sidePanelMerged) {
-      if (terminalSidePanelSingleOpen) {
-        closeHistory();
-        setActiveWorkspaceTab("terminal");
-      }
-      setSidePanelTab("git");
-      setSidePanelOpen(true);
-    } else {
-      if (terminalSidePanelSingleOpen) {
-        closeHistory();
-        setActiveWorkspaceTab("terminal");
-      }
-      if (terminalSidePanelSingleOpen || window.innerWidth < 1100) {
-        setStatsOpen(false);
-        setReplayOpen(false);
-        setFilesOpen(false);
-        setSystemResourcesOpen(false);
-        setProvidersOpen(false);
-      }
-      setGitOpen(true);
+    if (gitWorkspaceOpen) {
+      closeGitWorkspace();
+      return;
     }
-  }, [closeGitWorkspace, closeHistory, ensureTerminalSidePanelVisible, gitPanelActive, panelSession, projectById, rejectUnsupportedCapability, sidePanelMerged, terminalSidePanelSingleOpen]);
+    handleOpenGitChangesPanel();
+  }, [closeGitWorkspace, ensureTerminalSidePanelVisible, gitPanelActive, gitWorkspaceOpen, handleOpenGitChangesPanel, sidePanelMerged]);
 
   const handleToggleReplayPanel = useCallback(() => {
     if (replayPanelActive) {
@@ -1708,7 +1708,7 @@ export function useTerminalTabsController({
     fullscreen,
     sessionHistoryShortcutHint,
     replayPanelActive,
-    gitPanelActive,
+    gitPanelActive: gitPanelActive || gitWorkspaceOpen,
     filesPanelActive,
     filePanelProject,
     statsPanelActive,
@@ -1926,6 +1926,7 @@ export function useTerminalTabsController({
     gitWorkspaceProject,
     gitWorkspaceProjectPath,
     closeGitWorkspace,
+    handleOpenGitChangesPanel,
     handleOpenGitWorkspaceWorktree,
     terminalThemeTone,
     terminalSidePanelVisible,

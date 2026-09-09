@@ -58,6 +58,7 @@ export function TerminalTabsView({
   gitWorkspaceProject,
   gitWorkspaceProjectPath,
   closeGitWorkspace,
+  handleOpenGitChangesPanel,
   handleOpenGitWorkspaceWorktree,
   terminalThemeTone,
   terminalSidePanelVisible,
@@ -187,18 +188,24 @@ export function TerminalTabsView({
             style={{ height: gitWorkspaceHeight, borderColor: "var(--border-subtle, rgba(255,255,255,0.12))" }}
           >
             <div
-              className="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize"
+              className="group absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize touch-none select-none"
               onPointerDown={beginGitWorkspaceResize}
               role="separator"
               aria-orientation="horizontal"
               aria-label={t("git.workspace.resizeHeight")}
-            />
+            >
+              <span
+                className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 transition-[height] group-hover:h-0.5 group-active:h-0.5"
+                style={{ backgroundColor: "var(--border-subtle, rgba(255,255,255,0.12))" }}
+              />
+            </div>
             <Suspense fallback={null}>
               <GitWorkspace
                 active={gitWorkspaceOpen}
                 project={gitWorkspaceProject}
                 projectPath={gitWorkspaceProjectPath}
                 onClose={closeGitWorkspace}
+                onOpenChanges={handleOpenGitChangesPanel}
                 onOpenWorktreeSession={handleOpenGitWorkspaceWorktree}
               />
             </Suspense>
@@ -232,20 +239,6 @@ export function TerminalTabsView({
                   onOpenProviderSettings={onOpenProviderSettings}
                 />
               ) : null,
-              !sidePanelMerged && statsOpen && panelCapabilities.statistics ? (
-                <ResizableTerminalPanelFrame
-                  key="stats"
-                  widthKey="stats"
-                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
-                  dockSide={terminalSidePanelSide}
-                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
-                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
-                >
-                  <Suspense fallback={null}>
-                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
-                  </Suspense>
-                </ResizableTerminalPanelFrame>
-              ) : null,
               !sidePanelMerged && gitOpen && panelGitSupported ? (
                 <ResizableTerminalPanelFrame
                   key="git"
@@ -257,6 +250,20 @@ export function TerminalTabsView({
                 >
                   <Suspense fallback={null}>
                     <GitChangesPanel open={gitOpen} projectPath={sidePanelProjectPath} projectId={panelSession?.projectId} embedded />
+                  </Suspense>
+                </ResizableTerminalPanelFrame>
+              ) : null,
+              !sidePanelMerged && statsOpen && panelCapabilities.statistics ? (
+                <ResizableTerminalPanelFrame
+                  key="stats"
+                  widthKey="stats"
+                  defaultWidth={TERMINAL_PANEL_WIDTH_DEFAULTS.stats}
+                  dockSide={terminalSidePanelSide}
+                  resizeLabel={t("terminal.panel.resizeStatsLabel")}
+                  resizeTitle={t("terminal.panel.resizeStatsTitle")}
+                >
+                  <Suspense fallback={null}>
+                    <TerminalStatsPanel activeSessionId={panelSessionId} open={statsOpen} embedded />
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               ) : null,

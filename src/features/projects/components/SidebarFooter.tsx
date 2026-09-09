@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
-import { BarChart3, GitBranch, Handshake, Settings } from "../../../shared/ui/icons";
+import { BarChart3, Handshake, Settings } from "../../../shared/ui/icons";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../../settings/api/SettingsModal";
 import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../../settings/api/hookErrors";
 import { useSettingsStore, type SidebarToolbarVisibilitySettings } from "../../../shared/preferences/settingsStore";
 import { useI18n } from "../../../shared/i18n/index";
-import { useGitWorkspaceStore } from "../../git/api/gitWorkspaceStore";
 
 type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 type HookLightStatus = "missing" | "partial" | "installed";
@@ -234,23 +233,6 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
 
 export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarVisibility }: SidebarFooterProps) {
   const { t } = useI18n();
-  const gitWorkspaceOpen = useGitWorkspaceStore((state) => state.isOpen);
-  const openGitWorkspace = useGitWorkspaceStore((state) => state.open);
-  const closeGitWorkspace = useGitWorkspaceStore((state) => state.close);
-  const viewMode = useSettingsStore((state) => state.viewMode);
-  const updateSetting = useSettingsStore((state) => state.update);
-
-  const handleToggleGitWorkspace = () => {
-    if (gitWorkspaceOpen) {
-      closeGitWorkspace();
-      return;
-    }
-    if (viewMode === "compact") {
-      void updateSetting("viewMode", "standard").then(openGitWorkspace);
-      return;
-    }
-    openGitWorkspace();
-  };
 
   const statsButton = toolbarVisibility.stats ? (
     <button
@@ -286,27 +268,12 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     </button>
   );
 
-  const gitButton = (
-    <button
-      type="button"
-      onClick={handleToggleGitWorkspace}
-      className="ui-focus-ring ui-icon-action shrink-0 data-[active=true]:bg-accent/15 data-[active=true]:text-accent"
-      data-active={gitWorkspaceOpen ? "true" : "false"}
-      title={t("sidebar.gitWorkspace")}
-      aria-label={t("sidebar.gitWorkspace")}
-      aria-pressed={gitWorkspaceOpen}
-    >
-      <GitBranch size={14} strokeWidth={1.7} aria-hidden="true" />
-    </button>
-  );
-
   if (collapsed) {
     return (
       <div className="px-2 py-2">
         <div className="flex flex-col items-center gap-1.5">
           <SyncStatusIndicator collapsed onOpenSettings={onOpenSettings} />
           {tokenStationButton}
-          {gitButton}
           {statsButton}
           <HookStatusLight onOpenSettings={onOpenSettings} />
           {settingsButton}
@@ -322,7 +289,6 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
           <SyncStatusIndicator onOpenSettings={onOpenSettings} />
         </div>
         {tokenStationButton}
-        {gitButton}
         {statsButton}
         <HookStatusLight onOpenSettings={onOpenSettings} />
         {settingsButton}

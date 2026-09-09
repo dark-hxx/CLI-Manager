@@ -22,7 +22,7 @@ import type { GitTreeNode, GitPullStrategy, GitBranchInfo, Project } from "../..
 import { useGitTransportLease } from "./useGitTransportLease";
 import { GIT_BACKGROUND_REFRESH_INTERVAL_MS } from "../lib/gitRefreshPolicy";
 import { TerminalPanelHeader } from "../../terminal/api/TerminalPanelHeader";
-import { GitHistoryView } from "../components/GitHistoryView";
+import { useGitWorkspaceStore } from "./gitWorkspaceStore";
 
 interface GitChangesPanelProps {
   open: boolean;
@@ -362,7 +362,7 @@ export function GitChangesPanel({
   const [groupByMenuOpen, setGroupByMenuOpen] = useState(false);
   const [repoMenuOpen, setRepoMenuOpen] = useState(false);
   const [hideFilterLabels, setHideFilterLabels] = useState(false);
-  const [viewMode, setViewMode] = useState<"changes" | "history">("changes");
+  const openGitWorkspace = useGitWorkspaceStore((state) => state.open);
   const filterRowRef = useRef<HTMLDivElement | null>(null);
   const panelActive = open && visible;
   const project = useMemo<Project | null>(() => (
@@ -835,9 +835,9 @@ export function GitChangesPanel({
       <TerminalPanelHeader
         icon={<GitBranch size={13} strokeWidth={2} />}
         accent={TERM.yellow}
-        title={t(viewMode === "changes" ? "git.title" : "git.history.title")}
+        title={t("git.title")}
         actions={(
-          viewMode === "changes" ? <>
+          <>
           {/* Group By 切换下拉 */}
           <div className="relative">
             <button
@@ -946,18 +946,21 @@ export function GitChangesPanel({
           >
             <RefreshCw size={11} />
           </button>
-          </> : null
+          </>
         )}
       />
 
       {!workspaceMode && <div className="grid shrink-0 grid-cols-2 border-b p-1" style={{ borderColor: TERM.dim }}>
         {(["changes", "history"] as const).map((mode) => {
-          const selected = viewMode === mode;
+          const selected = mode === "changes";
           return (
             <button
               key={mode}
               type="button"
-              onClick={() => setViewMode(mode)}
+              onClick={() => {
+                // 历史由终端底部工作区承载，宿主在打开时关闭 Git 侧栏。
+                if (mode === "history") openGitWorkspace();
+              }}
               className="ui-focus-ring rounded px-2 py-1 text-[10px] transition-colors"
               style={{
                 color: selected ? TERM.yellow : TERM.dim,
@@ -1038,16 +1041,6 @@ export function GitChangesPanel({
           )}
         </div>
       )}
-
-      {viewMode === "history" ? (
-        <GitHistoryView
-          active={panelActive}
-          transport={transport}
-          repositoryId={projectPath ? (activeRepo?.absolutePath ?? (panelProject?.environment_type === "ssh" ? "" : projectPath)) : null}
-          branchContext={`${branchStatus?.detached ? "detached" : branchStatus?.branch ?? ""}:${activeRepo?.branch ?? ""}`}
-        />
-      ) : (
-      <>
 
       {/* Filter */}
       {changes.length > 0 && (
@@ -1484,8 +1477,6 @@ export function GitChangesPanel({
         }}
         onClose={() => setConfirmAllOpen(false)}
       />
-      </>
-      )}
     </Container>
   );
 }
