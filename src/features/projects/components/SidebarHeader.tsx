@@ -2,7 +2,7 @@ import { ChevronRight, Filter, FolderPlus, Plus } from "../../../shared/ui/icons
 import { useI18n } from "../../../shared/i18n/index";
 import type { WorkspaceDockSide } from "../../../shared/lib/workspaceLayout";
 
-export type ProjectListFilter = "all" | "open";
+export type ProjectListFilter = "all" | "open" | "pinned";
 
 interface SidebarHeaderProps {
   collapsed: boolean;
@@ -11,6 +11,7 @@ interface SidebarHeaderProps {
   showProjectFilter: boolean;
   totalProjectCount: number;
   openProjectCount: number;
+  pinnedProjectCount: number;
   dockSide: WorkspaceDockSide;
   onToggleCollapse: () => void;
   onProjectFilterChange: (filter: ProjectListFilter) => void;
@@ -25,6 +26,7 @@ export function SidebarHeader({
   showProjectFilter,
   totalProjectCount,
   openProjectCount,
+  pinnedProjectCount,
   dockSide,
   onToggleCollapse,
   onProjectFilterChange,
@@ -35,6 +37,17 @@ export function SidebarHeader({
   const compact = density === "compact";
   const collapseIconClassName = dockSide === "right" ? "" : "rotate-180";
   const expandIconClassName = dockSide === "right" ? "rotate-180" : "";
+  // 收起侧边栏只有一个筛选按钮，用下一状态提示保持三态筛选可发现。
+  const nextFilter: ProjectListFilter = projectFilter === "all"
+    ? "open"
+    : projectFilter === "open"
+      ? "pinned"
+      : "all";
+  const nextFilterTitle = nextFilter === "all"
+    ? t("sidebar.filter.showAll")
+    : nextFilter === "open"
+      ? t("sidebar.filter.showOpen")
+      : t("sidebar.filter.showPinned");
   if (collapsed) {
     return (
       <div className={`flex flex-col items-center ${compact ? "gap-1 px-1.5 pb-1.5 pt-2.5" : "gap-1.5 px-2 pb-2 pt-3"}`}>
@@ -48,13 +61,13 @@ export function SidebarHeader({
         </button>
         {showProjectFilter && (
           <button
-            onClick={() => onProjectFilterChange(projectFilter === "open" ? "all" : "open")}
+            onClick={() => onProjectFilterChange(nextFilter)}
             className={`ui-flat-action ui-toolbar-button-compact px-0 ${compact ? "h-7 w-7" : "h-8 w-8"} ${
-              projectFilter === "open" ? "text-primary" : ""
+              projectFilter !== "all" ? "text-primary" : ""
             }`}
-            title={projectFilter === "open" ? t("sidebar.filter.showAll") : t("sidebar.filter.showOpen")}
-            aria-label={projectFilter === "open" ? t("sidebar.filter.showAll") : t("sidebar.filter.showOpen")}
-            aria-pressed={projectFilter === "open"}
+            title={nextFilterTitle}
+            aria-label={nextFilterTitle}
+            data-filter={projectFilter}
           >
             <Filter size={14} strokeWidth={1.7} />
           </button>
@@ -116,11 +129,13 @@ export function SidebarHeader({
           role="group"
           aria-label={t("sidebar.projects")}
         >
-          {(["all", "open"] as const).map((filter) => {
+          {(["all", "open", "pinned"] as const).map((filter) => {
             const active = projectFilter === filter;
             const label = filter === "all"
               ? t("sidebar.filter.all", { count: totalProjectCount })
-              : t("sidebar.filter.open", { count: openProjectCount });
+              : filter === "open"
+                ? t("sidebar.filter.open", { count: openProjectCount })
+                : t("sidebar.filter.pinned", { count: pinnedProjectCount });
             return (
               <button
                 key={filter}

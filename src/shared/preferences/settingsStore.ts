@@ -398,6 +398,8 @@ export interface Settings {
   historySmartTitle: HistorySmartTitleSettings;
   historyDetailSortDirections: HistoryDetailSortDirections;
   collapsedGroupIds: string[];
+  pinnedProjectIds: string[];
+  sidebarPinnedSectionCollapsed: boolean;
   useExternalTerminal: boolean;
   debugMode: boolean;
   terminalThemeMode: TerminalThemeMode;
@@ -565,6 +567,8 @@ const DEFAULTS: Settings = {
   },
   historyDetailSortDirections: { ...DEFAULT_HISTORY_DETAIL_SORT_DIRECTIONS },
   collapsedGroupIds: [],
+  pinnedProjectIds: [],
+  sidebarPinnedSectionCollapsed: false,
   useExternalTerminal: false,
   debugMode: false,
   terminalThemeMode: "independent",
@@ -903,6 +907,19 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   if (value < min) return min;
   if (value > max) return max;
   return value;
+}
+
+// 兼容旧设置和同步快照：只保留字符串、去重并保持首次出现顺序。
+export function migratePinnedProjectIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const id of value) {
+    if (typeof id !== "string" || seen.has(id)) continue;
+    seen.add(id);
+    result.push(id);
+  }
+  return result;
 }
 
 function migrateKeyboardShortcuts(value: unknown): KeyboardShortcutMap {
@@ -1458,6 +1475,12 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.collapsedGroupIds = Array.isArray(entries.collapsedGroupIds)
       ? entries.collapsedGroupIds.filter((id): id is string => typeof id === "string")
       : DEFAULTS.collapsedGroupIds;
+    const storedPinnedProjectIds = entries.pinnedProjectIds;
+    const pinnedProjectIds = migratePinnedProjectIds(storedPinnedProjectIds);
+    entries.pinnedProjectIds = pinnedProjectIds;
+    if (JSON.stringify(storedPinnedProjectIds) !== JSON.stringify(pinnedProjectIds)) {
+      persistSetting("pinnedProjectIds", pinnedProjectIds);
+    }
 
     entries.terminalToolbarVisibility = migrateTerminalToolbarVisibility(entries.terminalToolbarVisibility);
     entries.sidebarToolbarVisibility = migrateSidebarToolbarVisibility(entries.sidebarToolbarVisibility);
@@ -1517,6 +1540,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.sidebarProjectFilterVisible === "boolean"
         ? entries.sidebarProjectFilterVisible
         : DEFAULTS.sidebarProjectFilterVisible;
+    entries.sidebarPinnedSectionCollapsed =
+      typeof entries.sidebarPinnedSectionCollapsed === "boolean"
+        ? entries.sidebarPinnedSectionCollapsed
+        : DEFAULTS.sidebarPinnedSectionCollapsed;
     entries.viewMode =
       entries.viewMode === "standard" || entries.viewMode === "compact"
         ? entries.viewMode

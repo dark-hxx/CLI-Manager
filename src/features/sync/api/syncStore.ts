@@ -515,13 +515,7 @@ async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]
   if (databaseStatements.length > 0) {
     await invoke("backup_restore_database", { statements: databaseStatements });
   }
-  if (selected.has("preferences")) await applyPreferences(snapshot.data.preferences);
-  if (selected.has("notifications")) {
-    await useSettingsStore.getState().update("thirdPartyHookNotificationsEnabled", snapshot.data.notifications.enabled);
-    await useSettingsStore.getState().update("thirdPartyHookTargets", sanitizeThirdPartyHookTargets(snapshot.data.notifications.targets));
-  }
-  if (selected.has("statusline")) await invoke("statusline_backup_restore", { bundle: snapshot.data.statusline });
-  if (selected.has("model_prices")) await useModelPricingStore.getState().load();
+  // 先刷新项目缓存，再应用包含 pinnedProjectIds 的偏好，避免恢复期间把新项目误判为悬挂记录。
   if (selected.has("workspace")) {
     await useSshHostStore.getState().fetchHosts();
     await useProjectStore.getState().fetchAll();
@@ -529,6 +523,13 @@ async function applySnapshot(snapshot: BackupSnapshotV3, domains: BackupDomain[]
     await useProjectStore.getState().refreshProjectDiagnostics();
     await useWorktreeStore.getState().markMissingWorktrees();
   }
+  if (selected.has("preferences")) await applyPreferences(snapshot.data.preferences);
+  if (selected.has("notifications")) {
+    await useSettingsStore.getState().update("thirdPartyHookNotificationsEnabled", snapshot.data.notifications.enabled);
+    await useSettingsStore.getState().update("thirdPartyHookTargets", sanitizeThirdPartyHookTargets(snapshot.data.notifications.targets));
+  }
+  if (selected.has("statusline")) await invoke("statusline_backup_restore", { bundle: snapshot.data.statusline });
+  if (selected.has("model_prices")) await useModelPricingStore.getState().load();
 }
 
 export const useSyncStore = create<BackupStore>((set, get) => ({

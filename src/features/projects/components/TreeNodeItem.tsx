@@ -5,7 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../../shared/types/index";
 import { countProjectsInNode, type ProviderBadge } from "../api/projectStore";
 import { useTreeActions, worktreeListCollapseId } from "./TreeContext";
-import { Play, ChevronRight, AlertTriangle, Link2 } from "../../../shared/ui/icons";
+import { ChevronRight, AlertTriangle, Link2, Pin, Play } from "../../../shared/ui/icons";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
 import { WorktreeIcon } from "../../../shared/ui/WorktreeIcon";
 import { useI18n } from "../../../shared/i18n/index";
@@ -15,7 +15,8 @@ import { NewGroupRow } from "./NewGroupRow";
 import { resolveNodeAppearance } from "../api/nodeAppearance";
 import { resolveCliToolIconKey } from "../../../shared/lib/cliTools";
 
-function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
+// 右键只打开项目菜单，避免浏览器先把树节点焦点移走。
+export function preventSecondaryPointerFocus(event: ReactPointerEvent<HTMLElement>) {
   if (event.button !== 2) return;
   event.preventDefault();
   event.stopPropagation();
@@ -35,7 +36,7 @@ function compactProviderBadgeLabel(name: string) {
     : token;
 }
 
-function ProviderBadgeChip({ badge }: { badge: ProviderBadge }) {
+export function ProviderBadgeChip({ badge }: { badge: ProviderBadge }) {
   const { t } = useI18n();
   const providerName = badge.providerName?.trim() || t("sidebar.tree.customProvider");
   const providerBadgeLabel = compactProviderBadgeLabel(providerName);
@@ -224,6 +225,7 @@ function TreeNodeItemImpl({
     const projectWorktrees = node.worktrees ?? [];
     const hasWorktrees = projectWorktrees.length > 0;
     const providerBadge = actions.providerBadges[p.id];
+    const projectPinned = actions.isProjectPinned(p.id);
     const worktreeCollapseKey = worktreeListCollapseId(p.id);
     const worktreesOpen = forceExpanded || !actions.collapsedIds.has(worktreeCollapseKey);
     const inheritsParentPath = p.path_mode === "inherit" && parentGroupId !== null;
@@ -380,6 +382,20 @@ function TreeNodeItemImpl({
             className="ui-tree-item-actions flex shrink-0 items-center gap-0.5"
             onDoubleClick={(e) => e.stopPropagation()}
           >
+            <button
+              type="button"
+              className={"icon-btn ui-tree-pin-toggle " + (projectPinned ? "is-pinned" : "")}
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                void actions.onToggleProjectPinned(p.id);
+              }}
+              title={projectPinned ? t("sidebar.pinned.unpin") : t("sidebar.pinned.pin")}
+              aria-label={projectPinned ? t("sidebar.pinned.unpin") : t("sidebar.pinned.pin")}
+              aria-pressed={projectPinned}
+            >
+              <Pin size={13} strokeWidth={1.7} fill={projectPinned ? "currentColor" : "none"} />
+            </button>
             <button onClick={(e) => { e.stopPropagation(); actions.onOpenProject(p); }} className="icon-btn" style={{ color: "var(--success)", opacity: 0.7 }} title={t("sidebar.tree.openTerminal")}>
               <Play size={14} strokeWidth={1.5} />
             </button>

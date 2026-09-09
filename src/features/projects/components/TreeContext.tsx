@@ -16,6 +16,11 @@ export interface TreeActions {
   renamingGroupId: string | null;
   renamingProjectId: string | null;
   providerBadges: Record<string, ProviderBadge>;
+  pinnedProjects: Project[];
+  pinnedSectionCollapsed: boolean;
+  isProjectPinned: (projectId: string) => boolean;
+  onToggleProjectPinned: (projectId: string) => void;
+  onTogglePinnedSection: () => void;
   onSelectProject: (e: ReactMouseEvent, p: Project) => void;
   onSelectProjectByKeyboard: (p: Project) => void;
   onSelectGroup: (e: ReactMouseEvent, groupId: string, forceExpanded: boolean) => void;

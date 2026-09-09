@@ -852,6 +852,115 @@
   background-color: color-mix(in srgb, var(--surface-container-highest) 24%, transparent);
 }
 
+.ui-pinned-project-section {
+  margin: 0 2px 4px;
+  overflow: visible;
+  border-radius: 14px;
+}
+
+.ui-pinned-project-section.is-compact {
+  margin-block: 2px 3px;
+}
+
+.ui-pinned-project-header {
+  display: flex;
+  width: 100%;
+  min-height: 29px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  text-align: left;
+}
+
+.ui-pinned-project-header:hover,
+.ui-pinned-project-header[data-open="true"] {
+  background-color: color-mix(in srgb, var(--surface-container-high) 58%, transparent);
+}
+
+[data-theme="dark"] .ui-pinned-project-header:hover,
+[data-theme="dark"] .ui-pinned-project-header[data-open="true"] {
+  background-color: color-mix(in srgb, var(--surface-container-high) 28%, transparent);
+}
+
+.ui-pinned-project-header[data-open="true"] {
+  border-color: color-mix(in srgb, var(--border) 18%, transparent);
+}
+
+[data-theme="dark"] .ui-pinned-project-header[data-open="true"] {
+  border-color: color-mix(in srgb, var(--border) 12%, transparent);
+}
+
+.ui-pinned-project-folder {
+  position: relative;
+  color: var(--primary);
+}
+
+.ui-pinned-project-folder > svg:last-child {
+  position: absolute;
+  right: -2px;
+  bottom: -1px;
+  width: 9px;
+  height: 9px;
+  padding: 1px;
+  border-radius: 999px;
+  background-color: var(--surface-container-lowest);
+}
+
+.ui-pinned-project-list {
+  padding: 0 0 3px;
+}
+
+.ui-pinned-project-item {
+  position: relative;
+  min-width: 0;
+  border-radius: 10px;
+}
+
+.ui-pinned-project-item:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 70%, transparent);
+  outline-offset: -1px;
+}
+
+.ui-pinned-project-item:focus-within .ui-tree-item-actions {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateX(0);
+}
+
+.ui-tree-pin-toggle,
+.ui-pinned-project-toggle {
+  color: var(--text-muted);
+}
+
+.ui-tree-pin-toggle.is-pinned,
+.ui-pinned-project-toggle.is-pinned {
+  color: var(--primary);
+  background-color: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+
+[data-theme="dark"] .ui-pinned-project-folder > svg:last-child {
+  background-color: var(--surface-container-highest);
+}
+
+.ui-pinned-collapsed-section {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  margin-bottom: 4px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid color-mix(in srgb, var(--primary) 25%, var(--border) 75%);
+}
+
+.ui-pinned-collapsed-heading {
+  display: inline-flex;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  color: var(--primary);
+}
+
 .ui-tree-collapsed-item {
   border: 1px solid color-mix(in srgb, var(--border) 16%, transparent);
   background-color: color-mix(in srgb, var(--surface-container-lowest) 56%, transparent);

@@ -5,7 +5,7 @@ import type { Project, TerminalScope, TreeNode as TNode } from "../../../shared/
 import { SidebarSkeleton } from "../../../shared/ui/Skeleton";
 import { EmptyState } from "../../../shared/ui/EmptyState";
 import { Popover, PopoverAnchor, PopoverContent } from "../../../shared/ui/popover";
-import { Folder, Plus, Terminal } from "../../../shared/ui/icons";
+import { Folder, Pin, Plus, Terminal } from "../../../shared/ui/icons";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
 import { WorktreeIcon } from "../../../shared/ui/WorktreeIcon";
 import { TreeNodeItem } from "./TreeNodeItem";
@@ -17,6 +17,8 @@ import { useI18n } from "../../../shared/i18n/index";
 import { countProjectsInNode } from "../api/projectStore";
 import { resolveCliToolIconKey } from "../../../shared/lib/cliTools";
 import { DND_ACTIVATION_CONSTRAINT } from "../../workspace/api/dragInteraction";
+import { PinnedProjectSection } from "./PinnedProjectSection";
+import type { ProjectListFilter } from "./SidebarHeader";
 
 interface ProjectTreeProps {
   tree: TNode[];
@@ -33,7 +35,7 @@ interface ProjectTreeProps {
   onQuickAddProject: () => void;
   onRetry: () => void;
   onExpandSidebar: () => void;
-  projectFilterActive?: boolean;
+  projectFilter: ProjectListFilter;
   onClearProjectFilter?: () => void;
   suppressEmptyState?: boolean;
   embedded?: boolean;
@@ -248,7 +250,7 @@ export function ProjectTree({
   onQuickAddProject,
   onRetry,
   onExpandSidebar,
-  projectFilterActive = false,
+  projectFilter,
   onClearProjectFilter,
   suppressEmptyState = false,
   embedded = false,
@@ -264,18 +266,26 @@ export function ProjectTree({
   const treeContainerRef = useRef<HTMLDivElement | null>(null);
   const suppressClickAfterDragUntilRef = useRef(0);
   const searchActive = searchOpen && searchQuery.trim().length > 0;
+  // 置顶筛选只替换普通树内容；全部/已开启仍沿用原项目树，搜索激活时隐藏重复置顶区。
+  const pinnedFilterActive = projectFilter === "pinned";
+  const visiblePinnedProjects = useMemo(
+    () => projectFilter === "open"
+      ? actions.pinnedProjects.filter((project) => actions.getProjectTerminalCount(project.id) > 0)
+      : actions.pinnedProjects,
+    [actions.getProjectTerminalCount, actions.pinnedProjects, projectFilter]
+  );
   const filteredTree = useMemo(
-    () => (searchActive ? filterTreeNodes(tree, searchQuery) : tree),
-    [searchActive, searchQuery, tree]
+    () => pinnedFilterActive ? [] : searchActive ? filterTreeNodes(tree, searchQuery) : tree,
+    [pinnedFilterActive, searchActive, searchQuery, tree]
   );
   const visibleNodes = useMemo(
     () => {
       const nodes = flattenVisibleTree(filteredTree, searchActive ? new Set<string>() : actions.collapsedIds);
-      return projectScopedTerminalViewEnabled
+      return projectScopedTerminalViewEnabled && !pinnedFilterActive
         ? [{ key: "scope:all", kind: "all-terminals", parentGroupKey: null } satisfies VisibleTreeNode, ...nodes]
         : nodes;
     },
-    [actions.collapsedIds, filteredTree, projectScopedTerminalViewEnabled, searchActive]
+    [actions.collapsedIds, filteredTree, pinnedFilterActive, projectScopedTerminalViewEnabled, searchActive]
   );
   const visibleNodeIndex = useMemo(() => {
     const map = new Map<string, number>();
@@ -576,9 +586,9 @@ export function ProjectTree({
     () => filteredTree.map((node) => (node.type === "group" ? node.group.id : node.type === "project" ? node.project.id : `wt:${node.worktree.id}`)),
     [filteredTree]
   );
-  const showWelcomeEmptyState = tree.length === 0 && !projectFilterActive && !loadError && !searchActive && !suppressEmptyState;
-  const showOpenFilterEmptyState = tree.length === 0 && projectFilterActive && !loadError && !searchActive;
-  const hasFilteredEmptyState = filteredTree.length === 0 && (searchActive || projectFilterActive);
+  const showWelcomeEmptyState = tree.length === 0 && projectFilter === "all" && !loadError && !searchActive && !suppressEmptyState;
+  const showOpenFilterEmptyState = tree.length === 0 && projectFilter === "open" && !loadError && !searchActive;
+  const hasFilteredEmptyState = filteredTree.length === 0 && (searchActive || projectFilter === "open");
   const shouldFillTreeArea = !hasFilteredEmptyState && (
     filteredTree.length > 0 || projectScopedTerminalViewEnabled || newGroupParentId === "__root__"
   );
@@ -593,9 +603,10 @@ export function ProjectTree({
 
   if (collapsed) {
     const buttonSize = density === "compact" ? "h-7 w-7" : "h-8 w-8";
+    const collapsedTree = pinnedFilterActive ? [] : tree;
     return (
       <div className={`h-full overflow-y-auto overflow-x-hidden ${density === "compact" ? "px-0.5 pb-1.5 pt-0.5" : "px-1 pb-2 pt-1"}`}>
-        {tree.length === 0 ? (
+        {collapsedTree.length === 0 && visiblePinnedProjects.length === 0 ? (
           <div className={`flex flex-col items-center text-text-muted ${density === "compact" ? "gap-1.5 py-2.5" : "gap-2 py-3"}`}>
             <Terminal size={20} strokeWidth={1.2} className="opacity-50" />
             <button
@@ -609,7 +620,22 @@ export function ProjectTree({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-0.5">
-            {tree.map((node) =>
+            {visiblePinnedProjects.length > 0 && (
+              <div className="ui-pinned-collapsed-section" role="group" aria-label={t("sidebar.pinned.title")}>
+                <div className="ui-pinned-collapsed-heading" aria-hidden="true">
+                  <Pin size={13} strokeWidth={1.7} fill="currentColor" />
+                </div>
+                {visiblePinnedProjects.map((project) => (
+                  <CollapsedProjectButton
+                    key={"pinned:" + project.id}
+                    node={{ type: "project", project }}
+                    sizeClass={buttonSize}
+                    pinned
+                  />
+                ))}
+              </div>
+            )}
+            {collapsedTree.map((node) =>
               node.type === "group" ? (
                 <CollapsedGroupButton
                   key={`g:${node.group.id}`}
@@ -629,7 +655,23 @@ export function ProjectTree({
 
   return (
     <div className={`${embedded ? "" : "flex h-full flex-col overflow-y-auto"} overflow-x-hidden ${density === "compact" ? "px-1 pb-1.5 pt-0.5" : "px-1.5 pb-2 pt-1"}`}>
-      {newGroupParentId === "__root__" && (
+      {(pinnedFilterActive || !searchActive) && visiblePinnedProjects.length > 0 && (
+        <PinnedProjectSection
+          projects={visiblePinnedProjects}
+          density={density}
+        />
+      )}
+
+      {pinnedFilterActive && visiblePinnedProjects.length === 0 && (
+        <EmptyState
+          icon={<Pin size={40} strokeWidth={1} />}
+          title={t("sidebar.pinned.emptyTitle")}
+          description={t("sidebar.pinned.emptyDescription")}
+          action={onClearProjectFilter ? { label: t("sidebar.tree.openFilterShowAll"), onClick: onClearProjectFilter } : undefined}
+        />
+      )}
+
+      {!pinnedFilterActive && newGroupParentId === "__root__" && (
         <div className="px-2">
           <NewGroupRow
             compact={density === "compact"}
@@ -639,7 +681,7 @@ export function ProjectTree({
         </div>
       )}
 
-      {searchOpen && (
+      {!pinnedFilterActive && searchOpen && (
         <div className={`px-2 ${density === "compact" ? "pb-1 pt-0.5" : "pb-1.5 pt-0.5"}`}>
           <input
             ref={searchInputRef}
@@ -673,6 +715,7 @@ export function ProjectTree({
         </div>
       )}
 
+      {!pinnedFilterActive && (
       <DndContext
         sensors={sensors}
         collisionDetection={treeCollisionDetection}
@@ -749,7 +792,7 @@ export function ProjectTree({
                 focusedNodeKey={focusedNodeKey}
                 onFocusNode={setFocusedNodeKey}
                 forceExpanded={searchActive}
-                sortableEnabled={!searchActive && !projectFilterActive}
+                sortableEnabled={!searchActive && projectFilter === "all"}
               />
             ))}
           </div>
@@ -758,6 +801,7 @@ export function ProjectTree({
           {activeId ? <DragGhost activeId={activeId} tree={filteredTree} /> : null}
         </DragOverlay>
       </DndContext>
+      )}
 
       {searchActive && filteredTree.length === 0 && (
         <EmptyState
@@ -800,7 +844,7 @@ export function ProjectTree({
   );
 }
 
-function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: string }) {
+function CollapsedProjectButton({ node, sizeClass, pinned = false }: { node: TNode; sizeClass: string; pinned?: boolean }) {
   const { t } = useI18n();
   const actions = useTreeActions();
   if (node.type !== "project") return null;
@@ -814,7 +858,7 @@ function CollapsedProjectButton({ node, sizeClass }: { node: TNode; sizeClass: s
       data-selected={selected ? "true" : "false"}
       style={(appearance.hasColor ? { "--node-accent": appearance.colorVar } : {}) as CSSProperties}
       title={p.name}
-      aria-label={t("sidebar.tree.openProject", { name: p.name })}
+      aria-label={t(pinned ? "sidebar.pinned.openProject" : "sidebar.tree.openProject", { name: p.name })}
       onPointerDownCapture={preventSecondaryPointerFocus}
       onClick={(event) => actions.onSelectProject(event, p)}
       onDoubleClick={() => actions.onOpenProject(p)}

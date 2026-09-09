@@ -29,6 +29,7 @@ import { resolveProjectPath } from "../api/groupPath";
 import { SIDEBAR_EXPAND_REQUEST_EVENT, SIDEBAR_TOGGLE_REQUEST_EVENT, notifySidebarStateChange } from "../api/sidebarCommands";
 import { type SidebarProps, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_COLLAPSE_THRESHOLD, SIDEBAR_MAX_WIDTH, SIDEBAR_AUTO_COLLAPSE_BREAKPOINT, IN_TAURI, preserveSidebarScrollAfterContextMenu, isLikelyMacOs, clampExpandedSidebarWidth, normalizePersistedSidebarWidth, resolveHistorySourceFilter, buildProjectSplitOptions, filterTreeForOpenTerminals, collectGroupTerminalTargets, type SidebarConfirmAction } from "../lib/sidebarModel";
 import { createSidebarDeleteConfirmation } from "../lib/sidebarDeleteConfirmation";
+import { usePinnedProjects } from "./usePinnedProjects";
 
 export function useSidebarController({
   onOpenSettings,
@@ -113,6 +114,13 @@ export function useSidebarController({
   const openHistory = useHistoryStore((s) => s.openHistory);
   const triggerGlobalSearchFocus = useHistoryStore((s) => s.triggerGlobalSearchFocus);
   const removeSyncedSessions = useExternalSessionSyncStore((s) => s.removeSyncedSessions);
+  const {
+    pinnedProjects,
+    pinnedSectionCollapsed,
+    isProjectPinned,
+    togglePinned,
+    togglePinnedSection,
+  } = usePinnedProjects(projects, projectStoreLoaded);
 
   const initialSidebarWidth = normalizePersistedSidebarWidth(persistedSidebarWidth);
   const [sidebarWidth, setSidebarWidth] = useState(initialSidebarWidth);
@@ -299,6 +307,9 @@ export function useSidebarController({
 
   // 可见项目的扁平顺序（跳过已折叠分组的子项），供 Shift 范围多选取区间
   const visibleProjectIds = useMemo(() => {
+    if (projectFilter === "pinned") {
+      return pinnedProjects.map((project) => project.id);
+    }
     const ids: string[] = [];
     const walk = (nodes: TNode[]) => {
       for (const node of nodes) {
@@ -311,7 +322,7 @@ export function useSidebarController({
     };
     walk(displayedTree);
     return ids;
-  }, [displayedTree, collapsedIds]);
+  }, [displayedTree, collapsedIds, pinnedProjects, projectFilter]);
   // 可见分组的扁平顺序（折叠时跳过隐藏的子分组），供文件夹 Shift 范围多选取区间
   const visibleGroupIds = useMemo(() => {
     const ids: string[] = [];
@@ -1739,6 +1750,11 @@ export function useSidebarController({
       renamingGroupId,
       renamingProjectId,
       providerBadges,
+      pinnedProjects,
+      pinnedSectionCollapsed,
+      isProjectPinned,
+      onToggleProjectPinned: togglePinned,
+      onTogglePinnedSection: togglePinnedSection,
       onSelectProject: handleSelectProject,
       onSelectProjectByKeyboard: handleSelectProjectByKeyboard,
       onSelectGroup: handleSelectGroup,
@@ -1777,6 +1793,11 @@ export function useSidebarController({
       renamingGroupId,
       renamingProjectId,
       providerBadges,
+      pinnedProjects,
+      pinnedSectionCollapsed,
+      isProjectPinned,
+      togglePinned,
+      togglePinnedSection,
       handleSelectProject,
       handleSelectProjectByKeyboard,
       handleSelectGroup,
@@ -1838,7 +1859,9 @@ export function useSidebarController({
     projectFilter,
     sidebarProjectFilterVisible,
     projects,
+    pinnedProjects,
     openProjectIds,
+    pinnedSectionCollapsed,
     toggleSidebarCollapsed,
     setProjectFilter,
     ensureSidebarExpanded,

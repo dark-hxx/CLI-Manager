@@ -26,6 +26,8 @@ export const SETTING_BACKUP_POLICY = {
   historySmartTitle: "excluded",
   historyDetailSortDirections: "preferences",
   collapsedGroupIds: "preferences",
+  pinnedProjectIds: "preferences",
+  sidebarPinnedSectionCollapsed: "preferences",
   useExternalTerminal: "excluded",
   debugMode: "excluded",
   terminalThemeMode: "preferences",

@@ -20,7 +20,7 @@ import { GroupEditDialog } from "./GroupEditDialog";
 import { NodeAppearancePanel } from "./NodeAppearancePanel";
 import { SidebarFooter } from "./SidebarFooter";
 import { FileExplorerSidebar } from "../../files/api/FileExplorerSidebar";
-import { ArrowLeftRight, Check, CircleStop, Copy, FileCode, FolderOpen, FolderPlus, ListClockIcon, Palette, Pencil, Play, Plus, Settings, SquareSplitHorizontal, SquareSplitVertical, Terminal, TerminalSquare, Trash2, X } from "../../../shared/ui/icons";
+import { ArrowLeftRight, Check, CircleStop, Copy, FileCode, FolderOpen, FolderPlus, ListClockIcon, Palette, Pencil, Pin, Play, Plus, Settings, SquareSplitHorizontal, SquareSplitVertical, Terminal, TerminalSquare, Trash2, X } from "../../../shared/ui/icons";
 import { buildProjectSplitOptions } from "../lib/sidebarModel";
 
 export function SidebarView({
@@ -35,6 +35,7 @@ export function SidebarView({
   projectFilter,
   sidebarProjectFilterVisible,
   projects,
+  pinnedProjects,
   openProjectIds,
   toggleSidebarCollapsed,
   setProjectFilter,
@@ -167,6 +168,7 @@ export function SidebarView({
           showProjectFilter={sidebarProjectFilterVisible}
           totalProjectCount={projects.length}
           openProjectCount={openProjectIds.size}
+          pinnedProjectCount={pinnedProjects.length}
           onToggleCollapse={toggleSidebarCollapsed}
           dockSide={dockSide}
           onProjectFilterChange={setProjectFilter}
@@ -210,7 +212,7 @@ export function SidebarView({
                   void loadProjects();
                 }}
                 onExpandSidebar={expandSidebar}
-                projectFilterActive={projectFilter === "open"}
+                projectFilter={projectFilter}
                 onClearProjectFilter={() => setProjectFilter("all")}
               />
             </div>
@@ -402,6 +404,20 @@ export function SidebarView({
                 >
                   <ListClockIcon size={14} />
                   {t("sidebar.menu.sessionHistory")}
+                </button>
+                <button
+                  className="context-menu-item"
+                  hidden={showProjectBatchContextMenu}
+                  role="menuitem"
+                  onClick={() => {
+                    void treeActions.onToggleProjectPinned(contextMenu.project.id);
+                    setContextMenu(null);
+                  }}
+                >
+                  <Pin size={14} strokeWidth={1.5} />
+                  {treeActions.isProjectPinned(contextMenu.project.id)
+                    ? t("sidebar.pinned.unpin")
+                    : t("sidebar.pinned.pin")}
                 </button>
                   {!showProjectBatchContextMenu && getProviderSwitchAppType(contextMenu.project) && projectSupportsCapability(contextMenu.project, "providerSwitch") && (
                   <button

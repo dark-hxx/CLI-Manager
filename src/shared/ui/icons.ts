@@ -45,6 +45,7 @@ export {
   FolderPlus,
   Palette,
   Pencil,
+  Pin,
   Play,
   Plus,
   RefreshCw,
