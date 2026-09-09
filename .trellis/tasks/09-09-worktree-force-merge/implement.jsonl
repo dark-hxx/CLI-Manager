@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "Feature scenario matrix and root-cause boundary requirements"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer IPC, error, and rollback data-flow checks"}
+{"file": ".trellis/spec/backend/worktree-isolation-contracts.md", "reason": "Existing Worktree command and cleanup contract"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Dialog confirmation and accessibility behavior"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "Zustand action and ephemeral dialog state boundaries"}
+{"file": ".trellis/spec/frontend/ai-architecture-contracts.md", "reason": "Feature-first structure and file size constraints"}

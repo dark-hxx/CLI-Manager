@@ -3,10 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { GitFileChange, Project, WorktreeRecord } from "../../../shared/types/index";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
-import { useWorktreeStore } from "./worktreeStore";
+import { useWorktreeStore, type GitWorktreeMergeResult } from "./worktreeStore";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } from "../../../shared/ui/dialog";
 import { Button } from "../../../shared/ui/button";
 import { Textarea } from "../../../shared/ui/textarea";
+import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
 
 interface WorktreeFinishDialogProps {
   project: Project | null;
@@ -19,6 +20,7 @@ type Step = "review" | "merge" | "cleanup" | "done";
 type Translate = (key: TranslationKey, params?: Record<string, string | number>) => string;
 
 interface FinishErrorInfo {
+  code?: string;
   title: string;
   description: string;
   details?: string[];
@@ -34,11 +36,49 @@ function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function createMergeConflictError(conflictFiles: string[], t: Translate): FinishErrorInfo {
+function createMergeConflictError(
+  conflictFiles: string[],
+  t: Translate,
+  stashCreated = false
+): FinishErrorInfo {
   return {
+    code: "merge_conflict",
     title: t("worktree.finish.error.conflictTitle"),
     description: t("worktree.finish.error.conflictDescription"),
-    details: conflictFiles.length > 0 ? conflictFiles : [t("worktree.finish.error.noConflictFiles")],
+    details: [
+      ...(conflictFiles.length > 0 ? conflictFiles : [t("worktree.finish.error.noConflictFiles")]),
+      ...(stashCreated ? [t("worktree.finish.error.forceMergeStashRetained")] : []),
+    ],
+  };
+}
+
+function createStashRestoreError(result: GitWorktreeMergeResult, t: Translate): FinishErrorInfo {
+  const mergeWasAborted = !result.merged;
+  return {
+    code: "force_merge_restore_conflict",
+    title: t(
+      mergeWasAborted
+        ? "worktree.finish.error.forceConflictRestoreTitle"
+        : "worktree.finish.error.forceRestoreConflictTitle"
+    ),
+    description: t(
+      mergeWasAborted
+        ? "worktree.finish.error.forceConflictRestoreDescription"
+        : "worktree.finish.error.forceRestoreConflictDescription"
+    ),
+    details: [
+      ...(mergeWasAborted && result.conflictFiles.length > 0
+        ? [t("worktree.finish.error.forceMergeConflictFiles"), ...result.conflictFiles]
+        : []),
+      ...(result.stashRestoreConflictFiles.length > 0
+        ? result.stashRestoreConflictFiles
+        : [t("worktree.finish.error.noConflictFiles")]),
+      ...(result.stashReference
+        ? [t("worktree.finish.error.forceRestoreStashReference", { reference: result.stashReference })]
+        : []),
+      t("worktree.finish.error.forceMergeStashRetained"),
+    ],
+    raw: result.output,
   };
 }
 
@@ -46,6 +86,7 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
   const raw = errorText(err).trim();
   if (raw.includes("dirty_main_worktree")) {
     return {
+      code: "dirty_main_worktree",
       title: t("worktree.finish.error.dirtyMainTitle"),
       description: t("worktree.finish.error.dirtyMainDescription"),
       details: [
@@ -56,8 +97,45 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
     };
   }
 
+  if (raw.includes("force_merge_stash_failed") || raw.includes("force_merge_stash_reference_failed") || raw.includes("force_merge_stash_incomplete")) {
+    return {
+      code: "force_merge_stash_failed",
+      title: t("worktree.finish.error.forceStashTitle"),
+      description: t("worktree.finish.error.forceStashDescription"),
+      raw,
+    };
+  }
+
+  if (raw.includes("force_merge_restore_failed")) {
+    return {
+      code: "force_merge_restore_failed",
+      title: t("worktree.finish.error.forceRestoreTitle"),
+      description: t("worktree.finish.error.forceRestoreDescription"),
+      raw,
+    };
+  }
+
+  if (raw.includes("force_merge_checkout_failed")) {
+    return {
+      code: "force_merge_checkout_failed",
+      title: t("worktree.finish.error.forceCheckoutTitle"),
+      description: t("worktree.finish.error.forceCheckoutDescription"),
+      raw,
+    };
+  }
+
+  if (raw.includes("force_merge_abort_failed")) {
+    return {
+      code: "force_merge_abort_failed",
+      title: t("worktree.finish.error.forceAbortTitle"),
+      description: t("worktree.finish.error.forceAbortDescription"),
+      raw,
+    };
+  }
+
   if (raw.includes("worktree_branch_not_found") || raw.includes("branch_not_found")) {
     return {
+      code: "branch_not_found",
       title: t("worktree.finish.error.branchMissingTitle"),
       description: t("worktree.finish.error.branchMissingDescription"),
       raw,
@@ -66,6 +144,7 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
 
   if (raw.includes("merge_failed")) {
     return {
+      code: "merge_failed",
       title: t("worktree.finish.error.mergeFailedTitle"),
       description: t("worktree.finish.error.mergeFailedDescription"),
       raw,
@@ -73,6 +152,7 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
   }
 
   return {
+    code: "generic",
     title: t("worktree.finish.error.genericTitle"),
     description: t("worktree.finish.error.genericDescription"),
     raw,
@@ -82,6 +162,7 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
 export function WorktreeFinishDialog({ project, worktree, open, onClose }: WorktreeFinishDialogProps) {
   const { t } = useI18n();
   const mergeWorktree = useWorktreeStore((state) => state.mergeWorktree);
+  const forceMergeWorktree = useWorktreeStore((state) => state.forceMergeWorktree);
   const removeWorktree = useWorktreeStore((state) => state.removeWorktree);
   const [changes, setChanges] = useState<GitFileChange[]>([]);
   const [loadingChanges, setLoadingChanges] = useState(false);
@@ -90,6 +171,7 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
   const [busy, setBusy] = useState(false);
   const [output, setOutput] = useState("");
   const [error, setError] = useState<FinishErrorInfo | null>(null);
+  const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
 
   useEffect(() => {
     if (!open || !worktree) return;
@@ -97,6 +179,7 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
     setCommitMessage(worktree.name);
     setOutput("");
     setError(null);
+    setForceConfirmOpen(false);
     setLoadingChanges(true);
     invoke<GitFileChange[]>("git_get_changes", { projectPath: worktree.path })
       .then((items) => {
@@ -109,6 +192,10 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
 
   const changeSummary = useMemo(() => formatChangeSummary(changes), [changes]);
   const canCommit = changes.length > 0 && commitMessage.trim().length > 0 && !busy;
+  const mergeBlockedByRestore =
+    error?.code === "force_merge_restore_conflict" ||
+    error?.code === "force_merge_restore_failed" ||
+    error?.code === "force_merge_abort_failed";
 
   if (!project || !worktree) return null;
 
@@ -136,19 +223,49 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
   };
 
   const handleMerge = async () => {
+    if (busy) return;
     setBusy(true);
     setError(null);
     setOutput((current) => `${current}\n\ngit -C "${project.path}" merge --no-ff --no-edit ${worktree.branch}`);
     try {
       const result = await mergeWorktree(worktree);
       setOutput((current) => `${current}\n${result.output}`);
-      if (result.merged) {
+      if (result.merged && (!result.stashCreated || result.stashRestored)) {
         setStep("cleanup");
       } else if (result.skipped && result.skipReason === "no_diff") {
         setOutput((current) => `${current}\n${t("worktree.finish.noDiffToMerge")}`);
         setStep("cleanup");
+      } else if (result.stashCreated && !result.stashRestored) {
+        setError(createStashRestoreError(result, t));
       } else {
-        setError(createMergeConflictError(result.conflictFiles, t));
+        setError(createMergeConflictError(result.conflictFiles, t, result.stashCreated));
+      }
+    } catch (err) {
+      setError(formatFinishError(err, t, project.path));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 只有确认框的显式确定按钮会进入此处，stash/merge/恢复由 Rust 作为一个受锁保护的序列执行。
+  const handleForceMerge = async () => {
+    if (busy) return;
+    setForceConfirmOpen(false);
+    setBusy(true);
+    setError(null);
+    setOutput((current) => `${current}\n\n${t("worktree.finish.forceMergeStarted")}`);
+    try {
+      const result = await forceMergeWorktree(worktree);
+      setOutput((current) => `${current}\n${result.output}`);
+      if (result.merged && (!result.stashCreated || result.stashRestored)) {
+        setStep("cleanup");
+      } else if (result.skipped && result.skipReason === "no_diff") {
+        setOutput((current) => `${current}\n${t("worktree.finish.noDiffToMerge")}`);
+        setStep("cleanup");
+      } else if (result.stashCreated && !result.stashRestored) {
+        setError(createStashRestoreError(result, t));
+      } else {
+        setError(createMergeConflictError(result.conflictFiles, t, result.stashCreated));
       }
     } catch (err) {
       setError(formatFinishError(err, t, project.path));
@@ -174,7 +291,8 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
+    <>
+      <Dialog open={open} onOpenChange={(next) => { if (!next && !forceConfirmOpen) onClose(); }}>
       <DialogContent className="max-w-[520px]" showCloseButton={false}>
         <DialogTitle>{t("worktree.finish.title", { name: worktree.name })}</DialogTitle>
         <DialogDescription className="mt-2">
@@ -228,6 +346,17 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
                   <pre className="whitespace-pre-wrap break-words">{error.raw}</pre>
                 </div>
               )}
+              {error.code === "dirty_main_worktree" && (
+                <Button
+                  className="mt-3"
+                  variant="destructive"
+                  onClick={() => setForceConfirmOpen(true)}
+                  disabled={busy}
+                  aria-label={t("worktree.finish.forceMergeAria")}
+                >
+                  {t("worktree.finish.forceMerge")}
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -235,10 +364,22 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
           {step === "review" && <Button onClick={handleCommit} disabled={!canCommit}>{busy ? t("common.processing") : t("worktree.finish.commitAll")}</Button>}
-          {step === "merge" && <Button onClick={handleMerge} disabled={busy}>{busy ? t("common.processing") : t("worktree.finish.merge")}</Button>}
+          {step === "merge" && <Button onClick={handleMerge} disabled={busy || mergeBlockedByRestore}>{busy ? t("common.processing") : t("worktree.finish.merge")}</Button>}
           {step === "cleanup" && <Button onClick={handleCleanup} disabled={busy}>{busy ? t("common.processing") : t("worktree.finish.cleanup")}</Button>}
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+      <ConfirmDialog
+        open={forceConfirmOpen}
+        title={t("worktree.finish.forceMergeConfirmTitle")}
+        message={t("worktree.finish.forceMergeConfirmMessage")}
+        confirmText={t("worktree.finish.forceMergeConfirm")}
+        cancelText={t("common.cancel")}
+        danger
+        explicitCloseOnly
+        onConfirm={handleForceMerge}
+        onClose={() => setForceConfirmOpen(false)}
+      />
+    </>
   );
 }

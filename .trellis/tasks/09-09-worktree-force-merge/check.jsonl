@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/task-delivery-checklist.md", "reason": "Delivery records, version, and unrelated-change safeguards"}
+{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "Verification and manual UI-check boundaries"}
+{"file": ".trellis/spec/backend/worktree-isolation-contracts.md", "reason": "Backend result and failure-state contract"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "Explicit-close dialog and cleanup gating review"}

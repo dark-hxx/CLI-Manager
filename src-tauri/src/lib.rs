@@ -886,6 +886,7 @@ pub fn run() {
             commands::git_worktree::git_worktree_create,
             commands::git_worktree::git_worktree_check_deps,
             commands::git_worktree::git_worktree_merge,
+            commands::git_worktree::git_worktree_force_merge,
             commands::git_worktree::git_worktree_remove,
             commands::subagent_transcript::subagent_transcript_subscribe,
             commands::subagent_transcript::subagent_transcript_unsubscribe,

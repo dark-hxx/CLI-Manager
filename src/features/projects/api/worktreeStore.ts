@@ -27,6 +27,10 @@ export interface GitWorktreeMergeResult {
   conflictFiles: string[];
   skipped: boolean;
   skipReason: string | null;
+  stashCreated: boolean;
+  stashRestored: boolean;
+  stashReference: string | null;
+  stashRestoreConflictFiles: string[];
 }
 
 export type WorktreeIsolationDecision = "prompt" | "auto" | "none";
@@ -66,6 +70,7 @@ interface WorktreeStore {
   checkDeps: (worktree: WorktreeRecord) => Promise<GitWorktreeDepsCheckResult>;
   dismissDepsPrompt: (worktreeId: string) => Promise<void>;
   mergeWorktree: (worktree: WorktreeRecord) => Promise<GitWorktreeMergeResult>;
+  forceMergeWorktree: (worktree: WorktreeRecord) => Promise<GitWorktreeMergeResult>;
   removeWorktree: (worktree: WorktreeRecord, deleteBranch: boolean) => Promise<void>;
   markMissingWorktrees: () => Promise<void>;
 }
@@ -328,6 +333,16 @@ export const useWorktreeStore = create<WorktreeStore>((set, get) => ({
     const project = useProjectStore.getState().projects.find((item) => item.id === worktree.project_id);
     if (!project) throw new Error("project_not_found");
     return invoke<GitWorktreeMergeResult>("git_worktree_merge", {
+      projectPath: project.path,
+      worktreeBranch: worktree.branch,
+      baseBranch: worktree.base_branch,
+    });
+  },
+
+  forceMergeWorktree: async (worktree) => {
+    const project = useProjectStore.getState().projects.find((item) => item.id === worktree.project_id);
+    if (!project) throw new Error("project_not_found");
+    return invoke<GitWorktreeMergeResult>("git_worktree_force_merge", {
       projectPath: project.path,
       worktreeBranch: worktree.branch,
       baseBranch: worktree.base_branch,

@@ -5,6 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -42,6 +43,10 @@ pub struct GitWorktreeMergeResult {
     pub conflict_files: Vec<String>,
     pub skipped: bool,
     pub skip_reason: Option<String>,
+    pub stash_created: bool,
+    pub stash_restored: bool,
+    pub stash_reference: Option<String>,
+    pub stash_restore_conflict_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +72,17 @@ impl GitCommandOutput {
 }
 
 const GIT_CREATE_ERROR_SNIPPET_LEN: usize = 300;
+const FORCE_MERGE_STASH_MESSAGE_PREFIX: &str = "CLI-Manager force merge";
+
+// 普通合并和强制合并共享同一把锁，避免多个完成对话框交错操作主工作区。
+static WORKTREE_MERGE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn acquire_worktree_merge_lock() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    WORKTREE_MERGE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "worktree_merge_lock_poisoned".to_string())
+}
 
 // 归一化 Git 进度换行并保留末尾 300 字符，避免遗漏最终错误。
 fn git_create_error_snippet(output: &str) -> String {
@@ -699,6 +715,384 @@ fn conflict_files(project_path: &Path) -> Vec<String> {
     }
 }
 
+fn build_merge_result(
+    merged: bool,
+    output: String,
+    conflict_files: Vec<String>,
+    skipped: bool,
+    skip_reason: Option<String>,
+    stash_created: bool,
+    stash_restored: bool,
+    stash_reference: Option<String>,
+    stash_restore_conflict_files: Vec<String>,
+) -> GitWorktreeMergeResult {
+    GitWorktreeMergeResult {
+        merged,
+        output,
+        conflict_files,
+        skipped,
+        skip_reason,
+        stash_created,
+        stash_restored,
+        stash_reference,
+        stash_restore_conflict_files,
+    }
+}
+
+// 将强制合并的稳定错误码与 Git 最终错误尾部及 stash 身份组合返回。
+fn format_force_merge_error(code: &str, detail: &str, stash_reference: Option<&str>) -> String {
+    let detail = git_create_error_snippet(detail);
+    let stash = stash_reference
+        .map(|reference| format!("; stash={reference}"))
+        .unwrap_or_default();
+    if detail.is_empty() {
+        format!("{code}{stash}")
+    } else {
+        format!("{code}: {detail}{stash}")
+    }
+}
+
+// 应用本次强制合并创建的 stash；冲突保留现场，非冲突失败返回错误。
+fn restore_force_merge_stash(
+    project_path: &Path,
+    stash_reference: &str,
+) -> Result<(bool, Vec<String>, String), String> {
+    let restore_output = run_git_raw(project_path, ["stash", "apply", "--index", stash_reference])?;
+    let combined = restore_output.combined();
+    if restore_output.success {
+        return Ok((true, Vec::new(), combined));
+    }
+
+    let files = conflict_files(project_path);
+    if !files.is_empty() {
+        return Ok((false, files, combined));
+    }
+
+    Err(format!(
+        "stash apply failed: {}",
+        git_create_error_snippet(&combined)
+    ))
+}
+
+// 在 checkout/merge 失败后恢复主工作区；恢复冲突或失败时禁止继续清理。
+fn restore_force_merge_after_failure(
+    project_path: &Path,
+    output: &mut String,
+    primary_code: &str,
+    primary_error: &str,
+    stash_reference: Option<&str>,
+) -> String {
+    let Some(stash_reference) = stash_reference else {
+        return format_force_merge_error(primary_code, primary_error, None);
+    };
+
+    match restore_force_merge_stash(project_path, stash_reference) {
+        Ok((true, _, restore_output)) => {
+            append_output_line(output, &restore_output);
+            format_force_merge_error(primary_code, primary_error, Some(stash_reference))
+        }
+        Ok((false, files, restore_output)) => {
+            append_output_line(output, &restore_output);
+            let detail = format!(
+                "{primary_code}: {primary_error}; restore_conflict_files={}",
+                files.join(", ")
+            );
+            format_force_merge_error("force_merge_restore_failed", &detail, Some(stash_reference))
+        }
+        Err(restore_error) => {
+            let detail = format!("{primary_code}: {primary_error}; {restore_error}");
+            format_force_merge_error("force_merge_restore_failed", &detail, Some(stash_reference))
+        }
+    }
+}
+
+fn merge_worktree_internal(
+    project_path: &str,
+    worktree_branch: &str,
+    base_branch: &str,
+    allow_dirty: bool,
+) -> Result<GitWorktreeMergeResult, String> {
+    let repo = open_main_repo(project_path)?;
+    let current_branch = current_branch_name(&repo)?;
+    let project_path = local_path_from_input(project_path)
+        .canonicalize()
+        .map_err(|e| format!("canonicalize_project_path_failed: {e}"))?;
+
+    // 普通合并保留原有顺序：先检查主工作区，脏时不触碰分支和 Git 状态。
+    if !allow_dirty {
+        let status = run_git_checked(&project_path, ["status", "--porcelain"])?;
+        if !status.trim().is_empty() {
+            return Err("dirty_main_worktree".to_string());
+        }
+    }
+
+    if !branch_exists(&project_path, base_branch)? {
+        return Err("branch_not_found".to_string());
+    }
+    if !branch_exists(&project_path, worktree_branch)? {
+        return Err("worktree_branch_not_found".to_string());
+    }
+    if !has_branch_content_diff(&project_path, base_branch, worktree_branch)? {
+        return Ok(build_merge_result(
+            false,
+            format!(
+                "merge_skipped: no_diff_between {} and {}",
+                base_branch, worktree_branch
+            ),
+            Vec::new(),
+            true,
+            Some("no_diff".to_string()),
+            false,
+            false,
+            None,
+            Vec::new(),
+        ));
+    }
+
+    let mut output = String::new();
+    let mut stash_reference = None;
+    let main_is_dirty = if allow_dirty {
+        let status = run_git_checked(&project_path, ["status", "--porcelain"])?;
+        !status.trim().is_empty()
+    } else {
+        false
+    };
+
+    if allow_dirty && main_is_dirty {
+        let stash_message = format!("{FORCE_MERGE_STASH_MESSAGE_PREFIX}: {worktree_branch}");
+        let stash_output = run_git_raw(
+            &project_path,
+            [
+                "stash",
+                "push",
+                "--include-untracked",
+                "--message",
+                stash_message.as_str(),
+            ],
+        )
+        .map_err(|error| format_force_merge_error("force_merge_stash_failed", &error, None))?;
+        if !stash_output.success {
+            return Err(format_force_merge_error(
+                "force_merge_stash_failed",
+                &stash_output.combined(),
+                None,
+            ));
+        }
+        append_output_line(&mut output, &stash_output.combined());
+
+        let stash_oid = run_git_checked(&project_path, ["rev-parse", "--verify", "refs/stash"])
+            .map(|value| value.trim().to_string())
+            .map_err(|error| {
+                format_force_merge_error("force_merge_stash_reference_failed", &error, None)
+            })?;
+        if stash_oid.is_empty() {
+            return Err(format_force_merge_error(
+                "force_merge_stash_reference_failed",
+                "empty stash reference",
+                None,
+            ));
+        }
+        stash_reference = Some(stash_oid);
+
+        let status_after_stash = run_git_checked(&project_path, ["status", "--porcelain"])
+            .map_err(|error| {
+                format_force_merge_error(
+                    "force_merge_stash_incomplete",
+                    &error,
+                    stash_reference.as_deref(),
+                )
+            })?;
+        if !status_after_stash.trim().is_empty() {
+            return Err(format_force_merge_error(
+                "force_merge_stash_incomplete",
+                &status_after_stash,
+                stash_reference.as_deref(),
+            ));
+        }
+    }
+
+    if current_branch != base_branch {
+        match run_git_checked(&project_path, ["checkout", base_branch]) {
+            Ok(checkout_output) => {
+                if allow_dirty {
+                    append_output_line(&mut output, &checkout_output);
+                }
+            }
+            Err(checkout_error) if allow_dirty => {
+                return Err(restore_force_merge_after_failure(
+                    &project_path,
+                    &mut output,
+                    "force_merge_checkout_failed",
+                    &checkout_error,
+                    stash_reference.as_deref(),
+                ));
+            }
+            Err(checkout_error) => return Err(checkout_error),
+        }
+    }
+
+    let merge_output = match run_git_raw(
+        &project_path,
+        ["merge", "--no-ff", "--no-edit", worktree_branch],
+    ) {
+        Ok(output) => output,
+        Err(error) if allow_dirty => {
+            return Err(restore_force_merge_after_failure(
+                &project_path,
+                &mut output,
+                "force_merge_failed",
+                &error,
+                stash_reference.as_deref(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    let merge_detail = merge_output.combined();
+    append_output_line(&mut output, &merge_detail);
+
+    if merge_output.success {
+        if let Some(stash_reference) = stash_reference.as_deref() {
+            let (stash_restored, restore_conflicts, restore_output) =
+                restore_force_merge_stash(&project_path, stash_reference).map_err(|error| {
+                    format_force_merge_error(
+                        "force_merge_restore_failed",
+                        &error,
+                        Some(stash_reference),
+                    )
+                })?;
+            append_output_line(&mut output, &restore_output);
+            return Ok(build_merge_result(
+                true,
+                output,
+                Vec::new(),
+                false,
+                None,
+                true,
+                stash_restored,
+                Some(stash_reference.to_string()),
+                restore_conflicts,
+            ));
+        }
+
+        return Ok(build_merge_result(
+            true,
+            if allow_dirty { output } else { merge_detail },
+            Vec::new(),
+            false,
+            None,
+            false,
+            false,
+            None,
+            Vec::new(),
+        ));
+    }
+
+    let files = conflict_files(&project_path);
+    if !allow_dirty {
+        if !files.is_empty() {
+            let _ = run_git_raw(&project_path, ["merge", "--abort"]);
+            return Ok(build_merge_result(
+                false,
+                format!("merge_conflict: {merge_detail}"),
+                files,
+                false,
+                None,
+                false,
+                false,
+                None,
+                Vec::new(),
+            ));
+        }
+
+        let _ = run_git_raw(&project_path, ["merge", "--abort"]);
+        let snippet: String = merge_detail.chars().take(300).collect();
+        return Err(format!("merge_failed: {snippet}"));
+    }
+
+    let abort_output = run_git_raw(&project_path, ["merge", "--abort"]).map_err(|error| {
+        format_force_merge_error(
+            "force_merge_abort_failed",
+            &error,
+            stash_reference.as_deref(),
+        )
+    })?;
+    let abort_detail = abort_output.combined();
+    append_output_line(&mut output, &abort_detail);
+    if !abort_output.success {
+        return Err(format_force_merge_error(
+            "force_merge_abort_failed",
+            &abort_detail,
+            stash_reference.as_deref(),
+        ));
+    }
+
+    let Some(stash_reference) = stash_reference.as_deref() else {
+        if !files.is_empty() {
+            return Ok(build_merge_result(
+                false,
+                output,
+                files,
+                false,
+                None,
+                false,
+                false,
+                None,
+                Vec::new(),
+            ));
+        }
+        return Err(format_force_merge_error(
+            "force_merge_failed",
+            &merge_detail,
+            None,
+        ));
+    };
+
+    match restore_force_merge_stash(&project_path, stash_reference) {
+        Ok((stash_restored, restore_conflicts, restore_output)) => {
+            append_output_line(&mut output, &restore_output);
+            if !stash_restored && !restore_conflicts.is_empty() {
+                return Ok(build_merge_result(
+                    false,
+                    output,
+                    files,
+                    false,
+                    None,
+                    true,
+                    false,
+                    Some(stash_reference.to_string()),
+                    restore_conflicts,
+                ));
+            }
+            if files.is_empty() {
+                return Err(format_force_merge_error(
+                    "force_merge_failed",
+                    &merge_detail,
+                    Some(stash_reference),
+                ));
+            }
+            return Ok(build_merge_result(
+                false,
+                output,
+                files,
+                false,
+                None,
+                true,
+                stash_restored,
+                Some(stash_reference.to_string()),
+                restore_conflicts,
+            ));
+        }
+        Err(restore_error) => {
+            let detail = format!("{merge_detail}; {restore_error}");
+            return Err(format_force_merge_error(
+                "force_merge_restore_failed",
+                &detail,
+                Some(stash_reference),
+            ));
+        }
+    }
+}
+
 #[tauri::command]
 // 在线程池检查路径是否为支持的本地主仓库根目录。
 pub async fn git_worktree_validate(project_path: String) -> Result<bool, String> {
@@ -799,67 +1193,25 @@ pub async fn git_worktree_merge(
     validate_worktree_branch(&worktree_branch)?;
     validate_plain_branch_name(&base_branch)?;
     tokio::task::spawn_blocking(move || {
-        let repo = open_main_repo(&project_path)?;
-        let current_branch = current_branch_name(&repo)?;
-        let project_path = local_path_from_input(&project_path)
-            .canonicalize()
-            .map_err(|e| format!("canonicalize_project_path_failed: {e}"))?;
+        let _lock = acquire_worktree_merge_lock()?;
+        merge_worktree_internal(&project_path, &worktree_branch, &base_branch, false)
+    })
+    .await
+    .map_err(|e| format!("task_failed: {e}"))?
+}
 
-        let status = run_git_checked(&project_path, ["status", "--porcelain"])?;
-        if !status.trim().is_empty() {
-            return Err("dirty_main_worktree".to_string());
-        }
-        if !branch_exists(&project_path, &base_branch)? {
-            return Err("branch_not_found".to_string());
-        }
-        if !branch_exists(&project_path, &worktree_branch)? {
-            return Err("worktree_branch_not_found".to_string());
-        }
-        if !has_branch_content_diff(&project_path, &base_branch, &worktree_branch)? {
-            return Ok(GitWorktreeMergeResult {
-                merged: false,
-                output: format!(
-                    "merge_skipped: no_diff_between {} and {}",
-                    base_branch, worktree_branch
-                ),
-                conflict_files: Vec::new(),
-                skipped: true,
-                skip_reason: Some("no_diff".to_string()),
-            });
-        }
-        if current_branch != base_branch {
-            run_git_checked(&project_path, ["checkout", base_branch.as_str()])?;
-        }
-
-        let merge_output = run_git_raw(
-            &project_path,
-            ["merge", "--no-ff", "--no-edit", worktree_branch.as_str()],
-        )?;
-        if merge_output.success {
-            return Ok(GitWorktreeMergeResult {
-                merged: true,
-                output: merge_output.combined(),
-                conflict_files: Vec::new(),
-                skipped: false,
-                skip_reason: None,
-            });
-        }
-
-        let files = conflict_files(&project_path);
-        if !files.is_empty() {
-            let _ = run_git_raw(&project_path, ["merge", "--abort"]);
-            return Ok(GitWorktreeMergeResult {
-                merged: false,
-                output: format!("merge_conflict: {}", merge_output.combined()),
-                conflict_files: files,
-                skipped: false,
-                skip_reason: None,
-            });
-        }
-
-        let _ = run_git_raw(&project_path, ["merge", "--abort"]);
-        let snippet: String = merge_output.combined().chars().take(300).collect();
-        Err(format!("merge_failed: {snippet}"))
+#[tauri::command]
+// 强制保存主工作区改动后合并，并在每个失败边界恢复原改动。
+pub async fn git_worktree_force_merge(
+    project_path: String,
+    worktree_branch: String,
+    base_branch: String,
+) -> Result<GitWorktreeMergeResult, String> {
+    validate_worktree_branch(&worktree_branch)?;
+    validate_plain_branch_name(&base_branch)?;
+    tokio::task::spawn_blocking(move || {
+        let _lock = acquire_worktree_merge_lock()?;
+        merge_worktree_internal(&project_path, &worktree_branch, &base_branch, true)
     })
     .await
     .map_err(|e| format!("task_failed: {e}"))?
@@ -939,15 +1291,69 @@ mod tests {
         check_dependency_need, classify_worktree_registration, cleanup_empty_worktree_parent,
         cleanup_stale_unregistered_worktree, default_worktree_root, git_create_error_snippet,
         is_retryable_worktree_remove_error, is_stale_worktree_remove_error,
-        parse_worktree_list_entries, path_to_git_arg, remove_registered_stale_worktree_dir,
-        remove_worktree_path_with_retry, resolve_worktree_target_path,
-        seed_trellis_developer_identity, should_cleanup_worktree_branch_after_failed_add,
-        validate_plain_branch_name, validate_task_name, validate_worktree_branch,
-        WorktreeRegistration,
+        merge_worktree_internal, parse_worktree_list_entries, path_to_git_arg,
+        remove_registered_stale_worktree_dir, remove_worktree_path_with_retry,
+        resolve_worktree_target_path, seed_trellis_developer_identity,
+        should_cleanup_worktree_branch_after_failed_add, validate_plain_branch_name,
+        validate_task_name, validate_worktree_branch, WorktreeRegistration,
+        FORCE_MERGE_STASH_MESSAGE_PREFIX,
     };
     use std::fs;
     use std::io;
     use std::path::{Path, PathBuf};
+    use std::process::Command;
+
+    fn run_test_git<I, S>(cwd: &Path, args: I) -> String
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        let output = Command::new("git")
+            .current_dir(cwd)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git command failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    fn commit_test_change(repo: &Path, message: &str) {
+        run_test_git(repo, ["add", "--all"]);
+        run_test_git(repo, ["commit", "--message", message]);
+    }
+
+    fn create_test_worktree() -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        run_test_git(&repo, ["init", "--initial-branch", "main"]);
+        run_test_git(&repo, ["config", "user.email", "test@example.com"]);
+        run_test_git(&repo, ["config", "user.name", "CLI Manager Tests"]);
+        run_test_git(&repo, ["config", "core.autocrlf", "false"]);
+        fs::write(repo.join("base.txt"), "base\n").unwrap();
+        commit_test_change(&repo, "base");
+
+        let worktree = temp.path().join("worktree");
+        let worktree_arg = worktree.to_string_lossy().to_string();
+        run_test_git(
+            &repo,
+            vec![
+                "worktree".to_string(),
+                "add".to_string(),
+                "-b".to_string(),
+                "wt/task".to_string(),
+                worktree_arg,
+                "main".to_string(),
+            ],
+        );
+        fs::write(worktree.join("task.txt"), "task\n").unwrap();
+        commit_test_change(&worktree, "task");
+        (temp, repo, worktree)
+    }
 
     #[test]
     // 验证任务名的空值、长度、字符和 Windows 保留名称限制。
@@ -1301,5 +1707,151 @@ mod tests {
         let cargo = check_dependency_need(cargo_dir.path());
         assert!(cargo.needs_install);
         assert_eq!(cargo.command.as_deref(), Some("cargo fetch"));
+    }
+
+    #[test]
+    // 验证普通合并在主工作区有改动时不创建 stash 也不改变分支。
+    fn normal_merge_keeps_dirty_main_worktree_blocked() {
+        let (_temp, repo, _worktree) = create_test_worktree();
+        fs::write(repo.join("main-only.txt"), "keep\n").unwrap();
+        let error =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", false).unwrap_err();
+
+        assert_eq!(error, "dirty_main_worktree");
+        assert!(run_test_git(&repo, ["status", "--porcelain"]).contains("?? main-only.txt"));
+        assert!(run_test_git(&repo, ["stash", "list"]).is_empty());
+        assert_eq!(run_test_git(&repo, ["branch", "--show-current"]), "main");
+    }
+
+    #[test]
+    // 验证无内容差异时强制合并也不创建 stash 或修改主工作区。
+    fn force_merge_skips_no_diff_without_stashing() {
+        let (_temp, repo, worktree) = create_test_worktree();
+        run_test_git(&worktree, ["reset", "--hard", "main"]);
+        fs::write(repo.join("main-only.txt"), "keep\n").unwrap();
+
+        let result =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", true).unwrap();
+
+        assert!(result.skipped);
+        assert_eq!(result.skip_reason.as_deref(), Some("no_diff"));
+        assert!(!result.stash_created);
+        assert!(run_test_git(&repo, ["status", "--porcelain"]).contains("?? main-only.txt"));
+        assert!(run_test_git(&repo, ["stash", "list"]).is_empty());
+    }
+
+    #[test]
+    // 验证强制合并保存并恢复 staged、unstaged、untracked 改动且保留本次 stash。
+    fn force_merge_restores_all_main_changes_and_keeps_existing_stash() {
+        let (_temp, repo, _worktree) = create_test_worktree();
+        fs::write(repo.join("prior-untracked.txt"), "prior\n").unwrap();
+        run_test_git(
+            &repo,
+            [
+                "stash",
+                "push",
+                "--include-untracked",
+                "--message",
+                "prior stash",
+            ],
+        );
+        let prior_reference = run_test_git(&repo, ["rev-parse", "--verify", "refs/stash"]);
+
+        fs::write(repo.join("staged.txt"), "staged\n").unwrap();
+        run_test_git(&repo, ["add", "staged.txt"]);
+        fs::write(repo.join("unstaged.txt"), "unstaged\n").unwrap();
+        fs::write(repo.join("untracked.txt"), "untracked\n").unwrap();
+
+        let result =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", true).unwrap();
+
+        assert!(result.merged);
+        assert!(result.stash_created);
+        assert!(result.stash_restored);
+        let stash_reference = result.stash_reference.as_deref().unwrap();
+        assert_ne!(stash_reference, prior_reference);
+        assert!(repo.join("task.txt").exists());
+        assert!(repo.join("staged.txt").exists());
+        assert!(repo.join("unstaged.txt").exists());
+        assert!(repo.join("untracked.txt").exists());
+        let status = run_test_git(&repo, ["status", "--porcelain"]);
+        assert!(status.lines().any(|line| line.starts_with("A  staged.txt")));
+        assert!(status.lines().any(|line| line == "?? unstaged.txt"));
+        assert!(status.lines().any(|line| line == "?? untracked.txt"));
+        let stash_list = run_test_git(&repo, ["stash", "list"]);
+        assert!(stash_list.contains("prior stash"));
+        assert!(stash_list.contains(FORCE_MERGE_STASH_MESSAGE_PREFIX));
+    }
+
+    #[test]
+    // 验证主工作区当前不在基础分支时仍先切换、合并并恢复改动。
+    fn force_merge_switches_to_base_branch_before_merging() {
+        let (_temp, repo, _worktree) = create_test_worktree();
+        run_test_git(&repo, ["checkout", "-b", "side"]);
+        fs::write(repo.join("side-only.txt"), "side change\n").unwrap();
+
+        let result =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", true).unwrap();
+
+        assert!(result.merged);
+        assert!(result.stash_restored);
+        assert_eq!(run_test_git(&repo, ["branch", "--show-current"]), "main");
+        assert_eq!(
+            fs::read_to_string(repo.join("side-only.txt")).unwrap(),
+            "side change\n"
+        );
+    }
+
+    #[test]
+    // 验证 merge 冲突会 abort，并在主分支恢复原有改动而保留工作树。
+    fn force_merge_aborts_conflict_and_restores_main_changes() {
+        let (_temp, repo, worktree) = create_test_worktree();
+        fs::write(worktree.join("base.txt"), "worktree version\n").unwrap();
+        commit_test_change(&worktree, "conflicting worktree change");
+        fs::write(repo.join("base.txt"), "main version\n").unwrap();
+        commit_test_change(&repo, "conflicting main change");
+        fs::write(repo.join("keep.txt"), "keep after abort\n").unwrap();
+
+        let result =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", true).unwrap();
+
+        assert!(!result.merged);
+        assert!(result.conflict_files.iter().any(|file| file == "base.txt"));
+        assert!(result.stash_created);
+        assert!(result.stash_restored);
+        assert_eq!(run_test_git(&repo, ["branch", "--show-current"]), "main");
+        assert_eq!(
+            fs::read_to_string(repo.join("base.txt")).unwrap(),
+            "main version\n"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.join("keep.txt")).unwrap(),
+            "keep after abort\n"
+        );
+        assert!(run_test_git(&repo, ["status", "--porcelain"]).contains("?? keep.txt"));
+    }
+
+    #[test]
+    // 验证 merge 成功但 stash 恢复冲突时不清理工作树并返回冲突文件和 stash 身份。
+    fn force_merge_reports_stash_restore_conflict_without_cleanup() {
+        let (_temp, repo, worktree) = create_test_worktree();
+        fs::write(worktree.join("base.txt"), "worktree version\n").unwrap();
+        commit_test_change(&worktree, "restore conflict worktree change");
+        fs::write(repo.join("base.txt"), "main local version\n").unwrap();
+
+        let result =
+            merge_worktree_internal(repo.to_str().unwrap(), "wt/task", "main", true).unwrap();
+
+        assert!(result.merged);
+        assert!(result.stash_created);
+        assert!(!result.stash_restored);
+        assert!(result
+            .stash_restore_conflict_files
+            .iter()
+            .any(|file| file == "base.txt"));
+        assert!(result.stash_reference.is_some());
+        assert!(run_test_git(&repo, ["stash", "list"]).contains(FORCE_MERGE_STASH_MESSAGE_PREFIX));
+        assert!(run_test_git(&repo, ["status", "--porcelain"]).contains("base.txt"));
+        assert!(run_test_git(&repo, ["branch", "--show-current"]) == "main");
     }
 }
