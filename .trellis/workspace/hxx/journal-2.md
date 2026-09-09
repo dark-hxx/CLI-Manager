@@ -1595,3 +1595,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 115: 完成项目置顶快捷入口
+
+**Date**: 2026-09-09
+**Task**: 完成项目置顶快捷入口
+**Branch**: `master`
+
+### Summary
+
+实现项目置顶持久化、同步、筛选与文件夹式快捷分组；根据验收反馈恢复筛选栏默认隐藏，并将置顶按钮放到启动按钮左侧。已通过 TypeScript、Vite 构建、架构检查与任务校验。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0b2ccabe` | (see git log) |
+
+### Status
+
+[OK] **Completed**
