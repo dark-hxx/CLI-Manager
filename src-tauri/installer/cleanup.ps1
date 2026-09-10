@@ -87,7 +87,10 @@ function Invoke-InstallationCleanup {
     $ptyPath = Join-Path $installRoot 'cli-manager-daemon.exe'
     $paths = @($mainPath, $webPath, $ptyPath,
         (Join-Path $installRoot 'cli-manager-codex-proxy.exe'),
-        (Join-Path $installRoot 'resources\conpty\OpenConsole.exe'))
+        (Join-Path $installRoot 'resources\conpty\OpenConsole.exe'),
+        (Join-Path $installRoot 'resources\conpty\x64\OpenConsole.exe'),
+        (Join-Path $installRoot 'resources\conpty\x86\OpenConsole.exe'),
+        (Join-Path $installRoot 'resources\conpty\arm64\OpenConsole.exe'))
 
     # Stop the UI first so its reconnect loop cannot respawn a daemon while
     # files are being replaced. CloseMainWindow may only minimize to tray.

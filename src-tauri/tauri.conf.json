@@ -69,7 +69,10 @@
     "targets": "all",
     "createUpdaterArtifacts": true,
     "resources": {
-      "resources/conpty/**/*": "resources/conpty",
+      "resources/conpty/README.md": "resources/conpty/README.md",
+      "resources/conpty/x64/*": "resources/conpty/x64",
+      "resources/conpty/x86/*": "resources/conpty/x86",
+      "resources/conpty/arm64/*": "resources/conpty/arm64",
       "resources/ssh-agent/**/*": "resources/ssh-agent",
       "../apps/web/dist/index.html": "apps/web/dist/index.html",
       "../apps/web/dist/assets/**/*": "apps/web/dist/assets"

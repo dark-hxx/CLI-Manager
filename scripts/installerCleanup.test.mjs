@@ -22,6 +22,7 @@ async function fixture(t) {
   t.after(() => { for (const child of children) if (child.exitCode === null) child.kill(); });
   async function start(dir, name) {
     const target = path.join(dir, name);
+    await mkdir(path.dirname(target), { recursive: true });
     await copyFile(path.join(process.env.SystemRoot, 'System32', 'ping.exe'), target);
     const child = spawn(target, ['-t', '127.0.0.1'], { windowsHide: true, stdio: 'ignore' });
     children.push(child);
@@ -45,13 +46,19 @@ function cleanup(install, discovery) {
 
 test('cleanup stops only exact installed paths, tolerates missing discovery, and is repeatable', windowsOnly, async t => {
   const f = await fixture(t);
-  const targets = await Promise.all(executableNames.map(name => f.start(f.install, name)));
+  const targets = await Promise.all([...executableNames,
+    'resources/conpty/OpenConsole.exe', 'resources/conpty/x64/OpenConsole.exe',
+    'resources/conpty/x86/OpenConsole.exe', 'resources/conpty/arm64/OpenConsole.exe',
+  ].map(name => f.start(f.install, name)));
   const unrelated = await f.start(f.other, 'cli-manager-web-daemon.exe');
+  const otherConsole = await f.start(f.other, 'resources/conpty/x64/OpenConsole.exe');
   const result = await cleanup(f.install, f.discovery);
   assert.equal(result.code, 0, result.output);
   for (const target of targets) assert.notEqual(target.exitCode ?? target.signalCode, null);
   assert.equal(unrelated.exitCode, null);
   assert.equal(unrelated.signalCode, null);
+  assert.equal(otherConsole.exitCode, null);
+  assert.equal(otherConsole.signalCode, null);
   assert.equal((await cleanup(f.install, f.discovery)).code, 0);
 });
 
