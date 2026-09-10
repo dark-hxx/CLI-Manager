@@ -21,6 +21,7 @@ Read the domain contract that owns the code being changed; do not load every gui
 | [Hook Guidelines](./hook-guidelines.md) | Hook ordering around mounted-but-hidden UI | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |
+| [File Explorer Batch Contracts](./file-explorer-batch-contracts.md) | Selection snapshots, batch mutations, dirty buffers and scoped drag/clipboard | Active |
 | [Type Safety](./type-safety.md) | Stable entry for type validation and owning contracts | Active |
 | [History Session Contracts](./history-session-contracts.md) | History favorites, metadata, and snapshot fallback contracts | Active |
 | [Workspace Session Restore Contracts](./workspace-session-restore-contracts.md) | 关闭后恢复工作区终端会话：TUI 走 resume、shell 贴 scrollback、节流落盘与启动问询 | Active |

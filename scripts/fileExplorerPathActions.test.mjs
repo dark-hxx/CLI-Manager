@@ -97,7 +97,7 @@ test("Git change files and directories share the terminal pointer-drag source", 
   assert.match(pointerDrag, /export function useTerminalFilePointerDrag/);
   assert.match(pointerDrag, /createTerminalFileDragPayload\(project, state\.source\.path, state\.source\.kind\)/);
   assert.match(pointerDrag, /commitTerminalFileDragDrop\(\)/);
-  assert.match(sidebar, /useTerminalFilePointerDrag<ProjectFileEntry>/);
+  assert.match(sidebar, /useTerminalFilePointerDrag<SelectedFileDragSource>/);
   assert.match(sidebar, /onDropOutsideTerminal: handlePointerDropOutsideTerminal/);
   assert.match(gitPanel, /useTerminalFilePointerDrag\(\{\s*project: gitTreeProject,/s);
   assert.match(gitTree, /onFilePointerDown/);

@@ -16,6 +16,7 @@ import {
   getTerminalFileDropZoneIdAtPoint,
   updateTerminalFileDragPointFromEvent,
   type TerminalFileDragProject,
+  type TerminalFileDragPayload,
 } from "./terminalFileDrag";
 import type { ProjectFileEntry } from "../../../shared/types/index";
 
@@ -34,6 +35,7 @@ interface PointerDragState<TSource extends TerminalFileDragSource> {
 }
 
 interface TerminalFileDragPreviewSource {
+  label?: ReactNode;
   className: string;
   html: string;
   offsetX: number;
@@ -50,6 +52,11 @@ interface TerminalFileDragPreviewState {
 
 interface UseTerminalFilePointerDragOptions<TSource extends TerminalFileDragSource> {
   project: TerminalFileDragProject | null;
+  /** Changing the file-panel scope cancels its pending drag without touching other panels. */
+  resetKey?: string;
+  /** Optional batch payload; returning null rejects a stale source before dragging begins. */
+  createPayload?: (source: TSource) => TerminalFileDragPayload | null;
+  previewLabel?: (source: TSource) => ReactNode;
   onDropOutsideTerminal?: (source: TSource, point: { x: number; y: number }) => void;
 }
 
@@ -74,6 +81,9 @@ export function isTerminalFilePointerDragClickHandled(element: HTMLElement): boo
 
 export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSource = TerminalFileDragSource>({
   project,
+  resetKey,
+  createPayload,
+  previewLabel,
   onDropOutsideTerminal,
 }: UseTerminalFilePointerDragOptions<TSource>): TerminalFilePointerDrag<TSource> {
   const [dragPreview, setDragPreview] = useState<TerminalFileDragPreviewState | null>(null);
@@ -83,6 +93,8 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
   const pendingDragPreviewRef = useRef<{ source: TerminalFileDragPreviewSource; x: number; y: number } | null>(null);
 
   const resetPointerDrag = useCallback(() => {
+    // 未拥有拖拽的面板不能清除另一面板设置的全局样式。
+    if (pointerDragRef.current?.dragging) document.body.style.removeProperty("user-select");
     pointerDragRef.current = null;
     pendingDragPreviewRef.current = null;
     if (dragPreviewFrameRef.current !== null) {
@@ -90,7 +102,6 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
       dragPreviewFrameRef.current = null;
     }
     setDragPreview(null);
-    document.body.style.removeProperty("user-select");
   }, []);
 
   const updateDragPreview = useCallback((source: TerminalFileDragPreviewSource, x: number, y: number) => {
@@ -114,12 +125,10 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
   }, []);
 
   useEffect(() => () => {
-    if (dragPreviewFrameRef.current !== null) {
-      window.cancelAnimationFrame(dragPreviewFrameRef.current);
-    }
+    // 卸载或来源切换只取消本 Hook 持有的拖拽。
     if (pointerDragRef.current?.dragging) endTerminalFileDrag();
-    document.body.style.removeProperty("user-select");
-  }, []);
+    resetPointerDrag();
+  }, [resetKey, resetPointerDrag]);
 
   const handlePointerDown = useCallback((event: ReactPointerEvent<HTMLElement>, source: TSource) => {
     if (!project || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey) return;
@@ -132,6 +141,7 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
       startY: event.clientY,
       source,
       preview: {
+        label: previewLabel?.(source),
         className: event.currentTarget.className,
         html: event.currentTarget.innerHTML,
         offsetX: event.clientX - rect.left,
@@ -142,7 +152,7 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
       dragging: false,
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
-  }, [project]);
+  }, [previewLabel, project]);
 
   const handlePointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const state = pointerDragRef.current;
@@ -157,8 +167,15 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
         return;
       }
 
+      const payload = createPayload
+        ? createPayload(state.source)
+        : createTerminalFileDragPayload(project, state.source.path, state.source.kind);
+      if (!payload) {
+        resetPointerDrag();
+        return;
+      }
       state.dragging = true;
-      beginTerminalFileDrag(createTerminalFileDragPayload(project, state.source.path, state.source.kind));
+      beginTerminalFileDrag(payload);
       setDragPreview({
         x: event.clientX - state.preview.offsetX,
         y: event.clientY - state.preview.offsetY,
@@ -171,7 +188,7 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
     updateDragPreview(state.preview, event.clientX, event.clientY);
     event.preventDefault();
     event.stopPropagation();
-  }, [project, resetPointerDrag, updateDragPreview]);
+  }, [createPayload, project, resetPointerDrag, updateDragPreview]);
 
   const handlePointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {
     const state = pointerDragRef.current;
@@ -218,6 +235,7 @@ export function useTerminalFilePointerDrag<TSource extends TerminalFileDragSourc
           style={dragPreview.source.paddingLeft ? { paddingLeft: dragPreview.source.paddingLeft } : undefined}
           dangerouslySetInnerHTML={{ __html: dragPreview.source.html }}
         />
+        {dragPreview.source.label && <div className="px-2 py-1 text-xs text-primary">{dragPreview.source.label}</div>}
       </div>
     </Portal>
   ) : null;

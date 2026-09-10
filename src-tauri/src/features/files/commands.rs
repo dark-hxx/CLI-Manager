@@ -808,7 +808,7 @@ pub async fn file_rename(
 pub async fn file_delete(root_path: String, relative_path: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
-        let target = resolve_existing_path(&root, &relative_path)?;
+        let target = resolve_mutation_source(&root, &relative_path)?;
         if target == root {
             return Err("cannot_delete_root".into());
         }
@@ -885,7 +885,7 @@ pub async fn file_move(
 ) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let root = canonical_root(&root_path)?;
-        let source = resolve_existing_path(&root, &source_path)?;
+        let source = resolve_mutation_source(&root, &source_path)?;
         let target = resolve_named_target(&root, &target_parent_path, &name)?;
         move_path(&root, &source, &target, overwrite)
     })
@@ -951,6 +951,22 @@ fn resolve_existing_path(root: &Path, relative_path: &str) -> Result<PathBuf, St
         .map_err(|err| format!("path_canonicalize_failed: {err}"))?;
     ensure_existing_child_within_root(root, &canonical)?;
     Ok(canonical)
+}
+
+/// Destructive operations must not canonicalize a link into its target and then
+/// delete/move that target. Check every source component before resolution.
+fn resolve_mutation_source(root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    validate_relative_path(relative_path).map_err(|err| err.to_string())?;
+    let mut candidate = root.to_path_buf();
+    for component in Path::new(relative_path).components() {
+        candidate.push(component);
+        let metadata =
+            fs::symlink_metadata(&candidate).map_err(|err| format!("metadata_failed: {err}"))?;
+        if is_symlink_or_reparse(&metadata) {
+            return Err("path_is_symlink".into());
+        }
+    }
+    resolve_existing_path(root, relative_path)
 }
 
 // 校验非空目标相对路径，并要求其现有父目录位于根内。
@@ -1251,6 +1267,9 @@ fn copy_dir_recursive(root: &Path, source: &Path, target: &Path) -> Result<(), S
 fn move_path(root: &Path, source: &Path, target: &Path, overwrite: bool) -> Result<(), String> {
     if source == root {
         return Err("cannot_move_root".into());
+    }
+    if source != target && source.starts_with(target) {
+        return Err("target_contains_source".into());
     }
     if source.is_dir() && target.starts_with(source) {
         return Err("target_inside_source".into());

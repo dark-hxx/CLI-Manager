@@ -32,8 +32,10 @@ import {
   isFileExplorerIgnoreCaseInsensitive,
   type FileExplorerIgnoreMatcher,
 } from "../lib/fileExplorerIgnore";
-import type { GitFileChange, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode, SshHost } from "../../../shared/types/index";
-import { isDefaultCollapsedDirectoryName, useFileExplorerStore } from "./fileExplorerStore";
+import type { GitFileChange, Project, ProjectFileContentMatch, ProjectFileEntry, ProjectFileSearchMode, SshHost } from "../../../shared/types/index";
+import { isDefaultCollapsedDirectoryName, useFileExplorerStore, type FileClipboard } from "./fileExplorerStore";
+import { fileActionEntries, fileOperationRootKey, isFileActionInput, normalizeFileOperationEntries, type FileBatchResult, type FileOperationEntry } from "../lib/fileExplorerOperations";
+import { isSameProjectFileContext } from "../../terminal/api/terminalProject";
 import {
   createGitDiffWorkspaceContext,
   useGitDiffWorkspaceStore,
@@ -72,15 +74,15 @@ type InputAction =
 type RenameAction = Extract<InputAction, { kind: "rename" }>;
 
 type ConfirmAction =
-  | { kind: "delete"; path: string; name: string }
+  | { kind: "delete"; entries: FileOperationEntry[]; project: Project }
   | { kind: "overwrite-create"; action: InputAction; value: string }
-  | { kind: "overwrite-paste"; targetParentPath: string };
+  | { kind: "overwrite-paste"; targetParentPath: string; clipboard: FileClipboard };
 
 type FileDisplayStatus =
   | { kind: "editing"; label: string; color: string; symbol: string }
   | { kind: "git"; label: string; color: string; symbol: string; status: GitFileChange["status"] };
 
-type DraggedFileEntry = Pick<ProjectFileEntry, "kind" | "name" | "path">;
+interface DraggedFileSelection { entries: FileOperationEntry[]; projectId: string; rootPath: string }
 type Translate = ReturnType<typeof useI18n>["t"];
 
 const FILE_EXPLORER_ENTRY_MIME = "application/x-cli-manager-file-entry";
@@ -90,6 +92,11 @@ interface FileIgnoreState {
   ignoreMatcher: FileExplorerIgnoreMatcher;
   ignorePath: (path: string) => void;
   unignorePath: (path: string) => void;
+}
+
+interface SelectedFileDragSource extends ProjectFileEntry {
+  entries: FileOperationEntry[];
+  project: Project;
 }
 
 const GIT_STATUS_LABELS: Record<GitFileChange["status"], TranslationKey> = {
@@ -216,37 +223,45 @@ function parentPath(path: string): string {
   return index === -1 ? "" : path.slice(0, index);
 }
 
-function isSameOrChildPath(path: string, targetPath: string): boolean {
-  if (!targetPath) return path === targetPath;
-  return path === targetPath || path.startsWith(`${targetPath}/`);
+function fileOperationErrorMessage(error: unknown, t: Translate): string {
+  const message = String(error);
+  const codes: Array<[string, TranslationKey]> = [
+    ["file_operation_unsaved", "files.batch.error.unsaved"],
+    ["file_operation_context_changed", "files.batch.error.context"],
+    ["file_operation_busy", "files.batch.error.busy"],
+    ["remote_project_read_only", "files.readOnly"],
+    ["path_is_symlink", "files.batch.error.link"],
+    ["batch_duplicate_target", "files.batch.error.duplicate"],
+    ["target_overlaps_selection", "files.batch.error.overlap"],
+    ["target_inside_source", "files.batch.error.inside"],
+    ["source_equals_target", "files.batch.error.same"],
+  ];
+  const match = codes.find(([code]) => message.includes(code));
+  return match ? t(match[1]) : `${t("files.batch.error.failed")} ${message}`;
+}
+
+// 逐项复用现有转义格式，同时保留跨项目终端投递需要的绝对路径回退。
+function createSelectedTerminalDragPayload(project: Project, entries: FileOperationEntry[]) {
+  const payloads = entries.map((entry) => createTerminalFileDragPayload(project, entry.path, entry.kind));
+  return {
+    ...payloads[0],
+    text: payloads.map((payload) => payload.text).join(" "),
+    absolutePath: payloads.map((payload) => payload.absolutePath).join(" "),
+  };
 }
 
 function hasFileExplorerDrag(dataTransfer: DataTransfer): boolean {
   return Array.from(dataTransfer.types).includes(FILE_EXPLORER_ENTRY_MIME);
 }
 
-function readDraggedFileEntry(dataTransfer: DataTransfer): DraggedFileEntry | null {
+function readDraggedFileEntry(dataTransfer: DataTransfer): DraggedFileSelection | null {
   try {
-    const raw = dataTransfer.getData(FILE_EXPLORER_ENTRY_MIME);
-    if (!raw) return null;
-    const value = JSON.parse(raw) as Partial<DraggedFileEntry>;
-    if (
-      (value.kind === "file" || value.kind === "directory")
-      && typeof value.name === "string"
-      && typeof value.path === "string"
-    ) {
-      return { kind: value.kind, name: value.name, path: value.path };
-    }
-  } catch {
-    return null;
-  }
-  return null;
-}
-
-function canMoveDraggedEntry(source: DraggedFileEntry, targetParentPath: string): boolean {
-  if (parentPath(source.path) === targetParentPath) return false;
-  if (source.kind === "directory" && isSameOrChildPath(targetParentPath, source.path)) return false;
-  return true;
+    const value = JSON.parse(dataTransfer.getData(FILE_EXPLORER_ENTRY_MIME)) as Partial<DraggedFileSelection>;
+    if (typeof value.projectId !== "string" || typeof value.rootPath !== "string" || !Array.isArray(value.entries) || !value.entries.length) return null;
+    if (!value.entries.every((entry) => entry && typeof entry.path === "string" && typeof entry.name === "string"
+      && (entry.kind === "file" || entry.kind === "directory"))) return null;
+    return value as DraggedFileSelection;
+  } catch { return null; }
 }
 
 function InlineRenameInput({
@@ -308,6 +323,34 @@ function InlineRenameInput({
   );
 }
 
+function FileSelectionMenuItems({ entry, onInput, onConfirm }: {
+  entry: FileOperationEntry;
+  onInput: (action: InputAction) => void;
+  onConfirm: (action: ConfirmAction) => void;
+}) {
+  const { t } = useI18n();
+  const project = useFileExplorerStore((state) => state.project);
+  const selected = useFileExplorerStore((state) => state.selectedEntries);
+  const busy = useFileExplorerStore((state) => state.mutationBusy);
+  const entries = fileActionEntries(selected, entry);
+  if (!project || project.environment_type === "ssh") return null;
+  const copy = (mode: "copy" | "move") => useFileExplorerStore.getState().setClipboard({ mode, entries });
+  return <>
+    <ContextMenuItem disabled={busy || entries.length !== 1} onSelect={() => onInput({ kind: "rename", path: entry.path, currentName: entry.name })}>
+      <Pencil size={13} /> {t("files.menu.rename")}
+    </ContextMenuItem>
+    <ContextMenuItem disabled={busy} onSelect={() => copy("copy")}>
+      <Copy size={13} /> {t("files.batch.copy", { count: entries.length })}
+    </ContextMenuItem>
+    <ContextMenuItem disabled={busy} onSelect={() => copy("move")}>
+      <Copy size={13} /> {t("files.batch.cut", { count: entries.length })}
+    </ContextMenuItem>
+    <ContextMenuItem danger disabled={busy} onSelect={() => onConfirm({ kind: "delete", entries, project })}>
+      <Trash2 size={13} /> {t("files.batch.delete", { count: entries.length })}
+    </ContextMenuItem>
+  </>;
+}
+
 function FileNode({
   entry,
   depth,
@@ -317,6 +360,7 @@ function FileNode({
   onOpenDiff,
   onInput,
   onConfirm,
+  onPaste,
   renamingPath,
   onRenameSubmit,
   onRenameCancel,
@@ -343,6 +387,7 @@ function FileNode({
   onOpenDiff: (change: GitFileChange) => void;
   onInput: (action: InputAction) => void;
   onConfirm: (action: ConfirmAction) => void;
+  onPaste: (targetParentPath: string) => void;
   renamingPath: string | null;
   onRenameSubmit: (action: RenameAction, value: string) => void;
   onRenameCancel: () => void;
@@ -368,12 +413,10 @@ function FileNode({
   const toggleDir = useFileExplorerStore((s) => s.toggleDir);
   const expandCompactDirChain = useFileExplorerStore((s) => s.expandCompactDirChain);
   const collapseDir = useFileExplorerStore((s) => s.collapseDir);
-  const setClipboard = useFileExplorerStore((s) => s.setClipboard);
-  const pasteInto = useFileExplorerStore((s) => s.pasteInto);
   const clipboard = useFileExplorerStore((s) => s.clipboard);
-  const selectedTreePath = useFileExplorerStore((s) => s.selectedTreePath);
-  const activeFilePath = useFileExplorerStore((s) => s.activeFile?.path ?? null);
-  const activePath = selectedTreePath ?? activeFilePath;
+  const selected = useFileExplorerStore((s) => s.selectedEntries);
+  const selectEntry = useFileExplorerStore((s) => s.selectEntry);
+  const busy = useFileExplorerStore((s) => s.mutationBusy);
   const isDir = entry.kind === "directory";
   const { suffixParts, leaf: displayEntry, chainPaths } = isDir
     ? collectCompactDirectoryChain(entry)
@@ -391,18 +434,6 @@ function FileNode({
   const displayStatus = getDisplayStatus(displayEntry);
   const gitChange = !isDir ? getGitChange(displayEntry.path) : null;
   const isRenaming = renamingPath === displayEntry.path;
-
-  const paste = async () => {
-    try {
-      await pasteInto(displayEntry.path, false);
-    } catch (err) {
-      if (String(err).includes("target_exists")) {
-        onConfirm({ kind: "overwrite-paste", targetParentPath: displayEntry.path });
-        return;
-      }
-      throw err;
-    }
-  };
 
   const toggleDirectory = () => {
     if (!isDir) return;
@@ -427,6 +458,7 @@ function FileNode({
       onOpenDiff={onOpenDiff}
       onInput={onInput}
       onConfirm={onConfirm}
+      onPaste={onPaste}
       renamingPath={renamingPath}
       onRenameSubmit={onRenameSubmit}
       onRenameCancel={onRenameCancel}
@@ -452,7 +484,7 @@ function FileNode({
       <div>
         <div
           className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
-          data-selected={activePath === displayEntry.path ? "true" : "false"}
+          data-selected={selected.some((item) => item.path === displayEntry.path) ? "true" : "false"}
           data-ignored={isIgnored ? "true" : "false"}
           data-file-tree-path={displayEntry.path}
           style={{ paddingLeft }}
@@ -482,18 +514,28 @@ function FileNode({
             role="button"
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-1.5 rounded px-1 py-1 text-left text-[12px]"
-            data-selected={activePath === displayEntry.path ? "true" : "false"}
+            aria-pressed={selected.some((item) => item.path === displayEntry.path)}
+            data-selected={selected.some((item) => item.path === displayEntry.path) ? "true" : "false"}
             data-ignored={isIgnored ? "true" : "false"}
             data-file-tree-path={displayEntry.path}
             data-file-drop-target-path={displayEntry.kind === "directory" ? displayEntry.path : parentPath(displayEntry.path)}
             draggable={false}
             style={{ paddingLeft }}
-            onContextMenu={(event) => event.stopPropagation()}
+            onContextMenu={(event) => {
+              event.stopPropagation();
+              if (!selected.some((item) => item.path === displayEntry.path)) selectEntry(displayEntry);
+            }}
             onKeyDown={(event) => {
               onFileKeyDown(event, displayEntry);
               if (event.defaultPrevented) return;
               if (event.key !== "Enter" && event.key !== " ") return;
               event.preventDefault();
+              if (event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                selectEntry(displayEntry, true);
+                return;
+              }
+              selectEntry(displayEntry);
               if (isDir) toggleDirectory();
               else onOpenFile(displayEntry);
             }}
@@ -508,6 +550,12 @@ function FileNode({
             onPointerCancel={onFilePointerCancel}
             onClick={(event) => {
               if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
+              if (event.ctrlKey || event.metaKey) {
+                event.preventDefault();
+                selectEntry(displayEntry, true);
+                return;
+              }
+              selectEntry(displayEntry);
               if (isDir) toggleDirectory();
               else onOpenFile(displayEntry);
             }}
@@ -544,13 +592,13 @@ function FileNode({
           <LiveServerFileMenuItem project={project} entry={displayEntry} />
           {!readOnly && isDir && (
             <>
-              <ContextMenuItem onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
+              <ContextMenuItem disabled={busy} onSelect={() => onInput({ kind: "create-file", parentPath: displayEntry.path })}>
                 <File size={13} /> {t("files.menu.newFile")}
               </ContextMenuItem>
-              <ContextMenuItem onSelect={() => onInput({ kind: "create-dir", parentPath: displayEntry.path })}>
+              <ContextMenuItem disabled={busy} onSelect={() => onInput({ kind: "create-dir", parentPath: displayEntry.path })}>
                 <FolderPlus size={13} /> {t("files.menu.newFolder")}
               </ContextMenuItem>
-              <ContextMenuItem disabled={!clipboard} onSelect={() => void paste()}>
+              <ContextMenuItem disabled={!clipboard || busy} onSelect={() => onPaste(displayEntry.path)}>
                 <Copy size={13} /> {t("files.menu.paste")}
               </ContextMenuItem>
               {isManuallyIgnored ? (
@@ -573,12 +621,7 @@ function FileNode({
               <FileCode size={13} /> {t("files.menu.openDiff")}
             </ContextMenuItem>
           )}
-          {!readOnly && <ContextMenuItem onSelect={() => onInput({ kind: "rename", path: displayEntry.path, currentName: displayEntry.name })}>
-            <Pencil size={13} /> {t("files.menu.rename")}
-          </ContextMenuItem>}
-          {!readOnly && <ContextMenuItem onSelect={() => setClipboard({ mode: "copy", path: displayEntry.path, name: displayEntry.name })}>
-            <Copy size={13} /> {t("files.menu.copy")}
-          </ContextMenuItem>}
+          <FileSelectionMenuItems entry={displayEntry} onInput={onInput} onConfirm={onConfirm} />
           {project && (
             <>
               {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, displayEntry.path, t)}>
@@ -593,10 +636,6 @@ function FileNode({
               )}
             </>
           )}
-          {!readOnly && <><ContextMenuSeparator />
-          <ContextMenuItem danger onSelect={() => onConfirm({ kind: "delete", path: displayEntry.path, name: displayEntry.name })}>
-            <Trash2 size={13} /> {t("files.menu.delete")}
-          </ContextMenuItem></>}
         </ContextMenuContent>
       </ContextMenu>
       {childRows}
@@ -613,6 +652,7 @@ function FileTreeRows({
   onOpenDiff,
   onInput,
   onConfirm,
+  onPaste,
   renamingPath,
   onRenameSubmit,
   onRenameCancel,
@@ -639,6 +679,7 @@ function FileTreeRows({
   onOpenDiff: (change: GitFileChange) => void;
   onInput: (action: InputAction) => void;
   onConfirm: (action: ConfirmAction) => void;
+  onPaste: (targetParentPath: string) => void;
   renamingPath: string | null;
   onRenameSubmit: (action: RenameAction, value: string) => void;
   onRenameCancel: () => void;
@@ -671,6 +712,7 @@ function FileTreeRows({
           onOpenDiff={onOpenDiff}
           onInput={onInput}
           onConfirm={onConfirm}
+          onPaste={onPaste}
           renamingPath={renamingPath}
           onRenameSubmit={onRenameSubmit}
           onRenameCancel={onRenameCancel}
@@ -711,7 +753,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const searchResults = useFileExplorerStore((s) => s.searchResults);
   const contentSearchResults = useFileExplorerStore((s) => s.contentSearchResults);
   const searchLoading = useFileExplorerStore((s) => s.searchLoading);
-  const activeFile = useFileExplorerStore((s) => s.activeFile);
   const openFiles = useFileExplorerStore((s) => s.openFiles);
   const gitChanges = useFileExplorerStore((s) => s.gitChanges);
   const clipboard = useFileExplorerStore((s) => s.clipboard);
@@ -725,7 +766,11 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const openFileEditorPane = useTerminalStore((s) => s.openFileEditorPane);
   const createEntry = useFileExplorerStore((s) => s.createEntry);
   const renameEntry = useFileExplorerStore((s) => s.renameEntry);
-  const deleteEntry = useFileExplorerStore((s) => s.deleteEntry);
+  const deleteEntries = useFileExplorerStore((s) => s.deleteEntries);
+  const selectedEntries = useFileExplorerStore((s) => s.selectedEntries);
+  const selectEntry = useFileExplorerStore((s) => s.selectEntry);
+  const clearSelection = useFileExplorerStore((s) => s.clearSelection);
+  const mutationBusy = useFileExplorerStore((s) => s.mutationBusy);
   const pasteInto = useFileExplorerStore((s) => s.pasteInto);
   const setClipboard = useFileExplorerStore((s) => s.setClipboard);
   const fileExplorerIgnoredPaths = useSettingsStore((s) => s.fileExplorerIgnoredPaths);
@@ -744,6 +789,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   );
   const [searchControlsVisible, setSearchControlsVisible] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const selectionProjectKeyRef = useRef(`${project?.id}:${project?.path}:${project?.remote_path}:${project?.ssh_host_id}`);
 
   const openSftp = useCallback(async () => {
     const hostId = project?.environment_type === "ssh" ? project.ssh_host_id?.trim() ?? "" : "";
@@ -934,9 +980,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         setConfirmAction({ kind: "overwrite-create", action, value });
         return;
       }
-      throw err;
+      toast.error(fileOperationErrorMessage(err, t));
     }
-  }, [renameEntry]);
+  }, [renameEntry, t]);
 
   const performInputAction = useCallback(async (action: InputAction, rawValue: string, overwrite = false) => {
     const value = rawValue.trim();
@@ -956,34 +1002,53 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         setConfirmAction({ kind: "overwrite-create", action, value });
         return;
       }
-      throw err;
+      toast.error(fileOperationErrorMessage(err, t));
     }
-  }, [createEntry, renameEntry]);
+  }, [createEntry, renameEntry, t]);
 
   const submitInput = useCallback(async (overwrite = false) => {
     if (!inputAction) return;
     await performInputAction(inputAction, inputValue, overwrite);
   }, [inputAction, inputValue, performInputAction]);
 
-  const pasteIntoTarget = useCallback(async (targetParentPath: string) => {
-    try {
-      await pasteInto(targetParentPath, false);
-    } catch (err) {
-      if (String(err).includes("target_exists")) {
-        setConfirmAction({ kind: "overwrite-paste", targetParentPath });
-        return;
-      }
-      throw err;
-    }
-  }, [pasteInto]);
+  const reportBatch = useCallback((result: FileBatchResult) => {
+    const message = t("files.batch.result", {
+      success: result.succeeded.length, skipped: result.skipped.length,
+      failed: result.failures.length, conflicts: result.conflicts.length,
+    });
+    if (result.failures.length) {
+      toast.error(message, {
+        description: result.failures.slice(0, 8).map(({ entry, error }) => `${entry.path}: ${fileOperationErrorMessage(error, t)}`).join("\n"),
+        duration: 12000,
+      });
+    } else if (result.succeeded.length || result.skipped.length) toast.success(message);
+  }, [t]);
 
-  const getPasteTargetPath = useCallback((entry: ProjectFileEntry) => (
+  // 确认覆盖时只重试冲突项，不能重新读取期间可能被替换的全局剪贴板。
+  const pasteIntoTarget = useCallback(async (targetParentPath: string, overwrite = false, captured?: FileClipboard) => {
+    const snapshot = captured ?? useFileExplorerStore.getState().clipboard;
+    if (!snapshot) return;
+    try {
+      const result = await pasteInto(targetParentPath, overwrite, snapshot);
+      reportBatch(result);
+      if (result.conflicts.length && isSameProjectFileContext(useFileExplorerStore.getState().project, snapshot.project)) {
+        setConfirmAction({ kind: "overwrite-paste", targetParentPath, clipboard: { ...snapshot, entries: result.conflicts } });
+      }
+    } catch (error) {
+      toast.error(fileOperationErrorMessage(error, t));
+    }
+  }, [pasteInto, reportBatch, t]);
+
+  const getPasteTargetPath = useCallback((entry: FileOperationEntry) => (
     entry.kind === "directory" ? entry.path : parentPath(entry.path)
   ), []);
 
-  const moveDraggedEntry = useCallback(async (source: DraggedFileEntry, targetParentPath: string) => {
-    if (!canMoveDraggedEntry(source, targetParentPath)) return;
-    setClipboard({ mode: "move", path: source.path, name: source.name });
+  const moveDraggedEntry = useCallback(async (entries: FileOperationEntry[], targetParentPath: string, sourceProject: Project) => {
+    const currentProject = useFileExplorerStore.getState().project;
+    if (!currentProject || !isSameProjectFileContext(currentProject, sourceProject)
+      || fileOperationRootKey(currentProject.path) !== fileOperationRootKey(sourceProject.path)
+      || sourceProject.environment_type === "ssh") return;
+    setClipboard({ mode: "move", entries });
     await pasteIntoTarget(targetParentPath);
   }, [pasteIntoTarget, setClipboard]);
 
@@ -998,21 +1063,45 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     return target.dataset.fileDropTargetPath ?? "";
   }, []);
 
-  const handlePointerDropOutsideTerminal = useCallback((entry: ProjectFileEntry, { x, y }: { x: number; y: number }) => {
+  // 目录投递沿用按下时捕获的选择与项目，不能读取松手时可能已改变的选择。
+  const handlePointerDropOutsideTerminal = useCallback((source: SelectedFileDragSource, { x, y }: { x: number; y: number }) => {
     const targetPath = getPointerDropTargetPath(x, y);
-    if (targetPath !== null) void moveDraggedEntry(entry, targetPath);
+    if (targetPath !== null) void moveDraggedEntry(source.entries, targetPath, source.project);
   }, [getPointerDropTargetPath, moveDraggedEntry]);
 
+  // 超过拖拽阈值时再次验证来源；WSL 根路径必须保留大小写。
+  const createPointerPayload = useCallback((source: SelectedFileDragSource) => {
+    const current = useFileExplorerStore.getState();
+    if (current.mutationBusy || !current.project || !isSameProjectFileContext(current.project, source.project)
+      || fileOperationRootKey(current.project.path) !== fileOperationRootKey(source.project.path)) return null;
+    return createSelectedTerminalDragPayload(source.project, source.entries);
+  }, []);
+
   const {
-    handlePointerDown: handleFilePointerDown,
+    handlePointerDown: beginFilePointerDrag,
     handlePointerMove: handleFilePointerMove,
     handlePointerUp: handleFilePointerUp,
     handlePointerCancel: handleFilePointerCancel,
     preview: terminalFileDragPreview,
-  } = useTerminalFilePointerDrag<ProjectFileEntry>({
+  } = useTerminalFilePointerDrag<SelectedFileDragSource>({
     project,
+    resetKey: `${project?.id}:${project?.path}:${project?.remote_path}:${project?.ssh_host_id}`,
+    createPayload: createPointerPayload,
+    previewLabel: (source) => source.entries.length > 1 ? t("files.batch.selected", { count: source.entries.length }) : null,
     onDropOutsideTerminal: handlePointerDropOutsideTerminal,
   });
+
+  useEffect(() => {
+    const key = `${project?.id}:${project?.path}:${project?.remote_path}:${project?.ssh_host_id}`;
+    if (selectionProjectKeyRef.current !== key) {
+      selectionProjectKeyRef.current = key;
+      clearSelection();
+      useFileExplorerStore.getState().setClipboard(null);
+    }
+    setConfirmAction(null);
+    setInputAction(null);
+    setRenamingAction(null);
+  }, [project?.id, project?.path, project?.remote_path, project?.ssh_host_id, clearSelection]);
 
   const focusSearchInput = useCallback(() => {
     window.requestAnimationFrame(() => searchInputRef.current?.focus());
@@ -1032,58 +1121,60 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   }, [revealSearchControls, searchControlsVisible]);
 
   const handleSidebarKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isFileActionInput(event.target)) return;
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "f") return;
     event.preventDefault();
     event.stopPropagation();
     revealSearchControls();
   }, [revealSearchControls]);
 
-  const handleFileKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>, entry: ProjectFileEntry) => {
+  const handleFileKeyDown = useCallback((event: ReactKeyboardEvent<HTMLElement>, entry: FileOperationEntry) => {
+    if (isFileActionInput(event.target)) return;
+    const state = useFileExplorerStore.getState();
+    if (event.key === "Escape") {
+      event.preventDefault(); event.stopPropagation(); clearSelection(); return;
+    }
+    if (!state.project || state.project.environment_type === "ssh" || state.mutationBusy) return;
+    const entries = state.selectedEntries;
     if (event.key === "F2" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      openInput({ kind: "rename", path: entry.path, currentName: entry.name });
+      event.preventDefault(); event.stopPropagation();
+      if (entries.length === 1) openInput({ kind: "rename", path: entries[0].path, currentName: entries[0].name });
       return;
     }
-
     if (event.key === "Delete" && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-      event.preventDefault();
-      event.stopPropagation();
-      setConfirmAction({ kind: "delete", path: entry.path, name: entry.name });
+      event.preventDefault(); event.stopPropagation();
+      if (entries.length) setConfirmAction({ kind: "delete", entries: [...entries], project: state.project });
       return;
     }
-
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
     const key = event.key.toLowerCase();
     if (key !== "c" && key !== "x" && key !== "v") return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    if (key === "v") {
-      void pasteIntoTarget(getPasteTargetPath(entry));
-      return;
-    }
-    setClipboard({ mode: key === "c" ? "copy" : "move", path: entry.path, name: entry.name });
-  }, [getPasteTargetPath, pasteIntoTarget, setClipboard]);
+    event.preventDefault(); event.stopPropagation();
+    if (key === "v") void pasteIntoTarget(getPasteTargetPath(entry));
+    else if (entries.length) setClipboard({ mode: key === "c" ? "copy" : "move", entries: [...entries] });
+  }, [clearSelection, getPasteTargetPath, pasteIntoTarget, setClipboard]);
 
   const handleRootKeyDown = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (isFileActionInput(event.target)) return;
+    if (event.key === "Escape") { clearSelection(); return; }
+    if (readOnly || mutationBusy) return;
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== "v") return;
-    event.preventDefault();
-    event.stopPropagation();
+    event.preventDefault(); event.stopPropagation();
     void pasteIntoTarget("");
-  }, [pasteIntoTarget]);
+  }, [clearSelection, mutationBusy, pasteIntoTarget, readOnly]);
 
   const handleFileDragStart = useCallback((event: ReactDragEvent<HTMLElement>, entry: ProjectFileEntry) => {
-    if (!project) return;
-    const payload = createTerminalFileDragPayload(project, entry.path, entry.kind);
+    if (!project || mutationBusy) { event.preventDefault(); return; }
+    const entries = normalizeFileOperationEntries(useFileExplorerStore.getState().getActionEntries(entry), gitIgnoreCaseInsensitive);
+    const payload = createSelectedTerminalDragPayload(project, entries);
     beginTerminalFileDrag(payload);
     updateTerminalFileDragPointFromEvent(event);
     event.dataTransfer.effectAllowed = "copyMove";
-    event.dataTransfer.setData(FILE_EXPLORER_ENTRY_MIME, JSON.stringify({ kind: entry.kind, name: entry.name, path: entry.path }));
+    event.dataTransfer.setData(FILE_EXPLORER_ENTRY_MIME, JSON.stringify({ entries, projectId: project.id, rootPath: project.path }));
     event.dataTransfer.setData(TERMINAL_FILE_DRAG_MIME, JSON.stringify(payload));
     event.dataTransfer.setData(TERMINAL_FILE_PATH_MIME, payload.text);
     event.dataTransfer.setData("text/plain", payload.text);
-  }, [project]);
+  }, [gitIgnoreCaseInsensitive, mutationBusy, project]);
 
   const handleFileDrag = useCallback((event: ReactDragEvent<HTMLElement>) => {
     updateTerminalFileDragPointFromEvent(event);
@@ -1107,6 +1198,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     endTerminalFileDrag();
   }, []);
 
+  // 按下已选中行时保留整组选项；只有后续未拖动的普通点击才恢复单选。
+  const handleFilePointerDown = useCallback((event: ReactPointerEvent<HTMLElement>, entry: ProjectFileEntry) => {
+    if (!project || mutationBusy || event.button !== 0 || event.ctrlKey || event.metaKey || event.altKey || isFileActionInput(event.target)) return;
+    if (event.pointerType === "mouse" && event.buttons !== 1) return;
+    const entries = normalizeFileOperationEntries(useFileExplorerStore.getState().getActionEntries(entry), gitIgnoreCaseInsensitive);
+    if (!useFileExplorerStore.getState().selectedEntries.some((item) => item.path === entry.path)) selectEntry(entry);
+    beginFilePointerDrag(event, { ...entry, entries, project: { ...project } });
+  }, [beginFilePointerDrag, gitIgnoreCaseInsensitive, mutationBusy, project, selectEntry]);
+
   const handleFileDragOver = useCallback((event: ReactDragEvent<HTMLElement>, _targetEntry: ProjectFileEntry) => {
     if (!hasFileExplorerDrag(event.dataTransfer)) return;
     event.preventDefault();
@@ -1119,9 +1219,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     event.preventDefault();
     event.stopPropagation();
     const source = readDraggedFileEntry(event.dataTransfer);
-    if (!source) return;
-    void moveDraggedEntry(source, getDropTargetPath(targetEntry));
-  }, [getDropTargetPath, moveDraggedEntry]);
+    if (!source || !project || readOnly || source.projectId !== project.id || source.rootPath !== project.path) return;
+    void moveDraggedEntry(source.entries, getDropTargetPath(targetEntry), project);
+  }, [getDropTargetPath, moveDraggedEntry, project, readOnly]);
 
   const handleRootDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
     if (!hasFileExplorerDrag(event.dataTransfer)) return;
@@ -1135,9 +1235,9 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
     event.preventDefault();
     event.stopPropagation();
     const source = readDraggedFileEntry(event.dataTransfer);
-    if (!source) return;
-    void moveDraggedEntry(source, "");
-  }, [moveDraggedEntry]);
+    if (!source || !project || readOnly || source.projectId !== project.id || source.rootPath !== project.path) return;
+    void moveDraggedEntry(source.entries, "", project);
+  }, [moveDraggedEntry, project, readOnly]);
 
   const requestOpenFile = (entry: ProjectFileEntry) => {
     void openFile(entry);
@@ -1161,8 +1261,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
 
   const renderContentSearchRow = useCallback((match: ProjectFileContentMatch) => {
     if (!project) return null;
+    const entry: ProjectFileEntry = { kind: "file", path: match.path, name: match.name, sizeBytes: 0, modifiedMs: null };
+    if (renamingAction?.path === match.path) return (
+      <div key={match.path} className="ui-file-tree-row flex items-center gap-2 px-2 py-1">
+        <InlineRenameInput initialName={match.name} onCancel={cancelRename}
+          onSubmit={(value) => void submitRename({ kind: "rename", path: match.path, currentName: match.name }, value)} />
+      </div>
+    );
     // Issue #227：搜索结果与文件树使用同一套淡化判定，避免「树里淡、搜索里亮」的割裂。
-    // match 必为文件，直接按路径判定，不构造伪 entry。
+    // 忽略态直接按匹配路径判定；操作条目仅用于选择、菜单和拖拽。
     const matchIgnored = ignoreState.ignoredPaths.has(match.path)
       || ignoreState.ignoreMatcher.ignores(match.path, false);
     return (
@@ -1171,10 +1278,30 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           <button
             type="button"
             className="ui-file-tree-row flex w-full items-start gap-2 rounded px-2 py-1.5 text-left text-[12px]"
-            data-selected={activeFile?.path === match.path ? "true" : "false"}
+            aria-pressed={selectedEntries.some((item) => item.path === match.path)}
+            data-selected={selectedEntries.some((item) => item.path === match.path) ? "true" : "false"}
             data-ignored={matchIgnored ? "true" : "false"}
-            onContextMenu={(event) => event.stopPropagation()}
-            onClick={() => {
+            data-file-tree-path={match.path}
+            data-file-drop-target-path={parentPath(match.path)}
+            draggable={false}
+            onContextMenu={(event) => {
+              event.stopPropagation();
+              if (!selectedEntries.some((item) => item.path === match.path)) selectEntry(entry);
+            }}
+            onKeyDown={(event) => handleFileKeyDown(event, entry)}
+            onPointerDown={(event) => handleFilePointerDown(event, entry)}
+            onPointerMove={handleFilePointerMove}
+            onPointerUp={handleFilePointerUp}
+            onPointerCancel={handleFilePointerCancel}
+            onDragStart={(event) => handleFileDragStart(event, entry)}
+            onDrag={handleFileDrag}
+            onDragEnd={handleFileDragEnd}
+            onDragOver={(event) => handleFileDragOver(event, entry)}
+            onDrop={(event) => handleFileDrop(event, entry)}
+            onClick={(event) => {
+              if (event.currentTarget.dataset.pointerDragHandled === "true") return;
+              if (event.ctrlKey || event.metaKey) { event.preventDefault(); selectEntry(entry, true); return; }
+              selectEntry(entry);
               void openFileAtSearchMatch(match);
               openFileEditorPane(project);
             }}
@@ -1200,6 +1327,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             project={project}
             entry={{ kind: "file", name: match.name, path: match.path }}
           />
+          <FileSelectionMenuItems entry={entry} onInput={openInput} onConfirm={setConfirmAction} />
           {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, match.path, t)}>
             <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
           </ContextMenuItem>}
@@ -1216,7 +1344,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, ignoreState, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
+  }, [selectedEntries, selectEntry, readOnly, renamingAction?.path, cancelRename, submitRename, handleFileKeyDown, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, handleFilePointerCancel, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, ignoreState, getGitChange, menuPortalContainer, openFileAtSearchMatch, openFileEditorPane, project, requestOpenDiff, t]);
 
   const renderSearchRow = useCallback((entry: ProjectFileEntry) => {
     if (!project) return null;
@@ -1229,7 +1357,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         <div
           key={entry.path}
           className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
-          data-selected={activeFile?.path === entry.path ? "true" : "false"}
+          data-selected={selectedEntries.some((item) => item.path === entry.path) ? "true" : "false"}
           data-ignored={entryIgnored ? "true" : "false"}
         >
           <img src={entry.kind === "directory" ? getMaterialFolderIcon(entry.name, false) : getMaterialFileIcon(entry.name)} alt="" width={16} height={16} />
@@ -1248,20 +1376,28 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             role="button"
             tabIndex={0}
             className="ui-file-tree-row flex w-full items-center gap-2 rounded px-2 py-1 text-left text-[12px]"
-            data-selected={activeFile?.path === entry.path ? "true" : "false"}
+            aria-pressed={selectedEntries.some((item) => item.path === entry.path)}
+            data-selected={selectedEntries.some((item) => item.path === entry.path) ? "true" : "false"}
             data-ignored={entryIgnored ? "true" : "false"}
             data-file-drop-target-path={getDropTargetPath(entry)}
             draggable={false}
             onClick={(event) => {
               if (isTerminalFilePointerDragClickHandled(event.currentTarget)) return;
+              if (event.ctrlKey || event.metaKey) { event.preventDefault(); selectEntry(entry, true); return; }
+              selectEntry(entry);
               if (entry.kind === "file") requestOpenFile(entry);
             }}
-            onContextMenu={(event) => event.stopPropagation()}
+            onContextMenu={(event) => {
+              event.stopPropagation();
+              if (!selectedEntries.some((item) => item.path === entry.path)) selectEntry(entry);
+            }}
             onKeyDown={(event) => {
               handleFileKeyDown(event, entry);
               if (event.defaultPrevented) return;
               if (event.key !== "Enter" && event.key !== " ") return;
               event.preventDefault();
+              if (event.ctrlKey || event.metaKey) { event.preventDefault(); selectEntry(entry, true); return; }
+              selectEntry(entry);
               if (entry.kind === "file") requestOpenFile(entry);
             }}
             onDragStart={(event) => handleFileDragStart(event, entry)}
@@ -1294,6 +1430,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
           <LiveServerFileMenuItem project={project} entry={entry} />
+          <FileSelectionMenuItems entry={entry} onInput={openInput} onConfirm={setConfirmAction} />
+          {!readOnly && entry.kind === "directory" && <ContextMenuItem disabled={!clipboard || mutationBusy} onSelect={() => void pasteIntoTarget(entry.path)}>
+            <Copy size={13} /> {t("files.menu.paste")}
+          </ContextMenuItem>}
         {!readOnly && <ContextMenuItem onSelect={() => void openFileBrowserFolder(project.path, entry.path, t)}>
           <FolderOpen size={13} /> {t("files.menu.openContainingFolder")}
         </ContextMenuItem>}
@@ -1312,7 +1452,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       </ContextMenu>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeFile?.path, ignoreState, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
+  }, [selectedEntries, selectEntry, clipboard, mutationBusy, readOnly, pasteIntoTarget, ignoreState, cancelRename, getDisplayStatus, getDropTargetPath, getGitChange, handleFileDragEnd, handleFileDragOver, handleFileDragStart, handleFileDrop, handleFileKeyDown, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, menuPortalContainer, openFile, project, renamingAction?.path, requestOpenDiff, submitRename, t]);
 
   const copyRootAiTree = useCallback(() => {
     if (!project) return;
@@ -1355,6 +1495,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         onOpenDiff={requestOpenDiff}
         onInput={openInput}
         onConfirm={setConfirmAction}
+        onPaste={pasteIntoTarget}
         renamingPath={renamingAction?.path ?? null}
         onRenameSubmit={(action, value) => void submitRename(action, value)}
         onRenameCancel={cancelRename}
@@ -1376,7 +1517,14 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       <div className="px-3 py-8 text-center text-xs text-text-muted">{t("files.empty")}</div>
     );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, tree.length, hasSearchQuery, searchLoading, searchMode, contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus, getGitChange, requestOpenDiff, ignoreState, menuPortalContainer, handleFileKeyDown, handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop, handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp, renamingAction?.path, submitRename, cancelRename, t]);
+  }, [
+    pasteIntoTarget, readOnly, loading, tree.length, hasSearchQuery, searchLoading, searchMode,
+    contentSearchResults, renderContentSearchRow, visibleRows, renderSearchRow, getDisplayStatus,
+    getGitChange, requestOpenDiff, ignoreState, menuPortalContainer, handleFileKeyDown,
+    handleFileDragStart, handleFileDrag, handleFileDragEnd, handleFileDragOver, handleFileDrop,
+    handleFilePointerCancel, handleFilePointerDown, handleFilePointerMove, handleFilePointerUp,
+    renamingAction?.path, submitRename, cancelRename, t,
+  ]);
 
   if (!project) return null;
 
@@ -1396,7 +1544,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const searchLabel = searchMode === "content" ? t("files.searchCodePlaceholder") : t("files.searchPlaceholder");
   const searchToggleLabel = searchControlsVisible ? t("files.hideSearch") : searchLabel;
   const displayPathName = getDisplayPathName(readOnly ? project.remote_path : project.path);
-  const hasHeaderExtras = searchControlsVisible || readOnly || Boolean(clipboard);
+  const hasHeaderExtras = searchControlsVisible || readOnly || Boolean(clipboard) || selectedEntries.length > 0 || mutationBusy;
   const headerActions = (
     <>
       <button
@@ -1463,8 +1611,10 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </div>
       )}
+      {mutationBusy && <div role="status" className="mt-1 text-[10px] text-text-muted">{t("files.batch.working")}</div>}
+      {selectedEntries.length > 0 && <div role="status" className="mt-1 text-[10px] text-text-muted">{t("files.batch.selected", { count: selectedEntries.length })}</div>}
       {readOnly && <div className="mt-1 text-[10px] text-text-muted">{t("files.readOnly")}</div>}
-      {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{clipboard.name}</div>}
+      {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{t("files.batch.clipboardCount", { count: clipboard.entries.length })}</div>}
     </>
   );
   const panelStyle = mode === "panel"
@@ -1531,6 +1681,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             className="min-h-0 flex-1 overflow-y-auto px-1 py-1 outline-none ui-thin-scroll"
             tabIndex={0}
             data-file-drop-target-path=""
+            onClick={(event) => { if (event.target === event.currentTarget) clearSelection(); }}
             onKeyDown={handleRootKeyDown}
             onDragOver={handleRootDragOver}
             onDrop={handleRootDrop}
@@ -1539,13 +1690,13 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           </div>
         </ContextMenuTrigger>
         <ContextMenuContent className="file-explorer-menu" portalContainer={menuPortalContainer}>
-          {!readOnly && <ContextMenuItem onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
+          {!readOnly && <ContextMenuItem disabled={mutationBusy} onSelect={() => openInput({ kind: "create-file", parentPath: "" })}>
             <File size={13} /> {t("files.menu.newFile")}
           </ContextMenuItem>}
-          {!readOnly && <ContextMenuItem onSelect={() => openInput({ kind: "create-dir", parentPath: "" })}>
+          {!readOnly && <ContextMenuItem disabled={mutationBusy} onSelect={() => openInput({ kind: "create-dir", parentPath: "" })}>
             <FolderPlus size={13} /> {t("files.menu.newFolder")}
           </ContextMenuItem>}
-          {!readOnly && <ContextMenuItem disabled={!clipboard} onSelect={() => void pasteIntoTarget("")}>
+          {!readOnly && <ContextMenuItem disabled={!clipboard || mutationBusy} onSelect={() => void pasteIntoTarget("")}>
             <Copy size={13} /> {t("files.menu.paste")}
           </ContextMenuItem>}
           {!readOnly && <ContextMenuSeparator />}
@@ -1575,7 +1726,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setInputAction(null)}>{t("common.cancel")}</Button>
-            <Button onClick={() => void submitInput(false)}>{t("common.confirm")}</Button>
+            <Button disabled={mutationBusy} onClick={() => void submitInput(false)}>{t("common.confirm")}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1583,21 +1734,30 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
       <ConfirmDialog
         open={confirmAction?.kind === "delete"}
         title={t("files.confirm.deleteTitle")}
-        message={confirmAction?.kind === "delete" ? t("files.confirm.deleteMessage", { name: confirmAction.name }) : undefined}
+        message={confirmAction?.kind === "delete" ? t("files.batch.deleteMessage", {
+          count: normalizeFileOperationEntries(confirmAction.entries, gitIgnoreCaseInsensitive).length,
+          paths: normalizeFileOperationEntries(confirmAction.entries, gitIgnoreCaseInsensitive).slice(0, 8).map((entry) => entry.path).join("; "),
+        }) : undefined}
         confirmText={t("common.delete")}
+        cancelText={t("common.cancel")}
         danger
         onClose={() => setConfirmAction(null)}
         onConfirm={() => {
           const action = confirmAction;
           setConfirmAction(null);
-          if (action?.kind === "delete") void deleteEntry(action.path);
+          if (action?.kind === "delete") {
+            void deleteEntries(action.entries, action.project).then(reportBatch).catch((error) => toast.error(fileOperationErrorMessage(error, t)));
+          }
         }}
       />
       <ConfirmDialog
         open={confirmAction?.kind === "overwrite-create" || confirmAction?.kind === "overwrite-paste"}
         title={t("files.confirm.targetExistsTitle")}
-        message={t("files.confirm.overwriteMessage")}
+        message={confirmAction?.kind === "overwrite-paste"
+          ? t("files.batch.overwriteMessage", { count: confirmAction.clipboard.entries.length, paths: confirmAction.clipboard.entries.slice(0, 8).map((entry) => entry.path).join("; ") })
+          : t("files.confirm.overwriteMessage")}
         confirmText={t("files.confirm.overwrite")}
+        cancelText={t("common.cancel")}
         danger
         onClose={() => setConfirmAction(null)}
         onConfirm={() => {
@@ -1607,7 +1767,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             void performInputAction(action.action, action.value, true);
           }
           if (action?.kind === "overwrite-paste") {
-            void pasteInto(action.targetParentPath, true);
+            void pasteIntoTarget(action.targetParentPath, true, action.clipboard);
           }
         }}
       />
