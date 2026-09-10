@@ -12,6 +12,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import { Workbench } from '/apps/web/src/views.tsx';
+import { MobileTerminalInput } from '/apps/web/src/MobileTerminalInput.tsx';
 import { createTerminalStream } from '/apps/web/src/terminalStream.ts';
 import { translate } from '/apps/web/src/i18n.ts';
 import { useMobileViewport } from '/apps/web/src/useMobileViewport.ts';
@@ -121,6 +122,7 @@ window.runNarrow = async () => {
   try {
     narrow = true; render(); await pause(400);
     await verifyMobileProjects();
+    await verifyDirectionPad();
     render(); await pause(100);
     check(innerWidth === 390, 'Narrow browser viewport applied');
     check(getComputedStyle(document.querySelector('.source-banner')).display === 'none', 'Mobile hides the verbose terminal status card');
@@ -197,6 +199,43 @@ async function verifyMobileProjects() {
   check(drawer().querySelector('.new-chat-button').disabled && drawer().querySelector('.secondary-button'), 'Empty projects retain disabled launch and refresh');
   document.querySelector('.overlay').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await pause(30);
   check(!drawer(), 'Backdrop dismisses project drawer');
+}
+async function verifyDirectionPad() {
+  const keys = [];
+  let enabled = true, lang = 'zh-CN';
+  const draw = () => flushSync(() => root.render(React.createElement(MobileTerminalInput, {
+    enabled, t: key => translate(lang, key), onFocus: noop, onPaste: noop, onKey: key => keys.push(key),
+  })));
+  draw(); await pause(30);
+  const toolbar = document.querySelector('.mobile-terminal-input-toolbar');
+  const enter = toolbar.querySelector('.mobile-terminal-enter');
+  check(toolbar.lastElementChild === enter && enter.getBoundingClientRect().right <= innerWidth, 'Enter fixed at right edge on phone');
+  check(!document.querySelector('.mobile-direction-pad'), 'Direction pad initially collapsed');
+  const toggle = () => document.querySelector('.mobile-direction-toggle');
+  toggle().click(); await pause(30);
+  let pad = document.querySelector('.mobile-direction-pad');
+  check(pad?.querySelectorAll('button').length === 4, 'Single direction button opens four arrows');
+  const bounds = pad.getBoundingClientRect();
+  check(bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0, 'Direction pad fits viewport');
+  document.querySelector('.mobile-terminal-input-tools button:nth-child(2)').click(); await pause(30);
+  const input = document.querySelector('textarea'); input.focus();
+  for (const direction of ['up', 'left', 'right', 'down']) {
+    const button = pad.querySelector('.direction-' + direction);
+    const pointer = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
+    check(!button.dispatchEvent(pointer), 'Arrow prevents pointer focus theft: ' + direction);
+    button.click(); await pause(10);
+  }
+  check(keys.join('|') === ['\\x1b[A', '\\x1b[D', '\\x1b[C', '\\x1b[B'].join('|'), 'Direction keys send standard terminal bytes');
+  check(document.querySelector('.mobile-direction-pad') && document.activeElement === input, 'Repeated arrows keep pad open and input focus');
+  enter.click(); check(keys.at(-1) === '\\r', 'Right Enter sends carriage return');
+  document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); await pause(30);
+  check(!document.querySelector('.mobile-direction-pad'), 'Outside tap closes direction pad');
+  toggle().click(); await pause(20); enabled = false; draw(); await pause(30);
+  check(!document.querySelector('.mobile-direction-pad') && toggle().disabled && document.querySelector('.mobile-terminal-enter').disabled, 'Inactive or disconnected terminal closes pad and disables keys');
+  enabled = true; lang = 'en-US'; draw(); await pause(20);
+  check(toggle().textContent === 'Arrows', 'Direction control has English label');
+  toggle().click(); await pause(20); window.dispatchEvent(new Event('resize')); await pause(20);
+  check(!document.querySelector('.mobile-direction-pad'), 'Viewport change dismisses pad');
 }
 window.runKeyboard = async () => {
   try {

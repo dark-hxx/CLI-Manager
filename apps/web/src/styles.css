@@ -570,6 +570,12 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 :root[data-mobile-keyboard="true"] .main-panel { padding-bottom: 0; }
 :root[data-mobile-keyboard="true"] .bottom-nav { display: none; }
 .mobile-terminal-input { display: none; }
+.mobile-direction-pad { position: fixed; z-index: 70; display: grid; grid-template: repeat(3, 44px) / repeat(3, 44px); gap: 4px; padding: 8px; width: 156px; height: 156px; box-sizing: border-box; border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 4px 24px #0006; }
+.mobile-direction-pad button { border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: inherit; font-size: 22px; touch-action: manipulation; }
+.mobile-direction-pad .direction-up { grid-area: 1 / 2; }
+.mobile-direction-pad .direction-left { grid-area: 2 / 1; }
+.mobile-direction-pad .direction-right { grid-area: 2 / 3; }
+.mobile-direction-pad .direction-down { grid-area: 3 / 2; }
 @media (max-width: 767px), (pointer: coarse) {
   .terminal-workspace > .source-banner { display: none; }
   .mobile-terminal-context { min-width: 0; display: grid; gap: 2px; padding: 5px 8px; border-left: 2px solid var(--primary); color: #aeb7c2; font-size: 11px; }
@@ -582,7 +588,10 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
   .mobile-terminal-input button:disabled { opacity: .45; }
   .mobile-terminal-input textarea { width: 100%; min-height: 40px; resize: vertical; font-size: 16px; color: inherit; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; }
   .mobile-terminal-input p { margin: 2px; font-size: 11px; }
-  .mobile-terminal-input-toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mobile-terminal-input-toolbar { display: flex; gap: 4px; flex-wrap: nowrap; min-width: 0; }
+  .mobile-terminal-input-tools { display: flex; flex: 1; min-width: 0; gap: 4px; overflow-x: auto; }
+  .mobile-terminal-input-toolbar button { flex-shrink: 0; white-space: nowrap; min-height: 44px; touch-action: manipulation; }
+  .mobile-terminal-input-toolbar .mobile-terminal-enter { min-width: 60px; color: var(--primary); border-color: var(--primary); }
   .mobile-terminal-input-fallback { display: flex; align-items: flex-start; gap: 4px; }
   .mobile-terminal-input-fallback textarea { min-width: 0; flex: 1; }
   .web-terminal-display-panel { max-height: min(450px, calc(var(--mobile-viewport-height, 100dvh) - 100px)); }

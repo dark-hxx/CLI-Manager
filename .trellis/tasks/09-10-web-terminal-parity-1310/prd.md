@@ -2,6 +2,8 @@
 
 ## Mobile project tree correction
 
+Follow-up approved: consolidate phone arrows into one toggle with floating cross-shaped pad, keep Enter at far right and other keys horizontally scrollable. Preserve input focus and IME guard, close on outside tap/viewport change/inactive or disconnected terminal. Cases: narrow/landscape, keyboard visible, multi-session, repeated arrows, offline, bilingual. Touchpoints: MobileTerminalInput/styles/i18n and browser smoke; WebTerminal passes active/running guard, protocol/desktop/WSL/hook unaffected. Memory inbound lookup missed JSX caller; source confirms WebTerminal dependency. Reuse release binaries with tauri bundle, no backend build; commit before packaging.
+
 Approved: phone header folder button opens the existing project/Worktree tree in a dismissible drawer. Available with zero terminals. Select context then launch, dismiss when a new terminal runs or when selecting an existing terminal. Retain desktop sidebar at >=768px. Browse cached projects offline, disable launch while disconnected, refresh empty snapshots, disable mobile tree dragging to allow scrolling. Build Web frontend assets now; installer embedding deferred by user. Paths and cursor keys remain.
 
 Root cause: below768px the sidebar is hidden with no alternate project entry. Touchpoints: Workbench drawer and launch callbacks, ProjectSidebar reuse, styles and existing bilingual keys. ProjectTree/start API/desktop runtime unchanged. Validate narrow/wide, empty/nonempty, project/Worktree, offline, close/reopen and launch completion. Focus/tray/split/WSL/hooks use unchanged launch chain.
