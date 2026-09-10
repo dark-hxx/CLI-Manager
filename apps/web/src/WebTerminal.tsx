@@ -243,7 +243,29 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     const reportSize = () => {
-      if (controlModeRef.current !== "web") return;
+      if (!activeRef.current) return;
+      if (controlModeRef.current !== "web") {
+        // Scale the viewer without changing fonts or the PTY grid.
+        const screen = container.querySelector<HTMLElement>(".xterm-screen");
+        const width = screen?.offsetWidth ?? 0;
+        const available = container.clientWidth - 28;
+        if (width > 0 && available > 0) {
+          const scale = Math.max(0.7, Math.min(1.4, available / width));
+          const element = terminal.element;
+          if (element) {
+            element.style.transformOrigin = "top left";
+            element.style.transform = `scale(${scale})`;
+            element.style.width = `${width + 16}px`;
+            element.style.height = `${Math.max(1, container.clientHeight - 12) / scale}px`;
+          }
+        }
+        return;
+      }
+      if (terminal.element) {
+        terminal.element.style.transform = "";
+        terminal.element.style.width = "";
+        terminal.element.style.height = "";
+      }
       try {
         fit.fit();
         if (terminal.cols > 0 && terminal.rows > 0) resizeRef.current(terminal.cols, terminal.rows);
@@ -251,12 +273,18 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         // The container can briefly have no dimensions while mobile chrome resizes.
       }
     };
+    let sizeFrame: number | null = null;
+    const scheduleSize = () => {
+      if (sizeFrame !== null || disposed) return;
+      sizeFrame = requestAnimationFrame(() => { sizeFrame = null; if (!disposed) reportSize(); });
+    };
     const input = terminal.onData((data) => inputRef.current(data));
+    const render = terminal.onRender(scheduleSize);
     const scroll = terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
       setScrolledAway(buffer.viewportY < buffer.baseY);
     });
-    const observer = new ResizeObserver(reportSize);
+    const observer = new ResizeObserver(scheduleSize);
     observer.observe(container);
     const resizeFrame = requestAnimationFrame(reportSize);
     terminal.focus();
@@ -267,9 +295,12 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       observer.disconnect();
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       cancelAnimationFrame(resizeFrame);
+      if (sizeFrame !== null) cancelAnimationFrame(sizeFrame);
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (hiddenFlushTimer !== null) window.clearTimeout(hiddenFlushTimer);
       input.dispose();
+      render.dispose();
+      scroll.dispose();
       terminalRef.current = null;
       releasePendingWrite?.();
       releasePendingWrite = null;
@@ -300,12 +331,12 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   useEffect(() => {
     if (!active) return;
     try {
-      fitRef.current?.fit();
+      if (controlMode === "web") fitRef.current?.fit();
     } catch {
       // The active tab can still be settling into its final dimensions.
     }
     if (status === "running") terminalRef.current?.focus();
-  }, [active, status]);
+  }, [active, status, controlMode]);
 
   return <div className="web-terminal-shell">
     {renderFailed && <div role="alert">{errorLabel}</div>}

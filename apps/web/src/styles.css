@@ -289,13 +289,13 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .terminal-workspace { width: 100%; max-width: none; min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 10px; background: #111418; }
 .terminal-workspace .source-banner { flex: none; border-color: #2b3037; border-radius: 5px; color: #aeb7c2; background: #171b20; }
 .terminal-workspace .source-badge { border-radius: 3px; }
-.terminal-tab-list { min-width: 0; min-height: 38px; display: flex; align-items: end; gap: 2px; overflow-x: auto; border-bottom: 1px solid #30363d; scrollbar-width: thin; }
-.terminal-tab { height: 34px; min-width: 0; max-width: 240px; display: flex; align-items: center; border: 1px solid transparent; border-bottom: 0; border-radius: 5px 5px 0 0; color: #9da7b2; background: #171b20; }
-.terminal-tab.active { color: #edf1f5; border-color: #30363d; background: #0b0d10; }
+.terminal-tab-list { min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 5px 8px; overflow-x: auto; scrollbar-width: thin; }
+.terminal-tab { height: 32px; min-width: 0; max-width: 240px; flex-shrink: 0; display: flex; align-items: center; border: 1px solid transparent; border-radius: 12px; color: var(--muted); background: var(--surface); }
+.terminal-tab.active { color: var(--text); border-color: var(--border); background: var(--surface); box-shadow: 0 1px 5px #0002; }
 .terminal-tab > button:first-child { min-width: 0; height: 100%; display: flex; align-items: center; gap: 7px; padding: 0 6px 0 10px; border: 0; color: inherit; background: transparent; cursor: pointer; }
 .terminal-tab > button:first-child > span:not(.terminal-tab-status) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .terminal-tab-status { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #77818d; }
-.terminal-tab-status.running { background: var(--success); }
+.terminal-tab-status.running { background: #8696cb; box-shadow: 0 0 0 4px #8696cb20; }
 .terminal-tab-status.error, .terminal-tab-status.exited { background: var(--danger); }
 .terminal-tab-close { width: 28px; height: 100%; flex: none; display: grid; place-items: center; border: 0; color: inherit; background: transparent; cursor: pointer; opacity: .65; }
 .terminal-tab-close:hover, .terminal-tab-close:focus-visible { color: #fff; opacity: 1; }
@@ -310,7 +310,6 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .web-terminal .xterm-viewport { scrollbar-color: #48515c #0b0d10; scrollbar-width: thin; }
 .web-terminal-scroll-bottom { position: absolute; right: 16px; bottom: 16px; z-index: 3; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #48515c; border-radius: 999px; color: #edf1f5; background: #171b20e8; box-shadow: 0 4px 14px #0008; cursor: pointer; }
 .web-terminal-scroll-bottom:hover { background: #26303a; }
-.web-terminal-scroll-bottom { position: absolute; right: 16px; bottom: 16px; z-index: 3; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #48515c; border-radius: 999px; color: #edf1f5; background: #171b20e8; box-shadow: 0 4px 14px #0008; cursor: pointer; }
 .web-terminal-scroll-bottom:hover { background: #26303a; }
 .terminal-empty { min-height: 0; flex: 1; display: grid; place-content: center; justify-items: center; gap: 12px; padding: 24px; color: #dce2e8; text-align: center; }
 .terminal-empty h1 { margin: 0; font-size: 20px; letter-spacing: 0; }

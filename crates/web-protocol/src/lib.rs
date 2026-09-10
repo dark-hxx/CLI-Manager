@@ -1,7 +1,56 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEVICE_PROTOCOL_VERSION: u16 = 1;
+pub const DEVICE_PROTOCOL_VERSION: u16 = 3;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalOutputKind {
+    Output,
+    Replay,
+    Reset,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputFrame {
+    pub sequence: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub data: String,
+    pub kind: TerminalOutputKind,
+    #[serde(default)]
+    pub replay_batch_end: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum TerminalCommand {
+    Attach {
+        session_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after_sequence: Option<u64>,
+    },
+    Detach {
+        session_id: String,
+    },
+    Close {
+        session_id: String,
+    },
+    Input {
+        session_id: String,
+        data: String,
+    },
+    Resize {
+        session_id: String,
+        cols: u16,
+        rows: u16,
+    },
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +130,26 @@ pub struct UserView {
 pub struct AuthStatusResponse {
     pub authenticated: bool,
     pub user: Option<UserView>,
+    #[serde(default)]
+    pub device_scope: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConversationEvent {
+    pub operation_id: String,
+    pub session_id: String,
+    pub source: String,
+    pub project_id: String,
+    #[serde(default)]
+    pub worktree_id: Option<String>,
+    pub sequence: u64,
+    pub kind: String,
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+    pub occurred_at: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,7 +198,13 @@ pub struct HistorySessionSummary {
     pub device_id: String,
     pub source: String,
     pub project_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_id: Option<String>,
     pub title: String,
+    /// Legacy field retained for decoding old snapshots. New clients always send null.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
@@ -155,6 +230,8 @@ pub struct WorkspaceProjectSummary {
     pub group_id: Option<String>,
     pub sort_order: i64,
     pub source: Option<String>,
+    /// The desktop keeps the real path local; this legacy field is always null in P0 snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub environment_type: String,
 }
@@ -166,17 +243,30 @@ pub struct WorkspaceWorktreeSummary {
     pub project_id: String,
     pub name: String,
     pub branch: String,
-    pub cwd: String,
+    /// The desktop keeps the real path local; this legacy field is always null in P0 snapshots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
     pub status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
+    #[serde(default)]
+    pub terminals: Option<Vec<WorkspaceTerminalSummary>>,
     pub groups: Vec<WorkspaceGroupSummary>,
     pub projects: Vec<WorkspaceProjectSummary>,
     pub worktrees: Vec<WorkspaceWorktreeSummary>,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceTerminalSummary {
+    pub session_id: String,
+    pub project_id: String,
+    pub worktree_id: Option<String>,
+    pub title: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -208,6 +298,22 @@ pub struct OperationView {
     rename_all_fields = "camelCase"
 )]
 pub enum DeviceToServerFrame {
+    TerminalOutput {
+        session_id: String,
+        sequence: u64,
+        frames: Vec<TerminalOutputFrame>,
+    },
+    TerminalStatus {
+        session_id: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control_mode: Option<String>,
+    },
+    ConversationEvent {
+        event: ConversationEvent,
+    },
     Hello {
         protocol_version: u16,
         device_id: String,
@@ -261,6 +367,13 @@ pub enum DeviceToServerFrame {
     rename_all_fields = "camelCase"
 )]
 pub enum ServerToDeviceFrame {
+    TerminalCommand {
+        command: TerminalCommand,
+    },
+    ConversationAck {
+        operation_id: String,
+        sequence: u64,
+    },
     HelloOk {
         paired: bool,
         device_token: Option<String>,
@@ -291,6 +404,11 @@ pub enum ServerToDeviceFrame {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all_fields = "camelCase")]
 pub enum BrowserEventPayload {
+    #[serde(rename = "conversation.updated")]
+    ConversationUpdated {
+        device_id: String,
+        event: ConversationEvent,
+    },
     #[serde(rename = "device.updated")]
     DeviceUpdated { device: DeviceView },
     #[serde(rename = "operation.updated")]
@@ -315,6 +433,22 @@ pub enum BrowserEventPayload {
     rename_all_fields = "camelCase"
 )]
 pub enum BrowserSocketFrame {
+    Heartbeat,
+    TerminalOutput {
+        device_id: String,
+        session_id: String,
+        sequence: u64,
+        frames: Vec<TerminalOutputFrame>,
+    },
+    TerminalStatus {
+        device_id: String,
+        session_id: String,
+        status: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        control_mode: Option<String>,
+    },
     Ready {
         latest_sequence: i64,
     },
@@ -329,9 +463,67 @@ pub enum BrowserSocketFrame {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(
+    tag = "type",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum BrowserToServerFrame {
+    TerminalCommand {
+        device_id: String,
+        command: TerminalCommand,
+    },
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversation_frames_preserve_identity_and_sequence() {
+        let event = ConversationEvent {
+            operation_id: "op".into(),
+            session_id: "session".into(),
+            source: "codex".into(),
+            project_id: "project".into(),
+            worktree_id: None,
+            sequence: 3,
+            kind: "assistant_delta".into(),
+            message_id: Some("message".into()),
+            text: Some("hello".into()),
+            occurred_at: 12,
+        };
+        let value = serde_json::to_value(DeviceToServerFrame::ConversationEvent {
+            event: event.clone(),
+        })
+        .unwrap();
+        assert_eq!(value["type"], "conversation_event");
+        assert_eq!(value["event"]["operationId"], "op");
+        assert_eq!(value["event"]["sequence"], 3);
+        assert_eq!(
+            serde_json::from_value::<DeviceToServerFrame>(value).unwrap(),
+            DeviceToServerFrame::ConversationEvent {
+                event: event.clone()
+            }
+        );
+        let value = serde_json::to_value(BrowserEventPayload::ConversationUpdated {
+            device_id: "device".into(),
+            event,
+        })
+        .unwrap();
+        assert_eq!(value["type"], "conversation.updated");
+        assert_eq!(value["deviceId"], "device");
+        let ack = serde_json::to_value(ServerToDeviceFrame::ConversationAck {
+            operation_id: "op".into(),
+            sequence: 3,
+        })
+        .unwrap();
+        assert_eq!(
+            ack,
+            serde_json::json!({"type":"conversation_ack","operationId":"op","sequence":3})
+        );
+    }
 
     #[test]
     fn operation_status_uses_snake_case() {
@@ -360,6 +552,74 @@ mod tests {
                 "operationId": "operation-1",
                 "status": "succeeded"
             })
+        );
+    }
+
+    #[test]
+    fn terminal_frames_round_trip_with_camel_case_fields() {
+        let browser = BrowserToServerFrame::TerminalCommand {
+            device_id: "device-1".into(),
+            command: TerminalCommand::Resize {
+                session_id: "terminal-1".into(),
+                cols: 120,
+                rows: 32,
+            },
+        };
+        let value = serde_json::to_value(&browser).unwrap();
+        assert_eq!(value["type"], "terminal_command");
+        assert_eq!(value["deviceId"], "device-1");
+        assert_eq!(value["command"]["sessionId"], "terminal-1");
+        assert_eq!(
+            serde_json::from_value::<BrowserToServerFrame>(value).unwrap(),
+            browser
+        );
+
+        let attach = TerminalCommand::Attach {
+            session_id: "terminal-1".into(),
+            after_sequence: Some(42),
+        };
+        let value = serde_json::to_value(&attach).unwrap();
+        assert_eq!(value["afterSequence"], 42);
+        assert_eq!(serde_json::from_value::<TerminalCommand>(value).unwrap(), attach);
+        let legacy = serde_json::json!({"type": "attach", "sessionId": "terminal-1"});
+        assert_eq!(
+            serde_json::from_value::<TerminalCommand>(legacy).unwrap(),
+            TerminalCommand::Attach {
+                session_id: "terminal-1".into(),
+                after_sequence: None,
+            }
+        );
+
+        let close = TerminalCommand::Close {
+            session_id: "terminal-1".into(),
+        };
+        let value = serde_json::to_value(&close).unwrap();
+        assert_eq!(value["type"], "close");
+        assert_eq!(serde_json::from_value::<TerminalCommand>(value).unwrap(), close);
+
+        let output = BrowserSocketFrame::TerminalOutput {
+            device_id: "device-1".into(),
+            session_id: "terminal-1".into(),
+            sequence: 7,
+            frames: vec![TerminalOutputFrame {
+                sequence: 6,
+                data: "YQ==".into(),
+                cols: 120,
+                rows: 32,
+                kind: TerminalOutputKind::Replay,
+                replay_batch_end: true,
+            }],
+        };
+        let value = serde_json::to_value(&output).unwrap();
+        assert_eq!(value["type"], "terminal_output");
+        assert_eq!(value["sessionId"], "terminal-1");
+        assert_eq!(value["frames"][0]["cols"], 120);
+        assert_eq!(value["frames"][0]["rows"], 32);
+        assert_eq!(value["frames"][0]["kind"], "replay");
+        assert_eq!(value["frames"][0]["replayBatchEnd"], true);
+        assert_eq!(
+            serde_json::from_value::<BrowserSocketFrame>(value).unwrap(),
+            output
         );
     }
 
@@ -453,6 +713,7 @@ mod tests {
             sequence: 2,
             sessions: vec![],
             workspace: Some(WorkspaceSnapshot {
+                terminals: None,
                 groups: vec![],
                 projects: vec![WorkspaceProjectSummary {
                     id: "project-1".to_string(),
@@ -460,7 +721,7 @@ mod tests {
                     group_id: None,
                     sort_order: 0,
                     source: Some("codex".to_string()),
-                    cwd: Some(r"D:\work\CLI-Manager".to_string()),
+                    cwd: None,
                     environment_type: "local".to_string(),
                 }],
                 worktrees: vec![],
@@ -469,6 +730,7 @@ mod tests {
         })
         .unwrap();
         assert_eq!(value["workspace"]["projects"][0]["groupId"], Value::Null);
+        assert!(value["workspace"]["projects"][0].get("cwd").is_none());
         assert_eq!(value["workspace"]["updatedAt"], 7);
     }
 }

@@ -1,3 +1,5 @@
+import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
+import ClaudeColor from "@lobehub/icons/es/Claude/components/Color";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -32,13 +34,14 @@ import {
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TerminalChunk, TerminalControlMode, TimelineItem, WorkspaceSnapshot } from "./domain";
+import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TerminalControlMode, TimelineItem, WebTerminalTab, WorkspaceSnapshot } from "./domain";
 import type { TranslationKey } from "./i18n";
 import { deviceWallpaperUrl } from "./webClient";
 import { WebTerminal } from "./WebTerminal";
 import { isManagementOperation, ManagementPanel } from "./ManagementPanel";
 import { ProjectTree } from "./ProjectTree";
 import { BrowserAccess, MobileQr } from "./BrowserAccess";
+import type { TerminalStream } from "./terminalStream";
 
 type T = (key: TranslationKey) => string;
 
@@ -140,7 +143,6 @@ export function HostHome(props: HostHomeProps) {
   };
   const removeDevice = async (device: Device) => {
     if (removingDeviceId) return;
-    if (!window.confirm(props.t("removeDeviceConfirmation").replace("{name}", device.name))) return;
     setRemovingDeviceId(device.id);
     try { await props.onRemoveDevice(device.id); } finally { setRemovingDeviceId(undefined); }
   };
@@ -187,7 +189,7 @@ export function HostHome(props: HostHomeProps) {
               {visibleDevices.length === 0 ? (
                 <div className="host-filter-empty"><Search size={32} /><h3>{props.t("noMatchingDevices")}</h3><p>{props.t("noMatchingDevicesHint")}</p><button className="secondary-button" type="button" onClick={clearFilters}>{props.t("clearFilters")}</button></div>
               ) : (
-                <div className="host-list" aria-label={`${props.t("hostsTitle")} · ${visibleDevices.length}`}>
+                <div className="host-list" aria-label={`${props.t("hostsTitle")} ? ${visibleDevices.length}`}>
                   {visibleDevices.map((device) => (
                     <div className="host-card-wrap" key={device.id}>
                       <button className={`host-card ${device.status}`} type="button" onClick={() => props.onSelectDevice(device.id)} aria-label={`${props.t("openHost")} ${device.name}`}>
@@ -198,7 +200,7 @@ export function HostHome(props: HostHomeProps) {
                         </span>
                         <span className="host-card-body">
                           <span className="host-card-heading">
-                            <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</strong>
+                            <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` ? ${clientKindLabel(device, props.t)}` : ""}</strong>
                             <span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span>
                           </span>
                           <span className="host-facts">
@@ -256,8 +258,9 @@ type WorkbenchProps = {
   projectContexts: ProjectContext[];
   selectedProjectContext?: ProjectContext;
   terminalSessionId?: string;
+  terminalTabs: WebTerminalTab[];
   terminalStatus: string;
-  terminalChunks: TerminalChunk[];
+  terminalStream: TerminalStream;
   terminalControlMode: TerminalControlMode;
   timeline: TimelineItem[];
   pairing: PairingState;
@@ -273,8 +276,10 @@ type WorkbenchProps = {
   onSelectSession: (id?: string) => void;
   onSelectProjectContext: (key: string) => void;
   onOpenTerminal: () => void;
-  onTerminalInput: (data: string) => boolean;
-  onTerminalResize: (cols: number, rows: number) => boolean;
+  onSelectTerminalTab: (sessionId: string) => void;
+  onCloseTerminal: (sessionId?: string) => void;
+  onTerminalInput: (data: string, sessionId?: string) => boolean;
+  onTerminalResize: (cols: number, rows: number, sessionId?: string) => boolean;
   onClaimPairing: (code: string) => Promise<void>;
   onResetPairing: () => void;
   onSubmitManagement: (kind: string, payload: JsonObject) => Promise<Operation>;
@@ -296,15 +301,11 @@ export function Workbench(props: WorkbenchProps) {
       <main className="main-panel" id="conversation-main">
         <header className="desktop-header">
           <div className="context-block">
-            <div className="project-line">
-              <strong>{selectedProjectContext ? `${selectedProjectContext.projectName} · ${selectedProjectContext.source}` : t("noProjectContext")}</strong>
-              <span>/</span>{selectedSession?.branch ?? selectedProjectContext?.branch ?? t("unknown")}
-            </div>
             <div className="device-context-row">
               <label className="sr-only" htmlFor="device-select">{t("devices")}</label>
               <select id="device-select" className="device-select" value={selectedDevice?.id ?? ""} onChange={(event) => props.onSelectDevice(event.target.value)} disabled={props.devices.length === 0}>
                 {props.devices.length === 0 && <option value="">{t("noDevice")}</option>}
-                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</option>)}
+                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{clientKindLabel(device, props.t) ? ` ? ${clientKindLabel(device, props.t)}` : ""}</option>)}
               </select>
               <DeviceLine device={selectedDevice} t={t} socketState={props.socketState} />
             </div>
@@ -341,14 +342,44 @@ export function Workbench(props: WorkbenchProps) {
             {props.terminalSessionId && <span>{t(props.terminalControlMode === "web" ? "terminalControlWeb" : "terminalControlDesktop")}</span>}
             <span className="socket-state">{t("browserConnection")}: {t(props.socketState === "open" ? "connected" : props.socketState === "connecting" ? "reconnecting" : "disconnected")}</span>
           </div>
+          {props.terminalTabs.length > 0 && (
+            <div className="terminal-tab-list" role="tablist" aria-label={t("terminal")}>
+              {props.terminalTabs.map((tab) => {
+                const context = props.projectContexts.find((item) => item.key === tab.contextKey);
+                const active = tab.sessionId === props.terminalSessionId;
+                return (
+                  <div className={`terminal-tab${active ? " active" : ""}`} key={tab.sessionId}>
+                    <button type="button" role="tab" aria-selected={active} onClick={() => props.onSelectTerminalTab(tab.sessionId)} title={context?.projectName ?? tab.sessionId}>
+                      <span className={`terminal-tab-status ${tab.status}`} aria-hidden="true" />
+                      {context?.source === "codex" ? <OpenAI size={16} /> : context?.source === "claude" ? <ClaudeColor size={16} /> : <SquareTerminal size={16} />}
+                      <span>{context?.projectName ?? tab.sessionId.slice(0, 12)}</span>
+                    </button>
+                    <button className="terminal-tab-close" type="button" onClick={() => props.onCloseTerminal(tab.sessionId)} aria-label={t("closeTerminal")} title={t("closeTerminal")}><X size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
           {!selectedDevice ? (
             <EmptyDevice t={t} onPair={() => setPairingOpen(true)} />
           ) : !selectedProjectContext ? (
             <TerminalEmpty t={t} canOpen={false} onOpen={props.onOpenTerminal} />
-          ) : props.terminalSessionId ? (
-            <WebTerminal sessionId={props.terminalSessionId} status={props.terminalStatus} chunks={props.terminalChunks} controlMode={props.terminalControlMode} theme={props.resolvedTheme} onInput={props.onTerminalInput} onResize={props.onTerminalResize} />
-          ) : (
+          ) : props.terminalTabs.length === 0 ? (
             <TerminalEmpty t={t} canOpen={canOpenTerminal} onOpen={props.onOpenTerminal} />
+          ) : null}
+          {props.terminalTabs.length > 0 && (
+            <div className="web-terminal-stack">
+              {!props.terminalSessionId && <TerminalEmpty t={t} canOpen={canOpenTerminal} onOpen={props.onOpenTerminal} />}
+              {props.terminalTabs.map((tab) => {
+                const active = tab.sessionId === props.terminalSessionId;
+                const status = props.socketState !== "open" ? "disconnected" : selectedDevice?.status !== "online" ? "offline" : tab.status;
+                return (
+                  <div className={`web-terminal-frame${active ? " active" : ""}`} key={tab.sessionId} role="tabpanel" aria-hidden={!active} inert={!active}>
+                    <WebTerminal active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
+                  </div>
+                );
+              })}
+            </div>
           )}
         </section>
       </main>
@@ -395,7 +426,7 @@ function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
 }
 
 function HistoryList({ t, items, selectedId, onSelect }: { t: T; items: HistorySessionSummary[]; selectedId?: string; onSelect: (id: string) => void }) {
-  return <div className="history-list"><div className="side-section-title"><span>{t("recent")}</span><span className="count">{items.length}</span></div>{items.length === 0 ? <p className="empty-copy">{t("noHistory")}</p> : items.map((session) => <button className={`history-row${selectedId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => onSelect(session.sessionId)}><MessageCircle size={18} /><span><strong>{session.title}</strong><small>{session.projectKey} · {formatServerTime(session.updatedAt)}</small></span><span className={`freshness-dot ${session.freshness}`} title={t(session.freshness === "live" ? "liveData" : session.freshness === "cached" ? "cachedData" : "staleData")} /></button>)}</div>;
+  return <div className="history-list"><div className="side-section-title"><span>{t("recent")}</span><span className="count">{items.length}</span></div>{items.length === 0 ? <p className="empty-copy">{t("noHistory")}</p> : items.map((session) => <button className={`history-row${selectedId === session.sessionId ? " active" : ""}`} type="button" key={session.sessionId} onClick={() => onSelect(session.sessionId)}><MessageCircle size={18} /><span><strong>{session.title}</strong><small>{session.projectKey} ? {formatServerTime(session.updatedAt)}</small></span><span className={`freshness-dot ${session.freshness}`} title={t(session.freshness === "live" ? "liveData" : session.freshness === "cached" ? "cachedData" : "staleData")} /></button>)}</div>;
 }
 
 function OverlayPanel({ title, closeLabel, onClose, children }: { title: string; closeLabel: string; onClose: () => void; children: ReactNode }) {
@@ -437,7 +468,7 @@ function DeviceLine({ device, t, socketState }: { device?: Device; t: T; socketS
 }
 
 function DeviceCard({ device, t, syncText }: { device: Device; t: T; syncText: string }) {
-  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{clientKindLabel(device, t) || t("unknown")} · {device.appVersion}</dd><dt>{t("softwareId")}</dt><dd>{device.clientId}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
+  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{clientKindLabel(device, t) || t("unknown")} ? {device.appVersion}</dd><dt>{t("softwareId")}</dt><dd>{device.clientId}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
 }
 
 function EmptyDevice({ t, onPair }: { t: T; onPair: () => void }) {
@@ -449,7 +480,7 @@ function TerminalEmpty({ t, canOpen, onOpen }: { t: T; canOpen: boolean; onOpen:
 }
 
 function terminalStatusLabel(t: T, status: string): string {
-  const keys: Record<string, TranslationKey> = { idle: "terminalIdle", connecting: "terminalConnecting", running: "terminalRunning", exited: "terminalExited", error: "terminalError" };
+  const keys: Record<string, TranslationKey> = { idle: "terminalIdle", connecting: "terminalConnecting", running: "terminalRunning", exited: "terminalExited", error: "terminalError", offline: "offline", disconnected: "disconnected" };
   return t(keys[status] ?? "terminalIdle");
 }
 
@@ -530,3 +561,4 @@ function serverTimestamp(value: number | string | null): number | null {
   const timestamp = typeof value === "number" && value < 10_000_000_000 ? value * 1000 : new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
 }
+

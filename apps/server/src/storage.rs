@@ -22,6 +22,18 @@ const KNOWN_MIGRATIONS: &[(i64, &[u8])] = &[
         include_bytes!("../migrations/0003_device_workspace_snapshot.sql"),
     ),
     (4, include_bytes!("../migrations/0004_client_identity.sql")),
+    (
+        5,
+        include_bytes!("../migrations/0005_history_context_ids.sql"),
+    ),
+    (
+        6,
+        include_bytes!("../migrations/0006_conversations_mobile.sql"),
+    ),
+    (
+        7,
+        include_bytes!("../migrations/0007_operation_delivery_stages.sql"),
+    ),
 ];
 
 #[derive(Debug, Clone)]
@@ -154,12 +166,17 @@ impl Storage {
             "SELECT users.id, users.username
              FROM browser_sessions
              JOIN users ON users.id = browser_sessions.user_id
-             WHERE browser_sessions.token_hash = ?1 AND browser_sessions.expires_at > ?2",
+             WHERE browser_sessions.token_hash = ?1 AND browser_sessions.expires_at > ?2
+             AND (browser_sessions.device_scope IS NULL OR EXISTS (SELECT 1 FROM devices d WHERE d.id = browser_sessions.device_scope AND d.user_id = browser_sessions.user_id))",
         )
         .bind(token_hash)
         .bind(now)
         .fetch_optional(&self.pool)
         .await?;
+        if row.is_some() {
+            sqlx::query("UPDATE browser_sessions SET last_seen_at = ? WHERE token_hash = ? AND device_scope IS NOT NULL AND (last_seen_at IS NULL OR last_seen_at < ?)")
+                .bind(now).bind(token_hash).bind(now - 60_000).execute(&self.pool).await?;
+        }
         Ok(row.map(|row| UserView {
             id: row.get("id"),
             username: row.get("username"),
@@ -172,6 +189,18 @@ impl Storage {
             .execute(&self.pool)
             .await?;
         Ok(())
+    }
+
+    pub async fn session_device_scope(&self, token_hash: &str) -> Result<Option<String>, AppError> {
+        let row = sqlx::query(
+            "SELECT device_scope FROM browser_sessions WHERE token_hash = ? AND expires_at > ?",
+        )
+        .bind(token_hash)
+        .bind(now_ms())
+        .fetch_optional(&self.pool)
+        .await?
+        .ok_or_else(AppError::unauthorized)?;
+        Ok(row.get("device_scope"))
     }
 
     pub async fn upsert_device_hello(
@@ -287,7 +316,11 @@ impl Storage {
         rows.into_iter().map(device_from_row).collect()
     }
 
-    pub async fn remove_device_for_user(&self, user_id: &str, device_id: &str) -> Result<bool, AppError> {
+    pub async fn remove_device_for_user(
+        &self,
+        user_id: &str,
+        device_id: &str,
+    ) -> Result<bool, AppError> {
         let result = sqlx::query(
             "UPDATE devices
              SET user_id = NULL, device_token_hash = NULL, paired_at = NULL
@@ -527,15 +560,17 @@ impl Storage {
             }
             sqlx::query(
                 "INSERT INTO history_sessions
-                    (device_id, session_id, user_id, source, project_key, title, cwd,
+                    (device_id, session_id, user_id, source, project_key, project_id, worktree_id, title, cwd,
                      created_at, updated_at, message_count, branch, freshness)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'live')
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, ?12, 'live')
                  ON CONFLICT(device_id, session_id) DO UPDATE SET
                     user_id = excluded.user_id,
                     source = excluded.source,
                     project_key = excluded.project_key,
+                    project_id = excluded.project_id,
+                    worktree_id = excluded.worktree_id,
                     title = excluded.title,
-                    cwd = excluded.cwd,
+                    cwd = NULL,
                     created_at = excluded.created_at,
                     updated_at = excluded.updated_at,
                     message_count = excluded.message_count,
@@ -547,8 +582,9 @@ impl Storage {
             .bind(user_id)
             .bind(&session.source)
             .bind(&session.project_key)
+            .bind(&session.project_id)
+            .bind(&session.worktree_id)
             .bind(&session.title)
-            .bind(&session.cwd)
             .bind(session.created_at)
             .bind(session.updated_at)
             .bind(session.message_count as i64)
@@ -557,7 +593,8 @@ impl Storage {
             .await?;
         }
         if let Some(workspace) = workspace {
-            let serialized = serde_json::to_string(workspace).map_err(|error| {
+            let safe_workspace = sanitize_workspace(workspace);
+            let serialized = serde_json::to_string(&safe_workspace).map_err(|error| {
                 AppError::Internal(format!("serialize workspace snapshot failed: {error}"))
             })?;
             sqlx::query("UPDATE devices SET workspace_snapshot_json = ?1 WHERE id = ?2")
@@ -591,9 +628,11 @@ impl Storage {
                 .flatten();
         serialized
             .map(|value| {
-                serde_json::from_str(&value).map_err(|error| {
-                    AppError::Internal(format!("decode workspace snapshot failed: {error}"))
-                })
+                serde_json::from_str::<WorkspaceSnapshot>(&value)
+                    .map(|workspace| sanitize_workspace(&workspace))
+                    .map_err(|error| {
+                        AppError::Internal(format!("decode workspace snapshot failed: {error}"))
+                    })
             })
             .transpose()
     }
@@ -607,7 +646,7 @@ impl Storage {
     ) -> Result<Vec<HistorySessionSummary>, AppError> {
         let rows = if let Some(device_id) = device_id {
             sqlx::query(
-                "SELECT device_id, session_id, source, project_key, title, cwd, created_at,
+                "SELECT device_id, session_id, source, project_key, project_id, worktree_id, title, cwd, created_at,
                         updated_at, message_count, branch, freshness
                  FROM history_sessions WHERE user_id = ?1 AND device_id = ?2
                  ORDER BY updated_at DESC, session_id LIMIT ?3 OFFSET ?4",
@@ -620,7 +659,7 @@ impl Storage {
             .await?
         } else {
             sqlx::query(
-                "SELECT device_id, session_id, source, project_key, title, cwd, created_at,
+                "SELECT device_id, session_id, source, project_key, project_id, worktree_id, title, cwd, created_at,
                         updated_at, message_count, branch, freshness
                  FROM history_sessions WHERE user_id = ?1
                  ORDER BY updated_at DESC, session_id LIMIT ?2 OFFSET ?3",
@@ -637,9 +676,11 @@ impl Storage {
                 session_id: row.get("session_id"),
                 device_id: row.get("device_id"),
                 source: row.get("source"),
-                project_key: row.get("project_key"),
+                project_key: public_project_key(row.get("project_key")),
+                project_id: row.get("project_id"),
+                worktree_id: row.get("worktree_id"),
                 title: row.get("title"),
-                cwd: row.get("cwd"),
+                cwd: None,
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
                 message_count: row.get::<i64, _>("message_count") as u64,
@@ -782,6 +823,23 @@ impl Storage {
         if current.status == next {
             return Ok(Some((user_id, current)));
         }
+        if matches!(next, OperationStatus::Accepted | OperationStatus::Running) {
+            let stages = sqlx::query(
+                "SELECT accepted_seen, running_seen FROM operations WHERE id = ? AND device_id = ?",
+            )
+            .bind(operation_id)
+            .bind(device_id)
+            .fetch_one(&self.pool)
+            .await?;
+            let already_seen = match next {
+                OperationStatus::Accepted => stages.get::<i64, _>("accepted_seen") != 0,
+                OperationStatus::Running => stages.get::<i64, _>("running_seen") != 0,
+                _ => false,
+            };
+            if already_seen {
+                return Ok(Some((user_id, current)));
+            }
+        }
         if current.status.is_terminal() || !valid_operation_transition(&current.status, &next) {
             return Err(AppError::conflict(
                 "invalid_operation_transition",
@@ -794,7 +852,10 @@ impl Storage {
         }
         sqlx::query(
             "UPDATE operations SET status = ?1, result_json = ?2, error_code = ?3,
-                    error_message = ?4, updated_at = ?5 WHERE id = ?6 AND device_id = ?7",
+                    error_message = ?4, updated_at = ?5,
+                    accepted_seen = CASE WHEN ?1 = 'accepted' THEN 1 ELSE accepted_seen END,
+                    running_seen = CASE WHEN ?1 = 'running' THEN 1 ELSE running_seen END
+                    WHERE id = ?6 AND device_id = ?7",
         )
         .bind(next.as_str())
         .bind(result.map(serde_json::to_string).transpose()?)
@@ -926,6 +987,49 @@ fn alternate_line_endings(bytes: &[u8]) -> Vec<u8> {
 
 pub fn now_ms() -> i64 {
     chrono::Utc::now().timestamp_millis()
+}
+
+fn public_project_key(value: String) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return "unknown".to_string();
+    }
+    // Older snapshots used the local checkout path as project_key. Keep the
+    // field for protocol compatibility, but never return a path to browsers.
+    if trimmed.contains('\\')
+        || trimmed.contains('/')
+        || trimmed.starts_with('~')
+        || (trimmed.len() >= 2 && trimmed.as_bytes()[1] == b':')
+    {
+        return "local-project".to_string();
+    }
+    trimmed.chars().take(512).collect()
+}
+
+fn sanitize_workspace(workspace: &WorkspaceSnapshot) -> WorkspaceSnapshot {
+    WorkspaceSnapshot {
+        terminals: workspace.terminals.clone(),
+        groups: workspace.groups.clone(),
+        projects: workspace
+            .projects
+            .iter()
+            .cloned()
+            .map(|mut project| {
+                project.cwd = None;
+                project
+            })
+            .collect(),
+        worktrees: workspace
+            .worktrees
+            .iter()
+            .cloned()
+            .map(|mut worktree| {
+                worktree.cwd = None;
+                worktree
+            })
+            .collect(),
+        updated_at: workspace.updated_at,
+    }
 }
 
 fn device_from_row(row: sqlx::sqlite::SqliteRow) -> Result<DeviceView, AppError> {
@@ -1128,6 +1232,93 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn replayed_delivery_stages_ack_current_state_without_reopening_operations() {
+        let storage = Storage::open_memory().await.unwrap();
+        storage.ensure_single_user("admin", "hash").await.unwrap();
+        let user = storage
+            .find_user_by_username("admin")
+            .await
+            .unwrap()
+            .unwrap();
+        storage
+            .upsert_device_hello("device", "PC", "windows", "1", &[], None, None, None, None)
+            .await
+            .unwrap();
+        let operation = storage
+            .create_operation(
+                &user.id,
+                "device",
+                "conversation.start",
+                "replay",
+                &serde_json::json!({}),
+                OperationStatus::Submitted,
+            )
+            .await
+            .unwrap();
+        assert!(storage
+            .update_operation_status(
+                "device",
+                &operation.id,
+                OperationStatus::Running,
+                None,
+                None
+            )
+            .await
+            .is_err());
+        for status in [
+            OperationStatus::Accepted,
+            OperationStatus::Running,
+            OperationStatus::Rejected,
+        ] {
+            storage
+                .update_operation_status("device", &operation.id, status, None, None)
+                .await
+                .unwrap();
+        }
+        for replay in [OperationStatus::Accepted, OperationStatus::Running] {
+            let (_, current) = storage
+                .update_operation_status("device", &operation.id, replay, None, None)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(current.status, OperationStatus::Rejected);
+        }
+        assert!(storage
+            .update_operation_status(
+                "device",
+                &operation.id,
+                OperationStatus::Succeeded,
+                None,
+                None
+            )
+            .await
+            .is_err());
+        let early = storage
+            .create_operation(
+                &user.id,
+                "device",
+                "conversation.start",
+                "early-reject",
+                &serde_json::json!({}),
+                OperationStatus::Submitted,
+            )
+            .await
+            .unwrap();
+        storage
+            .update_operation_status("device", &early.id, OperationStatus::Rejected, None, None)
+            .await
+            .unwrap();
+        assert!(storage
+            .update_operation_status("device", &early.id, OperationStatus::Accepted, None, None)
+            .await
+            .is_err());
+        assert!(storage
+            .update_operation_status("device", &early.id, OperationStatus::Running, None, None)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
     async fn history_snapshot_removes_missing_sessions() {
         let storage = Storage::open_memory().await.unwrap();
         storage.ensure_single_user("admin", "hash").await.unwrap();
@@ -1160,6 +1351,8 @@ mod tests {
             device_id: "device-1".to_string(),
             source: "codex".to_string(),
             project_key: "project".to_string(),
+            project_id: Some("project-1".to_string()),
+            worktree_id: None,
             title: session_id.to_string(),
             cwd: None,
             created_at: 1,
@@ -1169,6 +1362,7 @@ mod tests {
             freshness: "live".to_string(),
         };
         let workspace = |name: &str, updated_at: i64| WorkspaceSnapshot {
+            terminals: None,
             groups: vec![],
             projects: vec![WorkspaceProjectSummary {
                 id: "project-1".to_string(),
@@ -1182,7 +1376,11 @@ mod tests {
             worktrees: vec![],
             updated_at,
         };
-        let first_workspace = workspace("CLI-Manager", 1);
+        let mut first_workspace = workspace("CLI-Manager", 1);
+        first_workspace.terminals = Some(vec![cli_manager_web_protocol::WorkspaceTerminalSummary {
+            session_id: "terminal-a".to_string(), project_id: "project-1".to_string(),
+            worktree_id: None, title: "Terminal A".to_string(),
+        }]);
         storage
             .replace_history_snapshot(
                 "device-1",
@@ -1193,7 +1391,9 @@ mod tests {
             )
             .await
             .unwrap();
-        let next_workspace = workspace("CLI-Manager renamed", 2);
+        assert_eq!(storage.workspace_snapshot("device-1").await.unwrap().unwrap().terminals, first_workspace.terminals);
+        let mut next_workspace = workspace("CLI-Manager renamed", 2);
+        next_workspace.terminals = Some(vec![]);
         storage
             .replace_history_snapshot(
                 "device-1",
@@ -1216,7 +1416,10 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored_workspace.projects[0].name, "CLI-Manager renamed");
+        assert!(stored_workspace.projects[0].cwd.is_none());
         assert_eq!(stored_workspace.updated_at, 2);
+        assert_eq!(stored_workspace.terminals, Some(vec![]));
+        assert!(sessions[0].cwd.is_none());
     }
 
     #[test]
