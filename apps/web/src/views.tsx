@@ -34,7 +34,7 @@ import {
   WifiOff,
   X,
 } from "lucide-react";
-import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TerminalControlMode, TimelineItem, WebTerminalTab, WorkspaceSnapshot } from "./domain";
 import type { TranslationKey } from "./i18n";
 import { deviceWallpaperUrl } from "./webClient";
@@ -294,6 +294,18 @@ export function Workbench(props: WorkbenchProps) {
   const [managementArea, setManagementArea] = useState<"ssh" | "file">("ssh");
   const [historyContext, setHistoryContext] = useState<ProjectContext>();
   const [detailsOpen, setDetailsOpen] = useState(false);
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const projectDrawerTabs = useRef<string[]>([]);
+  const closeProjects = useCallback(() => setProjectsOpen(false), []);
+  useEffect(() => {
+    if (projectsOpen && props.terminalTabs.some((tab) => tab.status === "running" && !projectDrawerTabs.current.includes(tab.sessionId))) closeProjects();
+  }, [projectsOpen, props.terminalTabs, closeProjects]);
+  useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const closeOnDesktop = () => { if (desktop.matches) closeProjects(); };
+    desktop.addEventListener("change", closeOnDesktop);
+    return () => desktop.removeEventListener("change", closeOnDesktop);
+  }, [closeProjects]);
   const canOpenTerminal = Boolean(!props.sending && selectedDevice?.status === "online" && selectedProjectContext);
   const selectedFreshness = selectedSession?.freshness ?? selectedProjectContext?.freshness ?? "stale";
   const activeTerminalContext = props.projectContexts.find((context) =>
@@ -345,6 +357,7 @@ export function Workbench(props: WorkbenchProps) {
           </div>
         </header>
         <header className="mobile-header">
+          <button className="icon-button mobile-projects-toggle" type="button" onClick={() => { projectDrawerTabs.current = props.terminalTabs.filter((tab) => tab.status === "running").map((tab) => tab.sessionId); setProjectsOpen(true); }} aria-label={t("projects")} aria-haspopup="dialog" aria-expanded={projectsOpen}><Folder size={22} /></button>
           <button className="icon-button" type="button" onClick={props.onBackToHosts} aria-label={t("backToHosts")}><ArrowLeft size={22} /></button>
           <div><strong>{selectedSession?.title ?? "CLI-Manager"}</strong><span className="mobile-device-line"><span className={`status-dot ${selectedDevice?.status === "online" ? "" : "warning"}`} role="img" aria-label={selectedDevice?.status === "online" ? t("online") : t("offline")} />{selectedDevice?.name ?? t("noDevice")}</span></div>
           <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={22} /></button>
@@ -426,6 +439,24 @@ export function Workbench(props: WorkbenchProps) {
         <button type="button" onClick={props.onLogout}><CircleUserRound size={23} /><span>{t("logout")}</span></button>
       </nav>
 
+      {projectsOpen && <OverlayPanel title={t("projects")} closeLabel={t("close")} onClose={closeProjects}>
+        <ProjectSidebar {...props} mobile onPair={() => { closeProjects(); setPairingOpen(true); }} onOpenTerminal={() => {
+          if (!canOpenTerminal || props.socketState !== "open") return;
+          props.onOpenTerminal();
+          if (props.terminalTabs.some((tab) => tab.contextKey === selectedProjectContext?.key)) closeProjects();
+        }} onOpenPanel={(panel, contextKey) => {
+          props.onSelectProjectContext(contextKey);
+          closeProjects();
+          if (panel === "history") {
+            setHistoryContext(props.projectContexts.find((context) => context.key === contextKey));
+            setHistoryOpen(true);
+          } else {
+            setManagementArea("file");
+            setManagementOpen(true);
+          }
+        }} />
+      </OverlayPanel>}
+
       {historyOpen && <OverlayPanel title={t("history")} closeLabel={t("close")} onClose={() => setHistoryOpen(false)}><HistoryList t={t} items={historyContext ? props.history.filter((session) => session.source === historyContext.source && (historyContext.projectId ? session.projectId === historyContext.projectId : session.projectKey === historyContext.projectKey) && (session.worktreeId ?? null) === (historyContext.worktreeId ?? null)) : props.history} selectedId={selectedSession?.sessionId} onSelect={(id) => { props.onSelectSession(id); setHistoryOpen(false); }} /></OverlayPanel>}
       {!props.restricted && pairingOpen && <OverlayPanel title={t("pairDevice")} closeLabel={t("close")} onClose={() => { setPairingOpen(false); props.onResetPairing(); }}><PairingForm t={t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
       {managementOpen && <OverlayPanel title={t("management")} closeLabel={t("close")} onClose={() => setManagementOpen(false)}><ManagementPanel initialArea={managementArea} t={t} capabilities={selectedDevice?.capabilities ?? []} projectContext={selectedProjectContext} operations={props.timeline.filter((item): item is Extract<TimelineItem, { type: "operation" }> => item.type === "operation" && isManagementOperation(item.operation)).map((item) => item.operation)} onSubmit={props.onSubmitManagement} /></OverlayPanel>}
@@ -433,14 +464,15 @@ export function Workbench(props: WorkbenchProps) {
   );
 }
 
-function ProjectSidebar(props: WorkbenchProps & { onPair: () => void; onOpenPanel: (panel: "file" | "history", contextKey: string) => void }) {
+function ProjectSidebar(props: WorkbenchProps & { mobile?: boolean; onPair: () => void; onOpenPanel: (panel: "file" | "history", contextKey: string) => void }) {
   return (
-    <aside className="sidebar project-sidebar" aria-label={props.t("projects")}>
-      <div className="sidebar-brand"><AppLogo /><strong>CLI-Manager</strong></div>
-      <button className="new-chat-button" type="button" onClick={props.onOpenTerminal} disabled={!props.selectedProjectContext || props.selectedDevice?.status !== "online"}><Plus size={18} /><span>{props.t("newTerminal")}</span></button>
+    <aside className={`sidebar project-sidebar${props.mobile ? " mobile-project-sidebar" : ""}`} aria-label={props.t("projects")}>
+      {props.mobile ? <DeviceLine device={props.selectedDevice} t={props.t} socketState={props.socketState} /> : <div className="sidebar-brand"><AppLogo /><strong>CLI-Manager</strong></div>}
+      <button className="new-chat-button" type="button" onClick={props.onOpenTerminal} disabled={!props.selectedProjectContext || props.selectedDevice?.status !== "online" || (props.mobile && (props.sending || props.socketState !== "open"))}><Plus size={18} /><span>{props.t("newTerminal")}</span></button>
+      {props.mobile && <button className="secondary-button" type="button" onClick={props.onRefresh}><RefreshCw size={18} />{props.t("refresh")}</button>}
       <div className="project-tree">
         <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{props.workspace?.projects.length ?? 0}</span></div>
-        <ProjectTree t={props.t} workspace={props.workspace} projectContexts={props.projectContexts} selectedProjectContext={props.selectedProjectContext} dragEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} managementEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} onSelectProjectContext={props.onSelectProjectContext} onSubmit={props.onSubmitManagement} onReload={props.onRefresh} onOpenPanel={props.onOpenPanel} operations={props.timeline.filter((item): item is Extract<TimelineItem, { type: "operation" }> => item.type === "operation").map((item) => item.operation)} />
+        <ProjectTree t={props.t} workspace={props.workspace} projectContexts={props.projectContexts} selectedProjectContext={props.selectedProjectContext} dragEnabled={Boolean(!props.mobile && props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} managementEnabled={Boolean(props.selectedDevice?.status === "online" && (!props.mobile || props.socketState === "open") && props.selectedDevice.capabilities.includes("project.management"))} onSelectProjectContext={props.onSelectProjectContext} onSubmit={props.onSubmitManagement} onReload={props.onRefresh} onOpenPanel={props.onOpenPanel} operations={props.timeline.filter((item): item is Extract<TimelineItem, { type: "operation" }> => item.type === "operation").map((item) => item.operation)} />
       </div>
       <div className="sidebar-footer">{!props.restricted && <button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button>}<button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
     </aside>

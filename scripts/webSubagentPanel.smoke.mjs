@@ -31,7 +31,7 @@ let agents = [
   { sessionId: 'b1', parentSessionId: 'p2', title: 'Other parent', sourceKind: 'child-jsonl', ended: true, content: line('OTHER PARENT'), truncated: false },
 ];
 const device = { id: 'device1', name: 'Test Desktop', status: 'online', capabilities: [], platform: 'windows', appVersion: '1.3.10', lastSeenAt: Date.now() };
-let language = 'en-US', parent = 'p1', narrow = false;
+let language = 'en-US', parent = 'p1', narrow = false, lastProps;
 const noop = () => {};
 function ViewportHarness(props) { useMobileViewport(); return React.createElement(Workbench, props); }
 function render() {
@@ -43,6 +43,7 @@ function render() {
     onTheme: noop, onLanguage: noop, onLogout: noop, onBackToHosts: noop, onRefresh: noop, onSelectDevice: noop, onSelectSession: noop, onSelectProjectContext: noop,
     onOpenTerminal: noop, onSelectTerminalTab: noop, onCloseTerminal: noop, onTerminalInput: () => true, onTerminalResize: () => true, onClaimPairing: async () => {}, onResetPairing: noop, onSubmitManagement: async () => {},
   };
+  lastProps = props;
   flushSync(() => root.render(React.createElement(ViewportHarness, props)));
 }
 const panel = () => document.querySelector('.web-terminal-frame.active .web-subagent-panel');
@@ -119,6 +120,8 @@ async function wide() {
 window.runNarrow = async () => {
   try {
     narrow = true; render(); await pause(400);
+    await verifyMobileProjects();
+    render(); await pause(100);
     check(innerWidth === 390, 'Narrow browser viewport applied');
     check(getComputedStyle(document.querySelector('.source-banner')).display === 'none', 'Mobile hides the verbose terminal status card');
     check(document.querySelector('.mobile-terminal-context')?.textContent.includes('Project A') && document.querySelector('.mobile-terminal-context')?.textContent.includes('Project-A'), 'Mobile keeps compact project and cwd identification');
@@ -147,6 +150,54 @@ window.runNarrow = async () => {
     result.status = result.errors.length ? 'failed' : 'keyboard-ready';
   } catch(error) { result.errors.push(String(error)); result.status = 'failed'; }
 };
+async function verifyMobileProjects() {
+  const contexts = [
+    { key: 'project', projectId: 'project', projectName: 'Mobile project', source: 'codex', title: 'Project', freshness: 'live' },
+    { key: 'worktree', projectId: 'project', worktreeId: 'wt', projectName: 'Mobile worktree', source: 'codex', title: 'Worktree', freshness: 'live' },
+  ];
+  let selected, started;
+  let state = { ...lastProps, key: 'project-test', terminalSessionId: undefined, terminalTabs: [], terminalStatus: 'idle',
+    projectContexts: contexts, selectedProjectContext: undefined,
+    workspace: { groups: [], projects: [{ id: 'project', name: 'Mobile project', groupId: null, sortOrder: 0, source: 'codex' }], worktrees: [{ id: 'wt', projectId: 'project', name: 'Mobile worktree', branch: 'test', status: 'active' }], updatedAt: 1 },
+    onSelectProjectContext: key => { selected = contexts.find(context => context.key === key); state.selectedProjectContext = selected; draw(); },
+    onOpenTerminal: () => { started = selected?.key; },
+  };
+  const draw = () => flushSync(() => root.render(React.createElement(ViewportHarness, state)));
+  const drawer = () => document.querySelector('.mobile-project-sidebar');
+  const open = async () => { document.querySelector('.mobile-projects-toggle').click(); await pause(40); };
+  draw(); await pause(50);
+  check(getComputedStyle(document.querySelector('.sidebar')).display === 'none', 'Phone hides desktop sidebar');
+  check(document.querySelector('.mobile-projects-toggle').getBoundingClientRect().width > 0, 'Phone project button exists with zero terminals');
+  await open();
+  check(drawer()?.getBoundingClientRect().width > 100, 'Phone opens visible project tree');
+  check(drawer().closest('.drawer').getBoundingClientRect().right <= innerWidth + 1, 'Project drawer fits phone width');
+  check(drawer().querySelector('.new-chat-button').disabled, 'No selected project disables launch');
+  drawer().querySelector('.web-tree-label').click(); await pause(30);
+  check(selected?.key === 'project', 'Project selection reaches existing callback');
+  drawer().querySelector('.web-tree-worktree-main').click(); await pause(30);
+  check(selected?.key === 'worktree', 'Worktree selection reaches existing callback');
+  drawer().querySelector('.new-chat-button').click(); await pause(30);
+  check(started === 'worktree' && drawer(), 'Launch uses worktree context and keeps drawer until terminal arrives');
+  state.terminalTabs = [{ sessionId: 'created', contextKey: 'worktree', status: 'running', controlMode: 'desktop' }];
+  state.terminalSessionId = 'created'; draw(); await pause(80);
+  check(!drawer(), 'Running terminal snapshot closes project drawer');
+  await open(); drawer().querySelector('.new-chat-button').click(); await pause(40);
+  check(!drawer(), 'Opening existing terminal closes drawer');
+  state.terminalTabs = []; state.terminalSessionId = undefined;
+  state.selectedDevice = { ...device, status: 'offline' }; draw(); await pause(30); await open();
+  check(drawer().querySelector('.new-chat-button').disabled && drawer().textContent.includes('Mobile project'), 'Offline projects remain browsable while launch disabled');
+  document.querySelector('.drawer > header button').click(); await pause(30);
+  check(!drawer(), 'Close button dismisses tree');
+  state.selectedDevice = device; state.socketState = 'closed'; draw(); await pause(20); await open();
+  check(drawer().querySelector('.new-chat-button').disabled, 'Disconnected browser cannot launch');
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await pause(30);
+  state.socketState = 'open'; state.workspace = { groups: [], projects: [], worktrees: [], updatedAt: 2 }; state.projectContexts = []; state.selectedProjectContext = undefined;
+  state.t = key => translate('en-US', key); draw(); await pause(30); await open();
+  check(document.querySelector('.drawer h2').textContent === 'Projects', 'English project drawer label');
+  check(drawer().querySelector('.new-chat-button').disabled && drawer().querySelector('.secondary-button'), 'Empty projects retain disabled launch and refresh');
+  document.querySelector('.overlay').dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await pause(30);
+  check(!drawer(), 'Backdrop dismisses project drawer');
+}
 window.runKeyboard = async () => {
   try {
     const visual = window.visualViewport;

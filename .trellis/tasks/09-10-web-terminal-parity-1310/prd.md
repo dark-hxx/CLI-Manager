@@ -1,4 +1,12 @@
 # 1.3.10 Web terminal parity
+
+## Mobile project tree correction
+
+Approved: phone header folder button opens the existing project/Worktree tree in a dismissible drawer. Available with zero terminals. Select context then launch, dismiss when a new terminal runs or when selecting an existing terminal. Retain desktop sidebar at >=768px. Browse cached projects offline, disable launch while disconnected, refresh empty snapshots, disable mobile tree dragging to allow scrolling. Build Web frontend assets now; installer embedding deferred by user. Paths and cursor keys remain.
+
+Root cause: below768px the sidebar is hidden with no alternate project entry. Touchpoints: Workbench drawer and launch callbacks, ProjectSidebar reuse, styles and existing bilingual keys. ProjectTree/start API/desktop runtime unchanged. Validate narrow/wide, empty/nonempty, project/Worktree, offline, close/reopen and launch completion. Focus/tray/split/WSL/hooks use unchanged launch chain.
+
+GitNexus unavailable; refreshed codebase-memory and inbound traces, source and Web contract review used instead. ProjectSidebar inbound Workbench labelled CRITICAL (direct caller); JSX Workbench caller confirmed in App.tsx. Scope remains frontend presentation.
 User authorized task creation and implementation, including subagent display parity.
 - Desktop-owned terminal: preserve PTY grid, contain width and height, no automatic magnification. Input row stays visible when subagent splits narrow the parent.
 - Web-owned terminal: normal font and fit to browser; retain historical replay grids.

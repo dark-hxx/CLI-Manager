@@ -136,7 +136,18 @@ button:focus-visible, textarea:focus-visible { outline: 3px solid color-mix(in s
 .icon-button { width: 44px; height: 44px; display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 11px; background: var(--surface); cursor: pointer; transition: color 160ms ease, border-color 160ms ease, background 160ms ease; }
 .icon-button:hover { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, var(--border)); background: var(--primary-soft); }
 
-.mobile-header { height: 76px; position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: 44px 1fr 44px; align-items: center; padding: 0 18px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(16px); }
+.mobile-header { height: 76px; position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: 44px minmax(0, 1fr) 44px 44px; align-items: center; padding: 0 10px; border-bottom: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(16px); }
+.mobile-header > div { order: 1; min-width: 0; overflow: hidden; }
+.mobile-header > div strong { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mobile-header .mobile-projects-toggle { order: 2; }
+.mobile-header > button:last-child { order: 3; }
+.drawer:has(.mobile-project-sidebar) { width: min(420px, 100%); display: flex; flex-direction: column; padding-bottom: max(20px, env(safe-area-inset-bottom)); }
+.mobile-project-sidebar.sidebar { display: flex; flex: 1; flex-direction: column; min-height: 0; height: auto; position: static; border: 0; }
+.mobile-project-sidebar .device-line { flex-wrap: wrap; overflow-wrap: anywhere; }
+.mobile-project-sidebar .project-tree { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; touch-action: pan-y; }
+.mobile-project-sidebar .sidebar-footer { display: none; }
+.mobile-project-sidebar .web-tree-quick-action { opacity: 1; min-height: 44px; }
+.mobile-project-sidebar .web-tree-label, .mobile-project-sidebar .web-tree-worktree-main, .mobile-project-sidebar .web-tree-chevron { min-height: 44px; }
 .mobile-header > div { display: grid; justify-items: center; gap: 2px; }
 .mobile-header strong { font-size: 18px; }
 .mobile-header span:not(.status-dot) { color: var(--muted); font-size: 13px; }
