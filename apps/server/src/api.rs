@@ -21,6 +21,7 @@ const ENABLED_OPERATION_KINDS: &[&str] = &[
     "conversation.start",
     "conversation.prompt",
     "conversation.history",
+    "terminal.attach_image",
     "project.tree.reorder",
     "project.start",
     "project.action",
@@ -583,6 +584,13 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "operation payload is too large",
         ));
     }
+    if request.kind == "terminal.attach_image" {
+        let data = payload.get("dataBase64").and_then(Value::as_str).filter(|value| !value.is_empty()).ok_or_else(|| AppError::bad_request("invalid_operation_payload", "dataBase64 is required"))?;
+        if data.len() > 240_000 || payload.get("sessionId").and_then(Value::as_str).is_none_or(|value| value.is_empty()) {
+            return Err(AppError::bad_request("invalid_operation_payload", "invalid image upload payload"));
+        }
+    }
+
     if matches!(
         request.kind.as_str(),
         "conversation.start" | "conversation.prompt"
@@ -614,6 +622,13 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             ));
         }
     }
+    if request.kind == "terminal.attach_image" {
+        let data = payload.get("dataBase64").and_then(Value::as_str).filter(|value| !value.is_empty()).ok_or_else(|| AppError::bad_request("invalid_operation_payload", "dataBase64 is required"))?;
+        if data.len() > 240_000 || payload.get("sessionId").and_then(Value::as_str).is_none_or(|value| value.is_empty()) {
+            return Err(AppError::bad_request("invalid_operation_payload", "invalid image upload payload"));
+        }
+    }
+
     if matches!(
         request.kind.as_str(),
         "conversation.start" | "conversation.prompt" | "conversation.history"
@@ -670,6 +685,7 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
 fn operation_capability(kind: &str) -> &'static str {
     match kind.split_once('.').map(|(prefix, _)| prefix) {
         Some("conversation") => "conversation",
+        Some("terminal") => "conversation",
         Some("project") => "project.management",
         Some("ssh") => "ssh.management",
         Some("file") => "file.management",

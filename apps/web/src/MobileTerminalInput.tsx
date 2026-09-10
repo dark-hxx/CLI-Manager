@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, ImagePlus } from "lucide-react";
 import type { TranslationKey } from "./i18n";
 
 const TOOLBAR_COLLAPSED_KEY = "cli-manager.web.mobile-toolbar-collapsed";
@@ -15,9 +15,11 @@ type Props = {
   onFocus: () => void;
   onPaste: (text: string) => void;
   onKey: (key: string) => void;
+  onImageUpload: (file: File) => void;
+  onCollapsedChange?: (collapsed: boolean) => void;
 };
 
-export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Props) {
+export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey, onImageUpload, onCollapsedChange }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [toolbarCollapsed, setToolbarCollapsed] = useState(initialToolbarCollapsed);
   const [draft, setDraft] = useState("");
@@ -25,6 +27,7 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
   const [directionPosition, setDirectionPosition] = useState<{ left: number; top: number } | null>(null);
   const directionButton = useRef<HTMLButtonElement>(null);
   const directionPad = useRef<HTMLDivElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const directionId = useId();
   useEffect(() => { if (!enabled) setDirectionPosition(null); }, [enabled]);
   useEffect(() => {
@@ -36,6 +39,7 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
     const frame = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
     return () => cancelAnimationFrame(frame);
   }, [toolbarCollapsed]);
+  useEffect(() => { onCollapsedChange?.(toolbarCollapsed); }, [toolbarCollapsed, onCollapsedChange]);
   useEffect(() => {
     if (!directionPosition) return;
     const dismiss = (event: PointerEvent) => {
@@ -72,6 +76,7 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
       <button className="mobile-terminal-input-collapse" type="button" onClick={() => setToolbarCollapsed(true)}
         aria-label={t("mobileToolbarCollapse")} title={t("mobileToolbarCollapse")}><ChevronDown size={20} /></button>
       <button type="button" disabled={!enabled} onClick={onFocus} aria-label={t("mobileKeyboard")}>{t("mobileKeyboard")}</button>
+      <button type="button" disabled={!enabled} onClick={() => imageInput.current?.click()} aria-label={t("mobileUploadImage")} title={t("mobileUploadImage")}><ImagePlus size={17} /></button>
       <button type="button" disabled={!enabled} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t("mobileFallback")}</button>
       {([
         ["mobileTab", "\t", null], ["mobileEscape", "\x1b", null], ["mobileInterrupt", "\x03", null],

@@ -15,6 +15,7 @@ import { webDeviceApi, type WebDeviceOperation } from "./webDevice";
 
 const MANAGEMENT_KINDS = new Set([
   "project.tree.reorder",
+  "terminal.attach_image",
   "project.start",
   "project.action",
   "ssh.hosts.list", "ssh.client_status", "ssh.test_connection", "ssh.check_path", "ssh.list_directories",
@@ -789,6 +790,13 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
       return;
     }
     if (operation.kind === "ssh.check_path" || operation.kind === "ssh.list_directories") requiredString(payload, "path");
+    return;
+  }
+
+  if (operation.kind === "terminal.attach_image") {
+    requiredString(payload, "sessionId", 128);
+    requiredString(payload, "dataBase64", 240_000);
+    requiredString(payload, "fileName", 255);
     return;
   }
 

@@ -1,3 +1,4 @@
+import { buildWebSubagentSnapshots } from "../lib/webSubagentSnapshot";
 import { useEffect } from "react";
 import { publishWebTerminalBatch } from "../lib/webTerminalBackpressure";
 import { listen } from "@tauri-apps/api/event";
@@ -498,18 +499,18 @@ async function drainOperations() {
   }
 }
 
-async function publishWorkspace() {
+async function publishWorkspace(workspaceOnly = false) {
   try {
     const projectStore = useProjectStore.getState();
     if (!projectStore.loaded) await projectStore.fetchAll("startup");
     const status = await webDeviceApi.getStatus();
     if (!status.paired || !status.connected || !status.profile) return;
-    if (!webHistoryLoaded) {
+    if (!workspaceOnly && !webHistoryLoaded) {
       await useHistoryStore.getState().loadSessions({ background: true });
       webHistoryLoaded = true;
     }
     const { groups, projects, worktrees } = useProjectStore.getState();
-    const sessions = useHistoryStore.getState().sessions;
+    const sessions = workspaceOnly ? [] : useHistoryStore.getState().sessions;
     const publishedSessions: WebHistorySessionSummary[] = sessions.map((session) => {
       const sessionCwd = session.cwd?.trim() || "";
       const worktree = sessionCwd
@@ -538,10 +539,13 @@ async function publishWorkspace() {
         freshness: "live",
       };
     });
+    const terminalState = useTerminalStore.getState();
+    const terminals = terminalState.sessions
+      .filter((session) => (!session.kind || session.kind === "pty") && session.projectId && session.environmentType !== "ssh" && !session.remoteHandoff)
+      .map((session) => ({ sessionId: session.id, projectId: session.projectId!, worktreeId: session.worktreeId ?? null, title: session.title }));
     const workspace: WebWorkspaceSnapshot = {
-      terminals: useTerminalStore.getState().sessions
-        .filter((session) => (!session.kind || session.kind === "pty") && session.projectId && session.environmentType !== "ssh" && !session.remoteHandoff)
-        .map((session) => ({ sessionId: session.id, projectId: session.projectId!, worktreeId: session.worktreeId ?? null, title: session.title })),
+      terminals,
+      subagents: buildWebSubagentSnapshots(terminalState.sessions, terminalState.subagentTranscripts, new Set(terminals.map((terminal) => terminal.sessionId))),
       groups: groups.map((group) => ({
         id: group.id,
         name: group.name,
@@ -573,7 +577,7 @@ async function publishWorkspace() {
       })),
       updatedAt: Date.now(),
     };
-    await webDeviceApi.publishWorkspace(workspace, publishedSessions);
+    await webDeviceApi.publishWorkspace(workspace, publishedSessions, workspaceOnly);
   } catch (caught) {
     logWarn("Failed to publish Web device workspace", caught);
   }
@@ -598,10 +602,15 @@ export function useWebDeviceBridge(ready: boolean) {
       workspacePublishTimer = window.setTimeout(() => void publishWorkspace(), 300);
     });
     const workspaceTimer = window.setInterval(() => void publishWorkspace(), WORKSPACE_PUBLISH_MS);
+    let transcriptPublishTimer: number | null = null;
     const unsubscribeTerminals = useTerminalStore.subscribe((state, previous) => {
-      if (state.sessions === previous.sessions) return;
-      if (workspacePublishTimer !== null) window.clearTimeout(workspacePublishTimer);
-      workspacePublishTimer = window.setTimeout(() => void publishWorkspace(), 100);
+      if (state.sessions === previous.sessions && state.subagentTranscripts === previous.subagentTranscripts) return;
+      // Do not reset this deadline: continuous transcript chunks must still reach the Web.
+      if (transcriptPublishTimer !== null) return;
+      transcriptPublishTimer = window.setTimeout(() => {
+        transcriptPublishTimer = null;
+        void publishWorkspace(true);
+      }, state.sessions !== previous.sessions ? 100 : 1000);
     });
     return () => {
       polling.stop();
@@ -609,6 +618,7 @@ export function useWebDeviceBridge(ready: boolean) {
       if (workspacePublishTimer !== null) window.clearTimeout(workspacePublishTimer);
       unsubscribeProjects();
       unsubscribeTerminals();
+      if (transcriptPublishTimer !== null) window.clearTimeout(transcriptPublishTimer);
       for (const bridge of terminalBridges.values()) {
         bridge.output();
         bridge.status();

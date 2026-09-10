@@ -85,6 +85,8 @@ export function useAppModel() {
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [error, setError] = useState("");
   const [devices, setDevices] = useState<Device[]>([]);
+  const devicesRef = useRef<Device[]>([]);
+  useEffect(() => { devicesRef.current = devices; }, [devices]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [history, setHistory] = useState<HistorySessionSummary[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
@@ -475,6 +477,8 @@ export function useAppModel() {
         if (message.sequence <= sequenceRef.current) return;
         const payload = message.payload;
         if (payload.type === "device.updated") {
+          // Historical replay is not an authoritative device inventory. Do not resurrect deleted/stale devices during initial load.
+          if (message.sequence <= replayHighWater && !devicesRef.current.some((device) => device.id === payload.device.id)) return;
           setDevices((current) => {
             const found = current.some((device) => device.id === payload.device.id);
             return found
@@ -848,6 +852,24 @@ export function useAppModel() {
     }
   };
 
+  const submitTerminalImage = async (sessionId: string, file: File) => {
+    let upload = file;
+    if (upload.size > 180_000) {
+      const bitmap = await createImageBitmap(upload);
+      const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+      const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.round(bitmap.width * scale)); canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height); bitmap.close();
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.72));
+      if (!blob || blob.size > 180_000) throw new Error("image_too_large_for_web_upload");
+      upload = new File([blob], "web-image.jpg", { type: "image/jpeg" });
+    }
+    const bytes = new Uint8Array(await upload.arrayBuffer());
+    if (bytes.byteLength > 180_000) throw new Error("image_too_large_for_web_upload");
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000) binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    await submitManagementOperation("terminal.attach_image", { sessionId, fileName: upload.name || "web-image.jpg", dataBase64: btoa(binary) });
+  };
+
   const openTerminal = async () => {
     if (!selectedDevice || selectedDevice.status !== "online" || !selectedProjectContext) return;
     const existing = terminalTabsRef.current.find((tab) => tab.contextKey === selectedProjectContext.key);
@@ -885,7 +907,7 @@ export function useAppModel() {
     checkAuth, login, logout, loadWorkspace, claimPairing, removeDevice, setPairing,
     selectDevice, selectSession, selectProjectContext, selectTerminalTab,
     setDraft: (value: string) => { setDraft(value); localStorage.setItem(currentDraftKey, value); },
-    sendPrompt, submitManagementOperation, openTerminal,
+    sendPrompt, submitManagementOperation, submitTerminalImage, openTerminal,
     closeTerminal,
     sendTerminalInput: (data: string, sessionId = terminalSessionRef.current) => Boolean(selectedDeviceId && sessionId && socketRef.current?.sendTerminal(selectedDeviceId, { type: "input", sessionId, data })),
     resizeTerminal: (cols: number, rows: number, sessionId = terminalSessionRef.current) => Boolean(selectedDeviceId && sessionId && socketRef.current?.sendTerminal(selectedDeviceId, { type: "resize", sessionId, cols, rows })),

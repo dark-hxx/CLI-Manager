@@ -1,4 +1,4 @@
-﻿@import "tailwindcss";
+@import "tailwindcss";
 
 :root {
   color-scheme: light;
@@ -591,6 +591,8 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
   .mobile-terminal-input-toolbar .mobile-terminal-enter { min-width: 60px; color: var(--primary); border-color: var(--primary); }
   .mobile-terminal-input.collapsed { position: absolute; z-index: 18; right: 10px; bottom: 10px; display: block; width: 44px; height: 44px; padding: 0; overflow: visible; border: 0; border-radius: 8px; background: transparent; }
   .mobile-terminal-input.collapsed .mobile-terminal-input-expand { width: 44px; height: 44px; min-width: 44px; padding: 0; display: grid; place-items: center; border-color: var(--primary); color: var(--primary); background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: 0 3px 14px #0007; }
+.mobile-controls-collapsed .bottom-nav { display: none; }
+.mobile-controls-collapsed .main-panel { padding-bottom: 0; }
   .mobile-terminal-input-collapse { width: 44px; padding: 0 !important; display: grid; place-items: center; }
   .web-terminal-shell:has(.mobile-terminal-input.collapsed) .web-terminal-scroll-bottom { bottom: 62px; }
   .mobile-terminal-input-fallback { display: flex; align-items: flex-start; gap: 4px; }

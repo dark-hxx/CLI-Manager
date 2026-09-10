@@ -201,7 +201,7 @@ export function HostHome(props: HostHomeProps) {
                         </span>
                         <span className="host-card-body">
                           <span className="host-card-heading">
-                            <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` ? ${clientKindLabel(device, props.t)}` : ""}</strong>
+                            <strong className="host-card-name">{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</strong>
                             <span className={`host-status ${device.status}`}><span className={`status-dot ${device.status === "online" ? "" : "warning"}`} />{props.t(device.status === "online" ? "online" : "offline")}</span>
                           </span>
                           <span className="host-facts">
@@ -281,6 +281,7 @@ type WorkbenchProps = {
   onCloseTerminal: (sessionId?: string) => void;
   onTerminalInput: (data: string, sessionId?: string) => boolean;
   onTerminalResize: (cols: number, rows: number, sessionId?: string) => boolean;
+  onSubmitTerminalImage: (sessionId: string, file: File) => void;
   onClaimPairing: (code: string) => Promise<void>;
   onResetPairing: () => void;
   onSubmitManagement: (kind: string, payload: JsonObject) => Promise<Operation>;
@@ -295,6 +296,7 @@ export function Workbench(props: WorkbenchProps) {
   const [historyContext, setHistoryContext] = useState<ProjectContext>();
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [projectsOpen, setProjectsOpen] = useState(false);
+  const [mobileControlsCollapsed, setMobileControlsCollapsed] = useState(false);
   const projectDrawerTabs = useRef<string[]>([]);
   const closeProjects = useCallback(() => setProjectsOpen(false), []);
   useEffect(() => {
@@ -313,7 +315,7 @@ export function Workbench(props: WorkbenchProps) {
   ) ?? selectedProjectContext;
   const syncText = props.latestSyncAt === null ? t("unknown") : formatServerTime(props.latestSyncAt);
   return (
-    <div className={`app-shell${detailsOpen ? " details-open" : ""}`}>
+    <div className={`app-shell${detailsOpen ? " details-open" : ""}${mobileControlsCollapsed ? " mobile-controls-collapsed" : ""}`}>
       <a className="skip-link" href="#conversation-main">{t("skipToContent")}</a>
       <ProjectSidebar {...props} onPair={() => setPairingOpen(true)} onOpenPanel={(panel, contextKey) => {
         props.onSelectProjectContext(contextKey);
@@ -332,7 +334,7 @@ export function Workbench(props: WorkbenchProps) {
               <label className="sr-only" htmlFor="device-select">{t("devices")}</label>
               <select id="device-select" className="device-select" value={selectedDevice?.id ?? ""} onChange={(event) => props.onSelectDevice(event.target.value)} disabled={props.devices.length === 0}>
                 {props.devices.length === 0 && <option value="">{t("noDevice")}</option>}
-                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{clientKindLabel(device, props.t) ? ` ? ${clientKindLabel(device, props.t)}` : ""}</option>)}
+                {props.devices.map((device) => <option key={device.id} value={device.id}>{device.name}{clientKindLabel(device, props.t) ? ` · ${clientKindLabel(device, props.t)}` : ""}</option>)}
               </select>
               <DeviceLine device={selectedDevice} t={t} socketState={props.socketState} />
             </div>
@@ -405,7 +407,7 @@ export function Workbench(props: WorkbenchProps) {
                 const status = props.socketState !== "open" ? "disconnected" : selectedDevice?.status !== "online" ? "offline" : tab.status;
                 return (
                   <div className={`web-terminal-frame${active ? " active" : ""}`} key={tab.sessionId} role="tabpanel" aria-hidden={!active} inert={!active}>
-                    <WebTerminal t={t} active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} source={props.projectContexts.find((context) => context.key === tab.contextKey)?.source} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
+                    <WebTerminal t={t} active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} source={props.projectContexts.find((context) => context.key === tab.contextKey)?.source} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} onImageUpload={(file) => props.onSubmitTerminalImage(tab.sessionId, file)} onMobileToolbarCollapsed={(collapsed) => { if (active) setMobileControlsCollapsed(collapsed); }} />
                     <SubagentPanel agents={(props.workspace?.subagents ?? []).filter((agent) => agent.parentSessionId === tab.sessionId)} active={active} t={t} />
                   </div>
                 );
@@ -518,7 +520,7 @@ function DeviceLine({ device, t, socketState }: { device?: Device; t: T; socketS
 }
 
 function DeviceCard({ device, t, syncText }: { device: Device; t: T; syncText: string }) {
-  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{clientKindLabel(device, t) || t("unknown")} ? {device.appVersion}</dd><dt>{t("softwareId")}</dt><dd>{device.clientId}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
+  return <div className="device-card"><div><Monitor size={22} /><strong>{device.name}</strong></div><dl><dt>{t("status")}</dt><dd>{t(device.status === "online" ? "online" : "offline")}</dd><dt>{t("platform")}</dt><dd>{device.platform}</dd><dt>{t("appVersion")}</dt><dd>{clientKindLabel(device, t) || t("unknown")} · {device.appVersion}</dd><dt>{t("softwareId")}</dt><dd>{device.clientId}</dd><dt>{t("lastSync")}</dt><dd>{syncText}</dd></dl></div>;
 }
 
 function EmptyDevice({ t, onPair }: { t: T; onPair: () => void }) {

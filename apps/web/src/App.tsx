@@ -133,6 +133,7 @@ export function App() {
       onClaimPairing={model.claimPairing}
       onResetPairing={() => model.setPairing({ status: "idle" })}
       onSubmitManagement={model.submitManagementOperation}
+      onSubmitTerminalImage={(sessionId, file) => { void model.submitTerminalImage(sessionId, file); }}
     />
   );
 }

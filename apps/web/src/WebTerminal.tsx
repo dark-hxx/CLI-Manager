@@ -23,6 +23,8 @@ type WebTerminalProps = {
   t?: (key: TranslationKey) => string;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
+  onImageUpload: (file: File) => void;
+  onMobileToolbarCollapsed?: (collapsed: boolean) => void;
 };
 
 type RenderBatch = {
@@ -77,7 +79,7 @@ function appendFrame(batches: RenderBatch[], frame: TerminalOutputFrame, reset =
   });
 }
 
-export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, source, errorLabel, scrollLabel, onInput, onResize, t = (key) => translate("zh-CN", key) }: WebTerminalProps) {
+export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, source, errorLabel, scrollLabel, onInput, onResize, onImageUpload, onMobileToolbarCollapsed, t = (key) => translate("zh-CN", key) }: WebTerminalProps) {
   const [display, setDisplay] = useState(readDisplay);
   const displayRef = useRef(display);
   displayRef.current = display;
@@ -456,7 +458,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     <MobileTerminalInput enabled={active && status === "running"} t={t}
       onFocus={() => { if (enabledRef.current) terminalRef.current?.focus(); }}
       onPaste={(text) => { if (enabledRef.current) terminalRef.current?.paste(text); }}
-      onKey={(key) => { if (enabledRef.current) inputRef.current(key); }} />
+      onKey={(key) => { if (enabledRef.current) inputRef.current(key); }}
+      onImageUpload={onImageUpload}
+      onCollapsedChange={onMobileToolbarCollapsed} />
     {active && scrolledAway && <button className="web-terminal-scroll-bottom" type="button" onClick={() => terminalRef.current?.scrollToBottom()} aria-label={scrollLabel} title={scrollLabel}><ArrowDown size={16} aria-hidden="true" /></button>}
   </div>;
 }
