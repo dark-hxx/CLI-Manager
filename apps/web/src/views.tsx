@@ -25,17 +25,20 @@ import {
   Send,
   Settings,
   Shield,
+  SquareTerminal,
   Sun,
   Wifi,
   WifiOff,
   X,
 } from "lucide-react";
 import { FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
-import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TimelineItem, WorkspaceSnapshot } from "./domain";
+import type { Device, HistorySessionSummary, JsonObject, Operation, OperationStatus, PairingState, ProjectContext, TerminalChunk, TerminalControlMode, TimelineItem, WorkspaceSnapshot } from "./domain";
 import type { TranslationKey } from "./i18n";
 import { deviceWallpaperUrl } from "./webClient";
+import { WebTerminal } from "./WebTerminal";
 import { isManagementOperation, ManagementPanel } from "./ManagementPanel";
 import { ProjectTree } from "./ProjectTree";
+import { BrowserAccess, MobileQr } from "./BrowserAccess";
 
 type T = (key: TranslationKey) => string;
 
@@ -92,6 +95,7 @@ export function GlobalErrorPage({ t, error, onRetry }: { t: T; error: string; on
 }
 
 type HostHomeProps = {
+  restricted: boolean;
   t: T;
   userName: string;
   devices: Device[];
@@ -109,10 +113,12 @@ type HostHomeProps = {
 };
 
 export function HostHome(props: HostHomeProps) {
+  const [mobileDeviceId, setMobileDeviceId] = useState<string>();
   const [pairingOpen, setPairingOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | Device["status"]>("all");
   const [removingDeviceId, setRemovingDeviceId] = useState<string>();
+  const [pendingRemoval, setPendingRemoval] = useState<Device>();
   const devices = [...props.devices].sort((left, right) => {
     if (left.status !== right.status) return left.status === "online" ? -1 : 1;
     return (serverTimestamp(right.lastSeenAt) ?? 0) - (serverTimestamp(left.lastSeenAt) ?? 0);
@@ -167,7 +173,7 @@ export function HostHome(props: HostHomeProps) {
                     <input id="host-device-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder={props.t("searchDevices")} />
                     {query && <button type="button" onClick={() => setQuery("")} aria-label={props.t("clearSearch")}><X size={15} /></button>}
                   </div>
-                  <button className="secondary-button host-pair-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={17} />{props.t("pairDevice")}</button>
+                  {!props.restricted && <button className="secondary-button host-pair-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={17} />{props.t("pairDevice")}</button>}
                   <div className="host-filter" aria-label={props.t("filterByStatus")}>
                     {(["all", "online", "offline"] as const).map((status) => (
                       <button className={statusFilter === status ? "active" : ""} type="button" key={status} onClick={() => setStatusFilter(status)} aria-pressed={statusFilter === status}>
@@ -207,17 +213,18 @@ export function HostHome(props: HostHomeProps) {
                           <span className="host-card-open">{props.t("openHost")}<ChevronRight size={17} /></span>
                         </span>
                       </button>
-                      <span className="host-card-actions">
+                      {!props.restricted && <span className="host-card-actions">
+                        <button className="host-card-remove" type="button" aria-label={props.t("mobileQr")} onClick={() => setMobileDeviceId(device.id)}><Wifi size={17} /></button>
                         <button
                           className="host-card-remove"
                           type="button"
                           disabled={removingDeviceId === device.id}
                           aria-label={`${props.t("removeDevice")} ${device.name}`}
-                          onClick={(event) => { event.preventDefault(); event.stopPropagation(); void removeDevice(device); }}
+                          onClick={(event) => { event.preventDefault(); event.stopPropagation(); setPendingRemoval(device); }}
                         >
                           <Trash2 size={17} aria-hidden="true" />
                         </button>
-                      </span>
+                      </span>}
                     </div>
                   ))}
                 </div>
@@ -227,12 +234,18 @@ export function HostHome(props: HostHomeProps) {
         )}
       </section>
 
+      {!props.restricted && <BrowserAccess t={props.t} />}
+      {pendingRemoval && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !removingDeviceId) setPendingRemoval(undefined); }}><div className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="remove-device-title"><div className="confirm-dialog-icon"><Trash2 size={22} /></div><h2 id="remove-device-title">{props.t("removeDevice")}</h2><p>{props.t("removeDeviceConfirmation").replace("{name}", pendingRemoval.name)}</p><div className="confirm-dialog-actions"><button className="secondary-button" type="button" onClick={() => setPendingRemoval(undefined)} disabled={Boolean(removingDeviceId)}>{props.t("cancel")}</button><button className="danger-button" type="button" onClick={() => { const device = pendingRemoval; setPendingRemoval(undefined); void removeDevice(device); }} disabled={Boolean(removingDeviceId)}>{removingDeviceId && <LoaderCircle className="spin" size={16} />}{props.t("removeDevice")}</button></div></div></div>}
+      {mobileDeviceId && <OverlayPanel title={props.t("mobileQr")} closeLabel={props.t("close")} onClose={() => setMobileDeviceId(undefined)}><MobileQr t={props.t} deviceId={mobileDeviceId} /></OverlayPanel>}
       {pairingOpen && <OverlayPanel title={props.t("pairDevice")} closeLabel={props.t("close")} onClose={closePairing}><PairingForm t={props.t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
     </main>
   );
 }
 
 type WorkbenchProps = {
+  restricted: boolean;
+  sending: boolean;
+  detailState: "idle" | "loading" | "ready" | "error";
   t: T;
   userName: string;
   devices: Device[];
@@ -242,11 +255,13 @@ type WorkbenchProps = {
   selectedSession?: HistorySessionSummary;
   projectContexts: ProjectContext[];
   selectedProjectContext?: ProjectContext;
+  terminalSessionId?: string;
+  terminalStatus: string;
+  terminalChunks: TerminalChunk[];
+  terminalControlMode: TerminalControlMode;
   timeline: TimelineItem[];
   pairing: PairingState;
   socketState: "connecting" | "open" | "closed";
-  draft: string;
-  composerMessage: string;
   latestSyncAt: number | null;
   resolvedTheme: "light" | "dark";
   onTheme: () => void;
@@ -257,8 +272,9 @@ type WorkbenchProps = {
   onSelectDevice: (id: string) => void;
   onSelectSession: (id?: string) => void;
   onSelectProjectContext: (key: string) => void;
-  onDraft: (value: string) => void;
-  onSend: () => void;
+  onOpenTerminal: () => void;
+  onTerminalInput: (data: string) => boolean;
+  onTerminalResize: (cols: number, rows: number) => boolean;
   onClaimPairing: (code: string) => Promise<void>;
   onResetPairing: () => void;
   onSubmitManagement: (kind: string, payload: JsonObject) => Promise<Operation>;
@@ -270,7 +286,7 @@ export function Workbench(props: WorkbenchProps) {
   const [pairingOpen, setPairingOpen] = useState(false);
   const [managementOpen, setManagementOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const canSend = Boolean(props.draft.trim() && selectedDevice?.status === "online" && selectedProjectContext);
+  const canOpenTerminal = Boolean(!props.sending && selectedDevice?.status === "online" && selectedProjectContext);
   const selectedFreshness = selectedSession?.freshness ?? selectedProjectContext?.freshness ?? "stale";
   const syncText = props.latestSyncAt === null ? t("unknown") : formatServerTime(props.latestSyncAt);
   return (
@@ -281,19 +297,7 @@ export function Workbench(props: WorkbenchProps) {
         <header className="desktop-header">
           <div className="context-block">
             <div className="project-line">
-              <label className="sr-only" htmlFor="project-context-select">{t("projectContext")}</label>
-              <select
-                id="project-context-select"
-                className="project-context-select"
-                value={selectedProjectContext?.key ?? ""}
-                onChange={(event) => props.onSelectProjectContext(event.target.value)}
-                disabled={props.projectContexts.length === 0}
-              >
-                {props.projectContexts.length === 0 && <option value="">{t("noProjectContext")}</option>}
-                {props.projectContexts.map((context) => (
-                  <option key={context.key} value={context.key}>{context.projectKey} · {context.source}</option>
-                ))}
-              </select>
+              <strong>{selectedProjectContext ? `${selectedProjectContext.projectName} · ${selectedProjectContext.source}` : t("noProjectContext")}</strong>
               <span>/</span>{selectedSession?.branch ?? selectedProjectContext?.branch ?? t("unknown")}
             </div>
             <div className="device-context-row">
@@ -304,7 +308,7 @@ export function Workbench(props: WorkbenchProps) {
               </select>
               <DeviceLine device={selectedDevice} t={t} socketState={props.socketState} />
             </div>
-            <div className="context-meta"><span>{t("worktree")}: {selectedProjectContext?.cwd ?? t("unknown")}</span><span>CLI: {selectedProjectContext?.source ?? capabilityValue(selectedDevice, "cli:")}</span><span>{t("model")}: {capabilityValue(selectedDevice, "model:")}</span><span>{t("reasoning")}: {capabilityValue(selectedDevice, "reasoning:")}</span><span>{t("permission")}: {capabilityValue(selectedDevice, "permission:")}</span></div>
+            <div className="context-meta"><span>{t("worktree")}: {selectedProjectContext?.projectName ?? t("unknown")}</span><span>CLI: {selectedProjectContext?.source ?? capabilityValue(selectedDevice, "cli:")}</span><span>{t("terminal")}: {terminalStatusLabel(t, props.terminalStatus)}</span></div>
           </div>
           <div className="header-actions">
             <button className="icon-button" type="button" onClick={props.onBackToHosts} aria-label={t("backToHosts")}><ArrowLeft size={20} /></button>
@@ -330,22 +334,23 @@ export function Workbench(props: WorkbenchProps) {
           <button className="icon-button" type="button" onClick={() => setManagementOpen(true)} aria-label={t("management")}><Settings size={22} /></button>
         </header>
 
-        <section className="workspace-content conversation-workspace">
+        <section className="workspace-content terminal-workspace">
           <div className="source-banner" role="status" aria-live="polite">
-            <span className={`source-badge ${selectedFreshness}`}>{t(selectedFreshness === "live" ? "liveData" : selectedFreshness === "cached" ? "cachedData" : "staleData")}</span>
-            <span>{t("lastSync")} {syncText}</span>
+            <span className={`source-badge ${props.terminalStatus === "running" ? "live" : selectedFreshness}`}>{terminalStatusLabel(t, props.terminalStatus)}</span>
+            <span>{props.terminalSessionId ? `${t("terminalSession")}: ${props.terminalSessionId}` : t("terminalNotStarted")}</span>
+            {props.terminalSessionId && <span>{t(props.terminalControlMode === "web" ? "terminalControlWeb" : "terminalControlDesktop")}</span>}
             <span className="socket-state">{t("browserConnection")}: {t(props.socketState === "open" ? "connected" : props.socketState === "connecting" ? "reconnecting" : "disconnected")}</span>
           </div>
           {!selectedDevice ? (
             <EmptyDevice t={t} onPair={() => setPairingOpen(true)} />
-          ) : props.timeline.length === 0 ? (
-            <Welcome t={t} device={selectedDevice} onDraft={props.onDraft} />
+          ) : !selectedProjectContext ? (
+            <TerminalEmpty t={t} canOpen={false} onOpen={props.onOpenTerminal} />
+          ) : props.terminalSessionId ? (
+            <WebTerminal sessionId={props.terminalSessionId} status={props.terminalStatus} chunks={props.terminalChunks} controlMode={props.terminalControlMode} theme={props.resolvedTheme} onInput={props.onTerminalInput} onResize={props.onTerminalResize} />
           ) : (
-            <ConversationTimeline t={t} items={props.timeline} />
+            <TerminalEmpty t={t} canOpen={canOpenTerminal} onOpen={props.onOpenTerminal} />
           )}
         </section>
-
-        <Composer t={t} value={props.draft} disabled={!canSend} offline={selectedDevice?.status !== "online"} message={props.composerMessage} onChange={props.onDraft} onSend={props.onSend} />
       </main>
 
       <aside id="device-details-drawer" className="action-panel" aria-label={t("deviceDetails")} aria-hidden={!detailsOpen}>
@@ -354,22 +359,22 @@ export function Workbench(props: WorkbenchProps) {
           <button className="icon-button" type="button" onClick={() => setDetailsOpen(false)} aria-label={t("close")}><X size={18} /></button>
         </div>
         {selectedDevice ? <DeviceCard device={selectedDevice} t={t} syncText={syncText} /> : <p className="muted">{t("noDeviceHint")}</p>}
-        <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{t("pairDevice")}</button>
+        {!props.restricted && <button className="secondary-button" type="button" onClick={() => setPairingOpen(true)}><Plus size={18} />{t("pairDevice")}</button>}
         <button className="secondary-button" type="button" onClick={() => setManagementOpen(true)}><Settings size={18} />{t("management")}</button>
         <h2>{t("capabilities")}</h2>
         <div className="capability-list">{selectedDevice?.capabilities.length ? selectedDevice.capabilities.map((item) => <span key={item}>{item}</span>) : <span>{t("unknown")}</span>}</div>
       </aside>
 
       <nav className="bottom-nav" aria-label={t("workbench")}>
-        <button className="active" type="button"><MessageCircle size={23} /><span>{t("workbench")}</span></button>
+        <button className="active" type="button"><SquareTerminal size={23} /><span>{t("terminal")}</span></button>
         <button type="button" onClick={() => setHistoryOpen(true)}><History size={23} /><span>{t("history")}</span></button>
-        <button type="button" onClick={() => setPairingOpen(true)}><Monitor size={23} /><span>{t("devices")}</span></button>
+        <button type="button" onClick={props.restricted ? props.onBackToHosts : () => setPairingOpen(true)}><Monitor size={23} /><span>{t("devices")}</span></button>
         <button type="button" onClick={props.onLanguage}><Languages size={23} /><span>{t("language")}</span></button>
         <button type="button" onClick={props.onLogout}><CircleUserRound size={23} /><span>{t("logout")}</span></button>
       </nav>
 
       {historyOpen && <OverlayPanel title={t("history")} closeLabel={t("close")} onClose={() => setHistoryOpen(false)}><HistoryList t={t} items={props.history} selectedId={selectedSession?.sessionId} onSelect={(id) => { props.onSelectSession(id); setHistoryOpen(false); }} /></OverlayPanel>}
-      {pairingOpen && <OverlayPanel title={t("pairDevice")} closeLabel={t("close")} onClose={() => { setPairingOpen(false); props.onResetPairing(); }}><PairingForm t={t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
+      {!props.restricted && pairingOpen && <OverlayPanel title={t("pairDevice")} closeLabel={t("close")} onClose={() => { setPairingOpen(false); props.onResetPairing(); }}><PairingForm t={t} state={props.pairing} onClaim={props.onClaimPairing} /></OverlayPanel>}
       {managementOpen && <OverlayPanel title={t("management")} closeLabel={t("close")} onClose={() => setManagementOpen(false)}><ManagementPanel t={t} capabilities={selectedDevice?.capabilities ?? []} projectContext={selectedProjectContext} operations={props.timeline.filter((item): item is Extract<TimelineItem, { type: "operation" }> => item.type === "operation" && isManagementOperation(item.operation)).map((item) => item.operation)} onSubmit={props.onSubmitManagement} /></OverlayPanel>}
     </div>
   );
@@ -379,12 +384,12 @@ function ProjectSidebar(props: WorkbenchProps & { onPair: () => void }) {
   return (
     <aside className="sidebar project-sidebar" aria-label={props.t("projects")}>
       <div className="sidebar-brand"><AppLogo /><strong>CLI-Manager</strong></div>
-      <button className="new-chat-button" type="button" onClick={() => props.onSelectSession(undefined)}><Plus size={18} /><span>{props.t("newConversation")}</span></button>
+      <button className="new-chat-button" type="button" onClick={props.onOpenTerminal} disabled={!props.selectedProjectContext || props.selectedDevice?.status !== "online"}><Plus size={18} /><span>{props.t("newTerminal")}</span></button>
       <div className="project-tree">
         <div className="side-section-title"><span>{props.t("projects")}</span><span className="count">{props.workspace?.projects.length ?? 0}</span></div>
         <ProjectTree t={props.t} workspace={props.workspace} projectContexts={props.projectContexts} selectedProjectContext={props.selectedProjectContext} dragEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} managementEnabled={Boolean(props.selectedDevice?.status === "online" && props.selectedDevice.capabilities.includes("project.management"))} onSelectProjectContext={props.onSelectProjectContext} onSubmit={props.onSubmitManagement} onReload={props.onRefresh} />
       </div>
-      <div className="sidebar-footer"><button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button><button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
+      <div className="sidebar-footer">{!props.restricted && <button className="footer-row" type="button" onClick={props.onPair}><Monitor size={20} /><span>{props.t("pairDevice")}</span></button>}<button className="account-row" type="button" onClick={props.onLogout}><span className="avatar">{props.userName.slice(0, 1).toUpperCase()}</span><span>{props.userName}</span><LogOut size={16} /></button></div>
     </aside>
   );
 }
@@ -439,22 +444,40 @@ function EmptyDevice({ t, onPair }: { t: T; onPair: () => void }) {
   return <div className="welcome-block"><Monitor size={48} /><h1>{t("noDevice")}</h1><p>{t("noDeviceHint")}</p><button className="primary-button" type="button" onClick={onPair}>{t("pairDevice")}</button></div>;
 }
 
+function TerminalEmpty({ t, canOpen, onOpen }: { t: T; canOpen: boolean; onOpen: () => void }) {
+  return <div className="terminal-empty"><SquareTerminal size={46} /><h1>{t("terminalEmpty")}</h1><p>{canOpen ? t("terminalEmptyHint") : t("selectProjectFirst")}</p><button className="primary-button" type="button" onClick={onOpen} disabled={!canOpen}><SquareTerminal size={18} />{t("openTerminal")}</button></div>;
+}
+
+function terminalStatusLabel(t: T, status: string): string {
+  const keys: Record<string, TranslationKey> = { idle: "terminalIdle", connecting: "terminalConnecting", running: "terminalRunning", exited: "terminalExited", error: "terminalError" };
+  return t(keys[status] ?? "terminalIdle");
+}
+
 function Welcome({ t, device, onDraft }: { t: T; device: Device; onDraft: (value: string) => void }) {
   return <><div className="welcome-block"><AppLogo /><h1>{t("greeting")}</h1><p>{t("greetingQuestion")}</p></div><div className="suggestion-grid">{([["solveProject", "promptSolve", Folder], ["fixIssue", "promptFix", Shield], ["brainstorm", "promptBrainstorm", Bot]] as const).map(([label, prompt, Icon]) => <button className="suggestion-card" type="button" key={label} disabled={device.status !== "online"} onClick={() => onDraft(t(prompt))}><span className="feature-icon blue"><Icon size={24} /></span><span><strong>{t(label)}</strong><small>{device.status === "online" ? t("ready") : t("offlineDraftOnly")}</small></span></button>)}</div></>;
 }
 
 function ConversationTimeline({ t, items }: { t: T; items: TimelineItem[] }) {
-  return <section className="timeline" aria-label={t("conversationTimeline")} aria-live="polite">{items.map((item) => item.type === "prompt" ? <article className="timeline-item prompt-item" key={item.id}><header><MessageCircle size={18} /><strong>{t("you")}</strong><time>{formatServerTime(item.occurredAt)}</time></header><p>{item.text}</p></article> : <OperationCard key={item.id} t={t} item={item} />)}</section>;
+  return <section className="timeline" aria-label={t("conversationTimeline")} aria-live="polite">{items.map((item) => item.type === "operation" ? <OperationCard key={item.id} t={t} item={item} /> : <article className={`timeline-item ${item.type}-item`} key={item.id}><header>{item.type === "prompt" ? <MessageCircle size={18} /> : <Bot size={18} />}<strong>{t(item.type === "prompt" ? "you" : item.type === "assistant" ? "assistant" : "conversationActivity")}</strong><time>{formatServerTime(item.occurredAt)}</time></header><p>{item.text}</p>{item.type === "assistant" && item.streaming && <small>{t("assistantStreaming")}</small>}</article>)}</section>;
 }
 
 function OperationCard({ t, item }: { t: T; item: Extract<TimelineItem, { type: "operation" }> }) {
   const operation = item.operation;
   const terminal = ["succeeded", "failed", "rejected", "timed_out", "canceled"].includes(operation.status);
-  return <article className={`timeline-item operation-item ${operation.status}`}><header>{operation.status === "succeeded" ? <CheckCircle2 size={18} /> : terminal ? <AlertTriangle size={18} /> : <LoaderCircle className="spin" size={18} />}<strong>{t("operation")}</strong><code>{operation.id}</code></header><div className="operation-grid"><span>{t("operationKind")}</span><strong>{operation.kind}</strong><span>{t("operationStatus")}</span><strong>{operationStatusLabel(t, operation.status)}</strong></div>{operation.error && <p className="form-error" role="alert">{operation.error.message}</p>}<small>{t("updatedAt")} {formatServerTime(operation.updatedAt)}</small></article>;
+  const runtimeErrors: Record<string, TranslationKey> = { conversation_owned_by_terminal: "runtimeOwned", history_context_not_found: "runtimeContext", unsupported_web_approval_override: "runtimeApprovalOverride", cli_timeout: "runtimeTimeout", cli_spawn_failed: "runtimeSpawn", cli_approval_denied: "runtimeDenied", cli_turn_failed: "runtimeFailed", cli_exited: "runtimeExited", cli_rpc_failed: "runtimeRpc" };
+  const errorKey = operation.error && (runtimeErrors[operation.error.code] ?? runtimeErrors[operation.error.message.split(":")[0].trim()]);
+  return <article className={`timeline-item operation-item ${operation.status}`}><header>{operation.status === "succeeded" ? <CheckCircle2 size={18} /> : terminal ? <AlertTriangle size={18} /> : <LoaderCircle className="spin" size={18} />}<strong>{t("operation")}</strong><code>{operation.id}</code></header><div className="operation-grid"><span>{t("operationKind")}</span><strong>{operation.kind}</strong><span>{t("operationStatus")}</span><strong>{operationStatusLabel(t, operation.status)}</strong></div>{operation.error && <><p className="form-error" role="alert">{errorKey ? t(errorKey) : localizedError(t, operation.error.code)}</p><details><summary>{t("runtimeDiagnostics")}</summary><p>{operation.error.message}</p></details></>}<small>{t("updatedAt")} {formatServerTime(operation.updatedAt)}</small></article>;
 }
 
 function Composer({ t, value, disabled, offline, message, onChange, onSend }: { t: T; value: string; disabled: boolean; offline: boolean; message: string; onChange: (value: string) => void; onSend: () => void }) {
-  const submit = (event: FormEvent) => { event.preventDefault(); onSend(); };
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const update = () => document.documentElement.style.setProperty("--keyboard-height", `${Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)}px`);
+    viewport.addEventListener("resize", update); viewport.addEventListener("scroll", update); update();
+    return () => { viewport.removeEventListener("resize", update); viewport.removeEventListener("scroll", update); document.documentElement.style.removeProperty("--keyboard-height"); };
+  }, []);
+  const submit = (event: FormEvent) => { event.preventDefault(); if (!disabled) onSend(); };
   return <form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="task-composer">{t("composerLabel")}</label><textarea id="task-composer" value={value} onChange={(event) => onChange(event.target.value)} placeholder={offline ? t("offlineComposerPlaceholder") : t("composerPlaceholder")} rows={3} /><div className="composer-toolbar"><span className={`composer-state ${offline ? "offline" : "online"}`}>{offline ? <WifiOff size={17} /> : <Radio size={17} />}{t(offline ? "offlineDraftOnly" : "ready")}</span><button className="send-button" type="submit" aria-label={t("send")} disabled={disabled}><Send size={20} /></button></div>{message && <p className="composer-feedback" role="alert">{localizedError(t, message)}</p>}</form>;
 }
 

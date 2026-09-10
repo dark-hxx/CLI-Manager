@@ -1848,14 +1848,18 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
     };
     // Restore the local display before subscribing so the PTY stream cannot race the snapshot.
     let attachOutputTimer: number | null = null;
-    void initialDisplayReady.then(() => {
-      if (terminalRef.current !== terminal) return;
-      attachOutputTimer = window.setTimeout(() => {
-        attachOutputTimer = null;
+    if (initialTerminalOutput) {
+      void initialDisplayReady.then(() => {
         if (terminalRef.current !== terminal) return;
-        attachOutput();
-      }, 0);
-    });
+        attachOutputTimer = window.setTimeout(() => {
+          attachOutputTimer = null;
+          if (terminalRef.current !== terminal) return;
+          attachOutput();
+        }, 0);
+      });
+    } else {
+      attachOutput();
+    }
     const detachViewport = attachViewport(terminal);
     displayDisposables.push({ dispose: detachViewport });
     displayDisposables.push(terminal.onRender((range) => {
