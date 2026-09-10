@@ -126,7 +126,7 @@ window.runNarrow = async () => {
     render(); await pause(100);
     check(innerWidth === 390, 'Narrow browser viewport applied');
     check(getComputedStyle(document.querySelector('.source-banner')).display === 'none', 'Mobile hides the verbose terminal status card');
-    check(document.querySelector('.mobile-terminal-context')?.textContent.includes('Project A') && document.querySelector('.mobile-terminal-context')?.textContent.includes('Project-A'), 'Mobile keeps compact project and cwd identification');
+    check(!document.querySelector('.mobile-terminal-context'), 'Mobile removes redundant project and cwd block');
     check(panel()?.classList.contains('collapsed'), 'Narrow child panel starts collapsed');
     const collapsedHeight = parentPane().getBoundingClientRect().height;
     panel().querySelector('header button').click(); await pause(150);
@@ -217,7 +217,7 @@ async function verifyDirectionPad() {
   check(pad?.querySelectorAll('button').length === 4, 'Single direction button opens four arrows');
   const bounds = pad.getBoundingClientRect();
   check(bounds.left >= 0 && bounds.right <= innerWidth && bounds.top >= 0, 'Direction pad fits viewport');
-  document.querySelector('.mobile-terminal-input-tools button:nth-child(2)').click(); await pause(30);
+  [...document.querySelectorAll('.mobile-terminal-input-tools button')].find(button => button.textContent === '备用输入').click(); await pause(30);
   const input = document.querySelector('textarea'); input.focus();
   for (const direction of ['up', 'left', 'right', 'down']) {
     const button = pad.querySelector('.direction-' + direction);
@@ -236,6 +236,15 @@ async function verifyDirectionPad() {
   check(toggle().textContent === 'Arrows', 'Direction control has English label');
   toggle().click(); await pause(20); window.dispatchEvent(new Event('resize')); await pause(20);
   check(!document.querySelector('.mobile-direction-pad'), 'Viewport change dismisses pad');
+  lang = 'zh-CN'; draw(); await pause(20);
+  document.querySelector('.mobile-terminal-input-collapse').click(); await pause(30);
+  check(document.querySelector('.mobile-terminal-input.collapsed') && !document.querySelector('.mobile-terminal-input-toolbar'), 'Toolbar collapses to a single floating control');
+  check(document.querySelector('.mobile-terminal-input-expand').getAttribute('aria-label') === '展开操作栏', 'Collapsed control has Chinese accessible label');
+  draw(); await pause(20);
+  check(document.querySelector('.mobile-terminal-input.collapsed'), 'Collapsed preference survives component remount');
+  document.querySelector('.mobile-terminal-input-expand').click(); await pause(20);
+  check(document.querySelector('.mobile-terminal-input-toolbar'), 'Floating control restores toolbar');
+  check(localStorage.getItem('cli-manager.web.mobile-toolbar-collapsed') === 'false', 'Expanded preference is persisted');
 }
 window.runKeyboard = async () => {
   try {

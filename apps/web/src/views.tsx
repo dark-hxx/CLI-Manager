@@ -390,10 +390,6 @@ export function Workbench(props: WorkbenchProps) {
               })}
             </div>
           )}
-          {props.terminalSessionId && <div className="mobile-terminal-context">
-            <strong>{activeTerminalContext?.projectName ?? t("unknown")}</strong>
-            <span title={activeTerminalContext?.cwd ?? undefined}>{t("workingDirectory")}: {activeTerminalContext?.cwd ?? t("unknown")}</span>
-          </div>}
           {!selectedDevice ? (
             <EmptyDevice t={t} onPair={() => setPairingOpen(true)} />
           ) : !selectedProjectContext ? (

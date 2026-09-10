@@ -1,6 +1,13 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { TranslationKey } from "./i18n";
+
+const TOOLBAR_COLLAPSED_KEY = "cli-manager.web.mobile-toolbar-collapsed";
+
+function initialToolbarCollapsed(): boolean {
+  try { return localStorage.getItem(TOOLBAR_COLLAPSED_KEY) === "true"; } catch { return false; }
+}
 
 type Props = {
   enabled: boolean;
@@ -12,6 +19,7 @@ type Props = {
 
 export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [toolbarCollapsed, setToolbarCollapsed] = useState(initialToolbarCollapsed);
   const [draft, setDraft] = useState("");
   const composing = useRef(false);
   const [directionPosition, setDirectionPosition] = useState<{ left: number; top: number } | null>(null);
@@ -19,6 +27,15 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
   const directionPad = useRef<HTMLDivElement>(null);
   const directionId = useId();
   useEffect(() => { if (!enabled) setDirectionPosition(null); }, [enabled]);
+  useEffect(() => {
+    try { localStorage.setItem(TOOLBAR_COLLAPSED_KEY, String(toolbarCollapsed)); } catch { /* Browser storage can be disabled. */ }
+    if (toolbarCollapsed) {
+      setExpanded(false);
+      setDirectionPosition(null);
+    }
+    const frame = requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+    return () => cancelAnimationFrame(frame);
+  }, [toolbarCollapsed]);
   useEffect(() => {
     if (!directionPosition) return;
     const dismiss = (event: PointerEvent) => {
@@ -45,9 +62,15 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
     onPaste(draft.replace(/[\r\n\t]+/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, ""));
     setDraft("");
   };
-  return <div className="mobile-terminal-input">
+  if (toolbarCollapsed) return <div className="mobile-terminal-input collapsed">
+    <button className="mobile-terminal-input-expand" type="button" onClick={() => setToolbarCollapsed(false)}
+      aria-label={t("mobileToolbarExpand")} title={t("mobileToolbarExpand")}><ChevronUp size={20} /></button>
+  </div>;
+  return <div className="mobile-terminal-input expanded">
     <div className="mobile-terminal-input-toolbar">
       <div className="mobile-terminal-input-tools">
+      <button className="mobile-terminal-input-collapse" type="button" onClick={() => setToolbarCollapsed(true)}
+        aria-label={t("mobileToolbarCollapse")} title={t("mobileToolbarCollapse")}><ChevronDown size={20} /></button>
       <button type="button" disabled={!enabled} onClick={onFocus} aria-label={t("mobileKeyboard")}>{t("mobileKeyboard")}</button>
       <button type="button" disabled={!enabled} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t("mobileFallback")}</button>
       {([
