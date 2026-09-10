@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { debugConsoleLog, debugConsoleWarn } from "../../../shared/platform/debugConsole";
+import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo, GitPendingOperation } from "../../../shared/types/index";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import {
@@ -9,20 +9,12 @@ import {
 } from "../lib/gitTransport";
 import type { GitDiffOptions } from "../../../shared/lib/gitDiffOptions";
 
-type GitStatusFilter = "all" | "M" | "A" | "D" | "U";
+import { isUntracked, sameGitChanges, type GitStatusFilter, type GitTreeGrouping } from "../lib/gitTreeModel";
+import { buildGitTreesAsync } from "../lib/gitTreeBuilder";
+import { GitChangesRefreshQueue } from "../lib/gitChangesRefreshQueue";
 
 /** 项目根下枚举出的 Git 仓库（后端 git_list_repositories 返回）。 */
 export type GitRepoInfo = GitRepositoryRef;
-
-// 判断已跟踪文件是否匹配当前筛选。未跟踪(U/??)单独成组展示，不参与此处筛选。
-function matchTrackedFilter(status: string, filter: GitStatusFilter): boolean {
-  if (filter === "all" || filter === "U") return true;
-  return status === filter;
-}
-
-function isUntracked(status: string): boolean {
-  return status === "U" || status === "??";
-}
 
 interface GitStore {
   transport: GitTransport | null;
@@ -107,101 +99,6 @@ interface GitStore {
   reset: () => void;
 }
 
-function buildTree(changes: GitFileChange[]): GitTreeNode[] {
-  const root: GitTreeNode[] = [];
-  const dirMap = new Map<string, GitTreeNode>();
-
-  // 按路径排序
-  const sorted = [...changes].sort((a, b) => a.path.localeCompare(b.path));
-
-  for (const change of sorted) {
-    const parts = change.path.split(/[/\\]/);
-    let currentLevel = root;
-    let currentPath = "";
-
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      currentPath = currentPath ? `${currentPath}/${part}` : part;
-
-      if (i === parts.length - 1) {
-        // 文件节点
-        currentLevel.push({
-          type: "file",
-          name: part,
-          path: currentPath,
-          change,
-        });
-      } else {
-        // 目录节点
-        let dir = dirMap.get(currentPath);
-        if (!dir) {
-          dir = {
-            type: "directory",
-            name: part,
-            path: currentPath,
-            children: [],
-          };
-          dirMap.set(currentPath, dir);
-          currentLevel.push(dir);
-        }
-        currentLevel = dir.children!;
-      }
-    }
-  }
-
-  return root;
-}
-
-// 按模块分组构建树：第一级目录视为模块，每个模块是顶层节点。
-function buildTreeByModule(changes: GitFileChange[]): GitTreeNode[] {
-  const moduleMap = new Map<string, GitFileChange[]>();
-
-  // 按第一级目录分组
-  for (const change of changes) {
-    const parts = change.path.split(/[/\\]/);
-    const moduleName = parts[0];
-    if (!moduleMap.has(moduleName)) {
-      moduleMap.set(moduleName, []);
-    }
-    moduleMap.get(moduleName)!.push(change);
-  }
-
-  // 为每个模块构建子树
-  const modules: GitTreeNode[] = [];
-  for (const [moduleName, moduleChanges] of Array.from(moduleMap.entries()).sort((a, b) => a[0].localeCompare(b[0]))) {
-    const moduleSubtree = buildTree(moduleChanges);
-
-    // 如果模块内只有一个顶层节点且就是该模块名本身，直接用它并标记为模块根
-    if (moduleSubtree.length === 1 && moduleSubtree[0].name === moduleName) {
-      modules.push({ ...moduleSubtree[0], isModuleRoot: true });
-    } else {
-      // 否则创建一个模块根节点包裹子树
-      modules.push({
-        type: "directory",
-        name: moduleName,
-        path: moduleName,
-        children: moduleSubtree,
-        isModuleRoot: true,
-      });
-    }
-  }
-
-  return modules;
-}
-
-// 构建「已跟踪变更树」与「未跟踪文件树」。未跟踪文件单独成组（仿 JetBrains Unversioned Files）。
-function rebuildTrees(
-  changes: GitFileChange[],
-  filter: GitStatusFilter,
-  groupBy: "directory" | "module" = "directory"
-): { tree: GitTreeNode[]; untrackedTree: GitTreeNode[] } {
-  const tracked = changes.filter((c) => !isUntracked(c.status) && matchTrackedFilter(c.status, filter));
-  const untracked = changes.filter((c) => isUntracked(c.status));
-
-  const buildFn = groupBy === "module" ? buildTreeByModule : buildTree;
-  return { tree: buildFn(tracked), untrackedTree: buildFn(untracked) };
-}
-
 function collectDirectoryPaths(nodes: GitTreeNode[], treeId: string): string[] {
   const paths: string[] = [];
 
@@ -251,6 +148,43 @@ async function refreshIfResultUnknown(projectPath: string, error: unknown): Prom
   await store.fetchBranchStatus(projectPath);
 }
 
+const changesQueue = new GitChangesRefreshQueue();
+let changesEpoch = 0;
+let appliedGrouping: GitTreeGrouping | undefined;
+let filterBuild: AbortController | null = null;
+const treeBuilds = new Set<AbortController>();
+
+// 生命周期代次覆盖 A→B→A；取消建树可释放 Worker，底层不可取消的 IPC 结果仅丢弃。
+function invalidateChangesLifecycle(): void {
+  changesEpoch++;
+  appliedGrouping = undefined;
+  for (const controller of treeBuilds) controller.abort();
+  treeBuilds.clear();
+}
+
+// 查询期间筛选可能改变，提交树前重新核对选项，避免新快照配上旧筛选。
+async function prepareCurrentTrees(changes: GitFileChange[], current: () => boolean, controller: AbortController) {
+  treeBuilds.add(controller);
+  try {
+    while (current()) {
+      const filter = useGitStore.getState().statusFilter;
+      const groupBy = useSettingsStore.getState().gitGroupBy;
+      const trees = await buildGitTreesAsync(changes, filter, groupBy, controller.signal);
+      if (!current()) return null;
+      if (filter === useGitStore.getState().statusFilter && groupBy === useSettingsStore.getState().gitGroupBy) {
+        return { ...trees, groupBy };
+      }
+    }
+    return null;
+  } finally { treeBuilds.delete(controller); }
+}
+
+// 选择集合已与快照一致时保留引用，避免给每个选择订阅者制造无效更新。
+function retainSelection(selection: Set<string>, paths: Set<string>): Set<string> {
+  const kept = [...selection].filter(path => paths.has(path));
+  return kept.length === selection.size ? selection : new Set(kept);
+}
+
 export const useGitStore = create<GitStore>((set, get) => ({
   transport: null,
   remoteRequired: false,
@@ -281,6 +215,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (state.remoteRequired === remoteRequired && state.transport?.contextKey === transport?.contextKey) {
       return { transport };
     }
+    invalidateChangesLifecycle();
     return {
       transport,
       remoteRequired,
@@ -304,57 +239,48 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   fetchChanges: async (projectPath: string, silent = false) => {
-    // 项目切换：清空子仓库激活态与列表，避免带着上个项目的 activeRepoPath 查错仓库。
     const projectChanged = get().currentProjectPath !== projectPath;
-    const switchPatch = projectChanged ? { activeRepoPath: null, repositories: [] as GitRepoInfo[] } : {};
-    // silent 模式用于聚焦轮询：不 set loading，避免每次刷新闪烁 spinner。
-    if (silent) {
-      set({ currentProjectPath: projectPath, ...switchPatch });
-    } else {
-      debugConsoleLog(`[GitStore] 开始获取 Git 变更, projectPath: "${projectPath}"`);
-      set({ loading: true, error: null, currentProjectPath: projectPath, ...switchPatch });
+    if (projectChanged) {
+      invalidateChangesLifecycle();
+      set({ currentProjectPath: projectPath, activeRepoPath: null, repositories: [], changes: [], tree: [], untrackedTree: [],
+        selectedUntracked: new Set(), deselectedAdded: new Set() });
     }
-
+    const epoch = changesEpoch;
     const repoPath = get().activeRepoPath ?? (get().remoteRequired ? "" : projectPath);
-    let contextKey: string | null = null;
-    try {
-      const transport = currentTransport(projectPath);
-      contextKey = transport.contextKey;
-      const snapshot = await transport.getChanges(repoPath);
-      const changes = snapshot.value;
-      // 等待期间切换了项目、Transport 或子仓库 → 丢弃过期结果。
-      if (!requestStillCurrent(projectPath, repoPath, contextKey)) return;
-
-      // 应用筛选并拆分已跟踪 / 未跟踪两棵树，使用当前分组模式
-      const { statusFilter } = get();
-      const groupBy = useSettingsStore.getState().gitGroupBy;
-      const { tree, untrackedTree } = rebuildTrees(changes, statusFilter, groupBy);
-      // 选中集合按当前未跟踪文件裁剪：已被 add/删除的路径不再保留，避免悬挂选中。
-      const untrackedNow = new Set(changes.filter((c) => isUntracked(c.status)).map((c) => c.path));
-      const prevSelected = get().selectedUntracked;
-      const selectedUntracked = new Set([...prevSelected].filter((p) => untrackedNow.has(p)));
-      // 取消勾选集合按当前 A 文件裁剪：已提交/已不再是 A 的路径移除。
-      const addedNow = new Set(changes.filter((c) => c.status === "A").map((c) => c.path));
-      const prevDeselected = get().deselectedAdded;
-      const deselectedAdded = new Set([...prevDeselected].filter((p) => addedNow.has(p)));
-      set({ changes, tree, untrackedTree, selectedUntracked, deselectedAdded, loading: false, ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 获取 Git 变更失败:`, err);
-      // silent 失败（轮询）不清空已有数据、不弹错，避免打扰；仅非静默时显式报错。
-      const scopeStillCurrent = get().currentProjectPath === projectPath && effectiveRepoPath() === repoPath;
-      if (!scopeStillCurrent || (contextKey !== null && !requestStillCurrent(projectPath, repoPath, contextKey))) return;
-      if (silent) {
-        set({ loading: false });
-      } else {
-        set({ error: errorMsg, loading: false, changes: [], tree: [], untrackedTree: [] });
+    const contextKey = get().transport?.contextKey ?? null;
+    const current = () => epoch === changesEpoch && get().currentProjectPath === projectPath
+      && effectiveRepoPath() === repoPath && (get().transport?.contextKey ?? null) === contextKey;
+    if (!silent) set({ loading: true, error: null });
+    // 以实际仓库身份串行；即使 A→B→A，新的 A 也排在旧 A 查询之后而不并发扫描。
+    await changesQueue.request(JSON.stringify([projectPath, repoPath, contextKey]), async reportError => {
+      if (!current()) return;
+      try {
+        const transport = currentTransport(projectPath);
+        const snapshot = await transport.getChanges(repoPath);
+        if (!current()) return;
+        const changes = snapshot.value;
+        const unchanged = sameGitChanges(get().changes, changes);
+        if (!unchanged || appliedGrouping !== useSettingsStore.getState().gitGroupBy) {
+          const controller = new AbortController();
+          const prepared = await prepareCurrentTrees(changes, current, controller);
+          if (!prepared || !current()) return;
+          const untrackedNow = new Set(changes.filter(c => isUntracked(c.status)).map(c => c.path));
+          const addedNow = new Set(changes.filter(c => c.status === "A").map(c => c.path));
+          appliedGrouping = prepared.groupBy;
+          set({ changes, tree: prepared.tree, untrackedTree: prepared.untrackedTree,
+            selectedUntracked: retainSelection(get().selectedUntracked, untrackedNow),
+            deselectedAdded: retainSelection(get().deselectedAdded, addedNow) });
+        }
+        set({ loading: false, ...(reportError ? { error: null } : {}), ...(snapshot.asOf !== undefined ? { asOf: snapshot.asOf } : {}) });
+      } catch (err) {
+        if (!current()) return;
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        console.error(`[GitStore] 获取 Git 变更失败:`, err);
+        if (reportError) set({ error: errorMsg, loading: false, changes: [], tree: [], untrackedTree: [] });
+        else set({ loading: false });
       }
-    }
-
-    // 分支状态独立刷新，失败不影响变更列表展示。
-    if (get().currentProjectPath === projectPath) {
-      void get().fetchBranchStatus(projectPath);
-    }
+      if (current()) void get().fetchBranchStatus(projectPath);
+    }, !silent);
   },
 
   fetchBranchStatus: async (projectPath: string) => {
@@ -430,8 +356,9 @@ export const useGitStore = create<GitStore>((set, get) => ({
     // 根仓库归一化为 null，保证「未激活子仓库 = 项目根」单一表示。
     const next = absolutePath === currentProjectPath ? null : absolutePath;
     if (next === activeRepoPath) return;
+    invalidateChangesLifecycle();
     // 未跟踪选中 / A 文件取消勾选集合与各自仓库的相对路径绑定，切换时清空。
-    set({ activeRepoPath: next, selectedUntracked: new Set(), deselectedAdded: new Set() });
+    set({ activeRepoPath: next, changes: [], tree: [], untrackedTree: [], selectedUntracked: new Set(), deselectedAdded: new Set() });
     // 立刻刷新变更列表与分支状态（fetchChanges 内部会解析生效仓库路径并联动分支状态）。
     if (currentProjectPath) void get().fetchChanges(currentProjectPath);
     if (currentProjectPath) void get().fetchBranches(currentProjectPath);
@@ -1009,14 +936,24 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   setStatusFilter: (filter: GitStatusFilter) => {
-    set((state) => {
-      const groupBy = useSettingsStore.getState().gitGroupBy;
-      const { tree, untrackedTree } = rebuildTrees(state.changes, filter, groupBy);
-      return { statusFilter: filter, tree, untrackedTree };
+    filterBuild?.abort();
+    const controller = new AbortController();
+    filterBuild = controller;
+    const changes = get().changes;
+    const epoch = changesEpoch;
+    set({ statusFilter: filter });
+    const current = () => !controller.signal.aborted && changesEpoch === epoch && get().changes === changes;
+    void prepareCurrentTrees(changes, current, controller).then(prepared => {
+      if (!prepared || !current()) return;
+      appliedGrouping = prepared.groupBy;
+      set({ tree: prepared.tree, untrackedTree: prepared.untrackedTree });
+    }).catch(error => {
+      if (current()) set({ error: error instanceof Error ? error.message : String(error) });
     });
   },
 
   reset: () => {
+    invalidateChangesLifecycle();
     set({
       changes: [],
       tree: [],

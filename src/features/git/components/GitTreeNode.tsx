@@ -1,8 +1,10 @@
 import { ChevronRight, Undo2, Check, Minus, FileCode, Trash2 } from "../../../shared/ui/icons";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
+import { collectFileChanges, collectCompactDirectoryChain, type GitDirectorySummary } from "../lib/gitTreeModel";
 import { isTerminalFilePointerDragClickHandled, type TerminalFileDragSource } from "../../terminal/api/useTerminalFilePointerDrag";
 import type { TerminalFileDragProject } from "../../terminal/api/terminalFileDrag";
-import type { GitTreeNode, GitFileChange } from "../../../shared/types/index";
+import type { GitTreeNode } from "../../../shared/types/index";
 import { GitStatusIcon } from "../api/GitStatusIcon";
 import { useGitStore } from "../store/gitStore";
 import { TERM, panelColorTint } from "../../stats/api/termStatsUi";
@@ -12,40 +14,13 @@ import { StageCheckbox, type StageState } from "./StageCheckbox";
 import { useI18n } from "../../../shared/i18n/index";
 import { PathCopyMenu } from "../../files/api/PathCopyMenu";
 
-// 收集某节点下所有文件变更（含子目录），用于目录级三态勾选框与批量操作。
-function collectFileChanges(node: GitTreeNode): GitFileChange[] {
-  if (node.type === "file") return node.change ? [node.change] : [];
-  return (node.children ?? []).flatMap(collectFileChanges);
-}
-
-// 压缩连续单子目录链：只改变显示层级，不改变原始树与真实文件路径。
-// JetBrains 风格：当前目录独立成行，从它的唯一子目录开始向下收集连续单子目录链作为下一行的压缩后缀。
-function collectCompactDirectoryChain(node: GitTreeNode): { suffixParts: string[]; leaf: GitTreeNode } {
-  const suffixParts: string[] = [];
-  let leaf = node;
-
-  // 如果当前目录只有一个子目录（不是文件），开始收集压缩链
-  if (leaf.type === "directory" && leaf.children?.length === 1 && leaf.children[0].type === "directory") {
-    let current = leaf.children[0];
-    suffixParts.push(current.name);
-    leaf = current;
-
-    // 继续向下收集，直到遇到分叉或文件
-    while (leaf.children?.length === 1 && leaf.children[0].type === "directory") {
-      const next = leaf.children[0];
-      suffixParts.push(next.name);
-      leaf = next;
-    }
-  }
-
-  return { suffixParts, leaf };
-}
-
 interface GitTreeNodeProps {
   project: TerminalFileDragProject | null;
   node: GitTreeNode;
   depth: number;
   treeId: string;
+  summary?: GitDirectorySummary;
+  onMenuOpenChange: (open: boolean) => void;
   onFileClick: (filePath: string) => void;
   onOpenSourceFile: (filePath: string, status: string) => void;
   onRequestDiscard: (path: string, name: string, status: string) => void;
@@ -58,16 +33,26 @@ interface GitTreeNodeProps {
   onFilePointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
-export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick, onOpenSourceFile, onRequestDiscard, onRequestDeleteUntracked, onToggleStage, onToggleStagePaths, onFilePointerDown, onFilePointerMove, onFilePointerUp, onFilePointerCancel }: GitTreeNodeProps) {
+export function GitTreeNodeComponent({ project, node, depth, treeId, summary, onMenuOpenChange, onFileClick, onOpenSourceFile, onRequestDiscard, onRequestDeleteUntracked, onToggleStage, onToggleStagePaths, onFilePointerDown, onFilePointerMove, onFilePointerUp, onFilePointerCancel }: GitTreeNodeProps) {
   const { t } = useI18n();
-  const { collapsedDirs, toggleDir, selectedUntracked, toggleUntrackedSelection, deselectedAdded, toggleAddedDeselection, setAddedDeselection } = useGitStore();
+  const { suffixParts, leaf: displayNode } = useMemo(() => collectCompactDirectoryChain(node), [node]);
+  const displayCollapseKey = `${treeId}:${displayNode.path}`;
+  // 每行仅订阅自身的选择/折叠状态和稳定动作，不随分支状态或其它文件选择重绘。
+  const { displayCollapsed, untrackedSelected, addedSelected, toggleDir, toggleUntrackedSelection,
+    toggleAddedDeselection, setAddedDeselection } = useGitStore(useShallow(state => ({
+    displayCollapsed: state.collapsedDirs.has(displayCollapseKey),
+    untrackedSelected: state.selectedUntracked.has(node.path),
+    addedSelected: !state.deselectedAdded.has(node.path),
+    toggleDir: state.toggleDir,
+    toggleUntrackedSelection: state.toggleUntrackedSelection,
+    toggleAddedDeselection: state.toggleAddedDeselection,
+    setAddedDeselection: state.setAddedDeselection,
+  })));
+  const iconDataUri = useMemo(() => node.type === "file" ? getMaterialFileIcon(node.name) : null, [node.type, node.name]);
   // 折叠 key 按分区前缀隔离：已跟踪树与未跟踪树同名目录互不影响。
   const indentPx = depth * 12 + 4;
 
   if (node.type === "file") {
-    // 获取 Material Design 文件图标（base64 data URI）
-    const iconDataUri = getMaterialFileIcon(node.name);
-
     // 根据 Git 状态给文件名着色
     let fileNameColor = TERM.fg;
     if (node.change) {
@@ -97,18 +82,17 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
     const canDiscard = !!node.change && node.change.status !== "U" && node.change.status !== "??";
     // 未跟踪文件：复选框走前端「选中」态，勾选不立即 git add，提交时再统一 add。
     const isUntracked = node.change?.status === "U" || node.change?.status === "??";
-    const untrackedSelected = isUntracked && selectedUntracked.has(node.path);
+
     // 已加入跟踪(A)文件：复选框为「本次是否提交」选择态，取消勾选不会 unstage（保持跟踪）。
     const isAdded = node.change?.status === "A";
-    const addedSelected = isAdded && !deselectedAdded.has(node.path);
 
     return (
-      <ContextMenu>
+      <ContextMenu onOpenChange={onMenuOpenChange}>
         <ContextMenuTrigger asChild>
           <div
             className="group flex items-center gap-1.5 rounded py-0.5 px-1 cursor-pointer text-[13px]"
             draggable={false}
-            style={{ paddingLeft: indentPx, backgroundColor: "transparent" }}
+            style={{ paddingLeft: indentPx, backgroundColor: "transparent", height: 24 }}
             onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = panelColorTint(TERM.cyan, 13))}
             onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = "transparent")}
             onPointerDown={(event) => {
@@ -158,7 +142,7 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
               }
             />
             <img
-              src={iconDataUri}
+              src={iconDataUri ?? undefined}
               alt=""
               width={14}
               height={14}
@@ -262,35 +246,19 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
   // 目录节点 - 使用 Material Design 文件夹图标。连续单子目录链在渲染层压缩，行为仍以链尾目录为准。
   // 模块根节点不压缩后缀（单独显示模块名），只压缩其内部的子目录链。
   const isModuleRoot = node.isModuleRoot === true;
-  const { suffixParts, leaf: displayNode } = isModuleRoot
-    ? { suffixParts: [], leaf: node } // 模块根不压缩
-    : collectCompactDirectoryChain(node);
-  const displayCollapseKey = `${treeId}:${displayNode.path}`;
-  const displayCollapsed = collapsedDirs.has(displayCollapseKey);
-  const hasChildren = displayNode.children && displayNode.children.length > 0;
+  const hasChildren = !!displayNode.children?.length;
   const folderIconDataUri = getMaterialFolderIcon(node.name, !displayCollapsed);
-  const dirFiles = collectFileChanges(displayNode);
-  // 目录下全部为未跟踪文件时，复选框走「选中」态（与文件行一致）。
-          const dirAllUntracked =
-    dirFiles.length > 0 && dirFiles.every((f) => f.status === "U" || f.status === "??");
-  const dirSelectedCount = dirAllUntracked
-    ? dirFiles.filter((f) => selectedUntracked.has(f.path)).length
-    : 0;
-  const dirUntrackedState: StageState =
-    dirSelectedCount === 0 ? "unchecked" : dirSelectedCount === dirFiles.length ? "checked" : "indeterminate";
-
-  // 「改动」树目录：M/D/R 走真实暂存态，A 文件走「本次是否提交」选择态（取消不 unstage，保持跟踪）。
-  const dirModFiles = dirFiles.filter((f) => f.status !== "A" && f.status !== "U" && f.status !== "??");
-  const dirAddedFiles = dirFiles.filter((f) => f.status === "A");
-  const dirCheckedCount =
-    dirModFiles.filter((f) => f.staged).length + dirAddedFiles.filter((f) => !deselectedAdded.has(f.path)).length;
-  const dirTrackedState: StageState =
-    dirCheckedCount === 0 ? "unchecked" : dirCheckedCount === dirFiles.length ? "checked" : "indeterminate";
-  // 目录复选框最终三态：未跟踪目录用选中态，否则用「改动」组合态。
-  const dirState: StageState = dirAllUntracked ? dirUntrackedState : dirTrackedState;
+  const total = summary?.total ?? 0;
+  const dirAllUntracked = total > 0 && summary?.untracked === total;
+  const checked = summary?.checked ?? 0;
+  const dirTrackedState: StageState = checked === 0 ? "unchecked" : checked === total ? "checked" : "indeterminate";
+  const dirState = dirTrackedState;
 
   // 目录级切换：未跟踪→切选中；改动→M/D/R 真实暂存切换 + A 文件仅切换勾选（不 unstage）。
   const handleDirToggle = () => {
+    const dirFiles = collectFileChanges(displayNode);
+    const dirModFiles = dirFiles.filter(f => f.status !== "A" && f.status !== "U" && f.status !== "??");
+    const dirAddedFiles = dirFiles.filter(f => f.status === "A");
     if (dirFiles.length === 0) return;
     if (dirAllUntracked) {
       toggleUntrackedSelection(dirFiles.map((f) => f.path));
@@ -306,17 +274,18 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
     }
   };
   const directoryLabel = suffixParts.length > 0 ? `${node.name}/${suffixParts.join("/")}` : node.name;
-  const dirFilePaths = dirFiles.map((f) => f.path);
+
 
   return (
     <div>
-      <ContextMenu>
+      <ContextMenu onOpenChange={onMenuOpenChange}>
         <ContextMenuTrigger asChild>
           <div
             className="flex items-center gap-1.5 rounded py-0.5 px-1 hover:bg-opacity-10 cursor-pointer text-[13px]"
             draggable={false}
             style={{
               paddingLeft: indentPx,
+              height: 24,
               backgroundColor: "transparent",
               fontWeight: isModuleRoot ? 600 : 500,
             }}
@@ -343,7 +312,7 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
             >
               <ChevronRight size={10} strokeWidth={2} />
             </span>
-            {dirFiles.length > 0 && (
+            {total > 0 && (
               <StageCheckbox
                 state={dirState}
                 onToggle={handleDirToggle}
@@ -378,11 +347,11 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
           {project && <PathCopyMenu project={project} relativePath={displayNode.path} kind="directory" />}
           <ContextMenuItem
             className="flex items-center gap-2"
-            disabled={dirFiles.length === 0}
+            disabled={total === 0}
             onSelect={() => {
               if (dirAllUntracked) {
                 // 未跟踪目录右键：真实「加入跟踪」立即 git add 全部文件。
-                onToggleStagePaths(dirFiles.map((f) => f.path), false);
+                onToggleStagePaths(collectFileChanges(displayNode).map((f) => f.path), false);
               } else {
                 // 改动目录：M/D/R 真实切换暂存，A 文件仅切换勾选（不 unstage，保持跟踪）。
                 handleDirToggle();
@@ -406,7 +375,7 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
             <ContextMenuItem
               danger
               className="flex items-center gap-2"
-              onSelect={() => onRequestDeleteUntracked(dirFilePaths, directoryLabel)}
+              onSelect={() => onRequestDeleteUntracked(collectFileChanges(displayNode).map(f => f.path), directoryLabel)}
             >
               <Trash2 size={12} />
               {t("git.tree.deleteUntrackedDirectory")}
@@ -415,29 +384,6 @@ export function GitTreeNodeComponent({ project, node, depth, treeId, onFileClick
         </ContextMenuContent>
       </ContextMenu>
 
-      {!displayCollapsed && hasChildren && (
-        <div>
-          {displayNode.children!.map((child) => (
-            <GitTreeNodeComponent
-              key={child.path}
-              project={project}
-              node={child}
-              depth={depth + 1}
-              treeId={treeId}
-              onFileClick={onFileClick}
-              onOpenSourceFile={onOpenSourceFile}
-              onRequestDiscard={onRequestDiscard}
-              onRequestDeleteUntracked={onRequestDeleteUntracked}
-              onToggleStage={onToggleStage}
-              onToggleStagePaths={onToggleStagePaths}
-              onFilePointerDown={onFilePointerDown}
-              onFilePointerMove={onFilePointerMove}
-              onFilePointerUp={onFilePointerUp}
-              onFilePointerCancel={onFilePointerCancel}
-            />
-          ))}
-        </div>
-      )}
     </div>
   );
 }

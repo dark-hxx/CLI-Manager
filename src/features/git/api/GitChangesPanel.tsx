@@ -9,6 +9,7 @@ import { useProjectStore } from "../../projects/api/projectStore";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useTerminalFilePointerDrag } from "../../terminal/api/useTerminalFilePointerDrag";
 import { GitChangesTree } from "../components/GitChangesTree";
+import { summarizeGitChanges } from "../lib/gitChangesSummary";
 import { StageCheckbox, type StageState } from "../components/StageCheckbox";
 import { STATUS_CONFIG } from "./GitStatusIcon";
 import { GitDiffReviewDialog } from "../components/diff/GitDiffReviewDialog";
@@ -35,6 +36,7 @@ interface GitChangesPanelProps {
 }
 
 // 降级慢轮询间隔：仅当 fs-watcher 初始化失败（网络盘/WSL 等 notify 不可用）时启用。
+const EMPTY_GIT_TREE: GitTreeNode[] = [];
 const FILTER_LABEL_HIDE_WIDTH = 260;
 const BRANCH_MENU_SECTION_LIMIT = 80;
 const TERMINAL_PANEL_SCROLLBAR_STYLE = {
@@ -546,6 +548,13 @@ export function GitChangesPanel({
   const hasDirectories = directoryPaths.length > 0;
   const allCollapsed = hasDirectories && directoryPaths.every((path) => collapsedDirs.has(path));
 
+  const changesScrollRef = useRef<HTMLDivElement>(null);
+  const summary = useMemo(() => summarizeGitChanges(changes, deselectedAdded), [changes, deselectedAdded]);
+
+  const handleRequestDiscard = useCallback((path: string, name: string, status: string) => {
+    setDiscardTarget({ path, name, status });
+  }, []);
+
   if (!open || !visible) return null;
 
   const handleRefresh = () => {
@@ -577,28 +586,14 @@ export function GitChangesPanel({
     );
   };
 
-  const handleRequestDiscard = useCallback((path: string, name: string, status: string) => {
-    setDiscardTarget({ path, name, status });
-  }, []);
 
   const handleRequestDeleteUntracked = (paths: string[], name: string) => {
     if (paths.length === 0) return;
     setDeleteUntrackedTarget({ paths, name });
   };
 
-  const allCount = changes.length;
-  const modifiedCount = changes.filter((c) => c.status === "M").length;
-  const addedCount = changes.filter((c) => c.status === "A" || c.status === "U" || c.status === "??").length;
-  const deletedCount = changes.filter((c) => c.status === "D").length;
-  // 可回滚（已跟踪）文件数：排除未跟踪 U/??。
-  const trackableCount = changes.filter((c) => c.status !== "U" && c.status !== "??").length;
-  // 总增删行数聚合（真实 diff 行数，后端 git_get_changes 提供）。
-  const totalAdded = changes.reduce((sum, c) => sum + (c.added || 0), 0);
-  const totalDeleted = changes.reduce((sum, c) => sum + (c.deleted || 0), 0);
-  // 已暂存文件数（真实 git 索引，含 A/M/D/R）。
-  const stagedCount = changes.filter((c) => c.staged).length;
-  // 被取消勾选的已加入跟踪(A)文件：仍暂存/跟踪，但本次提交不计入。
-  const deselectedAddedCount = changes.filter((c) => c.status === "A" && deselectedAdded.has(c.path)).length;
+  const { allCount, modifiedCount, addedCount, deletedCount, trackableCount, totalAdded, totalDeleted,
+    stagedCount, deselectedAddedCount, allUntrackedPaths, addedPaths, trackedModPaths, hasConflicts } = summary;
   // 选中的未跟踪文件数（前端态，提交时才 git add）。
   const selectedUntrackedCount = selectedUntracked.size;
   // 待提交总数 = 已暂存 − 取消勾选的 A 文件 + 选中未跟踪。
@@ -611,16 +606,6 @@ export function GitChangesPanel({
         ? "checked"
         : "indeterminate";
 
-  // 各类路径分组，用于全选/全不选。
-  const allUntrackedPaths = changes.filter((c) => c.status === "U" || c.status === "??").map((c) => c.path);
-  const addedPaths = changes.filter((c) => c.status === "A").map((c) => c.path);
-  // 已跟踪且非新增(M/D/R)的路径：全选/全不选时走真实 stage/unstage。
-  const trackedModPaths = changes
-    .filter((c) => c.status !== "U" && c.status !== "??" && c.status !== "A")
-    .map((c) => c.path);
-
-  // 冲突态：存在冲突文件(C) 或 仓库处于合并/变基中 → 显示冲突横幅与中止/继续入口。
-  const hasConflicts = changes.some((c) => c.status === "C");
   const pendingOp = branchStatus?.pendingOp ?? null;
   const smartCheckoutConflict = hasConflicts && !!error && error.includes("smart_checkout_apply_conflict");
   const branchActionBusy = fetching || checkingOutBranch || creatingBranch;
@@ -1108,7 +1093,7 @@ export function GitChangesPanel({
       )}
 
       {/* Content */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
+      <div ref={changesScrollRef} className="min-h-0 flex-1 overflow-y-auto p-2 ui-thin-scroll">
         {!projectPath ? (
           <EmptyHint text={t("git.empty.noProject")} />
         ) : (contextLoading || loading) && changes.length === 0 ? (
@@ -1124,53 +1109,22 @@ export function GitChangesPanel({
         ) : changes.length === 0 ? (
           <EmptyHint text={t("git.empty.noChanges")} />
         ) : (
-          <>
-            {tree.length > 0 && (
-              <div>
-                <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: TERM.dim }}>
-                  {t("git.section.changed")}
-                </div>
-                <GitChangesTree
-                  project={gitTreeProject}
-                  nodes={tree}
-                  treeId="tracked"
-                  onFileClick={handleFileClick}
-                  onOpenSourceFile={handleOpenSourceFile}
-                  onRequestDiscard={handleRequestDiscard}
-                  onRequestDeleteUntracked={handleRequestDeleteUntracked}
-                  onToggleStage={handleToggleStage}
-                  onToggleStagePaths={handleToggleStagePaths}
-                  onFilePointerDown={handleTerminalFilePointerDown}
-                  onFilePointerMove={handleGitFilePointerMove}
-                  onFilePointerUp={handleGitFilePointerUp}
-                  onFilePointerCancel={handleGitFilePointerCancel}
-                />
-              </div>
-            )}
-            {/* 未跟踪文件单独成组（仿 JetBrains Unversioned Files），M/D 筛选下隐藏 */}
-            {untrackedTree.length > 0 && statusFilter !== "M" && statusFilter !== "D" && (
-              <div className={tree.length > 0 ? "mt-2 border-t pt-2" : ""} style={{ borderColor: TERM.dim }}>
-                <div className="mb-1 px-1 text-[10px] font-bold uppercase tracking-wide" style={{ color: TERM.dim }}>
-                  {t("git.section.untracked")}
-                </div>
-                <GitChangesTree
-                  project={gitTreeProject}
-                  nodes={untrackedTree}
-                  treeId="untracked"
-                  onFileClick={handleFileClick}
-                  onOpenSourceFile={handleOpenSourceFile}
-                  onRequestDiscard={handleRequestDiscard}
-                  onRequestDeleteUntracked={handleRequestDeleteUntracked}
-                  onToggleStage={handleToggleStage}
-                  onToggleStagePaths={handleToggleStagePaths}
-                  onFilePointerDown={handleTerminalFilePointerDown}
-                  onFilePointerMove={handleGitFilePointerMove}
-                  onFilePointerUp={handleGitFilePointerUp}
-                  onFilePointerCancel={handleGitFilePointerCancel}
-                />
-              </div>
-            )}
-          </>
+          <GitChangesTree
+            project={gitTreeProject}
+            tree={tree}
+            untrackedTree={statusFilter === "M" || statusFilter === "D" ? EMPTY_GIT_TREE : untrackedTree}
+            scrollElementRef={changesScrollRef}
+            onFileClick={handleFileClick}
+            onOpenSourceFile={handleOpenSourceFile}
+            onRequestDiscard={handleRequestDiscard}
+            onRequestDeleteUntracked={handleRequestDeleteUntracked}
+            onToggleStage={handleToggleStage}
+            onToggleStagePaths={handleToggleStagePaths}
+            onFilePointerDown={handleTerminalFilePointerDown}
+            onFilePointerMove={handleGitFilePointerMove}
+            onFilePointerUp={handleGitFilePointerUp}
+            onFilePointerCancel={handleGitFilePointerCancel}
+          />
         )}
       </div>
 
