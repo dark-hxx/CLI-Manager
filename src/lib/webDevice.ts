@@ -56,7 +56,7 @@ export interface WebWorkspaceSnapshot {
     groupId: string | null;
     sortOrder: number;
     source: "claude" | "codex" | null;
-    cwd?: null;
+    cwd?: string | null;
     environmentType: "local" | "wsl" | "ssh";
   }>;
   worktrees: Array<{
@@ -64,7 +64,7 @@ export interface WebWorkspaceSnapshot {
     projectId: string;
     name: string;
     branch: string;
-    cwd?: null;
+    cwd?: string | null;
     status: "active" | "missing";
   }>;
   updatedAt: number;

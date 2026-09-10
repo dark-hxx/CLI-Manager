@@ -24,10 +24,12 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey }: Pro
       <button type="button" disabled={!enabled} onClick={onFocus} aria-label={t("mobileKeyboard")}>{t("mobileKeyboard")}</button>
       <button type="button" disabled={!enabled} aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>{t("mobileFallback")}</button>
       {([
-        ["mobileEnter", "\r"], ["mobileTab", "\t"], ["mobileEscape", "\x1b"], ["mobileInterrupt", "\x03"],
-      ] as const).map(([label, key]) => <button key={label} type="button" disabled={!enabled}
+        ["mobileEnter", "\r", null], ["mobileTab", "\t", null], ["mobileEscape", "\x1b", null], ["mobileInterrupt", "\x03", null],
+        ["mobileArrowLeft", "\x1b[D", "←"], ["mobileArrowUp", "\x1b[A", "↑"],
+        ["mobileArrowDown", "\x1b[B", "↓"], ["mobileArrowRight", "\x1b[C", "→"],
+      ] as const).map(([label, key, glyph]) => <button key={label} type="button" disabled={!enabled}
         aria-label={t(label)} onPointerDown={(event) => event.preventDefault()}
-        onClick={() => { if (enabled && !composing.current) onKey(key); }}>{t(label)}</button>)}
+        onClick={() => { if (enabled && !composing.current) onKey(key); }}>{glyph ?? t(label)}</button>)}
     </div>
     {expanded && <div className="mobile-terminal-input-fallback">
       <textarea value={draft} disabled={!enabled} rows={2} style={{ fontSize: "16px" }}

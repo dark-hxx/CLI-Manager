@@ -1013,24 +1013,9 @@ fn sanitize_workspace(workspace: &WorkspaceSnapshot) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         terminals: workspace.terminals.clone(),
         groups: workspace.groups.clone(),
-        projects: workspace
-            .projects
-            .iter()
-            .cloned()
-            .map(|mut project| {
-                project.cwd = None;
-                project
-            })
-            .collect(),
-        worktrees: workspace
-            .worktrees
-            .iter()
-            .cloned()
-            .map(|mut worktree| {
-                worktree.cwd = None;
-                worktree
-            })
-            .collect(),
+        // Authenticated device owners need cwd to identify their open terminals.
+        projects: workspace.projects.clone(),
+        worktrees: workspace.worktrees.clone(),
         updated_at: workspace.updated_at,
     }
 }
@@ -1419,7 +1404,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored_workspace.projects[0].name, "CLI-Manager renamed");
-        assert!(stored_workspace.projects[0].cwd.is_none());
+        assert_eq!(stored_workspace.projects[0].cwd.as_deref(), Some(r"D:\work\CLI-Manager"));
         assert_eq!(stored_workspace.updated_at, 2);
         assert_eq!(stored_workspace.terminals, Some(vec![]));
         assert!(sessions[0].cwd.is_none());

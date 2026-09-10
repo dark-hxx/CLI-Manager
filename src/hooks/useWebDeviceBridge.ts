@@ -10,6 +10,7 @@ import { hasVisibleDesktopViewport, restoreDesktopViewportSize } from "../lib/te
 import { useTerminalStore } from "../stores/terminalStore";
 import { PtyHostSocket, type TerminalBinaryFrame } from "../terminal/transport/PtyHostSocket";
 import { normalizeProjectPath, projectWithWorktreeProviderOverrides } from "../lib/terminalProject";
+import { resolveProjectPath } from "../lib/groupPath";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseWebConversationLaunch } from "../lib/webConversationLaunch";
 import { getProviderSwitchAppType } from "../lib/providerSwitching";
@@ -558,7 +559,7 @@ async function publishWorkspace() {
           // Keep other registered CLI types visible in the tree without
           // claiming that the desktop bridge can execute them yet.
           source: source === "claude" || source === "codex" ? source : null,
-          cwd: null,
+          cwd: resolveProjectPath(project, groups),
           environmentType: project.environment_type,
         };
       }),
@@ -567,7 +568,7 @@ async function publishWorkspace() {
         projectId: worktree.project_id,
         name: worktree.name,
         branch: worktree.branch,
-        cwd: null,
+        cwd: worktree.path,
         status: worktree.status,
       })),
       updatedAt: Date.now(),

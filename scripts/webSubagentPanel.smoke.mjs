@@ -38,7 +38,7 @@ function render() {
   const props = {
     key: narrow ? 'narrow' : 'wide', restricted: false, sending: false, detailState: 'ready', t: key => translate(language, key), userName: 'Test',
     devices: [device], selectedDevice: device, history: [], workspace: { groups: [], projects: [], worktrees: [], subagents: agents, updatedAt: Date.now() },
-    projectContexts: [{ key: 'x', projectName: 'Project A', source: 'codex', title: 'Project A', freshness: 'live' }, { key: 'y', projectName: 'Project B', source: 'codex', title: 'Project B', freshness: 'live' }], selectedProjectContext: { key: parent === 'p1' ? 'x' : 'y', projectName: 'Project', source: 'codex', title: 'Project', freshness: 'live' }, terminalSessionId: parent, terminalTabs: [{ sessionId: 'p1', contextKey: 'x', status: 'running', controlMode: 'desktop' }, { sessionId: 'p2', contextKey: 'y', status: 'running', controlMode: 'desktop' }],
+    projectContexts: [{ key: 'x', projectKey: 'x', projectName: 'Project A', cwd: 'F:\\very-long-mobile-path\\workspace\\Project-A', source: 'codex', title: 'Project A', freshness: 'live' }, { key: 'y', projectKey: 'y', projectName: 'Project B', cwd: '/home/test/worktrees/project-b', source: 'codex', title: 'Project B', freshness: 'live' }], selectedProjectContext: { key: parent === 'p1' ? 'x' : 'y', projectKey: 'selected', projectName: 'Selected project', cwd: null, source: 'codex', title: 'Selected project', freshness: 'live' }, terminalSessionId: parent, terminalTabs: [{ sessionId: 'p1', contextKey: 'x', status: 'running', controlMode: 'desktop' }, { sessionId: 'p2', contextKey: 'y', status: 'running', controlMode: 'desktop' }],
     terminalStatus: 'running', terminalStream: stream, terminalControlMode: 'desktop', timeline: [], pairing: { phase: 'idle' }, socketState: 'open', latestSyncAt: null, resolvedTheme: 'dark',
     onTheme: noop, onLanguage: noop, onLogout: noop, onBackToHosts: noop, onRefresh: noop, onSelectDevice: noop, onSelectSession: noop, onSelectProjectContext: noop,
     onOpenTerminal: noop, onSelectTerminalTab: noop, onCloseTerminal: noop, onTerminalInput: () => true, onTerminalResize: () => true, onClaimPairing: async () => {}, onResetPairing: noop, onSubmitManagement: async () => {},
@@ -85,6 +85,7 @@ async function verifyGrid(cols, label) {
 
 async function wide() {
   render(); await pause(500);
+  check(document.querySelector('.source-banner')?.textContent.includes('Project A') && document.querySelector('.terminal-cwd')?.textContent.includes('F:\\very-long-mobile-path\\workspace\\Project-A'), 'Status card identifies active terminal project and cwd');
   await verifyGrid(120, 'Wide 120 columns');
   await verifyGrid(60, 'Wide split 60 columns');
   check(panel()?.classList.contains('expanded'), 'Wide panel is expanded next to parent terminal');
@@ -109,6 +110,7 @@ async function wide() {
   language = 'zh-CN'; render(); await pause(30);
   check(panel().textContent.includes('只读转录') && panel().textContent.includes('已结束'), 'Chinese labels apply immediately');
   parent = 'p2'; render(); await pause(30);
+  check(document.querySelector('.source-banner')?.textContent.includes('Project B') && document.querySelector('.terminal-cwd')?.textContent.includes('/home/test/worktrees/project-b'), 'Switching terminal updates project and worktree cwd');
   check(tabs().length === 1 && panel().textContent.includes('OTHER PARENT'), 'Switching parents selects the matching child panel');
   parent = 'p1'; agents = agents.filter(agent => agent.sessionId !== 'a2'); render(); await pause(30);
   check(tabs().length === 1 && panel().textContent.includes('Review result'), 'Removed selected child falls back to remaining child');
@@ -118,6 +120,8 @@ window.runNarrow = async () => {
   try {
     narrow = true; render(); await pause(400);
     check(innerWidth === 390, 'Narrow browser viewport applied');
+    check(getComputedStyle(document.querySelector('.source-banner')).display === 'none', 'Mobile hides the verbose terminal status card');
+    check(document.querySelector('.mobile-terminal-context')?.textContent.includes('Project A') && document.querySelector('.mobile-terminal-context')?.textContent.includes('Project-A'), 'Mobile keeps compact project and cwd identification');
     check(panel()?.classList.contains('collapsed'), 'Narrow child panel starts collapsed');
     const collapsedHeight = parentPane().getBoundingClientRect().height;
     panel().querySelector('header button').click(); await pause(150);

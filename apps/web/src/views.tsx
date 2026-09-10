@@ -296,6 +296,9 @@ export function Workbench(props: WorkbenchProps) {
   const [detailsOpen, setDetailsOpen] = useState(false);
   const canOpenTerminal = Boolean(!props.sending && selectedDevice?.status === "online" && selectedProjectContext);
   const selectedFreshness = selectedSession?.freshness ?? selectedProjectContext?.freshness ?? "stale";
+  const activeTerminalContext = props.projectContexts.find((context) =>
+    context.key === props.terminalTabs.find((tab) => tab.sessionId === props.terminalSessionId)?.contextKey
+  ) ?? selectedProjectContext;
   const syncText = props.latestSyncAt === null ? t("unknown") : formatServerTime(props.latestSyncAt);
   return (
     <div className={`app-shell${detailsOpen ? " details-open" : ""}`}>
@@ -351,6 +354,8 @@ export function Workbench(props: WorkbenchProps) {
           <div className="source-banner" role="status" aria-live="polite">
             <span className={`source-badge ${props.terminalStatus === "running" ? "live" : selectedFreshness}`}>{terminalStatusLabel(t, props.terminalStatus)}</span>
             <span>{props.terminalSessionId ? `${t("terminalSession")}: ${props.terminalSessionId}` : t("terminalNotStarted")}</span>
+            {props.terminalSessionId && <span className="terminal-project-meta">{t("project")}: {activeTerminalContext?.projectName ?? t("unknown")}</span>}
+            {props.terminalSessionId && <span className="terminal-cwd" title={activeTerminalContext?.cwd ?? undefined}>{t("workingDirectory")}: {activeTerminalContext?.cwd ?? t("unknown")}</span>}
             {props.terminalSessionId && <span>{t(props.terminalControlMode === "web" ? "terminalControlWeb" : "terminalControlDesktop")}</span>}
             <span className="socket-state">{t("browserConnection")}: {t(props.socketState === "open" ? "connected" : props.socketState === "connecting" ? "reconnecting" : "disconnected")}</span>
           </div>
@@ -372,6 +377,10 @@ export function Workbench(props: WorkbenchProps) {
               })}
             </div>
           )}
+          {props.terminalSessionId && <div className="mobile-terminal-context">
+            <strong>{activeTerminalContext?.projectName ?? t("unknown")}</strong>
+            <span title={activeTerminalContext?.cwd ?? undefined}>{t("workingDirectory")}: {activeTerminalContext?.cwd ?? t("unknown")}</span>
+          </div>}
           {!selectedDevice ? (
             <EmptyDevice t={t} onPair={() => setPairingOpen(true)} />
           ) : !selectedProjectContext ? (

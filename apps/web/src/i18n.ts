@@ -3,7 +3,7 @@ export type ResolvedLanguage = Exclude<LanguageMode, "auto">;
 
 const dictionary = {
   "zh-CN": {
-    mobileKeyboard: "打开键盘", mobileFallback: "备用输入", mobileInput: "终端备用输入", mobileInputHint: "发送仅粘贴文本，换行和 Tab 转为空格，其他控制字符移除；按 Enter 执行。草稿不保存。", mobileSend: "发送文本", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C",
+    mobileKeyboard: "打开键盘", mobileFallback: "备用输入", mobileInput: "终端备用输入", mobileInputHint: "发送仅粘贴文本，换行和 Tab 转为空格，其他控制字符移除；按 Enter 执行。草稿不保存。", mobileSend: "发送文本", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C", mobileArrowLeft: "左方向键", mobileArrowUp: "上方向键", mobileArrowDown: "下方向键", mobileArrowRight: "右方向键",
     terminalDisplay: "显示设置",
     terminalDisplayHint: "仅调整此网页显示，不改桌面行列数。Ctrl + 滚轮调整字号；超出区域可滚动。设置保存在当前浏览器。",
     terminalDisplayMode: "适配方式",
@@ -261,6 +261,8 @@ const dictionary = {
     terminalEmptyHint: "打开后将直接连接桌面端同一个 PTY，完整显示 CLI 的原始输出。",
     selectProjectFirst: "请先从左侧选择一个项目或 Worktree。",
     terminalSession: "终端会话",
+    workingDirectory: "工作目录",
+    project: "项目",
     terminalNotStarted: "终端未启动",
     terminalIdle: "未启动",
     terminalConnecting: "连接中",
@@ -341,7 +343,7 @@ const dictionary = {
     close: "关闭",
   },
   "en-US": {
-    mobileKeyboard: "Keyboard", mobileFallback: "Fallback input", mobileInput: "Terminal fallback input", mobileInputHint: "Send pastes text only: newlines and tabs become spaces; other control characters are removed. Press Enter to execute. Drafts are not saved.", mobileSend: "Send text", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C",
+    mobileKeyboard: "Keyboard", mobileFallback: "Fallback input", mobileInput: "Terminal fallback input", mobileInputHint: "Send pastes text only: newlines and tabs become spaces; other control characters are removed. Press Enter to execute. Drafts are not saved.", mobileSend: "Send text", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C", mobileArrowLeft: "Left arrow", mobileArrowUp: "Up arrow", mobileArrowDown: "Down arrow", mobileArrowRight: "Right arrow",
     terminalDisplay: "Display settings",
     terminalDisplayHint: "Browser display only; desktop grid is unchanged. Ctrl + wheel changes font size. Scroll to reach overflow. Saved in this browser.",
     terminalDisplayMode: "Fit mode",
@@ -599,6 +601,8 @@ const dictionary = {
     terminalEmptyHint: "Open the same desktop PTY and see the CLI's complete native output here.",
     selectProjectFirst: "Select a project or Worktree from the sidebar first.",
     terminalSession: "Terminal session",
+    workingDirectory: "Working directory",
+    project: "Project",
     terminalNotStarted: "Terminal not started",
     terminalIdle: "Not started",
     terminalConnecting: "Connecting",

@@ -234,7 +234,7 @@ pub struct WorkspaceProjectSummary {
     pub group_id: Option<String>,
     pub sort_order: i64,
     pub source: Option<String>,
-    /// The desktop keeps the real path local; this legacy field is always null in P0 snapshots.
+    /// Available only inside an authenticated, device-scoped workspace response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub environment_type: String,
@@ -247,7 +247,7 @@ pub struct WorkspaceWorktreeSummary {
     pub project_id: String,
     pub name: String,
     pub branch: String,
-    /// The desktop keeps the real path local; this legacy field is always null in P0 snapshots.
+    /// Available only inside an authenticated, device-scoped workspace response.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub status: String,

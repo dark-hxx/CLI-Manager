@@ -577,6 +577,9 @@ async function run() {
     check(result.mobileSent?.join('') === '中文输入 第二行 测试', 'Fallback paste lost CJK text or transmitted control characters');
     button('Enter').click();
     check(result.mobileSent.at(-1) === '\\r', 'Explicit Enter did not use terminal input channel');
+    const arrowButtons = label => Array.from(document.querySelectorAll('.mobile-terminal-input button')).find(node => node.getAttribute('aria-label') === label);
+    arrowButtons('Left arrow').click(); arrowButtons('Up arrow').click(); arrowButtons('Down arrow').click(); arrowButtons('Right arrow').click();
+    check(result.mobileSent.slice(-4).join('') === '\\x1b[D\\x1b[A\\x1b[B\\x1b[C', 'Mobile direction buttons did not send standard terminal key sequences');
     await fill('保留草稿');
     renderMobile('disconnected');
     const sentBefore = result.mobileSent.length;
@@ -587,7 +590,7 @@ async function run() {
     renderMobile('running', true);
     check(!document.activeElement?.classList.contains('xterm-helper-textarea'), 'Mobile tab activation automatically opened keyboard');
     check(textarea.value === '保留草稿', 'Tab change lost fallback draft');
-    result.mobileInput = { chineseIme: true, explicitEnter: true, safePaste: true, disabledDraft: true, noAutoFocus: true };
+    result.mobileInput = { chineseIme: true, explicitEnter: true, directionKeys: true, safePaste: true, disabledDraft: true, noAutoFocus: true };
   } finally {
     window.matchMedia = savedMatchMedia;
   }

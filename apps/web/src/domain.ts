@@ -56,7 +56,7 @@ export type HistorySessionSummary = {
   projectId?: string | null;
   worktreeId?: string | null;
   title: string;
-  cwd: null;
+  cwd: string | null;
   createdAt: number;
   updatedAt: number;
   messageCount: number;
@@ -77,7 +77,7 @@ export type WorkspaceProject = {
   groupId: string | null;
   sortOrder: number;
   source: "claude" | "codex" | null;
-  cwd: null;
+  cwd: string | null;
   environmentType: "local" | "wsl" | "ssh";
 };
 
@@ -114,6 +114,7 @@ export type ProjectContext = {
   source: string;
   projectKey: string;
   projectName: string;
+  cwd: string | null;
   branch: string | null;
   title: string;
   freshness: Freshness;

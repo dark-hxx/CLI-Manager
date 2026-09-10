@@ -288,6 +288,8 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .conversation-workspace { min-height: calc(100dvh - 286px); }
 .terminal-workspace { width: 100%; max-width: none; min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 10px; padding: 10px; background: #111418; }
 .terminal-workspace .source-banner { flex: none; border-color: #2b3037; border-radius: 5px; color: #aeb7c2; background: #171b20; }
+.terminal-cwd { min-width: 0; overflow-wrap: anywhere; user-select: text; }
+.mobile-terminal-context { display: none; }
 .terminal-workspace .source-badge { border-radius: 3px; }
 .terminal-tab-list { min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 5px 8px; overflow-x: auto; scrollbar-width: thin; }
 .terminal-tab { height: 32px; min-width: 0; max-width: 240px; flex-shrink: 0; display: flex; align-items: center; border: 1px solid transparent; border-radius: 12px; color: var(--muted); background: var(--surface); }
@@ -558,10 +560,14 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 :root[data-mobile-keyboard="true"] .bottom-nav { display: none; }
 .mobile-terminal-input { display: none; }
 @media (max-width: 767px), (pointer: coarse) {
+  .terminal-workspace > .source-banner { display: none; }
+  .mobile-terminal-context { min-width: 0; display: grid; gap: 2px; padding: 5px 8px; border-left: 2px solid var(--primary); color: #aeb7c2; font-size: 11px; }
+  .mobile-terminal-context strong { overflow: hidden; color: var(--text); text-overflow: ellipsis; white-space: nowrap; }
+  .mobile-terminal-context span { min-width: 0; overflow-wrap: anywhere; user-select: text; }
   .web-terminal-shell { flex-direction: column; }
   .web-terminal-display-area { flex-shrink: 1; }
   .mobile-terminal-input { display: flex; flex-direction: column; flex: none; gap: 4px; padding: 4px; color: var(--text); background: var(--surface); border-top: 1px solid var(--border); max-height: 65%; overflow: auto; }
-  .mobile-terminal-input button { min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: inherit; font-size: 12px; }
+  .mobile-terminal-input button { min-width: 36px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: inherit; font-size: 12px; }
   .mobile-terminal-input button:disabled { opacity: .45; }
   .mobile-terminal-input textarea { width: 100%; min-height: 40px; resize: vertical; font-size: 16px; color: inherit; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; }
   .mobile-terminal-input p { margin: 2px; font-size: 11px; }
