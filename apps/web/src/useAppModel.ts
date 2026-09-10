@@ -88,6 +88,7 @@ export function useAppModel() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<string>();
   const [history, setHistory] = useState<HistorySessionSummary[]>([]);
   const [workspace, setWorkspace] = useState<WorkspaceSnapshot | null>(null);
+  const workspaceVersionRef = useRef<{ deviceId: string; updatedAt: number } | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string>();
   const [selectedProjectContextKey, setSelectedProjectContextKey] = useState<string>();
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -295,6 +296,48 @@ export function useAppModel() {
     return false;
   }, [expireSession]);
 
+  const applyWorkspace = useCallback((deviceId: string, nextWorkspace: WorkspaceSnapshot | null) => {
+    if (selectedDeviceRef.current !== deviceId) return;
+    const current = workspaceVersionRef.current;
+    if (current?.deviceId === deviceId && (!nextWorkspace || nextWorkspace.updatedAt < current.updatedAt)) return;
+    workspaceVersionRef.current = nextWorkspace ? { deviceId, updatedAt: nextWorkspace.updatedAt } : null;
+    setWorkspace(nextWorkspace);
+    if (nextWorkspace?.terminals) {
+      const inventory = nextWorkspace.terminals;
+      const ids = new Set(inventory.map((item) => item.sessionId));
+      for (const [id, owner] of pendingCloseRef.current) {
+        if (owner === deviceId && !ids.has(id)) pendingCloseRef.current.delete(id);
+      }
+      for (const tab of terminalTabsRef.current) {
+        if (!ids.has(tab.sessionId)) {
+          socketRef.current?.sendTerminal(deviceId, { type: "detach", sessionId: tab.sessionId });
+          terminalStream.clear(tab.sessionId);
+        }
+      }
+      const previous = new Map(terminalTabsRef.current.map((tab) => [tab.sessionId, tab]));
+      const tabs = inventory.filter((item) => !pendingCloseRef.current.has(item.sessionId)).map((item) => {
+        const contextKey = item.worktreeId ? `worktree:${item.worktreeId}` : `project:${item.projectId}`;
+        const existing = previous.get(item.sessionId);
+        if (!existing) {
+          terminalStream.start(item.sessionId);
+          socketRef.current?.sendTerminal(deviceId, { type: "attach", sessionId: item.sessionId });
+        }
+        return existing ?? { sessionId: item.sessionId, contextKey, status: "connecting", controlMode: "desktop" as const };
+      });
+      terminalTabsRef.current = tabs;
+      setTerminalTabs(tabs);
+      if (!tabs.some((tab) => tab.sessionId === terminalSessionRef.current)) {
+        const next = tabs[0];
+        terminalSessionRef.current = next?.sessionId;
+        setTerminalSessionId(next?.sessionId);
+        if (next) {
+          selectedProjectContextKeyRef.current = next.contextKey;
+          setSelectedProjectContextKey(next.contextKey);
+        } else setTerminalStatus("idle");
+      }
+    }
+  }, [terminalStream]);
+
   const historyRefresh = useMemo(() => createHistoryRefresh(async (deviceId, signal) => {
     try {
       const [result, conversations] = await Promise.all([webClient.history(deviceId, 50, 0, signal), webClient.conversations(deviceId, signal)]);
@@ -302,41 +345,7 @@ export function useAppModel() {
       const sessions = new Map(result.items.map((session) => [session.sessionId, session]));
       for (const session of conversations.sessions) sessions.set(session.sessionId, session);
       setHistory([...sessions.values()].sort((a, b) => b.updatedAt - a.updatedAt));
-      setWorkspace(result.workspace);
-      if (result.workspace?.terminals) {
-        const inventory = result.workspace.terminals;
-        const ids = new Set(inventory.map((item) => item.sessionId));
-        for (const [id, owner] of pendingCloseRef.current) {
-          if (owner === deviceId && !ids.has(id)) pendingCloseRef.current.delete(id);
-        }
-        for (const tab of terminalTabsRef.current) {
-          if (!ids.has(tab.sessionId)) {
-            socketRef.current?.sendTerminal(deviceId, { type: "detach", sessionId: tab.sessionId });
-            terminalStream.clear(tab.sessionId);
-          }
-        }
-        const previous = new Map(terminalTabsRef.current.map((tab) => [tab.sessionId, tab]));
-        const tabs = inventory.filter((item) => !pendingCloseRef.current.has(item.sessionId)).map((item) => {
-          const contextKey = item.worktreeId ? `worktree:${item.worktreeId}` : `project:${item.projectId}`;
-          const existing = previous.get(item.sessionId);
-          if (!existing) {
-            terminalStream.start(item.sessionId);
-            socketRef.current?.sendTerminal(deviceId, { type: "attach", sessionId: item.sessionId });
-          }
-          return existing ?? { sessionId: item.sessionId, contextKey, status: "connecting", controlMode: "desktop" as const };
-        });
-        terminalTabsRef.current = tabs;
-        setTerminalTabs(tabs);
-        if (!tabs.some((tab) => tab.sessionId === terminalSessionRef.current)) {
-          const next = tabs[0];
-          terminalSessionRef.current = next?.sessionId;
-          setTerminalSessionId(next?.sessionId);
-          if (next) {
-            selectedProjectContextKeyRef.current = next.contextKey;
-            setSelectedProjectContextKey(next.contextKey);
-          } else setTerminalStatus("idle");
-        }
-      }
+      applyWorkspace(deviceId, result.workspace);
       const saved = sessionStorage.getItem(`cli-manager.web.selected:${deviceId}`);
       const restored = saved ? sessions.get(saved) : undefined;
       if (saved && !restored) sessionStorage.removeItem(`cli-manager.web.selected:${deviceId}`);
@@ -348,7 +357,7 @@ export function useAppModel() {
     } catch (caught) {
       if (!signal.aborted) handleError(caught);
     }
-  }), [handleError, terminalStream]);
+  }), [applyWorkspace, handleError]);
   const loadHistory = historyRefresh.refresh;
   useEffect(() => () => historyRefresh.cancel(), [historyRefresh, authPhase]);
 
@@ -522,6 +531,8 @@ export function useAppModel() {
               void loadHistory(payload.deviceId);
             }
           }
+        } else if (payload.type === "workspace.updated" && payload.deviceId === selectedDeviceId) {
+          applyWorkspace(payload.deviceId, payload.workspace);
         } else if (payload.type === "history.updated" && payload.deviceId === selectedDeviceId) {
           void loadHistory(payload.deviceId);
         }
@@ -531,7 +542,7 @@ export function useAppModel() {
     });
     socketRef.current = connection;
     return () => { if (socketRef.current === connection) socketRef.current = null; connection.close(); };
-  }, [attachFromOperation, authPhase, expireSession, loadHistory, terminalStream, user]);
+  }, [applyWorkspace, attachFromOperation, authPhase, expireSession, loadHistory, terminalStream, user]);
 
   const loadConversation = useCallback(async (deviceId: string, sessionId: string) => {
     const generation = viewGenerationRef.current;
@@ -598,6 +609,7 @@ export function useAppModel() {
       setAuthPhase("login");
       setDevices([]);
       setHistory([]);
+      workspaceVersionRef.current = null;
       setWorkspace(null);
       setSelectedProjectContextKey(undefined);
       setTimeline([]);
@@ -638,6 +650,7 @@ export function useAppModel() {
       detachTerminal(deviceId);
       setSelectedDeviceId(undefined);
       setHistory([]);
+      workspaceVersionRef.current = null;
       setWorkspace(null);
       setSelectedSessionId(undefined);
       setSelectedProjectContextKey(undefined);
@@ -657,6 +670,7 @@ export function useAppModel() {
     setConversationEvents({});
     setSelectedDeviceId(deviceId);
     setHistory([]);
+    workspaceVersionRef.current = null;
     setWorkspace(null);
     setSelectedSessionId(undefined);
     setSelectedProjectContextKey(undefined);

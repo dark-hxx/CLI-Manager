@@ -1,4 +1,7 @@
-import { FitAddon } from "@xterm/addon-fit";
+import { DEFAULT_DISPLAY, DISPLAY_KEY, normalizeDisplay, readDisplay, type TerminalDisplay } from "./terminalDisplay";
+import { translate, type TranslationKey } from "./i18n";
+import { installTerminalQueryPolicy } from "../../../src/lib/terminalQueryPolicy";
+import { createTerminalColorQueryFilter } from "../../../src/lib/terminalColorQueryFilter";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
@@ -16,6 +19,7 @@ type WebTerminalProps = {
   errorLabel: string;
   scrollLabel: string;
   source?: string | null;
+  t?: (key: TranslationKey) => string;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
 };
@@ -72,12 +76,24 @@ function appendFrame(batches: RenderBatch[], frame: TerminalOutputFrame, reset =
   });
 }
 
-export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, source, errorLabel, scrollLabel, onInput, onResize }: WebTerminalProps) {
+export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, source, errorLabel, scrollLabel, onInput, onResize, t = (key) => translate("zh-CN", key) }: WebTerminalProps) {
+  const [display, setDisplay] = useState(readDisplay);
+  const displayRef = useRef(display);
+  displayRef.current = display;
+  const shellRef = useRef<HTMLDivElement>(null);
+  const updateDisplay = (patch: Partial<TerminalDisplay>) => {
+    const next = normalizeDisplay({ ...displayRef.current, ...patch });
+    displayRef.current = next;
+    setDisplay(next);
+    try {
+      localStorage.setItem(DISPLAY_KEY, JSON.stringify(next));
+      window.dispatchEvent(new Event(DISPLAY_KEY));
+    } catch { /* Keep controls usable when browser storage is blocked. */ }
+  };
   const [renderFailed, setRenderFailed] = useState(false);
   const [scrolledAway, setScrolledAway] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
   const inputRef = useRef(onInput);
   const resizeRef = useRef(onResize);
   const controlModeRef = useRef(controlMode);
@@ -109,11 +125,12 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         ? { background: "#0b0d10", foreground: "#e7ebf0", cursor: "#f4f6f8", selectionBackground: "#315b7d99" }
         : { background: "#111418", foreground: "#edf1f5", cursor: "#ffffff", selectionBackground: "#3d709999" },
     });
-    const fit = new FitAddon();
-    terminal.loadAddon(fit);
     terminal.open(container);
+    // Desktop xterm owns protocol replies even in hidden tabs; Web is a mirror.
+    const queryPolicy = installTerminalQueryPolicy(terminal, () => false);
+    const colorQueries = createTerminalColorQueryFilter();
+    let colorDecoder = new TextDecoder();
     terminalRef.current = terminal;
-    fitRef.current = fit;
     setRenderFailed(false);
 
     let queuedChunks: Array<{ sequence: number; frames: TerminalOutputFrame[] }> = [];
@@ -161,7 +178,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         resolve();
       };
       releasePendingWrite = complete;
-      terminal.write(data, complete);
+      const filtered = colorQueries.feed(colorDecoder.decode(data, { stream: true }));
+      if (filtered) terminal.write(filtered, complete);
+      else complete();
     });
 
     const drain = async () => {
@@ -176,7 +195,11 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
             terminal.resize(batch.cols, batch.rows);
             scheduleSize();
           }
-          if (batch.reset) cancelCursorShow();
+          if (batch.reset) {
+            cancelCursorShow();
+            colorQueries.reset();
+            colorDecoder = new TextDecoder();
+          }
           const parts = batch.reset ? [TERMINAL_RESET, ...batch.parts] : batch.parts;
           await write(mergeParts(parts, batch.bytes + (batch.reset ? TERMINAL_RESET.byteLength : 0)));
           if (disposed) return;
@@ -286,49 +309,50 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       const availableWidth = container.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
       const availableHeight = container.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
       if (availableWidth <= 0 || availableHeight <= 0) return;
-      if (controlModeRef.current !== "web") {
-        // Scale the viewer without changing fonts or the PTY grid.
-        const screen = container.querySelector<HTMLElement>(".xterm-screen");
-        const width = screen?.offsetWidth ?? 0;
-        const available = availableWidth;
-        if (width > 0 && available > 0) {
-          const scale = Math.max(1, available - 16) / width;
-          const element = terminal.element;
-          if (element) {
-            element.style.transformOrigin = "top left";
-            element.style.transform = `scale(${scale})`;
-            element.style.width = `${width + 16 / scale}px`;
-            element.style.height = `${availableHeight / scale}px`;
-          }
-        }
-        return;
-      }
-      if (terminal.element) {
-        terminal.element.style.transform = "";
-        terminal.element.style.width = "";
-        terminal.element.style.height = "";
-      }
-      try {
-        // During replay retain each historical grid until all queued bytes commit.
+      const screen = container.querySelector<HTMLElement>(".xterm-screen");
+      const element = terminal.element;
+      const shell = shellRef.current;
+      if (!screen || !element || !shell || !screen.offsetWidth || !screen.offsetHeight) return;
+      // Web ownership keeps its existing automatic grid, based on the OUTER
+      // workspace at 14px. Display controls never feed back into the PTY size.
+      const workspace = `${shell.clientWidth}:${shell.clientHeight}:${window.devicePixelRatio}`;
+      if (controlModeRef.current !== "web") lastReportedSize = "";
+      if (controlModeRef.current === "web" && workspace !== lastReportedSize) {
         if (draining || replayFrames || renderQueue.length || queuedChunks.length) return;
-        fit.fit();
-        const size = `${terminal.cols}:${terminal.rows}`;
-        if (terminal.cols > 0 && terminal.rows > 0 && size !== lastReportedSize) {
-          lastReportedSize = size;
-          resizeRef.current(terminal.cols, terminal.rows);
-        }
-      } catch {
-        // The container can briefly have no dimensions while mobile chrome resizes.
+        terminal.options.fontSize = 14;
+        const cols = Math.max(2, Math.min(500, Math.floor((shell.clientWidth - 28) / (screen.offsetWidth / terminal.cols))));
+        const rows = Math.max(1, Math.min(300, Math.floor((shell.clientHeight - 10) / (screen.offsetHeight / terminal.rows))));
+        terminal.resize(cols, rows);
+        lastReportedSize = workspace;
+        resizeRef.current(cols, rows);
       }
+      const prefs = displayRef.current;
+      const layout = `${availableWidth}:${availableHeight}:${terminal.cols}:${terminal.rows}:${window.devicePixelRatio}:${prefs.mode}:${prefs.fontSize}`;
+      if (layout === lastDesktopLayout) return;
+      terminal.options.fontSize = prefs.fontSize;
+      const widthLimit = Math.max(1, availableWidth - 16);
+      if (prefs.mode !== "manual") {
+        const ratio = prefs.mode === "width" ? widthLimit / screen.offsetWidth
+          : Math.min(1, widthLimit / screen.offsetWidth, availableHeight / screen.offsetHeight);
+        terminal.options.fontSize = Math.max(1, Math.min(96, Math.floor(prefs.fontSize * ratio * 10) / 10));
+        // Rounding font metrics must not push the last column offscreen.
+        for (let attempt = 0; attempt < 3 && screen.offsetWidth > widthLimit; attempt++) {
+          terminal.options.fontSize = Math.max(1, terminal.options.fontSize - 0.1);
+        }
+      }
+      element.style.width = `${screen.offsetWidth + 16}px`;
+      element.style.height = `${screen.offsetHeight}px`;
+      lastDesktopLayout = layout;
     };
     let lastReportedSize = "";
+    let lastDesktopLayout = "";
     let sizeFrame: number | null = null;
     const scheduleSize = () => {
       if (sizeFrame !== null || disposed) return;
       sizeFrame = requestAnimationFrame(() => { sizeFrame = null; if (!disposed) reportSize(); });
     };
     const input = terminal.onData((data) => inputRef.current(data));
-    layoutRef.current = () => { lastReportedSize = ""; scheduleSize(); };
+    layoutRef.current = scheduleSize;
     wakeRef.current = () => {
       if (hiddenFlushTimer !== null) { clearTimeout(hiddenFlushTimer); hiddenFlushTimer = null; }
       if (queuedChunks.length || renderQueue.length) scheduleFlush();
@@ -339,6 +363,14 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     });
     const observer = new ResizeObserver(scheduleSize);
     observer.observe(container);
+    if (shellRef.current) observer.observe(shellRef.current);
+    const zoom = (event: WheelEvent) => {
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      updateDisplay({ mode: "manual", fontSize: displayRef.current.fontSize + (event.deltaY < 0 ? 1 : -1) });
+    };
+    container.addEventListener("wheel", zoom, { passive: false, capture: true });
     const resizeFrame = requestAnimationFrame(reportSize);
     if (activeRef.current) terminal.focus();
 
@@ -346,12 +378,14 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       disposed = true;
       unsubscribe();
       observer.disconnect();
+      container.removeEventListener("wheel", zoom, true);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       cancelAnimationFrame(resizeFrame);
       if (sizeFrame !== null) cancelAnimationFrame(sizeFrame);
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (hiddenFlushTimer !== null) window.clearTimeout(hiddenFlushTimer);
       input.dispose();
+      queryPolicy.dispose();
       cancelCursorShow();
       cursorHide.dispose();
       cursorShow.dispose();
@@ -362,9 +396,20 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       releasePendingWrite?.();
       releasePendingWrite = null;
       terminal.dispose();
-      fitRef.current = null;
     };
   }, [sessionId, stream]);
+
+  useEffect(() => {
+    layoutRef.current?.();
+  }, [display]);
+
+  useEffect(() => {
+    const sync = () => setDisplay(readDisplay());
+    const storage = (event: StorageEvent) => { if (event.key === DISPLAY_KEY || event.key === null) sync(); };
+    window.addEventListener(DISPLAY_KEY, sync);
+    window.addEventListener("storage", storage);
+    return () => { window.removeEventListener(DISPLAY_KEY, sync); window.removeEventListener("storage", storage); };
+  }, []);
 
   useEffect(() => {
     const terminal = terminalRef.current;
@@ -385,10 +430,25 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     if (status === "running") terminalRef.current?.focus();
   }, [active, status, controlMode]);
 
-  return <div className="web-terminal-shell">
+  return <div className="web-terminal-shell" ref={shellRef}>
     {renderFailed && <div role="alert">{errorLabel}</div>}
-    <div className="web-terminal" ref={containerRef} data-status={status} />
+    <details className="web-terminal-display" onKeyDown={(event) => { if (event.key === "Escape") event.currentTarget.open = false; }}>
+      <summary>{t("terminalDisplay")}</summary>
+      <div className="web-terminal-display-panel">
+        <p>{t("terminalDisplayHint")}</p>
+        <label>{t("terminalDisplayMode")}<select data-display-mode value={display.mode} onChange={(event) => updateDisplay({ mode: event.target.value as TerminalDisplay["mode"] })}>
+          <option value="manual">{t("terminalDisplayManual")}</option><option value="width">{t("terminalDisplayWidth")}</option><option value="contain">{t("terminalDisplayContain")}</option>
+        </select></label>
+        <label>{t("terminalDisplayFont")} <output>{display.fontSize}px</output><input data-display-font type="range" min="8" max="36" value={display.fontSize} onChange={(event) => updateDisplay({ fontSize: Number(event.target.value), mode: "manual" })} /></label>
+        <div className="web-terminal-display-buttons"><button type="button" aria-label={t("terminalDisplaySmaller")} onClick={() => updateDisplay({ mode: "manual", fontSize: display.fontSize - 1 })}>−</button><button type="button" aria-label={t("terminalDisplayLarger")} onClick={() => updateDisplay({ mode: "manual", fontSize: display.fontSize + 1 })}>+</button></div>
+        <label>{t("terminalDisplayAreaWidth")} <output>{display.width}%</output><input data-display-width type="range" min="30" max="100" value={display.width} onChange={(event) => updateDisplay({ width: Number(event.target.value) })} /></label>
+        <label>{t("terminalDisplayAreaHeight")} <output>{display.height}%</output><input data-display-height type="range" min="30" max="100" value={display.height} onChange={(event) => updateDisplay({ height: Number(event.target.value) })} /></label>
+        <button data-display-reset type="button" onClick={() => updateDisplay(DEFAULT_DISPLAY)}>{t("terminalDisplayReset")}</button>
+      </div>
+    </details>
+    <div className="web-terminal-display-area" style={{ width: `${display.width}%`, height: `${display.height}%` }}>
+      <div className="web-terminal" ref={containerRef} data-status={status} />
+    </div>
     {active && scrolledAway && <button className="web-terminal-scroll-bottom" type="button" onClick={() => terminalRef.current?.scrollToBottom()} aria-label={scrollLabel} title={scrollLabel}><ArrowDown size={16} aria-hidden="true" /></button>}
   </div>;
 }
-

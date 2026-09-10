@@ -1,3 +1,4 @@
+import { SubagentPanel } from "./SubagentPanel";
 import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
 import ClaudeColor from "@lobehub/icons/es/Claude/components/Color";
 import {
@@ -386,7 +387,8 @@ export function Workbench(props: WorkbenchProps) {
                 const status = props.socketState !== "open" ? "disconnected" : selectedDevice?.status !== "online" ? "offline" : tab.status;
                 return (
                   <div className={`web-terminal-frame${active ? " active" : ""}`} key={tab.sessionId} role="tabpanel" aria-hidden={!active} inert={!active}>
-                    <WebTerminal active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} source={props.projectContexts.find((context) => context.key === tab.contextKey)?.source} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
+                    <WebTerminal t={t} active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} source={props.projectContexts.find((context) => context.key === tab.contextKey)?.source} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
+                    <SubagentPanel agents={(props.workspace?.subagents ?? []).filter((agent) => agent.parentSessionId === tab.sessionId)} active={active} t={t} />
                   </div>
                 );
               })}
@@ -572,4 +574,3 @@ function serverTimestamp(value: number | string | null): number | null {
   const timestamp = typeof value === "number" && value < 10_000_000_000 ? value * 1000 : new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : null;
 }
-

@@ -90,7 +90,18 @@ export type WorkspaceWorktree = {
   status: "active" | "missing";
 };
 
+export type WebSubagentSnapshot = {
+  sessionId: string;
+  parentSessionId: string;
+  title: string;
+  sourceKind: string;
+  ended: boolean;
+  content: string;
+  truncated: boolean;
+};
+
 export type WorkspaceSnapshot = {
+  subagents?: WebSubagentSnapshot[] | null;
   terminals?: Array<{ sessionId: string; projectId: string; worktreeId: string | null; title: string }> | null;
   groups: WorkspaceGroup[];
   projects: WorkspaceProject[];
@@ -161,6 +172,7 @@ export type BrowserEventPayload =
   | { type: "device.updated"; device: Device }
   | { type: "operation.updated"; operation: Operation }
   | { type: "history.updated"; deviceId: string; latestUpdatedAt: number }
+  | { type: "workspace.updated"; deviceId: string; workspace: WorkspaceSnapshot }
   | { type: "pairing.updated"; pairingId: string; status: string; deviceId: string };
 
 export type BrowserMessage =
