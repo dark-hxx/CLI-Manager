@@ -1,0 +1,5 @@
+{"file":".trellis/spec/frontend/ai-architecture-contracts.md","reason":"交付前确认新增模块没有越过 feature 边界或触发文件长度豁免。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"交付前执行定向回归、类型检查、架构检查，并核对终端人工验收清单。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"交付前确认过滤仍位于共享 xterm 输出转换路径，未改变 PTY ACK 契约。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"交付前确认跨层根因和实时/回放/恢复边界已记录。"}
+{"file":".trellis/spec/guides/cross-platform-thinking-guide.md","reason":"交付前确认 Windows/WSL 终端场景和换行边界已记录。"}

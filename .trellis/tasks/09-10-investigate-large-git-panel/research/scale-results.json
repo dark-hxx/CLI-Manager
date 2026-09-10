@@ -1,0 +1,35 @@
+{
+  "note": "Actual current source functions extracted with TypeScript AST. Node microbenchmark; no browser rendering, IPC or native Git scan measured.",
+  "results": [
+    {
+      "shape": "flat",
+      "files": 64887,
+      "buildMs": 50.42,
+      "expandedComponentRows": 64887,
+      "directoryRows": 0,
+      "aggregatedFileEntries": 0,
+      "traversalMs": 1.71,
+      "jsonBytes": 4855416
+    },
+    {
+      "shape": "wide",
+      "files": 64887,
+      "buildMs": 112.6,
+      "expandedComponentRows": 64987,
+      "directoryRows": 100,
+      "aggregatedFileEntries": 64887,
+      "traversalMs": 6.76,
+      "jsonBytes": 5497796
+    },
+    {
+      "shape": "deep",
+      "files": 64887,
+      "buildMs": 172.21,
+      "expandedComponentRows": 64988,
+      "directoryRows": 101,
+      "aggregatedFileEntries": 129774,
+      "traversalMs": 22.46,
+      "jsonBytes": 6471101
+    }
+  ]
+}

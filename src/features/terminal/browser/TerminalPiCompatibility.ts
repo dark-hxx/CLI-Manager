@@ -12,6 +12,7 @@ import {
   resolvePiImeCompositionAnchor,
   resolvePiImeTextareaAnchor,
 } from "./TerminalPiIme";
+import { createPiOutputFilter } from "./TerminalPiOutputFilter";
 
 const DETECTION_TAIL_LIMIT = 64;
 const PI_DIAGNOSTIC_MARKER = "PI177-";
@@ -39,6 +40,7 @@ export function createPiTerminalCompatibility(
   let piActive = false;
   let detectionTail = "";
   const ansiTransform = createPiAnsiTransform();
+  const outputFilter = createPiOutputFilter();
   const diagnostics = createPiTerminalDiagnostics(sessionId, emit, diagnosticsEnabled);
 
   const activate = () => {
@@ -62,7 +64,8 @@ export function createPiTerminalCompatibility(
       return piActive;
     },
     transformOutput(text) {
-      return piActive ? ansiTransform.transform(text) : text;
+      if (!piActive) return text;
+      return ansiTransform.transform(outputFilter.transform(text));
     },
     onFrame(frame, rawText, normalizedText) {
       const detectionText = `${detectionTail}${rawText}`;
@@ -77,6 +80,7 @@ export function createPiTerminalCompatibility(
     reset() {
       detectionTail = "";
       ansiTransform.reset();
+      outputFilter.reset();
       diagnostics.reset();
     },
   };

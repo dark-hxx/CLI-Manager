@@ -1,0 +1,7 @@
+{"file":".trellis/spec/frontend/ai-architecture-contracts.md","reason":"终端输出过滤器需要遵守前端 feature 边界、文件长度和独立架构检查契约。"}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"终端 PTY 帧、xterm 写入确认和实时/回放/恢复共享输出链路的约束。"}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"终端输出缓冲、有界状态和人工 UI 验收要求。"}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"TypeScript 类型检查和外部输出边界约束。"}
+{"file":".trellis/spec/frontend/code-comment-contracts.md","reason":"新增有状态输出转换方法的必要注释要求。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"记录合并 PTY 中外部诊断覆盖 fullscreen TUI 的跨层排查与测试清单。"}
+{"file":".trellis/spec/guides/cross-platform-thinking-guide.md","reason":"记录 Windows/WSL/ConPTY 终端输出和换行差异的排查边界。"}

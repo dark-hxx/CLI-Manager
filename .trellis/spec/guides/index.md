@@ -24,6 +24,7 @@ These guides help you **ask the right questions before coding**.
 | [Fix Triage Guide](./fix-triage-guide.md) | Triage: minimal fix vs root-cause fix; scenario-enumeration gate for new features / root causes | **Before every bug fix or new feature — pass this gate first** |
 | [Code Reuse Thinking Guide](./code-reuse-thinking-guide.md) | Identify patterns and reduce duplication | When you notice repeated patterns |
 | [Cross-Layer Thinking Guide](./cross-layer-thinking-guide.md) | Think through data flow across layers | Features spanning multiple layers |
+| [Cross-Platform Thinking Guide](./cross-platform-thinking-guide.md) | Check platform-specific process and terminal behavior | Windows, WSL, Bash, or other platform-dependent behavior |
 | [Task Delivery Checklist](./task-delivery-checklist.md) | Enforce repo-specific start/finish delivery rules | Before any file-writing task and before final commit |
 | [Tauri User File Security Checklist](./tauri-user-file-security-checklist.md) | Verify boundary defenses on user paths and asset/fs scopes | Adding a Tauri command that accepts a path, or broadening assetProtocol/fs scope |
 | [Version Update Checklist](./version-update-checklist.md) | Keep npm/Tauri/Rust versions aligned and verify updater release signing/artifacts | Before bumping or tagging CLI-Manager release version |

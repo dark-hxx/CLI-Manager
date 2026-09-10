@@ -33,6 +33,10 @@ const ansiPath = transpile(
   "../src/features/terminal/browser/TerminalPiAnsiTransform.ts",
   "TerminalPiAnsiTransform.mjs",
 );
+const outputFilterPath = transpile(
+  "../src/features/terminal/browser/TerminalPiOutputFilter.ts",
+  "TerminalPiOutputFilter.mjs",
+);
 transpile("../src/features/terminal/lib/terminalTui.ts", "terminalTui.mjs");
 transpile(
   "../src/features/terminal/browser/TerminalPiIme.ts",
@@ -48,11 +52,13 @@ const compatibilityPath = transpile(
     "./TerminalPiAnsiTransform": "./TerminalPiAnsiTransform.mjs",
     "./TerminalPiDiagnostics": "./TerminalPiDiagnostics.mjs",
     "./TerminalPiIme": "./TerminalPiIme.mjs",
+    "./TerminalPiOutputFilter": "./TerminalPiOutputFilter.mjs",
   },
 );
 
 const { isPiTerminalContext } = await import(pathToFileURL(contextPath).href);
 const { createPiAnsiTransform, isPiToolBackgroundRgb } = await import(pathToFileURL(ansiPath).href);
+const { createPiOutputFilter } = await import(pathToFileURL(outputFilterPath).href);
 const {
   createPiTerminalCompatibility,
   resolvePiImeCompositionAnchor,
@@ -68,6 +74,12 @@ const PI_CONTEXT = {
   titleTool: "",
   outputHint: "",
 };
+
+const PI_MCP_ADVISORY = [
+  "MCP: 149 direct tools resolved. Each direct tool adds prompt context; ",
+  "README guidance recommends targeted sets of 5-20 tools and using the proxy or an explicit string[] ",
+  "when 75+ direct tools would be registered.\r\n",
+].join("");
 
 test("recognizes Pi from registered context without matching pip", () => {
   assert.equal(isPiTerminalContext(PI_CONTEXT), true);
@@ -259,16 +271,51 @@ test("ANSI transform survives every CSI frame split and reset drops fragments", 
   assert.equal(transform.transform(";50;40mafter"), ";50;40mafter");
 });
 
+test("Pi output filter removes the direct-tools advisory across every frame split", () => {
+  for (let split = 1; split < PI_MCP_ADVISORY.length; split += 1) {
+    const filter = createPiOutputFilter();
+    const output = filter.transform(`before${PI_MCP_ADVISORY.slice(0, split)}`)
+      + filter.transform(`${PI_MCP_ADVISORY.slice(split)}after`);
+    assert.equal(output, "beforeafter", `split ${split}`);
+  }
+
+  const filter = createPiOutputFilter();
+  assert.equal(filter.transform(`${PI_MCP_ADVISORY}${PI_MCP_ADVISORY}`), "");
+  const otherMcpOutput = "MCP: 74 direct tools resolved.\r\n";
+  assert.equal(filter.transform(otherMcpOutput), otherMcpOutput);
+  const malformedOutput = "MCP: 149 direct tools resolved, but this is another message.\r\n";
+  assert.equal(filter.transform(malformedOutput), malformedOutput);
+});
+
+test("Pi output filter reset drops an incomplete advisory without affecting later output", () => {
+  const filter = createPiOutputFilter();
+  assert.equal(filter.transform(PI_MCP_ADVISORY.slice(0, 16)), "");
+  filter.reset();
+  const remainder = PI_MCP_ADVISORY.slice(16);
+  assert.equal(filter.transform(remainder), remainder);
+});
+
+test("Pi compatibility reset clears the advisory filter state", () => {
+  const compatibility = createPiTerminalCompatibility("pi", () => {}, false);
+  compatibility.updateContext(PI_CONTEXT);
+  const partialLength = 16;
+  assert.equal(compatibility.transformOutput(PI_MCP_ADVISORY.slice(0, partialLength)), "");
+  compatibility.reset();
+  assert.equal(compatibility.transformOutput(PI_MCP_ADVISORY.slice(partialLength)), PI_MCP_ADVISORY.slice(partialLength));
+});
+
 test("Pi facade transforms active sessions and leaves non-Pi sessions byte-for-byte", () => {
   const pi = createPiTerminalCompatibility("pi", () => {}, false);
   pi.updateContext(PI_CONTEXT);
   assert.equal(pi.shouldRefreshImeCompositionAnchor(), true);
   assert.equal(pi.transformOutput("\x1b[48;2;40;50;40mtool"), "\x1b[49mtool");
+  assert.equal(pi.transformOutput(PI_MCP_ADVISORY), "");
 
   const shell = createPiTerminalCompatibility("shell", () => {}, false);
   assert.equal(shell.shouldRefreshImeCompositionAnchor(), false);
   const input = "\x1b[48;2;40;50;40mcustom";
   assert.equal(shell.transformOutput(input), input);
+  assert.equal(shell.transformOutput(PI_MCP_ADVISORY), PI_MCP_ADVISORY);
 });
 
 test("live, replay, reset, and serialized snapshot use the shared transform", () => {

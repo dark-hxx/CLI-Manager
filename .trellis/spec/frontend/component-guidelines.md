@@ -2236,3 +2236,41 @@ Ordinary captures use at least a 2x pixel ratio and may follow high-density disp
 `statsScreenshot` lazily loads html-to-image; `statsScreenshotClipboard` uses Tauri `Image.new` with explicit RGBA dimensions and `writeImage`, then closes the native resource in `finally`. The only added permission is clipboard-manager write-image. No filesystem export, upload or clipboard read is needed. The button owns its in-flight guard, disables duplicate clicks and localizes all feedback.
 
 Tests: `node --test scripts/statsScreenshot.test.mjs`; `node scripts/statsScreenshot.browser.mjs` produces a standalone file fixture whose `statsScreenshotTests.runScreenshotRegression()` exercises dark/light themes, three scroll positions, SVG/canvas, snapshot stability and cleanup. This fixture does not start CLI-Manager services or Tauri. A human must still verify pasting the image from the actual desktop app and switching UI language.
+
+## Convention: Pi fullscreen TUI external advisories use the shared output transform
+
+**What**: Pi-specific text emitted by an external extension through the PTY must be handled in
+`TerminalPiCompatibility.transformOutput`, which is shared by live output, replay, and restored
+snapshots. The incremental helper shape is
+`createPiOutputFilter(): { transform(text: string): string; reset(): void }`.
+
+**Why**: Pi's fullscreen renderer owns its redraw surface, while an extension's `console.warn`
+still enters the PTY as ordinary stderr. xterm cannot recover the composer after that text is
+written at the current cursor position. Filtering the one known advisory at the existing Pi
+compatibility boundary preserves the PTY transport and the user's configured direct tools.
+
+**Contracts**:
+
+- Match the complete `pi-mcp-adapter` direct-tools advisory, including a count of 75 or more and
+  its `\n` or `\r\n` terminator; do not filter arbitrary `MCP:` text.
+- Keep only a bounded candidate suffix while a PTY frame splits the advisory, and release a
+  candidate as ordinary output when it stops matching.
+- Keep non-Pi sessions byte-for-byte unchanged and clear the candidate on compatibility reset.
+
+**Correct**:
+
+```typescript
+const transformed = piActive
+  ? ansiTransform.transform(outputFilter.transform(text))
+  : text;
+```
+
+**Wrong**:
+
+```typescript
+text = text.replace(/MCP:.*/, "");
+```
+
+**Tests**: Assert every split point of the advisory, repeated advisories, nearby ordinary text,
+below-threshold and malformed MCP text, non-Pi passthrough, and reset after a partial candidate.
+Also keep the source contract that live, replay, and restore paths call the shared transform.

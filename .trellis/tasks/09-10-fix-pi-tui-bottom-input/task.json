@@ -1,0 +1,32 @@
+{
+  "id": "fix-pi-tui-bottom-input",
+  "name": "fix-pi-tui-bottom-input",
+  "title": "修复 Pi CLI 全屏 TUI 底部输入框展示",
+  "description": "修复 Pi CLI 全屏 TUI 中 MCP 直连工具提示覆盖底部输入框的问题。",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-09-10",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/features/terminal/browser/TerminalPiOutputFilter.ts",
+    "src/features/terminal/browser/TerminalPiCompatibility.ts",
+    "scripts/terminalPiCompatibility.test.mjs",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "",
+  "meta": {}
+}

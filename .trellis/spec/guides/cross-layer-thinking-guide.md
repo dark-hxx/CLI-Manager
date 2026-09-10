@@ -154,6 +154,30 @@ keep the paused state as the ordering barrier, and acquire the global clients
 lock only to validate state and enqueue the snapshot. Disk replay must never
 run inside the global fan-out critical section.
 
+### Mistake 11: Forwarding merged PTY diagnostics into a fullscreen TUI
+
+**Bad**: Treat every decoded PTY string as ordinary shell output and write it
+directly to xterm. A CLI fullscreen renderer and an extension's stderr then
+share the same cursor position, so an external diagnostic can overwrite the
+renderer-owned composer.
+
+**Good**: Trace the bytes from the process boundary through normalization,
+CLI-specific compatibility, live batching, replay, and restore. Keep the PTY
+transport unchanged; handle a confirmed CLI diagnostic in the existing shared
+output transform with an exact matcher, bounded cross-frame carry, and reset
+cleanup. Leave all other output byte-for-byte intact.
+
+**Checklist**:
+
+- [ ] Confirm whether stdout and stderr are merged by the supported PTY
+  platforms, including Windows/WSL and local Shell paths.
+- [ ] Find the common transform used by live output, replay, and restore
+  before adding a consumer-specific filter.
+- [ ] Test arbitrary frame splits, `\n`/`\r\n` terminators, repeated output,
+  adjacent ordinary text, non-matching diagnostics, and reset boundaries.
+- [ ] Keep the filter scoped to the identified CLI context; do not disable
+  the external tool or rewrite its user configuration as a display workaround.
+
 ---
 
 ## Checklist for Cross-Layer Features
