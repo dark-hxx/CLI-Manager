@@ -15,6 +15,7 @@ type WebTerminalProps = {
   theme: "light" | "dark";
   errorLabel: string;
   scrollLabel: string;
+  source?: string | null;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
 };
@@ -58,20 +59,20 @@ function appendFrame(batches: RenderBatch[], frame: TerminalOutputFrame, reset =
     && previous.bytes + data.byteLength <= MAX_LIVE_WRITE_BYTES) {
     if (data.byteLength) previous.parts.push(data);
     previous.bytes += data.byteLength;
-    previous.sequence = Math.max(previous.sequence, frame.sequence);
+    if (frame.sequenceEnd !== false) previous.sequence = Math.max(previous.sequence, frame.sequence);
     return;
   }
   batches.push({
     reset,
     cols: frame.cols,
     rows: frame.rows,
-    sequence: frame.sequence,
+    sequence: frame.sequenceEnd === false ? 0 : frame.sequence,
     parts: data.byteLength ? [data] : [],
     bytes: data.byteLength,
   });
 }
 
-export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, errorLabel, scrollLabel, onInput, onResize }: WebTerminalProps) {
+export function WebTerminal({ sessionId, active, status, stream, controlMode, theme, source, errorLabel, scrollLabel, onInput, onResize }: WebTerminalProps) {
   const [renderFailed, setRenderFailed] = useState(false);
   const [scrolledAway, setScrolledAway] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,10 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   const resizeRef = useRef(onResize);
   const controlModeRef = useRef(controlMode);
   const activeRef = useRef(active);
+  const sourceRef = useRef(source);
+  const layoutRef = useRef<(() => void) | null>(null);
+  const wakeRef = useRef<(() => void) | null>(null);
+  sourceRef.current = source;
   inputRef.current = onInput;
   resizeRef.current = onResize;
   controlModeRef.current = controlMode;
@@ -92,8 +97,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     const terminal = new Terminal({
       allowProposedApi: false,
       convertEol: false,
-      cursorBlink: true,
+      cursorBlink: false,
       cursorStyle: "bar",
+      cursorInactiveStyle: "none",
       fontFamily: '"Cascadia Mono", "JetBrains Mono", Consolas, monospace',
       fontSize: 14,
       letterSpacing: 0,
@@ -113,12 +119,37 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     let queuedChunks: Array<{ sequence: number; frames: TerminalOutputFrame[] }> = [];
     let renderQueue: RenderBatch[] = [];
     let replayFrames: TerminalOutputFrame[] | null = null;
+    let partialFrames: TerminalOutputFrame[] = [];
+    let acceptedSequence = 0;
     let lastChunkSequence = 0;
     let animationFrame: number | null = null;
     let hiddenFlushTimer: number | null = null;
     let draining = false;
     let disposed = false;
     let releasePendingWrite: (() => void) | null = null;
+    let cursorShowTimer: number | null = null;
+    let permitCursorShow = false;
+    const cancelCursorShow = () => {
+      if (cursorShowTimer !== null) clearTimeout(cursorShowTimer);
+      cursorShowTimer = null;
+    };
+    // Parse complete CSI sequences, including those split across network chunks.
+    const cursorHide = terminal.parser.registerCsiHandler({ prefix: "?", final: "l" }, (params) => {
+      if (params.includes(25)) cancelCursorShow();
+      return false;
+    });
+    const cursorShow = terminal.parser.registerCsiHandler({ prefix: "?", final: "h" }, (params) => {
+      if (sourceRef.current !== "codex" || params.length !== 1 || params[0] !== 25) return false;
+      if (permitCursorShow) { permitCursorShow = false; return false; }
+      cancelCursorShow();
+      cursorShowTimer = window.setTimeout(() => {
+        cursorShowTimer = null;
+        if (disposed) return;
+        permitCursorShow = true;
+        terminal.write("\x1b[?25h");
+      }, 80);
+      return true;
+    });
 
     const write = (data: Uint8Array) => new Promise<void>((resolve) => {
       if (!data.byteLength || disposed) {
@@ -143,12 +174,16 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
           batchesProcessed += 1;
           if (batch.cols > 0 && batch.rows > 0 && (terminal.cols !== batch.cols || terminal.rows !== batch.rows)) {
             terminal.resize(batch.cols, batch.rows);
+            scheduleSize();
           }
+          if (batch.reset) cancelCursorShow();
           const parts = batch.reset ? [TERMINAL_RESET, ...batch.parts] : batch.parts;
           await write(mergeParts(parts, batch.bytes + (batch.reset ? TERMINAL_RESET.byteLength : 0)));
           if (disposed) return;
-          stream.markRendered(sessionId, batch.sequence);
-          container.dataset.renderedSequence = String(batch.sequence);
+          if (batch.sequence > 0) {
+            stream.markRendered(sessionId, batch.sequence);
+            container.dataset.renderedSequence = String(batch.sequence);
+          }
           if (batch.reset) setRenderFailed(false);
         }
       } catch (error) {
@@ -159,6 +194,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       } finally {
         draining = false;
         if (!disposed && renderQueue.length) scheduleFlush();
+        if (!disposed && !renderQueue.length) scheduleSize();
       }
     };
 
@@ -184,33 +220,35 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         lastChunkSequence = chunk.sequence;
         for (const frame of chunk.frames) {
           if (frame.kind === "reset") {
+            partialFrames = [];
+            acceptedSequence = 0;
             replayFrames = [];
-            if (frame.replayBatchEnd) appendFrame(batches, frame, true);
+            if (frame.replayBatchEnd) {
+              appendFrame(batches, frame, true);
+              replayFrames = null;
+            }
             continue;
           }
+          // A reconnect resends the entire source frame, never its remaining
+          // bytes. Keep fragments atomic and discard a previous partial attempt.
+          if (frame.sequenceStart === true || (partialFrames.length && (
+            partialFrames[0]!.sequence !== frame.sequence || partialFrames[0]!.kind !== frame.kind
+          ))) partialFrames = [];
+          if (frame.sequence > 0 && frame.sequence <= acceptedSequence) continue;
+          partialFrames.push(frame);
+          if (frame.sequenceEnd === false) continue;
+          const completeFrames = partialFrames;
+          partialFrames = [];
+          acceptedSequence = Math.max(acceptedSequence, frame.sequence);
           if (replayFrames) {
-            replayFrames.push(frame);
+            replayFrames.push(...completeFrames);
             if (!frame.replayBatchEnd) continue;
-            const first = replayFrames[0] ?? frame;
-            const combined: RenderBatch = {
-              reset: true,
-              cols: frame.cols || first.cols,
-              rows: frame.rows || first.rows,
-              sequence: Math.max(...replayFrames.map((item) => item.sequence)),
-              parts: [],
-              bytes: 0,
-            };
-            for (const replayFrame of replayFrames) {
-              if (!replayFrame.data) continue;
-              const bytes = decodeBase64(replayFrame.data);
-              combined.parts.push(bytes);
-              combined.bytes += bytes.byteLength;
-            }
-            batches.push(combined);
+            // Replaying old bytes at the final grid corrupts wrapping and cursor rows.
+            replayFrames.forEach((entry, index) => appendFrame(batches, entry, index === 0));
             replayFrames = null;
             continue;
           }
-          appendFrame(batches, frame);
+          completeFrames.forEach((entry) => appendFrame(batches, entry));
         }
       }
       for (const batch of batches) {
@@ -244,19 +282,23 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
 
     const reportSize = () => {
       if (!activeRef.current) return;
+      const padding = getComputedStyle(container);
+      const availableWidth = container.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight);
+      const availableHeight = container.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom);
+      if (availableWidth <= 0 || availableHeight <= 0) return;
       if (controlModeRef.current !== "web") {
         // Scale the viewer without changing fonts or the PTY grid.
         const screen = container.querySelector<HTMLElement>(".xterm-screen");
         const width = screen?.offsetWidth ?? 0;
-        const available = container.clientWidth - 28;
+        const available = availableWidth;
         if (width > 0 && available > 0) {
-          const scale = Math.max(0.7, Math.min(1.4, available / width));
+          const scale = Math.max(1, available - 16) / width;
           const element = terminal.element;
           if (element) {
             element.style.transformOrigin = "top left";
             element.style.transform = `scale(${scale})`;
-            element.style.width = `${width + 16}px`;
-            element.style.height = `${Math.max(1, container.clientHeight - 12) / scale}px`;
+            element.style.width = `${width + 16 / scale}px`;
+            element.style.height = `${availableHeight / scale}px`;
           }
         }
         return;
@@ -267,19 +309,30 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         terminal.element.style.height = "";
       }
       try {
+        // During replay retain each historical grid until all queued bytes commit.
+        if (draining || replayFrames || renderQueue.length || queuedChunks.length) return;
         fit.fit();
-        if (terminal.cols > 0 && terminal.rows > 0) resizeRef.current(terminal.cols, terminal.rows);
+        const size = `${terminal.cols}:${terminal.rows}`;
+        if (terminal.cols > 0 && terminal.rows > 0 && size !== lastReportedSize) {
+          lastReportedSize = size;
+          resizeRef.current(terminal.cols, terminal.rows);
+        }
       } catch {
         // The container can briefly have no dimensions while mobile chrome resizes.
       }
     };
+    let lastReportedSize = "";
     let sizeFrame: number | null = null;
     const scheduleSize = () => {
       if (sizeFrame !== null || disposed) return;
       sizeFrame = requestAnimationFrame(() => { sizeFrame = null; if (!disposed) reportSize(); });
     };
     const input = terminal.onData((data) => inputRef.current(data));
-    const render = terminal.onRender(scheduleSize);
+    layoutRef.current = () => { lastReportedSize = ""; scheduleSize(); };
+    wakeRef.current = () => {
+      if (hiddenFlushTimer !== null) { clearTimeout(hiddenFlushTimer); hiddenFlushTimer = null; }
+      if (queuedChunks.length || renderQueue.length) scheduleFlush();
+    };
     const scroll = terminal.onScroll(() => {
       const buffer = terminal.buffer.active;
       setScrolledAway(buffer.viewportY < buffer.baseY);
@@ -287,7 +340,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     const observer = new ResizeObserver(scheduleSize);
     observer.observe(container);
     const resizeFrame = requestAnimationFrame(reportSize);
-    terminal.focus();
+    if (activeRef.current) terminal.focus();
 
     return () => {
       disposed = true;
@@ -299,7 +352,11 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (hiddenFlushTimer !== null) window.clearTimeout(hiddenFlushTimer);
       input.dispose();
-      render.dispose();
+      cancelCursorShow();
+      cursorHide.dispose();
+      cursorShow.dispose();
+      layoutRef.current = null;
+      wakeRef.current = null;
       scroll.dispose();
       terminalRef.current = null;
       releasePendingWrite?.();
@@ -318,23 +375,13 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   }, [theme]);
 
   useEffect(() => {
-    if (controlMode !== "web") return;
-    try {
-      fitRef.current?.fit();
-      const terminal = terminalRef.current;
-      if (terminal && terminal.cols > 0 && terminal.rows > 0) resizeRef.current(terminal.cols, terminal.rows);
-    } catch {
-      // The terminal can be between layouts while ownership changes.
-    }
+    layoutRef.current?.();
   }, [controlMode]);
 
   useEffect(() => {
-    if (!active) return;
-    try {
-      if (controlMode === "web") fitRef.current?.fit();
-    } catch {
-      // The active tab can still be settling into its final dimensions.
-    }
+    if (!active) { terminalRef.current?.blur(); return; }
+    wakeRef.current?.();
+    layoutRef.current?.();
     if (status === "running") terminalRef.current?.focus();
   }, [active, status, controlMode]);
 

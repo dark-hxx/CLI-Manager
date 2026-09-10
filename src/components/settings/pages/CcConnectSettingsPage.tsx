@@ -44,10 +44,10 @@ import {
 import { toast } from "sonner";
 import { getLanguageLocale, useI18n, type AppLanguage, type TranslationKey } from "../../../lib/i18n";
 import { webDeviceApi, type WebDeviceStatus } from "../../../lib/webDevice";
-import { useProjectStore } from "../../../stores/projectStore";
 import { useSettingsStore } from "../../../stores/settingsStore";
 import { ConfirmDialog } from "../../ConfirmDialog";
 import { WebDeviceSettingsSection } from "../WebDeviceSettingsSection";
+import { WebServerSettingsSection } from "../WebServerSettingsSection";
 
 type AgentKind = "claude" | "codex";
 type PlatformKind = "telegram" | "feishu" | "weixin" | "wecom";
@@ -1064,7 +1064,10 @@ export function CcConnectSettingsPage() {
         size="xl"
         keepMounted
       >
-        <WebDeviceSettingsSection onStatusChange={setWebDeviceStatus} />
+        <Stack gap="md">
+          <WebServerSettingsSection />
+          <WebDeviceSettingsSection onStatusChange={setWebDeviceStatus} />
+        </Stack>
       </Drawer>
 
       <Drawer

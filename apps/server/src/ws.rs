@@ -30,6 +30,9 @@ const DEVICE_SEND_QUEUE: usize = 64;
 const MAX_WALLPAPER_BYTES: usize = 384 * 1024;
 const MAX_WALLPAPER_DIMENSION: u32 = 1024;
 const MAX_TERMINAL_DATA_BYTES: usize = 64 * 1024;
+// Desktop batches include JSON metadata within 512 KiB; the outer message
+// retains headroom under MAX_SOCKET_FRAME_BYTES (1 MiB).
+const MAX_TERMINAL_OUTPUT_BATCH_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -302,10 +305,10 @@ fn validate_terminal_output(
         return Err(format!("invalid_frame_count: count={}", frames.len()));
     }
     let encoded_bytes = frames.iter().map(|frame| frame.data.len()).sum::<usize>();
-    if encoded_bytes > MAX_TERMINAL_DATA_BYTES * 2 {
+    if encoded_bytes > MAX_TERMINAL_OUTPUT_BATCH_BYTES {
         return Err(format!(
             "encoded_batch_too_large: bytes={encoded_bytes}, limit={}",
-            MAX_TERMINAL_DATA_BYTES * 2
+            MAX_TERMINAL_OUTPUT_BATCH_BYTES
         ));
     }
     for (index, frame) in frames.iter().enumerate() {
@@ -1205,6 +1208,8 @@ mod tests {
     #[test]
     fn terminal_output_rejection_reports_metadata_without_content() {
         let mut frame = TerminalOutputFrame {
+            sequence_start: Some(true),
+            sequence_end: Some(true),
             sequence: 1,
             cols: 120,
             rows: 32,
@@ -1213,7 +1218,7 @@ mod tests {
             replay_batch_end: true,
         };
         assert!(validate_terminal_output("session", &[frame.clone()]).is_ok());
-        frame.data = "A".repeat(MAX_TERMINAL_DATA_BYTES * 2);
+        frame.data = "A".repeat(MAX_TERMINAL_OUTPUT_BATCH_BYTES);
         assert!(validate_terminal_output("session", &[frame.clone()]).is_ok());
         frame.data.push_str("AAAA");
         assert!(validate_terminal_output("session", &[frame.clone()])
@@ -1265,6 +1270,8 @@ mod tests {
             session_id: "terminal-1".into(),
             sequence: 1,
             frames: vec![cli_manager_web_protocol::TerminalOutputFrame {
+                sequence_start: Some(true),
+                sequence_end: Some(true),
                 sequence: 1,
                 cols: 80,
                 rows: 24,

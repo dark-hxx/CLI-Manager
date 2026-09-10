@@ -46,6 +46,7 @@ import { useTerminalSearch } from "../hooks/useTerminalSearch";
 import { useTerminalContextMenu } from "../hooks/useTerminalContextMenu";
 import { useTerminalOsc } from "../hooks/useTerminalOsc";
 import { useTerminalDisplay } from "../hooks/useTerminalDisplay";
+import { registerDesktopViewport } from "../lib/terminalSizeOwnership";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "../hooks/useTerminalInput";
 import { getTerminalCellWidth } from "../lib/terminalCellWidth";
 import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
@@ -1031,6 +1032,34 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       tuiColorSync.schedule(terminal);
     }
   }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, terminalTextColor, terminalTuiUserColor, terminalTuiAssistantColor, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen, tuiColorSync]);
+
+  useLayoutEffect(() => {
+    let restoreFrame: number | null = null;
+    const visible = () => isVisible && document.visibilityState !== "hidden";
+    const restore = () => {
+      if (!visible()) return;
+      scheduleFit(true);
+      if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+      restoreFrame = requestAnimationFrame(() => {
+        restoreFrame = null;
+        const terminal = terminalRef.current;
+        if (terminal && visible()) {
+          // Web may have resized the PTY while this xterm kept its dimensions.
+          void terminalProcessManager.resize(sessionId, terminal.cols, terminal.rows).catch((error) => {
+            logWarn("Failed to reclaim desktop terminal size", error);
+          });
+        }
+      });
+    };
+    const unregister = registerDesktopViewport(sessionId, { visible, restore });
+    document.addEventListener("visibilitychange", restore);
+    restore();
+    return () => {
+      unregister();
+      document.removeEventListener("visibilitychange", restore);
+      if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+    };
+  }, [sessionId, isVisible]);
 
   // Hidden terminals stay attached and continue parsing output. Visibility only
   // controls renderer resources and when pending layout work is flushed.

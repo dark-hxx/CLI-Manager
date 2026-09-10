@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -589,7 +590,7 @@ fn optional_unicode_env(key: &str) -> Result<Option<String>, String> {
     }
 }
 
-fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
+pub(crate) fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
     if profile_name.is_empty()
         || profile_name.len() > 128
         || !profile_name
@@ -598,10 +599,11 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
     {
         return Err("Codex Provider profile name is invalid".to_string());
     }
-    let codex_home = env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
+    let codex_home = resolve_codex_profile_home(
+        env::var_os("CODEX_HOME"),
+        crate::provider::home::default_config_root("codex"),
+    )
+    .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
     let path = codex_home.join(format!("{profile_name}.config.toml"));
     let metadata = std::fs::metadata(&path)
         .map_err(|err| format!("read Codex Provider profile metadata failed: {err}"))?;
@@ -618,6 +620,16 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
         return Err("Codex Provider profile contains too many runtime options".to_string());
     }
     Ok(overrides)
+}
+
+fn resolve_codex_profile_home(
+    environment_home: Option<OsString>,
+    managed_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    environment_home
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or(managed_home)
 }
 
 fn flatten_codex_profile_value(
@@ -696,7 +708,7 @@ fn estimated_windows_argument_units(args: &[String]) -> usize {
 }
 
 #[cfg(target_os = "windows")]
-fn windows_shell_path(path: &Path) -> PathBuf {
+pub(crate) fn windows_shell_path(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
     if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
         PathBuf::from(format!(r"\\{rest}"))
@@ -1557,6 +1569,22 @@ wire_api = "responses"
             &"model_providers.\"custom.provider\".base_url=\"https://provider.example.com/v1\""
                 .to_string()
         ));
+    }
+
+    #[test]
+    fn provider_profile_home_falls_back_to_the_desktop_managed_codex_home() {
+        let managed = PathBuf::from("managed-codex-home");
+        assert_eq!(
+            resolve_codex_profile_home(None, Some(managed.clone())),
+            Some(managed)
+        );
+        assert_eq!(
+            resolve_codex_profile_home(
+                Some(OsString::from("environment-codex-home")),
+                Some(PathBuf::from("managed-codex-home")),
+            ),
+            Some(PathBuf::from("environment-codex-home"))
+        );
     }
 
     #[test]

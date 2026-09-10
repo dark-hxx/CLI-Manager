@@ -2674,7 +2674,10 @@ fn resolve_codex_launcher_from_path(
     resolve_program_from_path("codex", path_value.as_ref(), Some(wrapper_dir))
 }
 
-fn resolve_local_agent_program(program: &str, work_dir: &Path) -> Result<PathBuf, String> {
+pub(crate) fn resolve_local_agent_program(
+    program: &str,
+    work_dir: &Path,
+) -> Result<PathBuf, String> {
     let configured = Path::new(program);
     if configured.is_absolute() || program.contains(['/', '\\']) {
         let candidate = if configured.is_absolute() {

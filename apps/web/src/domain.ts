@@ -179,6 +179,8 @@ export type WebTerminalTab = {
   controlMode: TerminalControlMode;
 };
 export type TerminalOutputFrame = {
+  sequenceEnd?: boolean;
+  sequenceStart?: boolean;
   sequence: number;
   cols: number;
   rows: number;

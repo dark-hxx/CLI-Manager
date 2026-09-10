@@ -15,6 +15,10 @@ pub enum TerminalOutputKind {
 #[serde(rename_all = "camelCase")]
 pub struct TerminalOutputFrame {
     pub sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_end: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sequence_start: Option<bool>,
     pub cols: u16,
     pub rows: u16,
     pub data: String,
@@ -608,6 +612,8 @@ mod tests {
                 rows: 32,
                 kind: TerminalOutputKind::Replay,
                 replay_batch_end: true,
+                sequence_end: Some(true),
+                sequence_start: Some(true),
             }],
         };
         let value = serde_json::to_value(&output).unwrap();
@@ -617,6 +623,15 @@ mod tests {
         assert_eq!(value["frames"][0]["rows"], 32);
         assert_eq!(value["frames"][0]["kind"], "replay");
         assert_eq!(value["frames"][0]["replayBatchEnd"], true);
+        assert_eq!(value["frames"][0]["sequenceEnd"], true);
+        assert_eq!(value["frames"][0]["sequenceStart"], true);
+        let mut legacy = value["frames"][0].clone();
+        legacy.as_object_mut().unwrap().remove("sequenceEnd");
+        legacy.as_object_mut().unwrap().remove("sequenceStart");
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy.clone()).unwrap().sequence_start, None);
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy.clone()).unwrap().sequence_end, None);
+        legacy["sequenceEnd"] = serde_json::json!(false);
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy).unwrap().sequence_end, Some(false));
         assert_eq!(
             serde_json::from_value::<BrowserSocketFrame>(value).unwrap(),
             output

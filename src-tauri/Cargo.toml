@@ -8,6 +8,23 @@ edition = "2021"
 # 新增 cli-manager-daemon 第二个 bin 后，`cargo run`（tauri dev）需要显式默认目标
 default-run = "cli-manager"
 
+# Explicit targets keep all helpers visible to the Tauri bundler.
+[[bin]]
+name = "cli-manager"
+path = "src/main.rs"
+
+[[bin]]
+name = "cli-manager-codex-proxy"
+path = "src/bin/cli-manager-codex-proxy.rs"
+
+[[bin]]
+name = "cli-manager-daemon"
+path = "src/bin/cli-manager-daemon.rs"
+
+[[bin]]
+name = "cli-manager-web-daemon"
+path = "src/bin/cli-manager-web-daemon.rs"
+
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
@@ -80,6 +97,7 @@ url = "2"
 local-ip-address = "0.6.13"
 tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 cli-manager-web-protocol = { path = "../crates/web-protocol" }
+cli-manager-web-server = { path = "../apps/server" }
 
 # macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
 # 注意：macos-private-api 必须在上方 [dependencies].tauri 中声明（不能仅放在 macOS target 下），

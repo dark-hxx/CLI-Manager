@@ -1,11 +1,13 @@
 import { useEffect } from "react";
+import { publishWebTerminalBatch } from "../lib/webTerminalBackpressure";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { confirm as confirmNative } from "@tauri-apps/plugin-dialog";
 import { fetchLatestProjectSessionDetail, useHistoryStore } from "../stores/historyStore";
 import { useProjectStore } from "../stores/projectStore";
+import { useSettingsStore } from "../stores/settingsStore";
+import { hasVisibleDesktopViewport, restoreDesktopViewportSize } from "../lib/terminalSizeOwnership";
 import { useTerminalStore } from "../stores/terminalStore";
-import { terminalProcessManager } from "../terminal/core/TerminalProcessManager";
 import { PtyHostSocket, type TerminalBinaryFrame } from "../terminal/transport/PtyHostSocket";
 import { normalizeProjectPath, projectWithWorktreeProviderOverrides } from "../lib/terminalProject";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
@@ -68,7 +70,7 @@ let drainingTerminalCommands = false;
 const terminalOutputSequences = new Map<string, number>();
 
 function terminalControlMode(sessionId: string): WebTerminalControlMode {
-  return terminalProcessManager.hasActiveOutputConsumer(sessionId) ? "desktop" : "web";
+  return hasVisibleDesktopViewport(sessionId) ? "desktop" : "web";
 }
 
 function isMissingTerminalSessionError(error: unknown): boolean {
@@ -90,6 +92,7 @@ async function syncTerminalControlModes() {
     const nextMode = terminalControlMode(sessionId);
     if (nextMode === bridge.controlMode) continue;
     bridge.controlMode = nextMode;
+    if (nextMode === "desktop") restoreDesktopViewportSize(sessionId);
     await publishTerminalBridgeStatus(sessionId, bridge);
   }
 }
@@ -120,17 +123,16 @@ async function attachWebTerminal(sessionId: string, afterSequence?: number) {
     pendingFrames = [];
     if (frames.length === 0) return;
     const generation = outputGeneration;
-    for (const batch of batchWebTerminalFrames(frames)) {
+    for (const batch of batchWebTerminalFrames(frames, useSettingsStore.getState().webTerminalBatchKiB)) {
       const sequence = (terminalOutputSequences.get(sessionId) ?? 0) + 1;
       terminalOutputSequences.set(sessionId, sequence);
       publishQueue = publishQueue.then(async () => {
         if (generation !== outputGeneration || outputFailed) return;
-        await webDeviceApi.terminalOutput(
-          sessionId,
-          sequence,
-          batch.frames,
+        const accepted = await publishWebTerminalBatch(
+          () => webDeviceApi.terminalOutput(sessionId, sequence, batch.frames),
+          () => generation === outputGeneration && !outputFailed,
         );
-        if (generation === outputGeneration) {
+        if (accepted && generation === outputGeneration) {
           for (const ack of batch.acknowledgements) {
             socket.acknowledge(sessionId, ack.sequence, ack.bytes);
           }
@@ -138,6 +140,7 @@ async function attachWebTerminal(sessionId: string, afterSequence?: number) {
       }).catch((error) => {
         if (generation !== outputGeneration) return;
         outputFailed = true;
+        bridge.terminalStatus = "error";
         logWarn("Failed to publish Web terminal output", error);
         void webDeviceApi.terminalStatus(sessionId, "error").catch((caught) => logWarn("Failed to report Web terminal output error", caught));
       });
@@ -232,9 +235,10 @@ async function executeTerminalCommand(command: WebTerminalCommand) {
     const nextMode = terminalControlMode(command.sessionId);
     if (nextMode !== bridge.controlMode) {
       bridge.controlMode = nextMode;
+      if (nextMode === "desktop") restoreDesktopViewportSize(command.sessionId);
       await publishTerminalBridgeStatus(command.sessionId, bridge);
     }
-    if (bridge.controlMode === "web") {
+    if (!hasVisibleDesktopViewport(command.sessionId)) {
       await bridge.socket.resize(command.sessionId, command.cols, command.rows);
     }
   }

@@ -305,7 +305,7 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .web-terminal-frame { position: absolute; inset: 0; min-height: 0; display: flex; visibility: hidden; pointer-events: none; }
 .web-terminal-frame.active { visibility: visible; pointer-events: auto; }
 .web-terminal-frame > .web-terminal { min-width: 0; flex: 1; }
-.web-terminal { min-width: 0; min-height: 0; flex: 1; overflow: auto; padding: 6px 4px 4px 8px; background: #0b0d10; }
+.web-terminal { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: hidden; padding: 6px 4px 4px 8px; background: #0b0d10; }
 .web-terminal .xterm { height: 100%; }
 .web-terminal .xterm-viewport { scrollbar-color: #48515c #0b0d10; scrollbar-width: thin; }
 .web-terminal-scroll-bottom { position: absolute; right: 16px; bottom: 16px; z-index: 3; width: 32px; height: 32px; display: grid; place-items: center; border: 1px solid #48515c; border-radius: 999px; color: #edf1f5; background: #171b20e8; box-shadow: 0 4px 14px #0008; cursor: pointer; }

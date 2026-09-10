@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { normalizeWebTerminalBatchKiB, type WebTerminalBatchKiB } from "../lib/webTerminalFrames";
 import { Store } from "@tauri-apps/plugin-store";
 import { invoke } from "@tauri-apps/api/core";
 import { isKnownTerminalThemePreset, resolveAutoTerminalThemeId } from "../lib/terminalThemes";
@@ -376,6 +377,7 @@ const TERMINAL_BACKGROUND_POSITIONS: readonly TerminalBackgroundPosition[] = [
 ] as const;
 
 export interface Settings {
+  webTerminalBatchKiB: WebTerminalBatchKiB;
   language: LanguagePreference;
   theme: ThemeMode;
   lightThemePalette: LightThemePalette;
@@ -535,6 +537,7 @@ interface SettingsStore extends Settings {
 }
 
 const DEFAULTS: Settings = {
+  webTerminalBatchKiB: 96,
   language: "auto",
   theme: "system",
   lightThemePalette: "emerald-mist",
@@ -1317,6 +1320,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
     const theme = (entries.theme as ThemeMode) ?? DEFAULTS.theme;
     entries.language = migrateLanguagePreference(entries.language);
+    entries.webTerminalBatchKiB = normalizeWebTerminalBatchKiB(entries.webTerminalBatchKiB);
     entries.lastSettingsTab = migrateLastSettingsTab(entries.lastSettingsTab);
     const debugMode = (entries.debugMode as boolean) ?? DEFAULTS.debugMode;
     const storedTerminalThemeMode = entries.terminalThemeMode as unknown;

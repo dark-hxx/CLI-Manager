@@ -161,7 +161,7 @@ async fn rejected_terminal_output_preserves_device_socket_and_browser_stream() {
         assert_eq!(read_json_frame(&mut device)["paired"], true);
         let mut browser = upgrade(bind, "/ws/browser?afterSequence=0", "cli_manager_session=output-test");
         assert_eq!(read_json_frame(&mut browser)["type"], "ready");
-        let mut output = serde_json::json!({"type":"terminal_output","sessionId":"terminal-test","sequence":1,"frames":[{"sequence":1,"cols":120,"rows":32,"data":"A".repeat(128 * 1024 + 4),"kind":"output","replayBatchEnd":true}]});
+        let mut output = serde_json::json!({"type":"terminal_output","sessionId":"terminal-test","sequence":1,"frames":[{"sequence":1,"cols":120,"rows":32,"data":"A".repeat(512 * 1024 + 4),"kind":"output","replayBatchEnd":true}]});
         write_json_frame(&mut device, &output);
         let rejected = read_until_type(&mut device, "error");
         assert_eq!(rejected["code"], "invalid_terminal_output");

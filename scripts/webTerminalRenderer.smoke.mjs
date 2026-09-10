@@ -15,9 +15,14 @@ import { Terminal } from '@xterm/xterm';
 import { WebTerminal } from '/apps/web/src/WebTerminal.tsx';
 import { createTerminalStream } from '/apps/web/src/terminalStream.ts';
 import { batchWebTerminalFrames } from '/src/lib/webTerminalFrames.ts';
+import '/apps/web/src/styles.css';
 const result = window.terminalSmoke = { status: 'running', errors: [], rounds: [], payloadBytes: 0, componentRenders: 0 };
 const originalWrite = Terminal.prototype.write;
-Terminal.prototype.write = function(...args) { result.writeCount = (result.writeCount || 0) + 1; return originalWrite.apply(this, args); };
+Terminal.prototype.write = function(...args) {
+  result.writeCount = (result.writeCount || 0) + 1;
+  if (result.captureDimensions) result.captureDimensions.push({ cols: this.cols, rows: this.rows });
+  return originalWrite.apply(this, args);
+};
 window.addEventListener('error', e => result.errors.push(String(e.error || e.message)));
 window.addEventListener('unhandledrejection', e => result.errors.push(String(e.reason)));
 const originalError = console.error;
@@ -49,10 +54,10 @@ function chunks(id) {
   const frame = { kind: 'replay', sessionId: id, sequence: 123, cols: 120, rows: 32, data, replayBatchEnd: true };
   return batchWebTerminalFrames([{ ...frame, kind: 'reset', data: new Uint8Array(), replayBatchEnd: false }, frame]).map((batch, i) => ({ sequence: i + 1, frames: batch.frames }));
 }
-function mount(id, data) {
+function mount(id, data, controlMode = 'desktop', active = true) {
   stream.start(id);
   result.componentRenders++;
-  flushSync(() => root.render(React.createElement(WebTerminal, { sessionId: id, active: true, status: 'running', stream, controlMode: 'desktop', theme: 'dark', errorLabel: '终端错误 / Terminal error', scrollLabel: 'Scroll to bottom', onInput() {}, onResize() {} })));
+  flushSync(() => root.render(React.createElement(WebTerminal, { sessionId: id, active, status: 'running', stream, controlMode, source: 'codex', theme: 'dark', errorLabel: '终端错误 / Terminal error', scrollLabel: 'Scroll to bottom', onInput() {}, onResize(cols, rows) { (result.resizeRequests ??= []).push({ id, cols, rows }); } })));
   data.forEach(chunk => stream.publish(id, chunk));
 }
 async function waitMarker(id) {
@@ -64,6 +69,151 @@ async function waitMarker(id) {
   throw new Error('Rendered terminal missing final marker for ' + id + ': ' + tail().slice(-300));
 }
 async function run() {
+  const check = (condition, message) => { if (!condition) throw new Error(message); };
+  const publish = (id, chunkSequence, text, extra = {}) => stream.publish(id, {
+    sequence: chunkSequence,
+    frames: [{ kind: 'output', sequence: chunkSequence, sequenceStart: true, sequenceEnd: true, cols: 120, rows: 32, data: btoa(text), replayBatchEnd: false, ...extra }],
+  });
+  result.widths = [];
+  for (const width of [800, 1200, 2400]) {
+    document.getElementById('root').style.width = width + 'px';
+    const id = 'width-' + width;
+    mount(id, []);
+    publish(id, 1, 'SMOKE FINAL ' + id);
+    await waitMarker(id);
+    await pause(100);
+    const host = document.querySelector('.web-terminal');
+    const screen = host.querySelector('.xterm-screen').getBoundingClientRect();
+    const css = getComputedStyle(host);
+    const available = host.clientWidth - parseFloat(css.paddingLeft) - parseFloat(css.paddingRight);
+    result.widths.push({ width, available, screen: screen.width });
+    check(Math.abs(available - screen.width) <= 30, 'Desktop viewer leaves excess blank width: ' + JSON.stringify(result.widths.at(-1)));
+  }
+  check((result.resizeRequests ?? []).length === 0, 'Desktop-controlled viewer emitted resize requests');
+  document.getElementById('root').style.width = '1200px';
+
+  const splitId = 'split-checkpoint';
+  mount(splitId, []);
+  publish(splitId, 1, 'partial', { sequence: 55, sequenceEnd: false });
+  await pause(100);
+  check(stream.renderedSequence(splitId) === undefined, 'Partial sequence was committed before final segment');
+  publish(splitId, 2, ' complete', { sequence: 55, sequenceStart: false, sequenceEnd: true });
+  await pause(100);
+  check(stream.renderedSequence(splitId) === 55, 'Final sequence segment was not committed');
+  result.splitCheckpoint = true;
+
+  const reconnectId = 'partial-reconnect';
+  mount(reconnectId, []);
+  publish(reconnectId, 1, 'BASE\\r\\n');
+  await pause(70);
+  publish(reconnectId, 2, 'PREFIX-', { sequence: 2, sequenceEnd: false });
+  await pause(70);
+  check(stream.renderedSequence(reconnectId) === 1, 'Partial reconnect checkpoint advanced');
+  // Retained daemon replay is incremental: no reset when sequence 1 still exists.
+  publish(reconnectId, 3, 'PREFIX-COMPLETE\\r\\n', { kind: 'replay', sequence: 2, sequenceEnd: true, replayBatchEnd: true });
+  await pause(100);
+  const reconnectTail = tail();
+  check(reconnectTail.includes('BASE') && reconnectTail.includes('PREFIX-COMPLETE') && !reconnectTail.includes('PREFIX-PREFIX-'), 'Incremental reconnect duplicated an already drawn partial prefix: ' + reconnectTail);
+  result.partialReconnect = true;
+
+  const retryId = 'replay-retry';
+  mount(retryId, []);
+  publish(retryId, 1, 'BASE\\r\\n');
+  await pause(70);
+  publish(retryId, 2, 'PREFIX-', { kind: 'replay', sequence: 2, sequenceEnd: false });
+  await pause(70);
+  publish(retryId, 3, 'PREFIX-', { kind: 'replay', sequence: 2, sequenceEnd: false });
+  publish(retryId, 4, 'COMPLETE\\r\\n', { kind: 'replay', sequence: 2, sequenceStart: false, sequenceEnd: true, replayBatchEnd: true });
+  await pause(100);
+  const retryTail = tail();
+  check(retryTail.includes('BASE') && retryTail.includes('PREFIX-COMPLETE') && !retryTail.includes('PREFIX-PREFIX-'), 'Repeated incremental replay retained a stale partial prefix: ' + retryTail);
+  result.replayRetry = true;
+
+  const replayId = 'dimension-replay';
+  mount(replayId, []);
+  result.captureDimensions = [];
+  stream.publish(replayId, { sequence: 1, frames: [
+    { kind: 'reset', sequence: 1, sequenceEnd: false, cols: 80, rows: 24, data: '', replayBatchEnd: false },
+    { kind: 'replay', sequence: 1, sequenceEnd: true, cols: 80, rows: 24, data: btoa('old grid\\r\\n'), replayBatchEnd: false },
+    { kind: 'replay', sequence: 2, sequenceEnd: true, cols: 120, rows: 32, data: btoa('SMOKE FINAL ' + replayId), replayBatchEnd: true },
+  ]});
+  await waitMarker(replayId);
+  const dimensions = result.captureDimensions;
+  delete result.captureDimensions;
+  check(dimensions.some(entry => entry.cols === 80) && dimensions.some(entry => entry.cols === 120), 'Replay flattened intermediate terminal dimensions');
+  result.replayDimensions = dimensions;
+
+  const sentinelId = 'standalone-replay-end';
+  mount(sentinelId, []);
+  publish(sentinelId, 1, '', { kind: 'reset', sequence: 0, cols: 0, rows: 0, sequenceEnd: false });
+  publish(sentinelId, 2, 'HISTORY-READY\\r\\n', { kind: 'replay', sequence: 7, replayBatchEnd: false });
+  await pause(50);
+  check(!tail().includes('HISTORY-READY'), 'Full replay was drawn before its boundary');
+  publish(sentinelId, 3, '', { kind: 'replay', sequence: 0, cols: 0, rows: 0, replayBatchEnd: true });
+  await pause(100);
+  check(tail().includes('HISTORY-READY'), 'Independent sequence-zero replay boundary was swallowed');
+  check(stream.renderedSequence(sentinelId) === 7, 'Empty replay boundary lost the history checkpoint');
+  publish(sentinelId, 4, 'LIVE-AFTER-REPLAY', { sequence: 8 });
+  await pause(100);
+  check(tail().includes('LIVE-AFTER-REPLAY') && stream.renderedSequence(sentinelId) === 8, 'Live output was blocked after standalone replay boundary');
+  result.standaloneReplayEnd = true;
+
+  result.visibilityWake = [];
+  for (const mode of ['inactive', 'hidden']) {
+    const wakeId = 'wake-' + mode;
+    mount(wakeId, [], 'desktop', mode !== 'inactive');
+    if (mode === 'hidden') {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
+      document.dispatchEvent(new Event('visibilitychange'));
+    }
+    publish(wakeId, 1, 'WAKE-MARKER');
+    await pause(30);
+    check(!tail().includes('WAKE-MARKER'), mode + ' output was not throttled');
+    const wakeStart = performance.now();
+    if (mode === 'hidden') {
+      delete document.visibilityState;
+      document.dispatchEvent(new Event('visibilitychange'));
+    } else {
+      mount(wakeId, [], 'desktop', true);
+    }
+    while (!tail().includes('WAKE-MARKER') && performance.now() - wakeStart < 180) await pause(5);
+    const elapsedMs = Math.round(performance.now() - wakeStart);
+    check(tail().includes('WAKE-MARKER') && elapsedMs < 180, mode + ' activation retained the 250ms background delay: ' + elapsedMs);
+    result.visibilityWake.push({ mode, elapsedMs });
+  }
+
+  const cursorId = 'cursor-policy';
+  mount(cursorId, []);
+  await pause(80);
+  check(terminal().options.cursorBlink === false && terminal().options.cursorInactiveStyle === 'none', 'Web cursor policy differs from desktop');
+  publish(cursorId, 1, '\\x1b[?25l');
+  await pause(70);
+  check(terminal()._core.coreService.isCursorHidden, 'Cursor hide was ignored');
+  publish(cursorId, 2, '\\x1b[?2');
+  await pause(30);
+  publish(cursorId, 3, '5h');
+  await pause(40);
+  check(terminal()._core.coreService.isCursorHidden, 'Split cursor-show flashed before Codex delay');
+  await pause(120);
+  check(!terminal()._core.coreService.isCursorHidden, 'Stable input cursor was never restored');
+  publish(cursorId, 4, '\\x1b[?25l\\x1b[?25h\\x1b[?25l');
+  await pause(160);
+  check(terminal()._core.coreService.isCursorHidden, 'Stale delayed show overrode a newer hide');
+  result.cursorPolicy = true;
+
+  const webId = 'web-control';
+  mount(webId, [], 'web');
+  await pause(150);
+  const beforeOutput = (result.resizeRequests ?? []).length;
+  const grid = { cols: terminal().cols, rows: terminal().rows };
+  for (let i = 1; i <= 30; i++) {
+    publish(webId, i, 'live output\\r\\n', grid);
+    await pause(5);
+  }
+  await pause(150);
+  check((result.resizeRequests ?? []).length === beforeOutput, 'Web output generated redundant resize requests');
+  result.webResizeStable = true;
+
   const first = 'initial';
   mount(first, chunks(first));
   await waitMarker(first);
@@ -117,7 +267,7 @@ const server = await createServer({
       vite.middlewares.use(async (request, response, next) => {
         if (request.url !== "/") return next();
         response.setHeader("Content-Type", "text/html; charset=utf-8");
-        response.end(await vite.transformIndexHtml("/", '<!doctype html><html><head><meta charset="utf-8"><title>Terminal smoke</title><style>body{margin:0;background:#0b0d10;color:white}#root{height:700px;width:1200px}.web-terminal{height:100%;width:100%}</style></head><body><div id="root"></div><script type="module" src="/terminal-smoke.js"></script></body></html>'));
+        response.end(await vite.transformIndexHtml("/", '<!doctype html><html><head><meta charset="utf-8"><title>Terminal smoke</title><style>body{margin:0;background:#0b0d10;color:white}#root{height:700px;width:1200px;display:flex}</style></head><body><div id="root"></div><script type="module" src="/terminal-smoke.js"></script></body></html>'));
       });
     },
   }],

@@ -448,14 +448,14 @@ export function useAppModel() {
           if (message.deviceId === selectedDeviceId && terminalTabsRef.current.some((tab) => tab.sessionId === message.sessionId)) {
             const nextTabs = terminalTabsRef.current.map((tab) => tab.sessionId === message.sessionId ? {
               ...tab,
-              status: tab.status === "error" && message.status === "running" ? tab.status : message.status,
+              status: message.status,
               controlMode: message.controlMode ?? tab.controlMode,
             } : tab);
             terminalTabsRef.current = nextTabs;
             setTerminalTabs(nextTabs);
           }
           if (message.deviceId === selectedDeviceId && message.sessionId === terminalSessionRef.current) {
-            setTerminalStatus((current) => current === "error" && message.status === "running" ? current : message.status);
+            setTerminalStatus(message.status);
             if (message.controlMode) setTerminalControlMode(message.controlMode);
           }
           return;

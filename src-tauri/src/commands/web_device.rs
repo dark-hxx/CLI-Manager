@@ -218,6 +218,7 @@ pub struct WebDeviceManager {
     terminal_commands: Arc<Mutex<VecDeque<TerminalCommand>>>,
     outbound: Arc<Mutex<crate::web_device_outbox::WebDeviceOutbox>>,
     generation: Arc<AtomicU64>,
+    output_ready: Arc<tokio::sync::Notify>,
     connection: Arc<crate::web_daemon::DeviceConnectionControl>,
 }
 
@@ -231,6 +232,7 @@ impl Default for WebDeviceManager {
                 crate::web_device_outbox::WebDeviceOutbox::default(),
             )),
             generation: Arc::new(AtomicU64::new(0)),
+            output_ready: Arc::new(tokio::sync::Notify::new()),
             connection: Arc::new(crate::web_daemon::DeviceConnectionControl::default()),
         }
     }
@@ -285,7 +287,9 @@ impl WebDeviceManager {
             .outbound
             .lock()
             .map_err(|_| "web device send lock poisoned")?;
-        outbound.push(frame)
+        outbound.push(frame)?;
+        self.output_ready.notify_one();
+        Ok(())
     }
 
     fn start(&self, app: AppHandle) -> Result<(), String> {
@@ -323,6 +327,7 @@ impl WebDeviceManager {
     }
 
     fn stop(&self, app: &AppHandle) {
+        self.output_ready.notify_one();
         if let Ok(mut runtime) = self.runtime.lock() {
             self.generation.fetch_add(1, Ordering::SeqCst);
             self.connection.cancel();
@@ -372,7 +377,8 @@ impl WebDeviceManager {
             .reconnect();
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
-        let url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
+        let url =
+            crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
         let token = crate::credential_store::get(&token_account(&profile.client_id))?;
         let mut socket = self
             .connection
@@ -408,6 +414,8 @@ impl WebDeviceManager {
             runtime.history_sequence = runtime.history_sequence.max(seed);
         }
         self.emit_status(app);
+        let mut socket =
+            crate::web_daemon::EventDeviceSocket::new(socket, self.output_ready.clone())?;
         let mut last_heartbeat = Instant::now();
         let mut last_received = Instant::now();
         while self.is_current(generation) {
@@ -424,7 +432,7 @@ impl WebDeviceManager {
                     runtime.heartbeat_sequence = runtime.heartbeat_sequence.saturating_add(1);
                     runtime.heartbeat_sequence
                 };
-                send_frame(&mut socket, &DeviceToServerFrame::Heartbeat { sequence })?;
+                socket.send_frame(&DeviceToServerFrame::Heartbeat { sequence })?;
                 last_heartbeat = Instant::now();
             }
             let received = socket.read();
@@ -456,11 +464,15 @@ impl WebDeviceManager {
                 Err(err) => return Err(format!("read web device frame failed: {err}")),
             }
         }
-        let _ = socket.close(None);
+        let _ = socket.socket.close(None);
         Ok(())
     }
 
-    fn flush_outbound(&self, socket: &mut DeviceSocket) -> Result<(), String> {
+    fn flush_outbound(
+        &self,
+        socket: &mut crate::web_daemon::EventDeviceSocket,
+    ) -> Result<(), String> {
+        let started = Instant::now();
         for _ in 0..32 {
             let frame = self
                 .outbound
@@ -468,12 +480,16 @@ impl WebDeviceManager {
                 .map_err(|_| "web device send lock poisoned")?
                 .next();
             let Some(frame) = frame else { return Ok(()) };
-            send_frame(socket, &frame)?;
+            socket.send_frame(&frame)?;
             self.outbound
                 .lock()
                 .map_err(|_| "web device send lock poisoned")?
                 .sent();
+            if started.elapsed() >= Duration::from_millis(4) {
+                break;
+            }
         }
+        self.output_ready.notify_one();
         Ok(())
     }
 
@@ -635,7 +651,10 @@ fn new_profile(
     Ok(WebDeviceProfile {
         server_url: request.server_url,
         trusted_network: request.trusted_network,
-        public_access_url: crate::web_daemon::normalize_public_url(&request.public_access_url, request.trusted_network)?,
+        public_access_url: crate::web_daemon::normalize_public_url(
+            &request.public_access_url,
+            request.trusted_network,
+        )?,
         client_id: client_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         machine_id,
         client_kind: client_kind().to_string(),
@@ -744,7 +763,9 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
 
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
-        || host.trim_start_matches('[').trim_end_matches(']')
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
             .parse::<IpAddr>()
             .map(|ip| ip.is_loopback())
             .unwrap_or(false)
@@ -974,7 +995,8 @@ pub(crate) fn web_device_save_profile_blocking(
         });
     }
     let mut profile = new_profile(request, load_profile()?)?;
-    profile.server_url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
+    profile.server_url =
+        crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
     save_profile_file(&profile)?;
     manager.emit_status(&app);
     manager.status()
@@ -1330,10 +1352,16 @@ pub struct MobileTicket {
 #[tauri::command]
 pub async fn web_device_mobile_ticket(revoke: bool) -> Result<Option<MobileTicket>, String> {
     let profile = load_profile()?.ok_or("web device profile is not configured")?;
-    let socket_url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
+    let socket_url =
+        crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
     let mut url = reqwest::Url::parse(&socket_url).map_err(|_| "invalid server URL")?;
-    let http_scheme = if url.scheme() == "wss" { "https" } else { "http" };
-    url.set_scheme(http_scheme).map_err(|_| "invalid server URL")?;
+    let http_scheme = if url.scheme() == "wss" {
+        "https"
+    } else {
+        "http"
+    };
+    url.set_scheme(http_scheme)
+        .map_err(|_| "invalid server URL")?;
     let public_url = if profile.public_access_url.trim().is_empty() {
         let mut origin = url.clone();
         origin.set_path("/");
@@ -1342,7 +1370,8 @@ pub async fn web_device_mobile_ticket(revoke: bool) -> Result<Option<MobileTicke
         profile.public_access_url.clone()
     };
     let normalized = crate::web_daemon::normalize_public_url(&public_url, profile.trusted_network)?;
-    let mut browser_url = reqwest::Url::parse(&normalized).map_err(|_| "invalid public access URL")?;
+    let mut browser_url =
+        reqwest::Url::parse(&normalized).map_err(|_| "invalid public access URL")?;
     if is_loopback_host(browser_url.host_str().unwrap_or("")) {
         return Err("mobile_pairing_requires_public_https".into());
     }
@@ -1458,16 +1487,19 @@ pub(crate) fn web_device_terminal_output_blocking(
         sequence: request.sequence,
         frames: request.frames.clone(),
     };
-    if daemon_call::<()>(crate::web_daemon::Request::TerminalOutput {
+    if manager
+        .runtime
+        .lock()
+        .map_err(|_| "web device state lock poisoned")?
+        .running
+    {
+        return manager.queue(frame);
+    }
+    daemon_call::<()>(crate::web_daemon::Request::TerminalOutput {
         session_id: request.session_id,
         sequence: request.sequence,
         frames: request.frames,
     })
-    .is_ok()
-    {
-        return Ok(());
-    }
-    manager.queue(frame)
 }
 
 #[tauri::command]
@@ -1489,17 +1521,20 @@ pub(crate) fn web_device_terminal_status_blocking(
         exit_code: request.exit_code,
         control_mode: request.control_mode.clone(),
     };
-    if daemon_call::<()>(crate::web_daemon::Request::TerminalStatus {
+    if manager
+        .runtime
+        .lock()
+        .map_err(|_| "web device state lock poisoned")?
+        .running
+    {
+        return manager.queue(frame);
+    }
+    daemon_call::<()>(crate::web_daemon::Request::TerminalStatus {
         session_id: request.session_id,
         status: request.status,
         exit_code: request.exit_code,
         control_mode: request.control_mode,
     })
-    .is_ok()
-    {
-        return Ok(());
-    }
-    manager.queue(frame)
 }
 
 pub(crate) fn complete_conversation_operation(

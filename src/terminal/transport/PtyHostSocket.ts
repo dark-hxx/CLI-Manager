@@ -219,6 +219,40 @@ export class PtyHostSocket {
     logInfo("PtyHost transport reset after daemon restart", this.lifecycleSnapshot());
   }
 
+  dispose(): void {
+    const error = new Error("PtyHost socket disposed");
+    this.attachedSessions.clear();
+    this.cancelReconnectWhenIdle();
+    this.stopHeartbeat();
+    this.pendingRequests.forEach(({ reject, timeoutId }) => {
+      window.clearTimeout(timeoutId);
+      reject(error);
+    });
+    this.pendingRequests.clear();
+    this.pendingCheckpoints.forEach(({ reject, timeoutId }) => {
+      window.clearTimeout(timeoutId);
+      reject(error);
+    });
+    this.pendingCheckpoints.clear();
+    this.outputListeners.clear();
+    this.statusListeners.clear();
+    this.pendingOutput.clear();
+    this.pendingOutputBytes.clear();
+    this.pendingOutputWarned.clear();
+    this.pendingStatus.clear();
+    this.latestReceivedSequence.clear();
+    this.latestCommittedSequence.clear();
+    this.legacyOutputUnlisten?.();
+    this.legacyStatusUnlisten?.();
+    this.legacyOutputUnlisten = null;
+    this.legacyStatusUnlisten = null;
+    const socket = this.socket;
+    this.socket = null;
+    this.transportMode = null;
+    this.connectedFeatures.clear();
+    socket?.close(1000, "observer-disposed");
+  }
+
   async write(sessionId: string, data: string): Promise<void> {
     await this.request({ type: "write", session_id: sessionId, data });
   }
@@ -336,17 +370,19 @@ export class PtyHostSocket {
     await this.request({ type: "close_all" });
   }
 
-  async attach(sessionId: string): Promise<PtyHostAttachResult> {
+  async attach(sessionId: string, replayFromStart = false, resumeAfterSequence?: number): Promise<PtyHostAttachResult> {
     if (this.closedSessions.has(sessionId)) {
       return { attached: false, alive: false, replay: [] };
     }
     this.attachedSessions.add(sessionId);
     try {
-      const afterSequence = this.latestCommittedSequence.get(sessionId) ?? 0;
+      const afterSequence = replayFromStart
+        ? 0
+        : resumeAfterSequence ?? this.latestCommittedSequence.get(sessionId) ?? 0;
       const frame = await this.request({
         type: "attach",
         session_id: sessionId,
-        after_sequence: afterSequence > 0 ? afterSequence : undefined,
+        after_sequence: replayFromStart || afterSequence === 0 ? undefined : afterSequence,
       });
       const meta = (frame.meta ?? {}) as Record<string, unknown>;
       if (this.transportMode === "legacy") this.deliverLegacyReplay(sessionId, frame);

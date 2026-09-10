@@ -547,6 +547,7 @@ export function useTerminalDisplay({
     if (!container) return () => {};
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       if (!forwardPtyResizeRef.current) return;
+      if (!isVisibleRef.current || document.visibilityState === "hidden") return;
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
       const pixelWidth = terminal.dimensions?.css.canvas.width;
       const pixelHeight = terminal.dimensions?.css.canvas.height;

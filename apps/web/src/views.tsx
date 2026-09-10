@@ -386,7 +386,7 @@ export function Workbench(props: WorkbenchProps) {
                 const status = props.socketState !== "open" ? "disconnected" : selectedDevice?.status !== "online" ? "offline" : tab.status;
                 return (
                   <div className={`web-terminal-frame${active ? " active" : ""}`} key={tab.sessionId} role="tabpanel" aria-hidden={!active} inert={!active}>
-                    <WebTerminal active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
+                    <WebTerminal active={active} sessionId={tab.sessionId} status={status} stream={props.terminalStream} controlMode={tab.controlMode} source={props.projectContexts.find((context) => context.key === tab.contextKey)?.source} theme={props.resolvedTheme} errorLabel={t("terminalRenderError")} scrollLabel={t("scrollToBottom")} onInput={(data) => props.onTerminalInput(data, tab.sessionId)} onResize={(cols, rows) => props.onTerminalResize(cols, rows, tab.sessionId)} />
                   </div>
                 );
               })}

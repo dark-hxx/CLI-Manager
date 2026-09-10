@@ -42,7 +42,7 @@ const PAIRING_LIFETIME_MS: i64 = 5 * 60 * 1000;
 const IDLE_EXIT_AFTER: Duration = Duration::from_secs(10 * 60);
 const CONTROL_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const CONTROL_RETRY_DELAY: Duration = Duration::from_secs(3);
-pub(crate) const PROTOCOL_VERSION: u16 = 7;
+pub(crate) const PROTOCOL_VERSION: u16 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,6 +223,7 @@ pub struct DaemonState {
     operations: Arc<Mutex<OperationQueue>>,
     terminal_commands: Arc<Mutex<VecDeque<TerminalCommand>>>,
     outbound: Arc<Mutex<crate::web_device_outbox::WebDeviceOutbox>>,
+    output_ready: Arc<tokio::sync::Notify>,
     generation: Arc<AtomicU64>,
     connection: Arc<DeviceConnectionControl>,
     stopping: Arc<AtomicBool>,
@@ -240,6 +241,7 @@ impl DaemonState {
                 crate::web_device_outbox::WebDeviceOutbox::default(),
             )),
             generation: Arc::new(AtomicU64::new(0)),
+            output_ready: Arc::new(tokio::sync::Notify::new()),
             connection: Arc::new(DeviceConnectionControl::default()),
             stopping: Arc::new(AtomicBool::new(false)),
             info_path,
@@ -261,6 +263,14 @@ impl DaemonState {
             ..self.info.clone()
         };
         write_info_exclusive(&self.info_path, &info)?;
+        let accept_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?;
+        let listener = {
+            let _guard = accept_runtime.enter();
+            tokio::net::TcpListener::from_std(listener).map_err(|err| err.to_string())?
+        };
         let mut idle_since = Instant::now();
         let state = self.clone();
         thread::spawn(move || {
@@ -271,16 +281,20 @@ impl DaemonState {
             }
         });
         while !self.stopping.load(Ordering::SeqCst) {
-            match listener.accept() {
-                Ok((stream, _)) => {
+            match accept_runtime.block_on(async {
+                tokio::time::timeout(Duration::from_secs(1), listener.accept()).await
+            }) {
+                Ok(Ok((stream, _))) => {
+                    let stream = stream.into_std().map_err(|err| err.to_string())?;
+                    stream
+                        .set_nonblocking(false)
+                        .map_err(|err| err.to_string())?;
                     idle_since = Instant::now();
                     let state = self.clone();
                     thread::spawn(move || state.handle_client(stream));
                 }
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    thread::sleep(Duration::from_millis(50));
-                }
-                Err(err) => return Err(format!("accept web daemon client failed: {err}")),
+                Err(_) => {}
+                Ok(Err(err)) => return Err(format!("accept web daemon client failed: {err}")),
             }
             let idle = self
                 .runtime
@@ -301,6 +315,7 @@ impl DaemonState {
     }
 
     fn handle_client(&self, mut stream: TcpStream) {
+        let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(Duration::from_secs(10)));
         let mut reader = match stream.try_clone() {
             Ok(stream) => BufReader::new(stream),
@@ -585,6 +600,7 @@ impl DaemonState {
     }
 
     fn stop(&self) {
+        self.output_ready.notify_one();
         if let Ok(mut runtime) = self.runtime.lock() {
             self.generation.fetch_add(1, Ordering::SeqCst);
             self.connection.cancel();
@@ -667,6 +683,7 @@ impl DaemonState {
             runtime.heartbeat_sequence = runtime.heartbeat_sequence.max(seed);
             runtime.history_sequence = runtime.history_sequence.max(seed);
         }
+        let mut socket = EventDeviceSocket::new(socket, self.output_ready.clone())?;
         let mut last_heartbeat = Instant::now();
         let mut last_received = Instant::now();
         while self.is_current(generation) {
@@ -683,7 +700,7 @@ impl DaemonState {
                     runtime.heartbeat_sequence = runtime.heartbeat_sequence.saturating_add(1);
                     runtime.heartbeat_sequence
                 };
-                send_frame(&mut socket, &DeviceToServerFrame::Heartbeat { sequence })?;
+                socket.send_frame(&DeviceToServerFrame::Heartbeat { sequence })?;
                 last_heartbeat = Instant::now();
             }
             let received = socket.read();
@@ -715,11 +732,12 @@ impl DaemonState {
                 Err(err) => return Err(format!("read web device frame failed: {err}")),
             }
         }
-        let _ = socket.close(None);
+        let _ = socket.socket.close(None);
         Ok(())
     }
 
-    fn flush_outbound(&self, socket: &mut DeviceSocket) -> Result<(), String> {
+    fn flush_outbound(&self, socket: &mut EventDeviceSocket) -> Result<(), String> {
+        let started = Instant::now();
         for _ in 0..32 {
             let frame = self
                 .outbound
@@ -727,12 +745,17 @@ impl DaemonState {
                 .map_err(|_| "web daemon send lock poisoned")?
                 .next();
             let Some(frame) = frame else { return Ok(()) };
-            send_frame(socket, &frame)?;
+            socket.send_frame(&frame)?;
             self.outbound
                 .lock()
                 .map_err(|_| "web daemon send lock poisoned")?
                 .sent();
+            if started.elapsed() >= Duration::from_millis(4) {
+                break;
+            }
         }
+        // A full quantum must continue immediately even when the server is silent.
+        self.output_ready.notify_one();
         Ok(())
     }
 
@@ -834,7 +857,9 @@ impl DaemonState {
             .outbound
             .lock()
             .map_err(|_| "web daemon send lock poisoned")?;
-        outbound.push(frame)
+        outbound.push(frame)?;
+        self.output_ready.notify_one();
+        Ok(())
     }
 
     fn clear_pairing(&self) -> Result<(), String> {
@@ -1097,27 +1122,47 @@ fn request_with_info<T: for<'de> Deserialize<'de>>(
     static CONNECTOR: ControlConnector = ControlConnector {
         failed: Mutex::new(None),
     };
+    thread_local! {
+        static SESSION: std::cell::RefCell<Option<(DaemonInfo, Instant, BufReader<TcpStream>)>> = const { std::cell::RefCell::new(None) };
+    }
     let protocol_version = control_protocol_version(info.protocol_version, upgrade)?;
-    let mut stream = CONNECTOR.connect(info)?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+    let cached = SESSION
+        .with(|slot| slot.borrow_mut().take())
+        .filter(|(previous, used, _)| previous == info && used.elapsed() < Duration::from_secs(8));
+    let mut reader = if let Some((_, _, reader)) = cached {
+        reader
+    } else {
+        let mut stream = CONNECTOR.connect(info)?;
+        stream.set_nodelay(true).map_err(|err| err.to_string())?;
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| err.to_string())?;
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .map_err(|err| err.to_string())?;
+        let auth = serde_json::to_string(&Request::Auth {
+            token: info.token.clone(),
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol_version,
+        })
         .map_err(|err| err.to_string())?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|err| err.to_string())?;
-    let auth = serde_json::to_string(&Request::Auth {
-        token: info.token.clone(),
-        client_version: env!("CARGO_PKG_VERSION").to_string(),
-        protocol_version,
-    })
-    .map_err(|err| err.to_string())?;
-    writeln!(stream, "{auth}").map_err(|err| err.to_string())?;
+        writeln!(stream, "{auth}").map_err(|err| err.to_string())?;
+        BufReader::new(stream)
+    };
     let payload = serde_json::to_string(&request).map_err(|err| err.to_string())?;
-    writeln!(stream, "{payload}").map_err(|err| err.to_string())?;
-    let mut reader = BufReader::new(stream);
+    writeln!(reader.get_mut(), "{payload}").map_err(|err| err.to_string())?;
     let line = read_line(&mut reader).ok_or_else(|| "web daemon response missing".to_string())?;
     let response: Response = serde_json::from_str(&line)
         .map_err(|err| format!("parse web daemon response failed: {err}"))?;
+    // Never retry an ambiguous write/read failure: the request may have executed.
+    if !matches!(request, Request::Shutdown)
+        && !matches!(
+            response.error.as_deref(),
+            Some("auth_failed" | "web_daemon_protocol_mismatch")
+        )
+    {
+        SESSION.with(|slot| *slot.borrow_mut() = Some((info.clone(), Instant::now(), reader)));
+    }
     if !response.ok {
         return Err(response
             .error
@@ -1131,7 +1176,7 @@ fn request_with_info<T: for<'de> Deserialize<'de>>(
 }
 
 fn control_protocol_version(discovered: u16, upgrade: bool) -> Result<u16, String> {
-    if discovered == PROTOCOL_VERSION || (upgrade && matches!(discovered, 1..=6)) {
+    if discovered == PROTOCOL_VERSION || (upgrade && matches!(discovered, 1..=7)) {
         Ok(discovered)
     } else {
         Err("web_daemon_protocol_mismatch: finish pending operations before upgrading the Web daemon".into())
@@ -1170,6 +1215,100 @@ fn send_frame(socket: &mut DeviceSocket, frame: &DeviceToServerFrame) -> Result<
     socket
         .send(Message::Text(json.into()))
         .map_err(|err| format!("send web device frame failed: {err}"))
+}
+
+/// One owner for tungstenite, with OS readiness and an explicit producer wakeup.
+/// This avoids parking outbound traffic behind a blocking receive or splitting TLS state.
+pub(crate) struct EventDeviceSocket {
+    pub(crate) socket: DeviceSocket,
+    readiness: tokio::net::TcpStream,
+    runtime: tokio::runtime::Runtime,
+    output_ready: Arc<tokio::sync::Notify>,
+}
+
+impl EventDeviceSocket {
+    pub(crate) fn new(
+        mut socket: DeviceSocket,
+        output_ready: Arc<tokio::sync::Notify>,
+    ) -> Result<Self, String> {
+        let stream = match socket.get_mut() {
+            MaybeTlsStream::Plain(stream) => stream,
+            MaybeTlsStream::Rustls(stream) => &mut stream.sock,
+            _ => return Err("unsupported web device transport".into()),
+        };
+        stream
+            .set_nonblocking(true)
+            .map_err(|err| err.to_string())?;
+        stream.set_nodelay(true).map_err(|err| err.to_string())?;
+        let clone = stream.try_clone().map_err(|err| err.to_string())?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?;
+        let readiness = {
+            let _guard = runtime.enter();
+            tokio::net::TcpStream::from_std(clone).map_err(|err| err.to_string())?
+        };
+        Ok(Self {
+            socket,
+            readiness,
+            runtime,
+            output_ready,
+        })
+    }
+
+    pub(crate) fn read(&mut self) -> Result<Message, WsError> {
+        // Try the parser first: TLS / tungstenite may already hold a complete frame.
+        match self.socket.read() {
+            Err(WsError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+            result => return result,
+        }
+        let socket = &mut self.socket;
+        let readiness = &self.readiness;
+        self.runtime.block_on(async {
+            tokio::select! {
+                _ = self.output_ready.notified() => Err(WsError::Io(std::io::ErrorKind::WouldBlock.into())),
+                _ = tokio::time::sleep(Duration::from_secs(1)) => Err(WsError::Io(std::io::ErrorKind::WouldBlock.into())),
+                result = readiness.async_io(tokio::io::Interest::READABLE, || {
+                    match socket.read() {
+                        Err(WsError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock => Err(err),
+                        result => Ok(result),
+                    }
+                }) => result.map_err(WsError::Io)?,
+            }
+        })
+    }
+
+    pub(crate) fn send(&mut self, message: Message) -> Result<(), WsError> {
+        match self.socket.send(message) {
+            Ok(()) => return Ok(()),
+            // tungstenite retains the accepted frame; only flush, never resend it.
+            Err(WsError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(err) => return Err(err),
+        }
+        let socket = &mut self.socket;
+        let readiness = &self.readiness;
+        self.runtime.block_on(async {
+            tokio::time::timeout(
+                Duration::from_secs(5),
+                readiness.async_io(tokio::io::Interest::WRITABLE, || match socket.flush() {
+                    Err(WsError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        Err(err)
+                    }
+                    result => Ok(result),
+                }),
+            )
+            .await
+            .map_err(|_| WsError::Io(std::io::ErrorKind::TimedOut.into()))?
+            .map_err(WsError::Io)?
+        })
+    }
+
+    pub(crate) fn send_frame(&mut self, frame: &DeviceToServerFrame) -> Result<(), String> {
+        let text = serde_json::to_string(frame).map_err(|err| err.to_string())?;
+        self.send(Message::Text(text.into()))
+            .map_err(|err| format!("send web device frame failed: {err}"))
+    }
 }
 
 fn set_read_timeout(socket: &mut DeviceSocket) -> Result<(), String> {
@@ -1240,7 +1379,11 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
 
 pub(crate) fn normalize_device_url(raw: &str, trusted_network: bool) -> Result<String, String> {
     let parsed = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid web device server URL")?;
-    if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
+    if !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
         return Err("web device URL must not contain credentials, query, or fragment".into());
     }
     let uri = raw
@@ -1275,13 +1418,20 @@ pub(crate) fn normalize_public_url(raw: &str, trusted_network: bool) -> Result<S
         return Ok(String::new());
     }
     let mut url = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid public access URL")?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
-        || !url.username().is_empty() || url.password().is_some()
-        || url.query().is_some() || url.fragment().is_some() || url.path() != "/"
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
     {
-        return Err("public access URL must be an HTTP(S) origin without credentials or path".into());
+        return Err(
+            "public access URL must be an HTTP(S) origin without credentials or path".into(),
+        );
     }
-    if url.scheme() == "http" && !is_loopback_host(url.host_str().unwrap_or("")) && !trusted_network {
+    if url.scheme() == "http" && !is_loopback_host(url.host_str().unwrap_or("")) && !trusted_network
+    {
         return Err("public access URL requires HTTPS or explicit trusted network mode".into());
     }
     url.set_path("/");
@@ -1290,7 +1440,9 @@ pub(crate) fn normalize_public_url(raw: &str, trusted_network: bool) -> Result<S
 
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
-        || host.trim_start_matches('[').trim_end_matches(']')
+        || host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
             .parse::<IpAddr>()
             .map(|ip| ip.is_loopback())
             .unwrap_or(false)
@@ -1405,24 +1557,119 @@ mod tests {
     use super::*;
 
     #[test]
-    fn trusted_network_requires_explicit_opt_in_for_ip_and_domain() {
-        for endpoint in ["http://192.168.1.20:9090", "ws://100.95.251.17:9090", "http://desktop.internal:9090", "http://[fd00::1]:9090"] {
-            assert!(normalize_device_url(endpoint, false).is_err(), "{endpoint}");
-            assert!(normalize_device_url(endpoint, true).unwrap().ends_with("/ws/device"));
+    fn web_output_wakes_silent_socket_without_receive_timeout() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let message = socket.read().unwrap();
+            assert!(message.into_text().unwrap().contains("heartbeat"));
+            Instant::now()
+        });
+        let (socket, _) = tungstenite::connect(format!("ws://{address}")).unwrap();
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let mut socket = EventDeviceSocket::new(socket, wake.clone()).unwrap();
+        let producer = thread::spawn(move || {
+            thread::sleep(Duration::from_millis(40));
+            let queued = Instant::now();
+            wake.notify_one();
+            queued
+        });
+        assert!(
+            matches!(socket.read(), Err(WsError::Io(err)) if err.kind() == std::io::ErrorKind::WouldBlock)
+        );
+        socket
+            .send_frame(&DeviceToServerFrame::Heartbeat { sequence: 1 })
+            .unwrap();
+        let latency = server
+            .join()
+            .unwrap()
+            .duration_since(producer.join().unwrap());
+        eprintln!("silent-server output latency: {latency:?}");
+        assert!(latency < Duration::from_millis(250), "{latency:?}");
+    }
+
+    #[test]
+    fn web_control_reuses_one_authenticated_socket_for_multiple_requests() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let info = control_info(listener.local_addr().unwrap().port());
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            assert!(matches!(
+                serde_json::from_str::<Request>(&read_line(&mut reader).unwrap()).unwrap(),
+                Request::Auth { .. }
+            ));
+            for _ in 0..3 {
+                assert!(matches!(
+                    serde_json::from_str::<Request>(&read_line(&mut reader).unwrap()).unwrap(),
+                    Request::GetStatus
+                ));
+                write_response(&mut stream, Some(Value::Bool(true)), None).unwrap();
+            }
+        });
+        for _ in 0..3 {
+            assert!(request_with_info::<bool>(Request::GetStatus, false, &info).unwrap());
         }
-        assert_eq!(normalize_device_url("http://[::1]:9090", false).unwrap(), "ws://[::1]:9090/ws/device");
-        assert_eq!(normalize_device_url("https://cli.example.com", false).unwrap(), "wss://cli.example.com/ws/device");
-        for endpoint in ["ftp://example.com", "http://user:secret@example.com", "http://example.com?token=secret", "http://example.com/#secret"] {
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn trusted_network_requires_explicit_opt_in_for_ip_and_domain() {
+        for endpoint in [
+            "http://192.168.1.20:9090",
+            "ws://100.95.251.17:9090",
+            "http://desktop.internal:9090",
+            "http://[fd00::1]:9090",
+        ] {
+            assert!(normalize_device_url(endpoint, false).is_err(), "{endpoint}");
+            assert!(normalize_device_url(endpoint, true)
+                .unwrap()
+                .ends_with("/ws/device"));
+        }
+        assert_eq!(
+            normalize_device_url("http://[::1]:9090", false).unwrap(),
+            "ws://[::1]:9090/ws/device"
+        );
+        assert_eq!(
+            normalize_device_url("https://cli.example.com", false).unwrap(),
+            "wss://cli.example.com/ws/device"
+        );
+        for endpoint in [
+            "ftp://example.com",
+            "http://user:secret@example.com",
+            "http://example.com?token=secret",
+            "http://example.com/#secret",
+        ] {
             assert!(normalize_device_url(endpoint, true).is_err());
         }
     }
 
     #[test]
     fn public_browser_origin_is_independent_and_bounded() {
-        assert_eq!(normalize_public_url("https://cli.example.com", false).unwrap(), "https://cli.example.com/");
-        assert_eq!(normalize_public_url("http://desktop.internal:9090", true).unwrap(), "http://desktop.internal:9090/");
+        assert_eq!(
+            normalize_public_url("https://cli.example.com", false).unwrap(),
+            "https://cli.example.com/"
+        );
+        assert_eq!(
+            normalize_public_url("http://desktop.internal:9090", true).unwrap(),
+            "http://desktop.internal:9090/"
+        );
         assert!(normalize_public_url("http://desktop.internal:9090", false).is_err());
-        for endpoint in ["ws://example.com", "https://example.com/path", "https://example.com?x=1", "https://user:pass@example.com", "https://example.com/#secret"] {
+        for endpoint in [
+            "ws://example.com",
+            "https://example.com/path",
+            "https://example.com?x=1",
+            "https://user:pass@example.com",
+            "https://example.com/#secret",
+        ] {
             assert!(normalize_public_url(endpoint, true).is_err());
         }
         assert_eq!(normalize_public_url("", false).unwrap(), "");

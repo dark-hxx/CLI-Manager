@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { Badge, Button, Card, Group, Stack, Switch, Text, TextInput } from "@mantine/core";
+import { Badge, Button, Card, Group, Select, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Copy, Link2, Play, RefreshCw, Save, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { webDeviceApi, type WebDeviceStatus } from "../../lib/webDevice";
 import { webServerApi } from "../../lib/webServer";
 import { WebMobileAccess } from "./WebMobileAccess";
+import { useSettingsStore } from "../../stores/settingsStore";
+import { normalizeWebTerminalBatchKiB } from "../../lib/webTerminalFrames";
 
 const STATUS_EVENT = "web-device-status-changed";
 
@@ -16,6 +18,7 @@ interface Props {
 
 export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const { t } = useI18n();
+  const batchKiB = useSettingsStore((state) => state.webTerminalBatchKiB);
   const [status, setStatus] = useState<WebDeviceStatus | null>(null);
   const [serverUrl, setServerUrl] = useState("");
   const [trustedNetwork, setTrustedNetwork] = useState(false);
@@ -121,6 +124,22 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
       </Group>
 
       <Stack gap="sm" mt="md">
+        <Select
+          label={t("settings.webDevice.outputBatch")}
+          description={t("settings.webDevice.outputBatchHint")}
+          value={String(batchKiB)}
+          allowDeselect={false}
+          disabled={busy}
+          data={[
+            { value: "96", label: t("settings.webDevice.outputBatchDefault") },
+            { value: "256", label: "256 KiB" },
+            { value: "512", label: "512 KiB" },
+          ]}
+          onChange={(value) => {
+            void useSettingsStore.getState().update("webTerminalBatchKiB", normalizeWebTerminalBatchKiB(Number(value)))
+              .catch((caught) => toast.error(t("settings.webDevice.toast.actionFailed"), { description: String(caught) }));
+          }}
+        />
         <Button size="xs" variant="subtle" disabled={busy} loading={working === "localServer"} onClick={() => void useLocalServer()}>{t("settings.webDevice.useLocalServer")}</Button>
         <Switch checked={trustedNetwork} onChange={(event) => { formDirtyRef.current = true; setTrustedNetwork(event.currentTarget.checked); }} label={t("settings.webDevice.trustedNetwork")} description={t("settings.webDevice.trustedNetworkHint")} />
         <TextInput label={t("settings.webDevice.publicAccessUrl")} description={t("settings.webDevice.publicAccessUrlHint")} placeholder="https://cli.example.com" value={publicAccessUrl} onChange={(event) => { formDirtyRef.current = true; setPublicAccessUrl(event.currentTarget.value); }} />
