@@ -1,7 +1,7 @@
 {
   "id": "web-terminal-lifecycle",
   "title": "修复 Web 终端尺寸、延迟、光标和安装卸载清理",
-  "status": "in_progress",
+  "status": "completed",
   "version": "1.3.9",
   "branch": "feat/web-management-capabilities-v2",
   "description": "用户已批准统一实施：明确桌面可见终端尺寸所有权；修复 Web 缩放与回放；唤醒输出发送并复用连接；增加 96/256/512 KiB 最大批次设置；统一光标防闪；安装升级卸载前按路径停止进程。",
