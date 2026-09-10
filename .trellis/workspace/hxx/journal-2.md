@@ -1637,3 +1637,24 @@ V1.4.0：虚拟化变更树、Worker 建树及刷新合并；64887 文件浏览�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 117: 修复 Pi CLI 全屏 TUI 底部输入框
+
+**Date**: 2026-09-10
+**Task**: 修复 Pi CLI 全屏 TUI 底部输入框
+**Branch**: `master`
+
+### Summary
+
+修复 Pi 全屏 TUI 中跨 PTY 帧输出的 MCP 直连工具提示覆盖底部输入框问题；补充过滤器、测试、规范与 V1.4.0 文档记录。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `09341b65` | (see git log) |
+
+### Status
+
+[OK] **Completed**
