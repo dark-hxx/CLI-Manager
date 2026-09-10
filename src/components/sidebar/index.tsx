@@ -1842,13 +1842,13 @@ export function Sidebar({
   );
 
   const handleStopGroup = useCallback(
-    async (groupId: string) => {
+    async (groupId: string, remotelyConfirmed = false) => {
       if (stoppingGroupIdsRef.current.has(groupId)) return;
       const projectIds = collectProjectIdsForGroup(groups, projects, groupId);
       const targets = collectGroupTerminalTargets(useTerminalStore.getState().sessions, projectIds);
       if (targets.terminalSessionIds.length === 0) return;
 
-      if (confirmBeforeClosingTerminalTab) {
+      if (confirmBeforeClosingTerminalTab && !remotelyConfirmed) {
         const confirmed = await confirm({
           title: t("sidebar.confirm.stopGroupTitle", { count: targets.terminalSessionIds.length }),
           message: t("sidebar.confirm.stopGroupMessage"),
@@ -1890,8 +1890,8 @@ export function Sidebar({
     [closeSession, confirm, confirmBeforeClosingTerminalTab, groups, projects, t]
   );
 
-  const deleteProjectDirect = useCallback(async (project: Project) => {
-    const confirmed = await confirm({
+  const deleteProjectDirect = useCallback(async (project: Project, remotelyConfirmed = false) => {
+    const confirmed = remotelyConfirmed || await confirm({
       title: t("sidebar.confirm.deleteTerminalTitle"),
       message: t("sidebar.confirm.deleteTerminalMessage", { name: project.name }),
       confirmText: t("sidebar.menu.delete"),
@@ -1918,8 +1918,8 @@ export function Sidebar({
     return { deleted: true, projectId: project.id };
   }, [closeSession, confirm, deleteProject, removeSyncedSessions, selectedId, t]);
 
-  const deleteGroupDirect = useCallback(async (groupId: string, groupName: string) => {
-    const confirmed = await confirm({
+  const deleteGroupDirect = useCallback(async (groupId: string, groupName: string, remotelyConfirmed = false) => {
+    const confirmed = remotelyConfirmed || await confirm({
       title: t("sidebar.confirm.deleteGroupTitle"),
       message: t("sidebar.confirm.deleteGroupMessage", { name: groupName }),
       confirmText: t("sidebar.menu.delete"),
@@ -1994,7 +1994,7 @@ export function Sidebar({
         setProviderSwitchTarget({ kind: "project", project: project! });
         return { opened: true };
       case "project.delete":
-        return deleteProjectDirect(project!);
+        return deleteProjectDirect(project!, request.confirmed === true);
       case "group.newChild":
         ensureSidebarExpanded();
         setNewGroupParentId(group!.id);
@@ -2007,7 +2007,7 @@ export function Sidebar({
         setBatchShellPreselected(collectProjectIdsForGroup(groups, projects, group!.id));
         return { opened: true };
       case "group.stop":
-        return handleStopGroup(group!.id);
+        return handleStopGroup(group!.id, request.confirmed === true);
       case "group.focus":
         handleSelectGroupScope(group!.id);
         return { focused: true };
@@ -2016,7 +2016,7 @@ export function Sidebar({
         handleRenameGroup(group!.id, group!.name);
         return { opened: true };
       case "group.delete":
-        return deleteGroupDirect(group!.id, group!.name);
+        return deleteGroupDirect(group!.id, group!.name, request.confirmed === true);
       case "worktree.openDirectory":
         return handleOpenWorktreeDirectory(worktree!);
       case "worktree.openFiles":
@@ -2035,7 +2035,7 @@ export function Sidebar({
         setFinishTarget({ project: project!, worktree: worktree! });
         return { opened: true };
       case "worktree.discard": {
-        const confirmed = await confirm({
+        const confirmed = request.confirmed === true || await confirm({
           title: t("worktree.discard.title", { name: worktree!.name }),
           message: t("worktree.discard.message", { branch: worktree!.branch }),
           confirmText: t("worktree.discard.confirm"),

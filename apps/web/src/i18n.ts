@@ -3,6 +3,9 @@ export type ResolvedLanguage = Exclude<LanguageMode, "auto">;
 
 const dictionary = {
   "zh-CN": {
+    desktopOnlyMenu: "此功能需要在桌面端操作，暂不支持从网页完成。",
+    desktopOnlyShort: "桌面端操作",
+    confirmMenuAction: "确认操作",
     assistant: "助手", assistantStreaming: "正在回复…", conversationActivity: "会话状态",
     runtimeOwned: "此会话正在桌面终端中运行，请先在桌面结束该会话。", runtimeContext: "找不到此会话的项目上下文，请刷新项目和历史。", runtimeApprovalOverride: "此项目的审批设置不支持 Web 会话，请在桌面检查配置。", runtimeTimeout: "CLI 等待超时，请检查桌面运行状态。", runtimeSpawn: "无法启动 CLI，请检查桌面安装与登录状态。", runtimeDenied: "工具执行未获批准，操作已停止。", runtimeFailed: "CLI 未能完成本轮回复，请查看诊断。", runtimeExited: "CLI 已退出，本轮回复未完成。", runtimeRpc: "CLI 协议请求失败，请检查 CLI 版本与配置。", runtimeDiagnostics: "技术诊断",
     mobileQr: "手机扫码连接", mobileQrHint: "手机扫码后确认连接。授权仅限当前主机，二维码两分钟有效且只能使用一次。", mobileLoopback: "当前是本机地址，手机无法访问。请通过可被手机访问的 HTTPS 服务地址打开此页面后生成二维码。", mobileQrExpired: "二维码已过期，请刷新。", mobileQrExpires: "授权有效至", mobileQrStop: "停止本次授权",
@@ -235,7 +238,7 @@ const dictionary = {
     terminalConnecting: "连接中",
     terminalRunning: "运行中",
     terminalExited: "已退出",
-    terminalError: "连接失败", scrollToBottom: "滚动到底部",
+    terminalError: "连接失败", terminalRenderError: "终端画面加载失败，请重新连接终端。", closeTerminal: "关闭终端窗口", scrollToBottom: "滚动到底部",
     terminalControlDesktop: "桌面控制尺寸，Web 同步显示",
     terminalControlWeb: "Web 控制终端尺寸",
     offlineDraftOnly: "设备离线，仅保存草稿",
@@ -310,6 +313,9 @@ const dictionary = {
     close: "关闭",
   },
   "en-US": {
+    desktopOnlyMenu: "This action requires the desktop interface and cannot be completed in the browser yet.",
+    desktopOnlyShort: "Desktop only",
+    confirmMenuAction: "Confirm action",
     assistant: "Assistant", assistantStreaming: "Replying…", conversationActivity: "Conversation status",
     runtimeOwned: "This conversation is running in a desktop terminal. End that session on the desktop first.", runtimeContext: "The conversation project context was not found. Refresh projects and history.", runtimeApprovalOverride: "This project's approval settings do not support Web conversations. Check the desktop configuration.", runtimeTimeout: "The CLI timed out. Check its desktop status.", runtimeSpawn: "The CLI could not start. Check its desktop installation and sign-in status.", runtimeDenied: "Tool execution was not approved. The operation stopped.", runtimeFailed: "The CLI could not complete this reply. See diagnostics.", runtimeExited: "The CLI exited before completing this reply.", runtimeRpc: "The CLI protocol request failed. Check its version and configuration.", runtimeDiagnostics: "Technical diagnostics",
     mobileQr: "Connect phone", mobileQrHint: "Scan and confirm on your phone. Access is limited to this host. The code expires in two minutes and can be used once.", mobileLoopback: "This local address cannot be reached by your phone. Open this page through a reachable HTTPS service address to create a code.", mobileQrExpired: "Code expired. Refresh to create a new one.", mobileQrExpires: "Valid until", mobileQrStop: "Stop this authorization",
@@ -542,7 +548,7 @@ const dictionary = {
     terminalConnecting: "Connecting",
     terminalRunning: "Running",
     terminalExited: "Exited",
-    terminalError: "Connection failed", scrollToBottom: "Scroll to bottom",
+    terminalError: "Connection failed", terminalRenderError: "The terminal display could not load. Reconnect the terminal.", closeTerminal: "Close terminal window", scrollToBottom: "Scroll to bottom",
     terminalControlDesktop: "Desktop controls terminal size; Web mirrors it",
     terminalControlWeb: "Web controls terminal size",
     offlineDraftOnly: "Device offline, draft only",

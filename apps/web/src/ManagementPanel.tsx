@@ -9,6 +9,7 @@ type Area = "ssh" | "file" | "git" | "worktree" | "hook";
 const AREAS: Area[] = ["ssh", "file", "git", "worktree", "hook"];
 
 type Props = {
+  initialArea?: Area;
   t: T;
   capabilities: string[];
   projectContext?: ProjectContext;
@@ -49,14 +50,61 @@ function managementErrorText(t: T, code: string, message?: unknown) {
   else if (code === "operation_confirmation_required") summary = t("operationConfirmationRequired");
   else if (code === "unsupported_operation_kind") summary = t("unsupportedOperation");
   else if (code === "invalid_operation_payload") summary = t("invalidOperationPayload");
+  else if (code === "file_result_too_large" || code === "git_result_too_large" || code === "git_diff_too_large") summary = t("diffTooLarge");
   else summary = t("requestFailed");
-  const details = safeErrorMessage(message);
+  const details = ["file_result_too_large", "git_result_too_large", "git_diff_too_large"].includes(code) ? "" : safeErrorMessage(message);
   return details ? `${summary} (${code}): ${details}` : `${summary} (${code})`;
 }
 
 function operationStatusLabel(t: T, status: OperationStatus): string {
   const key: Record<OperationStatus, TranslationKey> = { submitted: "submitted", waiting_device: "waitingDevice", accepted: "accepted", running: "running", succeeded: "succeeded", failed: "failed", rejected: "rejected", timed_out: "timedOut", canceled: "canceled" };
   return t(key[status]);
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function resultString(value: unknown, key: string): string {
+  const record = recordValue(value);
+  return typeof record?.[key] === "string" ? record[key] as string : "";
+}
+
+function resultNumber(value: unknown, key: string): number | null {
+  const record = recordValue(value);
+  return typeof record?.[key] === "number" ? record[key] as number : null;
+}
+
+function resultArray(value: unknown, key?: string): unknown[] {
+  const candidate = key ? recordValue(value)?.[key] : value;
+  return Array.isArray(candidate) ? candidate : [];
+}
+
+function formatBytes(value: unknown): string {
+  const bytes = typeof value === "number" ? value : 0;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ManagementResult({ t, operation, onSelectPath }: { t: T; operation?: Operation; onSelectPath?: (path: string, kind: string, status?: string) => void }) {
+  if (!operation || operation.result === null || operation.result === undefined) return <p className="muted">{t("noResult")}</p>;
+  if (operation.kind === "file.read_text") {
+    return <div className="management-preview"><div className="preview-meta"><strong>{resultString(operation.result, "encoding") || "UTF-8"}</strong><span>{formatBytes(resultNumber(operation.result, "sizeBytes"))}</span></div><pre className="code-preview">{resultString(operation.result, "content")}</pre></div>;
+  }
+  if (operation.kind === "file.read_image") {
+    const mime = resultString(operation.result, "mimeType");
+    const data = resultString(operation.result, "dataBase64");
+    if (mime.startsWith("image/") && data) return <div className="management-preview image-preview"><img src={`data:${mime};base64,${data}`} alt={t("filePreview")} /><span>{formatBytes(resultNumber(operation.result, "sizeBytes"))}</span></div>;
+  }
+  if (operation.kind === "git.diff") {
+    return <pre className="code-preview diff-preview">{resultString(operation.result, "content") || t("noResult")}</pre>;
+  }
+  const entries = operation.kind === "git.status" ? resultArray(operation.result, "changes") : resultArray(operation.result);
+  if (entries.length > 0 && entries.every((entry) => recordValue(entry))) {
+    return <div className="management-table-wrap"><table className="management-table"><thead><tr><th>{t("fileName")}</th><th>{t("fileType")}</th><th>{t("fileSize")}</th><th>{t("modifiedAt")}</th></tr></thead><tbody>{entries.map((entry, index) => { const item = recordValue(entry)!; const path = typeof item.path === "string" ? item.path : typeof item.name === "string" ? item.name : ""; const kind = typeof item.kind === "string" ? item.kind : ""; const status = typeof item.status === "string" ? item.status : undefined; return <tr key={`${path || index}-${index}`}><td>{onSelectPath && path ? <button className="result-path-button" type="button" onClick={() => onSelectPath(path, kind, status)}>{path}</button> : <code>{path || "-"}</code>}</td><td>{String(item.kind ?? item.status ?? "-")}</td><td>{item.sizeBytes === undefined ? "-" : formatBytes(item.sizeBytes)}</td><td>{item.modifiedMs ? new Date(Number(item.modifiedMs)).toLocaleString() : item.staged === undefined ? "-" : item.staged ? t("staged") : t("unstaged")}</td></tr>; })}</tbody></table></div>;
+  }
+  return <pre>{JSON.stringify(operation.result, null, 2)}</pre>;
 }
 
 function stringValue(payload: JsonObject, key: string): string {
@@ -104,7 +152,7 @@ function validateOperation(t: T, kind: string, payload: JsonObject): string {
 }
 
 function operationTarget(t: T, kind: string, payload: JsonObject, projectContext?: ProjectContext): string {
-  const context = projectContext?.cwd || projectContext?.projectKey || t("unknown");
+  const context = projectContext?.projectName || projectContext?.projectKey || t("unknown");
   if (kind.startsWith("ssh.")) return stringValue(payload, "hostId") || stringValue(payload, "host") || t("unknown");
   if (kind === "file.copy" || kind === "file.move") return `${stringValue(payload, "sourcePath")} → ${stringValue(payload, "targetParentPath") || "."}/${stringValue(payload, "name")}`;
   if (kind === "file.rename") return `${stringValue(payload, "path")} → ${stringValue(payload, "name")}`;
@@ -135,8 +183,8 @@ function moveTabFocus(event: KeyboardEvent<HTMLButtonElement>, currentIndex: num
   tabs?.[nextIndex]?.focus();
 }
 
-export function ManagementPanel({ t, capabilities, projectContext, operations, onSubmit }: Props) {
-  const [area, setArea] = useState<Area>("ssh");
+export function ManagementPanel({ t, capabilities, projectContext, operations, onSubmit, initialArea = "ssh" }: Props) {
+  const [area, setArea] = useState<Area>(initialArea);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const [lastOperationId, setLastOperationId] = useState<string>();
@@ -172,10 +220,16 @@ export function ManagementPanel({ t, capabilities, projectContext, operations, o
       setWorking(false);
     }
   };
+  const selectResultPath = (path: string, kind: string, status?: string) => {
+    update("path", path);
+    if (status) update("status", status);
+    if (latest?.kind === "file.list" && kind === "directory") void run("file.list", { path });
+  };
 
   return (
     <div className="management-panel">
       <p className="muted">{t("managementHint")}</p>
+      <div className="management-context"><span>{t("projectContext")}</span><strong>{projectContext ? `${projectContext.projectName}${projectContext.worktreeId ? ` / ${projectContext.branch || "Worktree"}` : ""}` : t("noProjectContext")}</strong></div>
       <div className="management-tabs" role="tablist" aria-label={t("management")} aria-orientation="horizontal">
         {AREAS.map((item, index) => (
           <button key={item} id={`management-tab-${item}`} type="button" role="tab" aria-selected={area === item} aria-controls="management-tabpanel" tabIndex={area === item ? 0 : -1} disabled={working} className={area === item ? "active" : ""} onClick={() => setArea(item)} onKeyDown={(event) => moveTabFocus(event, index, setArea)}>
@@ -203,7 +257,7 @@ export function ManagementPanel({ t, capabilities, projectContext, operations, o
         {!latest ? <p className="muted">{t("noManagementOperation")}</p> : <>
           <div className="operation-grid"><span>{t("operationKind")}</span><strong>{latest.kind}</strong><span>{t("operationStatus")}</span><strong>{operationStatusLabel(t, latest.status)}</strong><span>ID</span><code>{latest.id}</code></div>
           {latest.error && <p className="form-error" role="alert">{managementErrorText(t, latest.error.code, latest.error.message)}</p>}
-          {latest.result !== null && <pre>{JSON.stringify(latest.result, null, 2)}</pre>}
+          <ManagementResult t={t} operation={latest} onSelectPath={area === "file" || area === "git" ? selectResultPath : undefined} />
         </>}
       </section>
     </div>
@@ -234,7 +288,7 @@ function FileControls({ t, field, update, run, busy, disabled }: ControlProps & 
   return <>
     {disabled && <p className="form-error">{t("projectContextRequired")}</p>}
     <div className="management-grid"><Input label={t("relativePath")} value={field("path")} onChange={(value) => update("path", value)} /><Input label={t("query")} value={field("query")} onChange={(value) => update("query", value)} /><Input label={t("name")} value={field("name")} onChange={(value) => update("name", value)} /><Input label={t("targetPath")} value={field("targetPath")} onChange={(value) => update("targetPath", value)} /></div>
-    <div className="management-actions"><Action disabled={busy || disabled} label={t("listFiles")} onClick={() => run("file.list", { path: field("path") })} /><Action disabled={busy || disabled} label={t("searchFiles")} onClick={() => run("file.search", { query: field("query") })} /><Action disabled={busy || disabled} label={t("searchContent")} onClick={() => run("file.search_content", { query: field("query") })} /></div>
+    <div className="management-actions"><Action disabled={busy || disabled} label={t("listFiles")} onClick={() => run("file.list", { path: field("path") })} /><Action disabled={busy || disabled} label={t("searchFiles")} onClick={() => run("file.search", { query: field("query") })} /><Action disabled={busy || disabled} label={t("searchContent")} onClick={() => run("file.search_content", { query: field("query") })} /><Action disabled={busy || disabled} label={t("readText")} onClick={() => run("file.read_text", { path: field("path") })} /><Action disabled={busy || disabled} label={t("readImage")} onClick={() => run("file.read_image", { path: field("path") })} /></div>
     <div className="management-actions"><Action disabled={busy || disabled} label={t("createFile")} onClick={() => run("file.create", { parentPath: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("createDirectory")} onClick={() => run("file.create_directory", { parentPath: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("rename")} onClick={() => run("file.rename", { path: field("path"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("copy")} onClick={() => run("file.copy", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("move")} onClick={() => run("file.move", { sourcePath: field("path"), targetParentPath: field("targetPath"), name: field("name") }, true)} /><Action disabled={busy || disabled} label={t("deleteAction")} onClick={() => run("file.delete", { path: field("path") }, true)} /></div>
   </>;
 }
@@ -242,8 +296,8 @@ function FileControls({ t, field, update, run, busy, disabled }: ControlProps & 
 function GitControls({ t, field, update, run, busy, disabled }: ControlProps & { disabled: boolean }) {
   return <>
     {disabled && <p className="form-error">{t("projectContextRequired")}</p>}
-    <div className="management-actions"><Action disabled={busy || disabled} label={t("gitStatus")} onClick={() => run("git.status")} /><Action disabled={busy || disabled} label={t("branches")} onClick={() => run("git.branches")} /><Action disabled={busy || disabled} label={t("fetch")} onClick={() => run("git.fetch", {}, true)} /></div>
-    <div className="management-grid"><Input label={t("branch")} value={field("branch")} onChange={(value) => update("branch", value)} /><Input label={t("pathsCommaSeparated")} value={field("paths")} onChange={(value) => update("paths", value)} /><Input label={t("statusCode")} value={field("status")} onChange={(value) => update("status", value)} /><Input label={t("commitMessage")} value={field("message")} onChange={(value) => update("message", value)} /></div>
+    <div className="management-actions"><Action disabled={busy || disabled} label={t("gitStatus")} onClick={() => run("git.status")} /><Action disabled={busy || disabled} label={t("branches")} onClick={() => run("git.branches")} /><Action disabled={busy || disabled} label={t("viewDiff")} onClick={() => run("git.diff", { path: field("path"), status: field("status") || "M", whitespace: field("whitespace") || "exact", contextLines: Number(field("contextLines") || 3) })} /><Action disabled={busy || disabled} label={t("fetch")} onClick={() => run("git.fetch", {}, true)} /></div>
+    <div className="management-grid"><Input label={t("branch")} value={field("branch")} onChange={(value) => update("branch", value)} /><Input label={t("pathsCommaSeparated")} value={field("paths")} onChange={(value) => update("paths", value)} /><Input label={t("relativePath")} value={field("path")} onChange={(value) => update("path", value)} /><Input label={t("statusCode")} value={field("status")} onChange={(value) => update("status", value)} /><Input label={t("commitMessage")} value={field("message")} onChange={(value) => update("message", value)} /><label><span>{t("diffWhitespace")}</span><select value={field("whitespace") || "exact"} onChange={(event) => update("whitespace", event.target.value)}><option value="exact">{t("diffExact")}</option><option value="ignore-eol">{t("diffIgnoreEol")}</option><option value="ignore-all">{t("diffIgnoreAll")}</option></select></label><label><span>{t("diffContext")}</span><select value={field("contextLines") || "3"} onChange={(event) => update("contextLines", event.target.value)}><option value="3">3</option><option value="10">10</option><option value="20">20</option></select></label></div>
     <div className="management-actions"><Action disabled={busy || disabled} label={t("checkout")} onClick={() => run("git.checkout", { branch: field("branch"), remote: false }, true)} /><Action disabled={busy || disabled} label={t("createBranch")} onClick={() => run("git.create_branch", { branch: field("branch") }, true)} /><Action disabled={busy || disabled} label={t("stage")} onClick={() => run("git.stage", { paths: csv(field("paths")) }, true)} /><Action disabled={busy || disabled} label={t("unstage")} onClick={() => run("git.unstage", { paths: csv(field("paths")) }, true)} /><Action disabled={busy || disabled} label={t("commit")} onClick={() => run("git.commit", { message: field("message") }, true)} /><Action disabled={busy || disabled} label={t("pull")} onClick={() => run("git.pull", { strategy: field("pullStrategy") }, true)} /><Action disabled={busy || disabled} label={t("push")} onClick={() => run("git.push", {}, true)} /><Action disabled={busy || disabled} label={t("discard")} onClick={() => run("git.discard", { items: csv(field("paths")).map((path) => ({ path, status: field("status") || "M" })) }, true)} /><Action disabled={busy || disabled} label={t("deleteUntracked")} onClick={() => run("git.delete_untracked", { paths: csv(field("paths")) }, true)} /></div>
   </>;
 }

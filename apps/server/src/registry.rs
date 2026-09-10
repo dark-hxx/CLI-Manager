@@ -11,6 +11,7 @@ pub struct BrowserBroadcast {
 pub struct ConnectionRegistry {
     devices: RwLock<HashMap<String, DeviceConnection>>,
     browser_events: broadcast::Sender<BrowserBroadcast>,
+    session_revocations: broadcast::Sender<()>,
 }
 
 struct DeviceConnection {
@@ -25,7 +26,15 @@ impl ConnectionRegistry {
         Self {
             devices: RwLock::new(HashMap::new()),
             browser_events,
+            session_revocations: broadcast::channel(16).0,
         }
+    }
+
+    pub fn notify_session_revocation(&self) {
+        let _ = self.session_revocations.send(());
+    }
+    pub fn subscribe_session_revocations(&self) -> broadcast::Receiver<()> {
+        self.session_revocations.subscribe()
     }
 
     pub async fn register_device(

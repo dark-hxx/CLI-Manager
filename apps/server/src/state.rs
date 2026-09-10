@@ -9,6 +9,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub storage: Storage,
     pub registry: Arc<ConnectionRegistry>,
+    pub shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 impl AppState {
@@ -17,6 +18,7 @@ impl AppState {
             config: Arc::new(config),
             storage,
             registry: Arc::new(ConnectionRegistry::new()),
+            shutdown: tokio::sync::watch::channel(false).0,
         }
     }
 

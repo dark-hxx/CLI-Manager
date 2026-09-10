@@ -5,8 +5,9 @@
 //! filesystem operation authority beyond the Web profile and credential store.
 
 use cli_manager_web_protocol::{
-    DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus, OperationView,
-    ServerToDeviceFrame, WorkspaceSnapshot, DEVICE_PROTOCOL_VERSION,
+    ConversationEvent, DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus,
+    OperationView, ServerToDeviceFrame, TerminalCommand, TerminalOutputFrame, WorkspaceSnapshot,
+    DEVICE_PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -14,14 +15,14 @@ use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{connect, Error as WsError, Message, WebSocket};
+use tungstenite::{Error as WsError, Message, WebSocket};
 use uuid::Uuid;
 
 const PROFILE_FILE_NAME: &str = "web-device.json";
@@ -32,15 +33,18 @@ const DEV_INFO_FILE_NAME: &str = "web-daemon.dev.json";
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
+pub(crate) const SERVER_SILENCE_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_OPERATIONS: usize = 128;
 const MAX_SEEN_OPERATIONS: usize = 1024;
-const MAX_OUTBOUND_FRAMES: usize = 256;
+const MAX_TERMINAL_COMMANDS: usize = 512;
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
 const PAIRING_LIFETIME_MS: i64 = 5 * 60 * 1000;
 const IDLE_EXIT_AFTER: Duration = Duration::from_secs(10 * 60);
-const PROTOCOL_VERSION: u16 = 1;
+const CONTROL_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
+const CONTROL_RETRY_DELAY: Duration = Duration::from_secs(3);
+pub(crate) const PROTOCOL_VERSION: u16 = 7;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonInfo {
     pub port: u16,
@@ -54,6 +58,10 @@ pub struct DaemonInfo {
 #[serde(rename_all = "camelCase")]
 struct Profile {
     server_url: String,
+    #[serde(default)]
+    trusted_network: bool,
+    #[serde(default)]
+    public_access_url: String,
     #[serde(alias = "deviceId")]
     client_id: String,
     #[serde(default)]
@@ -89,10 +97,16 @@ pub enum Request {
     Auth {
         token: String,
         client_version: String,
+        #[serde(default)]
+        protocol_version: u16,
     },
     GetStatus,
     SaveProfile {
         server_url: String,
+        #[serde(default)]
+        trusted_network: bool,
+        #[serde(default)]
+        public_access_url: String,
         name: String,
         auto_start: bool,
         #[serde(default = "default_true")]
@@ -104,6 +118,18 @@ pub enum Request {
     CreatePairing,
     ClearPairing,
     TakeOperations,
+    TakeTerminalCommands,
+    TerminalOutput {
+        session_id: String,
+        sequence: u64,
+        frames: Vec<TerminalOutputFrame>,
+    },
+    TerminalStatus {
+        session_id: String,
+        status: String,
+        exit_code: Option<i32>,
+        control_mode: Option<String>,
+    },
     PublishHistory {
         sessions: Vec<HistorySessionSummary>,
         workspace: WorkspaceSnapshot,
@@ -119,6 +145,9 @@ pub enum Request {
         status: OperationStatus,
         result: Option<Value>,
         error: Option<OperationError>,
+    },
+    ConversationEvent {
+        event: ConversationEvent,
     },
     Shutdown,
 }
@@ -192,8 +221,10 @@ impl OperationQueue {
 pub struct DaemonState {
     runtime: Arc<Mutex<RuntimeState>>,
     operations: Arc<Mutex<OperationQueue>>,
-    outbound: Arc<Mutex<VecDeque<DeviceToServerFrame>>>,
+    terminal_commands: Arc<Mutex<VecDeque<TerminalCommand>>>,
+    outbound: Arc<Mutex<crate::web_device_outbox::WebDeviceOutbox>>,
     generation: Arc<AtomicU64>,
+    connection: Arc<DeviceConnectionControl>,
     stopping: Arc<AtomicBool>,
     info_path: PathBuf,
     info: DaemonInfo,
@@ -204,8 +235,12 @@ impl DaemonState {
         Self {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             operations: Arc::new(Mutex::new(OperationQueue::default())),
-            outbound: Arc::new(Mutex::new(VecDeque::new())),
+            terminal_commands: Arc::new(Mutex::new(VecDeque::new())),
+            outbound: Arc::new(Mutex::new(
+                crate::web_device_outbox::WebDeviceOutbox::default(),
+            )),
             generation: Arc::new(AtomicU64::new(0)),
+            connection: Arc::new(DeviceConnectionControl::default()),
             stopping: Arc::new(AtomicBool::new(false)),
             info_path,
             info,
@@ -274,11 +309,20 @@ impl DaemonState {
         let Some(line) = read_line(&mut reader) else {
             return;
         };
-        let Ok(Request::Auth { token, .. }) = serde_json::from_str(&line) else {
+        let Ok(Request::Auth {
+            token,
+            protocol_version,
+            ..
+        }) = serde_json::from_str(&line)
+        else {
             return;
         };
         if token != self.info.token {
             let _ = write_response(&mut stream, None, Some("auth_failed"));
+            return;
+        }
+        if protocol_version != PROTOCOL_VERSION {
+            let _ = write_response(&mut stream, None, Some("web_daemon_protocol_mismatch"));
             return;
         }
         loop {
@@ -311,6 +355,8 @@ impl DaemonState {
             Request::GetStatus => Ok(Some(serde_json::to_value(self.status()?).unwrap())),
             Request::SaveProfile {
                 server_url,
+                trusted_network,
+                public_access_url,
                 name,
                 auto_start,
                 upload_wallpaper,
@@ -324,7 +370,9 @@ impl DaemonState {
                     .map(str::to_string)
                     .unwrap_or(crate::app_paths::machine_id()?);
                 let profile = Profile {
-                    server_url: normalize_server_url(&server_url)?,
+                    server_url: normalize_device_url(&server_url, trusted_network)?,
+                    trusted_network,
+                    public_access_url: normalize_public_url(&public_access_url, trusted_network)?,
                     client_id: client_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
                     machine_id,
                     client_kind: client_kind().to_string(),
@@ -384,6 +432,41 @@ impl DaemonState {
                 )
                 .unwrap(),
             )),
+            Request::TakeTerminalCommands => {
+                let commands = self
+                    .terminal_commands
+                    .lock()
+                    .map_err(|_| "web daemon terminal command lock poisoned")?
+                    .drain(..)
+                    .collect::<Vec<_>>();
+                Ok(Some(serde_json::to_value(commands).unwrap()))
+            }
+            Request::TerminalOutput {
+                session_id,
+                sequence,
+                frames,
+            } => {
+                self.queue(DeviceToServerFrame::TerminalOutput {
+                    session_id,
+                    sequence,
+                    frames,
+                })?;
+                Ok(None)
+            }
+            Request::TerminalStatus {
+                session_id,
+                status,
+                exit_code,
+                control_mode,
+            } => {
+                self.queue(DeviceToServerFrame::TerminalStatus {
+                    session_id,
+                    status,
+                    exit_code,
+                    control_mode,
+                })?;
+                Ok(None)
+            }
             Request::PublishHistory {
                 sessions,
                 workspace,
@@ -449,6 +532,10 @@ impl DaemonState {
                 self.stop();
                 Ok(None)
             }
+            Request::ConversationEvent { event } => {
+                self.queue(DeviceToServerFrame::ConversationEvent { event })?;
+                Ok(None)
+            }
         }
     }
 
@@ -480,7 +567,7 @@ impl DaemonState {
     fn start(&self) -> Result<(), String> {
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
-        normalize_server_url(&profile.server_url)?;
+        normalize_device_url(&profile.server_url, profile.trusted_network)?;
         let mut runtime = self
             .runtime
             .lock()
@@ -490,16 +577,17 @@ impl DaemonState {
         }
         runtime.running = true;
         runtime.last_error = None;
-        drop(runtime);
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        drop(runtime);
         let state = self.clone();
         thread::spawn(move || state.run_connection_loop(generation));
         Ok(())
     }
 
     fn stop(&self) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut runtime) = self.runtime.lock() {
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            self.connection.cancel();
             runtime.running = false;
             runtime.connected = false;
             runtime.paired = false;
@@ -513,6 +601,9 @@ impl DaemonState {
                 break;
             }
             if let Ok(mut runtime) = self.runtime.lock() {
+                if self.generation.load(Ordering::SeqCst) != generation {
+                    break;
+                }
                 runtime.connected = false;
                 runtime.paired = false;
                 runtime.last_error = result.err();
@@ -531,14 +622,25 @@ impl DaemonState {
     }
 
     fn run_connection(&self, generation: u64) -> Result<(), String> {
+        let _attempt = self.connection.begin()?;
+        if !self.is_current(generation) {
+            return Ok(());
+        }
+        self.outbound
+            .lock()
+            .map_err(|_| "web daemon send lock poisoned")?
+            .reconnect();
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
-        let url = normalize_server_url(&profile.server_url)?;
+        let url = normalize_device_url(&profile.server_url, profile.trusted_network)?;
         let token = crate::credential_store::get(&token_account(&profile.client_id))?;
-        let (mut socket, _) =
-            connect(url.as_str()).map_err(|err| format!("connect web device failed: {err}"))?;
-        set_read_timeout(&mut socket)?;
+        let mut socket = self
+            .connection
+            .connect(&url, &self.generation, generation)?;
         let identity = crate::device_identity::collect(profile.upload_wallpaper);
+        if !self.is_current(generation) {
+            return Ok(());
+        }
         send_frame(
             &mut socket,
             &DeviceToServerFrame::Hello {
@@ -557,14 +659,20 @@ impl DaemonState {
             },
         )?;
         if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.connected = true;
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return Ok(());
+            }
             runtime.last_error = None;
             let seed = now_millis().max(1) as u64;
             runtime.heartbeat_sequence = runtime.heartbeat_sequence.max(seed);
             runtime.history_sequence = runtime.history_sequence.max(seed);
         }
         let mut last_heartbeat = Instant::now();
+        let mut last_received = Instant::now();
         while self.is_current(generation) {
+            if last_received.elapsed() >= SERVER_SILENCE_TIMEOUT {
+                return Err("web device server heartbeat timed out".into());
+            }
             self.flush_outbound(&mut socket)?;
             if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
                 let sequence = {
@@ -578,11 +686,18 @@ impl DaemonState {
                 send_frame(&mut socket, &DeviceToServerFrame::Heartbeat { sequence })?;
                 last_heartbeat = Instant::now();
             }
-            match socket.read() {
+            let received = socket.read();
+            if !self.is_current(generation) {
+                return Ok(());
+            }
+            if received.is_ok() {
+                last_received = Instant::now();
+            }
+            match received {
                 Ok(Message::Text(text)) => {
                     let frame = serde_json::from_str::<ServerToDeviceFrame>(&text)
                         .map_err(|err| format!("invalid web device frame: {err}"))?;
-                    self.handle_server_frame(frame)?;
+                    self.handle_server_frame(frame, generation)?;
                 }
                 Ok(Message::Ping(payload)) => socket
                     .send(Message::Pong(payload))
@@ -605,26 +720,34 @@ impl DaemonState {
     }
 
     fn flush_outbound(&self, socket: &mut DeviceSocket) -> Result<(), String> {
-        loop {
+        for _ in 0..32 {
             let frame = self
                 .outbound
                 .lock()
                 .map_err(|_| "web daemon send lock poisoned")?
-                .front()
-                .cloned();
+                .next();
             let Some(frame) = frame else { return Ok(()) };
             send_frame(socket, &frame)?;
             self.outbound
                 .lock()
                 .map_err(|_| "web daemon send lock poisoned")?
-                .pop_front();
+                .sent();
         }
+        Ok(())
     }
 
-    fn handle_server_frame(&self, frame: ServerToDeviceFrame) -> Result<(), String> {
+    fn handle_server_frame(
+        &self,
+        frame: ServerToDeviceFrame,
+        generation: u64,
+    ) -> Result<(), String> {
         match frame {
             ServerToDeviceFrame::HelloOk { paired, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return Ok(());
+                    }
+                    runtime.connected = true;
                     runtime.paired = paired;
                 }
             }
@@ -634,6 +757,9 @@ impl DaemonState {
                     .ok_or_else(|| "web device profile is not configured".to_string())?;
                 crate::credential_store::set(&token_account(&profile.client_id), &device_token)?;
                 if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return Ok(());
+                    }
                     runtime.paired = true;
                     runtime.pairing_code = None;
                     runtime.pairing_expires_at = None;
@@ -649,10 +775,24 @@ impl DaemonState {
                     return Err("web device operation queue is full".to_string());
                 }
             }
+            ServerToDeviceFrame::TerminalCommand { command } => {
+                let mut commands = self
+                    .terminal_commands
+                    .lock()
+                    .map_err(|_| "web daemon terminal command lock poisoned")?;
+                if commands.len() >= MAX_TERMINAL_COMMANDS {
+                    commands.pop_front();
+                }
+                commands.push_back(command);
+            }
             ServerToDeviceFrame::OperationAck {
                 operation_id,
                 status,
             } => {
+                self.outbound
+                    .lock()
+                    .map_err(|_| "web daemon send lock poisoned")?
+                    .acknowledge_operation(&operation_id, &status);
                 let mut operations = self
                     .operations
                     .lock()
@@ -663,7 +803,23 @@ impl DaemonState {
                     operations.mark_status(&operation_id, status);
                 }
             }
+            ServerToDeviceFrame::ConversationAck {
+                operation_id,
+                sequence,
+            } => {
+                self.outbound
+                    .lock()
+                    .map_err(|_| "web daemon send lock poisoned")?
+                    .acknowledge_event(&operation_id, sequence);
+            }
             ServerToDeviceFrame::Ack { .. } => {}
+            ServerToDeviceFrame::Error { code, message } if code == "invalid_terminal_output" => {
+                if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) == generation {
+                        runtime.last_error = Some(format!("terminal output rejected: {message}"));
+                    }
+                }
+            }
             ServerToDeviceFrame::Error { code, message } => {
                 return Err(format!(
                     "server rejected web device frame ({code}): {message}"
@@ -678,11 +834,7 @@ impl DaemonState {
             .outbound
             .lock()
             .map_err(|_| "web daemon send lock poisoned")?;
-        if outbound.len() >= MAX_OUTBOUND_FRAMES {
-            return Err("web device send queue is full".into());
-        }
-        outbound.push_back(frame);
-        Ok(())
+        outbound.push(frame)
     }
 
     fn clear_pairing(&self) -> Result<(), String> {
@@ -712,6 +864,155 @@ impl DaemonState {
 
 type DeviceSocket = WebSocket<MaybeTlsStream<TcpStream>>;
 
+/// Shared by the helper process and the in-process fallback. The attempt guard
+/// prevents retired workers from consuming the replacement worker's outbox.
+#[derive(Default)]
+pub(crate) struct DeviceConnectionControl {
+    attempt: Mutex<()>,
+    active: Mutex<Option<TcpStream>>,
+}
+
+pub(crate) struct DeviceConnectionAttempt<'a> {
+    control: &'a DeviceConnectionControl,
+    _guard: std::sync::MutexGuard<'a, ()>,
+}
+
+impl Drop for DeviceConnectionAttempt<'_> {
+    fn drop(&mut self) {
+        self.control.cancel();
+    }
+}
+
+impl DeviceConnectionControl {
+    pub(crate) fn begin(&self) -> Result<DeviceConnectionAttempt<'_>, String> {
+        Ok(DeviceConnectionAttempt {
+            control: self,
+            _guard: self
+                .attempt
+                .lock()
+                .map_err(|_| "web connection lock poisoned")?,
+        })
+    }
+    pub(crate) fn cancel(&self) {
+        if let Ok(mut active) = self.active.lock() {
+            if let Some(stream) = active.take() {
+                let _ = stream.shutdown(Shutdown::Both);
+            }
+        }
+    }
+
+    pub(crate) fn connect(
+        &self,
+        url: &str,
+        generation: &AtomicU64,
+        expected: u64,
+    ) -> Result<DeviceSocket, String> {
+        self.connect_with_timeout(url, generation, expected, Duration::from_secs(5))
+    }
+
+    fn connect_with_timeout(
+        &self,
+        url: &str,
+        generation: &AtomicU64,
+        expected: u64,
+        timeout: Duration,
+    ) -> Result<DeviceSocket, String> {
+        let uri = url
+            .parse::<tungstenite::http::Uri>()
+            .map_err(|err| err.to_string())?;
+        let host = uri
+            .host()
+            .ok_or("web device URL requires host")?
+            .trim_matches(['[', ']'])
+            .to_string();
+        let port = uri
+            .port_u16()
+            .unwrap_or(if uri.scheme_str() == Some("wss") {
+                443
+            } else {
+                80
+            });
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        thread::spawn(move || {
+            let addresses = (host.as_str(), port)
+                .to_socket_addrs()
+                .map(|items| items.collect::<Vec<_>>())
+                .map_err(|err| err.to_string());
+            let _ = sender.send(addresses);
+        });
+        let started = Instant::now();
+        let addresses = loop {
+            if generation.load(Ordering::SeqCst) != expected {
+                return Err("web device connection canceled".into());
+            }
+            if started.elapsed() >= timeout {
+                return Err("resolve web device server timed out".into());
+            }
+            match receiver.recv_timeout(Duration::from_millis(50)) {
+                Ok(result) => break result?,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(err) => return Err(err.to_string()),
+            }
+        };
+        let mut last_error = "web device server has no addresses".to_string();
+        for address in addresses {
+            if generation.load(Ordering::SeqCst) != expected {
+                return Err("web device connection canceled".into());
+            }
+            let remaining = timeout.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err("connect web device timed out".into());
+            }
+            let stream = match TcpStream::connect_timeout(&address, remaining) {
+                Ok(stream) => stream,
+                Err(err) => {
+                    last_error = err.to_string();
+                    continue;
+                }
+            };
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(|err| err.to_string())?;
+            stream
+                .set_write_timeout(Some(timeout))
+                .map_err(|err| err.to_string())?;
+            {
+                let mut active = self
+                    .active
+                    .lock()
+                    .map_err(|_| "web device socket lock poisoned")?;
+                if generation.load(Ordering::SeqCst) != expected {
+                    return Err("web device connection canceled".into());
+                }
+                *active = Some(stream.try_clone().map_err(|err| err.to_string())?);
+            }
+            // The socket is registered before TLS/HTTP handshake so Stop can
+            // interrupt a server which accepts TCP but never completes upgrade.
+            // A peer trickling bytes must not extend the handshake indefinitely.
+            let deadline_socket = stream.try_clone().map_err(|err| err.to_string())?;
+            let (finished, wait_finished) = std::sync::mpsc::channel::<()>();
+            thread::spawn(move || {
+                if matches!(
+                    wait_finished.recv_timeout(timeout),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ) {
+                    let _ = deadline_socket.shutdown(Shutdown::Both);
+                }
+            });
+            let result = tungstenite::client_tls(url, stream);
+            drop(finished);
+            let (mut socket, _) =
+                result.map_err(|err| format!("connect web device handshake failed: {err}"))?;
+            if generation.load(Ordering::SeqCst) != expected {
+                return Err("web device connection canceled".into());
+            }
+            set_read_timeout(&mut socket)?;
+            return Ok(socket);
+        }
+        Err(format!("connect web device failed: {last_error}"))
+    }
+}
+
 pub fn run_daemon() -> Result<(), String> {
     let data_dir = crate::app_paths::cli_manager_data_dir()?;
     let info_path = data_dir.join(if cfg!(debug_assertions) {
@@ -730,6 +1031,21 @@ pub fn run_daemon() -> Result<(), String> {
 }
 
 pub fn request<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, String> {
+    request_checked(request, false)
+}
+
+/// The only legacy operations allowed are inspection and an explicitly gated shutdown.
+pub(crate) fn upgrade_control<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, String> {
+    if !matches!(request, Request::GetStatus | Request::Shutdown) {
+        return Err("web_daemon_upgrade_control_forbidden".into());
+    }
+    request_checked(request, true)
+}
+
+fn request_checked<T: for<'de> Deserialize<'de>>(
+    request: Request,
+    upgrade: bool,
+) -> Result<T, String> {
     let data_dir = crate::app_paths::cli_manager_data_dir()?;
     let path = data_dir.join(if cfg!(debug_assertions) {
         DEV_INFO_FILE_NAME
@@ -737,11 +1053,62 @@ pub fn request<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, Stri
         INFO_FILE_NAME
     });
     let info = read_info(&path)?.ok_or_else(|| "web daemon unavailable".to_string())?;
-    let mut stream = TcpStream::connect(("127.0.0.1", info.port))
-        .map_err(|err| format!("connect web daemon failed: {err}"))?;
+    request_with_info(request, upgrade, &info)
+}
+
+// Cache only failed TCP connects, never business errors or requests that may
+// already have been applied. A new discovery identity bypasses the cooldown.
+#[derive(Default)]
+struct ControlConnector {
+    failed: Mutex<Option<(DaemonInfo, Instant)>>,
+}
+
+impl ControlConnector {
+    fn connect(&self, info: &DaemonInfo) -> Result<TcpStream, String> {
+        let mut failed = self
+            .failed
+            .lock()
+            .map_err(|_| "web daemon connection lock poisoned")?;
+        if failed
+            .as_ref()
+            .is_some_and(|(previous, retry_at)| previous == info && Instant::now() < *retry_at)
+        {
+            return Err("web daemon unavailable (connection cooldown)".into());
+        }
+        let address = SocketAddr::from((Ipv4Addr::LOCALHOST, info.port));
+        match TcpStream::connect_timeout(&address, CONTROL_CONNECT_TIMEOUT) {
+            Ok(stream) => {
+                *failed = None;
+                Ok(stream)
+            }
+            Err(error) => {
+                *failed = Some((info.clone(), Instant::now() + CONTROL_RETRY_DELAY));
+                Err(format!("connect web daemon failed: {error}"))
+            }
+        }
+    }
+}
+
+fn request_with_info<T: for<'de> Deserialize<'de>>(
+    request: Request,
+    upgrade: bool,
+    info: &DaemonInfo,
+) -> Result<T, String> {
+    static CONNECTOR: ControlConnector = ControlConnector {
+        failed: Mutex::new(None),
+    };
+    let protocol_version = control_protocol_version(info.protocol_version, upgrade)?;
+    let mut stream = CONNECTOR.connect(info)?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .map_err(|err| err.to_string())?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|err| err.to_string())?;
     let auth = serde_json::to_string(&Request::Auth {
         token: info.token.clone(),
         client_version: env!("CARGO_PKG_VERSION").to_string(),
+        protocol_version,
     })
     .map_err(|err| err.to_string())?;
     writeln!(stream, "{auth}").map_err(|err| err.to_string())?;
@@ -760,6 +1127,14 @@ pub fn request<T: for<'de> Deserialize<'de>>(request: Request) -> Result<T, Stri
         Some(value) => serde_json::from_value(value)
             .map_err(|err| format!("decode web daemon response failed: {err}")),
         None => serde_json::from_value(Value::Null).map_err(|err| err.to_string()),
+    }
+}
+
+fn control_protocol_version(discovered: u16, upgrade: bool) -> Result<u16, String> {
+    if discovered == PROTOCOL_VERSION || (upgrade && matches!(discovered, 1..=6)) {
+        Ok(discovered)
+    } else {
+        Err("web_daemon_protocol_mismatch: finish pending operations before upgrading the Web daemon".into())
     }
 }
 
@@ -858,7 +1233,16 @@ fn client_kind() -> &'static str {
     }
 }
 
+#[cfg(test)]
 fn normalize_server_url(raw: &str) -> Result<String, String> {
+    normalize_device_url(raw, false)
+}
+
+pub(crate) fn normalize_device_url(raw: &str, trusted_network: bool) -> Result<String, String> {
+    let parsed = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid web device server URL")?;
+    if !parsed.username().is_empty() || parsed.password().is_some() || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("web device URL must not contain credentials, query, or fragment".into());
+    }
     let uri = raw
         .trim()
         .parse::<tungstenite::http::Uri>()
@@ -873,7 +1257,7 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
     if !secure && !matches!(scheme, "http" | "ws") {
         return Err("web device server URL must use http, https, ws, or wss".into());
     }
-    if !secure && !is_loopback_host(host) {
+    if !secure && !is_loopback_host(host) && !trusted_network {
         return Err("remote web device server must use TLS".into());
     }
     let authority = uri
@@ -886,9 +1270,27 @@ fn normalize_server_url(raw: &str) -> Result<String, String> {
     ))
 }
 
+pub(crate) fn normalize_public_url(raw: &str, trusted_network: bool) -> Result<String, String> {
+    if raw.trim().is_empty() {
+        return Ok(String::new());
+    }
+    let mut url = reqwest::Url::parse(raw.trim()).map_err(|_| "invalid public access URL")?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
+        || !url.username().is_empty() || url.password().is_some()
+        || url.query().is_some() || url.fragment().is_some() || url.path() != "/"
+    {
+        return Err("public access URL must be an HTTP(S) origin without credentials or path".into());
+    }
+    if url.scheme() == "http" && !is_loopback_host(url.host_str().unwrap_or("")) && !trusted_network {
+        return Err("public access URL requires HTTPS or explicit trusted network mode".into());
+    }
+    url.set_path("/");
+    Ok(url.to_string())
+}
+
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
-        || host
+        || host.trim_start_matches('[').trim_end_matches(']')
             .parse::<IpAddr>()
             .map(|ip| ip.is_loopback())
             .unwrap_or(false)
@@ -902,6 +1304,7 @@ fn default_capabilities() -> Vec<String> {
         "conversation",
         "conversation.start",
         "conversation.prompt",
+        "terminal.stream",
         "project.management",
         "ssh.management",
         "file.management",
@@ -970,6 +1373,27 @@ pub fn read_discovery() -> Result<Option<DaemonInfo>, String> {
     read_info(&info_path()?)
 }
 
+/// PID existence alone is insufficient after a reboot: Windows can reuse it
+/// for an unrelated application. Unknown process paths are kept conservatively.
+pub(crate) fn discovery_process_is_stale(info: &DaemonInfo) -> bool {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let mut system = System::new();
+    let pid = Pid::from_u32(info.pid);
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::nothing().with_exe(UpdateKind::Always),
+    );
+    let Some(process) = system.process(pid) else {
+        return true;
+    };
+    process.exe().and_then(Path::file_stem).is_some_and(|name| {
+        !name
+            .to_string_lossy()
+            .eq_ignore_ascii_case("cli-manager-web-daemon")
+    })
+}
+
 pub fn remove_discovery() {
     if let Ok(path) = info_path() {
         remove_info(&path);
@@ -981,13 +1405,298 @@ mod tests {
     use super::*;
 
     #[test]
+    fn trusted_network_requires_explicit_opt_in_for_ip_and_domain() {
+        for endpoint in ["http://192.168.1.20:9090", "ws://100.95.251.17:9090", "http://desktop.internal:9090", "http://[fd00::1]:9090"] {
+            assert!(normalize_device_url(endpoint, false).is_err(), "{endpoint}");
+            assert!(normalize_device_url(endpoint, true).unwrap().ends_with("/ws/device"));
+        }
+        assert_eq!(normalize_device_url("http://[::1]:9090", false).unwrap(), "ws://[::1]:9090/ws/device");
+        assert_eq!(normalize_device_url("https://cli.example.com", false).unwrap(), "wss://cli.example.com/ws/device");
+        for endpoint in ["ftp://example.com", "http://user:secret@example.com", "http://example.com?token=secret", "http://example.com/#secret"] {
+            assert!(normalize_device_url(endpoint, true).is_err());
+        }
+    }
+
+    #[test]
+    fn public_browser_origin_is_independent_and_bounded() {
+        assert_eq!(normalize_public_url("https://cli.example.com", false).unwrap(), "https://cli.example.com/");
+        assert_eq!(normalize_public_url("http://desktop.internal:9090", true).unwrap(), "http://desktop.internal:9090/");
+        assert!(normalize_public_url("http://desktop.internal:9090", false).is_err());
+        for endpoint in ["ws://example.com", "https://example.com/path", "https://example.com?x=1", "https://user:pass@example.com", "https://example.com/#secret"] {
+            assert!(normalize_public_url(endpoint, true).is_err());
+        }
+        assert_eq!(normalize_public_url("", false).unwrap(), "");
+    }
+
+    fn control_info(port: u16) -> DaemonInfo {
+        DaemonInfo {
+            port,
+            token: "control-test-token".into(),
+            pid: std::process::id(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            protocol_version: PROTOCOL_VERSION,
+        }
+    }
+
+    #[test]
+    fn web_control_closed_port_is_bounded_and_cooled_down() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let info = control_info(listener.local_addr().unwrap().port());
+        drop(listener);
+        let connector = ControlConnector::default();
+        let started = Instant::now();
+        assert!(connector.connect(&info).is_err());
+        assert!(started.elapsed() < Duration::from_secs(1));
+        let cooled = Instant::now();
+        for _ in 0..100 {
+            assert!(connector.connect(&info).unwrap_err().contains("cooldown"));
+        }
+        assert!(cooled.elapsed() < Duration::from_millis(200));
+        // The same endpoint can recover after the retry deadline.
+        let _listener = TcpListener::bind(("127.0.0.1", info.port)).unwrap();
+        connector.failed.lock().unwrap().as_mut().unwrap().1 = Instant::now();
+        assert!(connector.connect(&info).is_ok());
+    }
+
+    #[test]
+    fn web_control_new_discovery_bypasses_old_connection_failure() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut info = control_info(listener.local_addr().unwrap().port());
+        drop(listener);
+        let connector = ControlConnector::default();
+        assert!(connector.connect(&info).is_err());
+        let _listener = TcpListener::bind(("127.0.0.1", info.port)).unwrap();
+        assert!(connector.connect(&info).is_err());
+        info.token = "replacement-daemon-token".into();
+        assert!(connector.connect(&info).is_ok());
+    }
+
+    #[test]
+    fn web_control_auth_and_request_roundtrip_still_work() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let info = control_info(listener.local_addr().unwrap().port());
+        let worker = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let auth: Value = serde_json::from_str(&read_line(&mut reader).unwrap()).unwrap();
+            assert_eq!(auth["token"], "control-test-token");
+            assert!(matches!(
+                serde_json::from_str::<Request>(&read_line(&mut reader).unwrap()).unwrap(),
+                Request::GetStatus
+            ));
+            write_response(&mut stream, Some(Value::Bool(true)), None).unwrap();
+        });
+        assert!(request_with_info::<bool>(Request::GetStatus, false, &info).unwrap());
+        worker.join().unwrap();
+    }
+
+    #[test]
+    fn web_control_dead_or_reused_pid_is_stale() {
+        let mut info = control_info(1);
+        // Our test process is alive but is not the Web daemon executable.
+        assert!(discovery_process_is_stale(&info));
+        info.pid = u32::MAX - 1;
+        assert!(discovery_process_is_stale(&info));
+    }
+
+    #[test]
+    fn terminal_output_rejection_keeps_device_connected_but_auth_errors_fail() {
+        let state = DaemonState::new(
+            PathBuf::new(),
+            DaemonInfo {
+                port: 0,
+                token: String::new(),
+                pid: 0,
+                version: String::new(),
+                protocol_version: PROTOCOL_VERSION,
+            },
+        );
+        state.generation.store(1, Ordering::SeqCst);
+        {
+            let mut runtime = state.runtime.lock().unwrap();
+            runtime.running = true;
+            runtime.connected = true;
+            runtime.paired = true;
+        }
+        state
+            .handle_server_frame(
+                ServerToDeviceFrame::Error {
+                    code: "invalid_terminal_output".into(),
+                    message: "encoded_batch_too_large".into(),
+                },
+                1,
+            )
+            .unwrap();
+        {
+            let runtime = state.runtime.lock().unwrap();
+            assert!(runtime.connected && runtime.paired && runtime.running);
+            assert!(runtime
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("encoded_batch_too_large"));
+        }
+        assert!(state
+            .handle_server_frame(
+                ServerToDeviceFrame::Error {
+                    code: "invalid_device_token".into(),
+                    message: "authentication failed".into(),
+                },
+                1
+            )
+            .is_err());
+        state.stop();
+        state
+            .handle_server_frame(
+                ServerToDeviceFrame::Error {
+                    code: "invalid_terminal_output".into(),
+                    message: "stale error".into(),
+                },
+                1,
+            )
+            .unwrap();
+        assert!(!state
+            .runtime
+            .lock()
+            .unwrap()
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("stale"));
+    }
+
+    #[test]
+    fn stalled_handshake_times_out() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (_stream, _) = listener.accept().unwrap();
+            let _ = wait.recv_timeout(Duration::from_secs(3));
+        });
+        let control = DeviceConnectionControl::default();
+        let generation = AtomicU64::new(1);
+        let started = Instant::now();
+        let result = control.connect_with_timeout(
+            &format!("ws://{address}/ws/device"),
+            &generation,
+            1,
+            Duration::from_millis(150),
+        );
+        assert!(result.is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        control.cancel();
+        let _ = release.send(());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn stop_interrupts_handshake_and_next_generation_reconnects() {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (accepted, wait_accepted) = std::sync::mpsc::channel();
+        let (release, wait_release) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (first, _) = listener.accept().unwrap();
+            accepted.send(()).unwrap();
+            let _ = wait_release.recv_timeout(Duration::from_secs(3));
+            drop(first);
+            let (second, _) = listener.accept().unwrap();
+            let _socket = tungstenite::accept(second).unwrap();
+        });
+        let control = Arc::new(DeviceConnectionControl::default());
+        let generation = Arc::new(AtomicU64::new(1));
+        let worker_control = control.clone();
+        let worker_generation = generation.clone();
+        let (finished, wait_finished) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            let _attempt = worker_control.begin().unwrap();
+            let result =
+                worker_control.connect(&format!("ws://{address}/ws/device"), &worker_generation, 1);
+            finished.send(result.is_err()).unwrap();
+        });
+        wait_accepted.recv_timeout(Duration::from_secs(2)).unwrap();
+        generation.store(2, Ordering::SeqCst);
+        control.cancel();
+        assert!(wait_finished.recv_timeout(Duration::from_secs(2)).unwrap());
+        worker.join().unwrap();
+        release.send(()).unwrap();
+        let _attempt = control.begin().unwrap();
+        let socket = control
+            .connect(&format!("ws://{address}/ws/device"), &generation, 2)
+            .unwrap();
+        assert!(socket.can_write());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn retired_generation_cannot_restore_connected_status() {
+        let state = DaemonState::new(
+            PathBuf::new(),
+            DaemonInfo {
+                port: 0,
+                token: String::new(),
+                pid: 0,
+                version: String::new(),
+                protocol_version: PROTOCOL_VERSION,
+            },
+        );
+        state.runtime.lock().unwrap().running = true;
+        state.generation.store(1, Ordering::SeqCst);
+        state.stop();
+        let frame = serde_json::from_value(
+            serde_json::json!({"type":"hello_ok","paired":true,"serverTime":0}),
+        )
+        .unwrap();
+        state.handle_server_frame(frame, 1).unwrap();
+        let runtime = state.runtime.lock().unwrap();
+        assert!(!runtime.running);
+        assert!(!runtime.connected);
+        assert!(!runtime.paired);
+    }
+
+    #[test]
     fn local_protocol_uses_auth_first_and_camel_case_payloads() {
+        let auth = serde_json::to_value(Request::Auth {
+            token: "test-token".into(),
+            client_version: "1.3.9".into(),
+            protocol_version: PROTOCOL_VERSION,
+        })
+        .unwrap();
+        assert_eq!(auth["protocol_version"], PROTOCOL_VERSION);
+        let legacy: Request = serde_json::from_value(
+            serde_json::json!({"type":"auth", "token":"test-token", "client_version":"1.3.9"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            legacy,
+            Request::Auth {
+                protocol_version: 0,
+                ..
+            }
+        ));
         let request = serde_json::to_value(Request::OperationRunning {
             operation_id: "op-1".into(),
         })
         .unwrap();
         assert_eq!(request["type"], "operation_running");
         assert_eq!(request["operation_id"], "op-1");
+    }
+
+    #[test]
+    fn legacy_upgrade_auth_uses_the_old_protocol_only_for_inspection_and_shutdown() {
+        for protocol in 1..PROTOCOL_VERSION {
+            assert_eq!(control_protocol_version(protocol, true).unwrap(), protocol);
+            assert!(control_protocol_version(protocol, false).is_err());
+        }
+        assert!(control_protocol_version(0, true).is_err());
+        assert!(control_protocol_version(PROTOCOL_VERSION + 1, true).is_err());
+        assert!(upgrade_control::<()>(Request::Start)
+            .unwrap_err()
+            .contains("forbidden"));
     }
 
     #[test]
@@ -1035,6 +1744,8 @@ mod tests {
             connected: true,
             paired: true,
             profile: Some(Profile {
+                trusted_network: false,
+                public_access_url: String::new(),
                 server_url: "wss://example.com/ws/device".into(),
                 client_id: "client-1".into(),
                 machine_id: "machine-1".into(),

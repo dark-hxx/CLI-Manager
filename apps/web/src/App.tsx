@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LanguageMode, TranslationKey, resolveLanguage, translate } from "./i18n";
 import { useAppModel } from "./useAppModel";
+import { MobileAccess } from "./BrowserAccess";
 import { GlobalErrorPage, HostHome, LoadingPage, LoginPage, SessionExpiredPage, Workbench } from "./views";
 
 type ThemeMode = "system" | "light" | "dark";
@@ -57,6 +58,7 @@ export function App() {
     setLanguageMode((current) => (current === "auto" ? "zh-CN" : current === "zh-CN" ? "en-US" : "auto"));
   };
 
+  if (model.mobileToken) return <MobileAccess t={t} onRedeem={model.redeemMobile} onCancel={model.cancelMobile} />;
   if (model.authPhase === "checking") return <LoadingPage t={t} />;
   if (model.authPhase === "login") return <LoginPage t={t} error={model.error} onLogin={model.login} />;
   if (model.authPhase === "expired") return <SessionExpiredPage t={t} onLogin={model.checkAuth} />;
@@ -67,6 +69,7 @@ export function App() {
   if (page === "hosts") {
     return (
       <HostHome
+        restricted={Boolean(model.deviceScope)}
         t={t}
         userName={model.user?.username ?? t("developer")}
         devices={model.devices}
@@ -90,6 +93,9 @@ export function App() {
 
   return (
     <Workbench
+      restricted={Boolean(model.deviceScope)}
+      sending={model.sending}
+      detailState={model.detailState}
       t={t}
       userName={model.user?.username ?? t("developer")}
       devices={model.devices}
@@ -99,23 +105,29 @@ export function App() {
       selectedSession={model.selectedSession}
       projectContexts={model.projectContexts}
       selectedProjectContext={model.selectedProjectContext}
+      terminalSessionId={model.terminalSessionId}
+      terminalTabs={model.terminalTabs}
+      terminalStatus={model.terminalStatus}
+      terminalStream={model.terminalStream}
+      terminalControlMode={model.terminalControlMode}
       timeline={model.timeline}
       pairing={model.pairing}
       socketState={model.socketState}
-      draft={model.draft}
-      composerMessage={model.composerMessage}
       latestSyncAt={model.latestSyncAt}
       resolvedTheme={resolvedTheme}
       onTheme={cycleTheme}
       onLanguage={cycleLanguage}
       onLogout={() => void model.logout()}
-      onBackToHosts={() => setPage("hosts")}
+      onBackToHosts={() => { model.closeTerminal(); setPage("hosts"); }}
       onRefresh={() => void model.loadWorkspace()}
       onSelectDevice={model.selectDevice}
       onSelectSession={model.selectSession}
       onSelectProjectContext={model.selectProjectContext}
-      onDraft={model.setDraft}
-      onSend={() => void model.sendPrompt()}
+      onOpenTerminal={() => void model.openTerminal()}
+      onSelectTerminalTab={model.selectTerminalTab}
+      onCloseTerminal={model.closeTerminal}
+      onTerminalInput={model.sendTerminalInput}
+      onTerminalResize={model.resizeTerminal}
       onClaimPairing={model.claimPairing}
       onResetPairing={() => model.setPairing({ status: "idle" })}
       onSubmitManagement={model.submitManagementOperation}

@@ -102,6 +102,48 @@ pub async fn require_user(state: &AppState, headers: &HeaderMap) -> Result<UserV
         .ok_or_else(AppError::unauthorized)
 }
 
+pub async fn device_scope(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<String>, AppError> {
+    let token = cookie_value(headers).ok_or_else(AppError::unauthorized)?;
+    state
+        .storage
+        .session_device_scope(&hash_secret(&token))
+        .await
+}
+
+pub async fn require_full_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<UserView, AppError> {
+    let user = require_user(state, headers).await?;
+    if device_scope(state, headers).await?.is_some() {
+        return Err(AppError::forbidden(
+            "account_session_required",
+            "sign in with an account to manage authorization",
+        ));
+    }
+    Ok(user)
+}
+
+pub async fn require_device_scope(
+    state: &AppState,
+    headers: &HeaderMap,
+    device_id: &str,
+) -> Result<(), AppError> {
+    if device_scope(state, headers)
+        .await?
+        .is_some_and(|scope| scope != device_id)
+    {
+        return Err(AppError::forbidden(
+            "device_scope_forbidden",
+            "device is outside this browser authorization",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

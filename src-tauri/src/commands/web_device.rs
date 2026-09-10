@@ -1,6 +1,7 @@
 use cli_manager_web_protocol::{
-    DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus, OperationView,
-    ServerToDeviceFrame, WorkspaceSnapshot, DEVICE_PROTOCOL_VERSION,
+    ConversationEvent, DeviceToServerFrame, HistorySessionSummary, OperationError, OperationStatus,
+    OperationView, ServerToDeviceFrame, TerminalCommand, TerminalOutputFrame, WorkspaceSnapshot,
+    DEVICE_PROTOCOL_VERSION,
 };
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -16,7 +17,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{connect, Error as WsError, Message, WebSocket};
+use tungstenite::{Error as WsError, Message, WebSocket};
 use uuid::Uuid;
 
 use crate::shell_resolver::silent_command;
@@ -28,16 +29,19 @@ const STATUS_EVENT: &str = "web-device-status-changed";
 const OPERATION_EVENT: &str = "web-device-operation-ready";
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
 const RECONNECT_DELAY: Duration = Duration::from_secs(3);
-const READ_TIMEOUT: Duration = Duration::from_millis(500);
 const MAX_OPERATIONS: usize = 128;
+const MAX_TERMINAL_COMMANDS: usize = 256;
 const MAX_SEEN_OPERATIONS: usize = 1024;
-const MAX_OUTBOUND_FRAMES: usize = 256;
 const PAIRING_LIFETIME_MS: i64 = 5 * 60 * 1000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebDeviceProfile {
     pub server_url: String,
+    #[serde(default)]
+    pub trusted_network: bool,
+    #[serde(default)]
+    pub public_access_url: String,
     #[serde(alias = "deviceId")]
     pub client_id: String,
     #[serde(default)]
@@ -57,6 +61,10 @@ pub struct WebDeviceProfile {
 #[serde(rename_all = "camelCase")]
 pub struct SaveProfileRequest {
     pub server_url: String,
+    #[serde(default)]
+    pub trusted_network: bool,
+    #[serde(default)]
+    pub public_access_url: String,
     pub name: String,
     #[serde(default)]
     pub auto_start: bool,
@@ -112,6 +120,23 @@ pub struct OperationCompletedRequest {
 pub struct ValidateContextRequest {
     pub root_path: String,
     pub cwd: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOutputRequest {
+    pub session_id: String,
+    pub sequence: u64,
+    pub frames: Vec<TerminalOutputFrame>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalStatusRequest {
+    pub session_id: String,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub control_mode: Option<String>,
 }
 
 #[derive(Default)]
@@ -190,8 +215,10 @@ impl OperationQueue {
 pub struct WebDeviceManager {
     runtime: Arc<Mutex<RuntimeState>>,
     operations: Arc<Mutex<OperationQueue>>,
-    outbound: Arc<Mutex<VecDeque<DeviceToServerFrame>>>,
+    terminal_commands: Arc<Mutex<VecDeque<TerminalCommand>>>,
+    outbound: Arc<Mutex<crate::web_device_outbox::WebDeviceOutbox>>,
     generation: Arc<AtomicU64>,
+    connection: Arc<crate::web_daemon::DeviceConnectionControl>,
 }
 
 impl Default for WebDeviceManager {
@@ -199,8 +226,12 @@ impl Default for WebDeviceManager {
         Self {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             operations: Arc::new(Mutex::new(OperationQueue::default())),
-            outbound: Arc::new(Mutex::new(VecDeque::new())),
+            terminal_commands: Arc::new(Mutex::new(VecDeque::new())),
+            outbound: Arc::new(Mutex::new(
+                crate::web_device_outbox::WebDeviceOutbox::default(),
+            )),
             generation: Arc::new(AtomicU64::new(0)),
+            connection: Arc::new(crate::web_daemon::DeviceConnectionControl::default()),
         }
     }
 }
@@ -242,22 +273,26 @@ impl WebDeviceManager {
     }
 
     fn queue(&self, frame: DeviceToServerFrame) -> Result<(), String> {
+        if !self
+            .runtime
+            .lock()
+            .map_err(|_| "web device state lock poisoned")?
+            .running
+        {
+            return Err("web device transport is not running".into());
+        }
         let mut outbound = self
             .outbound
             .lock()
             .map_err(|_| "web device send lock poisoned")?;
-        if outbound.len() >= MAX_OUTBOUND_FRAMES {
-            return Err("web device send queue is full".to_string());
-        }
-        outbound.push_back(frame);
-        Ok(())
+        outbound.push(frame)
     }
 
     fn start(&self, app: AppHandle) -> Result<(), String> {
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
         validate_profile(&profile)?;
-        {
+        let generation = {
             let mut runtime = self
                 .runtime
                 .lock()
@@ -267,8 +302,8 @@ impl WebDeviceManager {
             }
             runtime.running = true;
             runtime.last_error = None;
-        }
-        let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+            self.generation.fetch_add(1, Ordering::SeqCst) + 1
+        };
         let manager = self.clone();
         manager.emit_status(&app);
         thread::Builder::new()
@@ -276,6 +311,9 @@ impl WebDeviceManager {
             .spawn(move || manager.run(app, generation))
             .map_err(|err| {
                 if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return format!("start web device worker failed: {err}");
+                    }
                     runtime.running = false;
                     runtime.last_error = Some(format!("start web device worker failed: {err}"));
                 }
@@ -285,8 +323,9 @@ impl WebDeviceManager {
     }
 
     fn stop(&self, app: &AppHandle) {
-        self.generation.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut runtime) = self.runtime.lock() {
+            self.generation.fetch_add(1, Ordering::SeqCst);
+            self.connection.cancel();
             runtime.running = false;
             runtime.connected = false;
             runtime.paired = false;
@@ -301,6 +340,9 @@ impl WebDeviceManager {
                 break;
             }
             if let Ok(mut runtime) = self.runtime.lock() {
+                if self.generation.load(Ordering::SeqCst) != generation {
+                    break;
+                }
                 runtime.connected = false;
                 runtime.paired = false;
                 runtime.last_error = result.err();
@@ -320,14 +362,25 @@ impl WebDeviceManager {
     }
 
     fn run_connection(&self, app: &AppHandle, generation: u64) -> Result<(), String> {
+        let _attempt = self.connection.begin()?;
+        if !self.is_current(generation) {
+            return Ok(());
+        }
+        self.outbound
+            .lock()
+            .map_err(|_| "web device send lock poisoned")?
+            .reconnect();
         let profile =
             load_profile()?.ok_or_else(|| "web device profile is not configured".to_string())?;
-        let url = normalize_server_url(&profile.server_url)?;
+        let url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
         let token = crate::credential_store::get(&token_account(&profile.client_id))?;
-        let (mut socket, _) =
-            connect(url.as_str()).map_err(|err| format!("connect web device failed: {err}"))?;
-        set_read_timeout(&mut socket)?;
+        let mut socket = self
+            .connection
+            .connect(&url, &self.generation, generation)?;
         let identity = crate::device_identity::collect(profile.upload_wallpaper);
+        if !self.is_current(generation) {
+            return Ok(());
+        }
         send_frame(
             &mut socket,
             &DeviceToServerFrame::Hello {
@@ -346,7 +399,9 @@ impl WebDeviceManager {
             },
         )?;
         if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.connected = true;
+            if self.generation.load(Ordering::SeqCst) != generation {
+                return Ok(());
+            }
             runtime.last_error = None;
             let seed = now_millis().max(1) as u64;
             runtime.heartbeat_sequence = runtime.heartbeat_sequence.max(seed);
@@ -354,7 +409,11 @@ impl WebDeviceManager {
         }
         self.emit_status(app);
         let mut last_heartbeat = Instant::now();
+        let mut last_received = Instant::now();
         while self.is_current(generation) {
+            if last_received.elapsed() >= crate::web_daemon::SERVER_SILENCE_TIMEOUT {
+                return Err("web device server heartbeat timed out".into());
+            }
             self.flush_outbound(&mut socket)?;
             if last_heartbeat.elapsed() >= HEARTBEAT_INTERVAL {
                 let sequence = {
@@ -368,11 +427,18 @@ impl WebDeviceManager {
                 send_frame(&mut socket, &DeviceToServerFrame::Heartbeat { sequence })?;
                 last_heartbeat = Instant::now();
             }
-            match socket.read() {
+            let received = socket.read();
+            if !self.is_current(generation) {
+                return Ok(());
+            }
+            if received.is_ok() {
+                last_received = Instant::now();
+            }
+            match received {
                 Ok(Message::Text(text)) => {
                     let frame = serde_json::from_str::<ServerToDeviceFrame>(&text)
                         .map_err(|err| format!("invalid web device frame: {err}"))?;
-                    self.handle_server_frame(app, &profile, frame)?;
+                    self.handle_server_frame(app, &profile, frame, generation)?;
                 }
                 Ok(Message::Ping(payload)) => socket
                     .send(Message::Pong(payload))
@@ -395,20 +461,20 @@ impl WebDeviceManager {
     }
 
     fn flush_outbound(&self, socket: &mut DeviceSocket) -> Result<(), String> {
-        loop {
+        for _ in 0..32 {
             let frame = self
                 .outbound
                 .lock()
                 .map_err(|_| "web device send lock poisoned")?
-                .front()
-                .cloned();
+                .next();
             let Some(frame) = frame else { return Ok(()) };
             send_frame(socket, &frame)?;
             self.outbound
                 .lock()
                 .map_err(|_| "web device send lock poisoned")?
-                .pop_front();
+                .sent();
         }
+        Ok(())
     }
 
     fn handle_server_frame(
@@ -416,10 +482,15 @@ impl WebDeviceManager {
         app: &AppHandle,
         profile: &WebDeviceProfile,
         frame: ServerToDeviceFrame,
+        generation: u64,
     ) -> Result<(), String> {
         match frame {
             ServerToDeviceFrame::HelloOk { paired, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return Ok(());
+                    }
+                    runtime.connected = true;
                     runtime.paired = paired;
                 }
                 self.emit_status(app);
@@ -428,6 +499,9 @@ impl WebDeviceManager {
             ServerToDeviceFrame::PairingClaimed { device_token, .. } => {
                 crate::credential_store::set(&token_account(&profile.client_id), &device_token)?;
                 if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) != generation {
+                        return Ok(());
+                    }
                     runtime.paired = true;
                     runtime.pairing_code = None;
                     runtime.pairing_expires_at = None;
@@ -452,10 +526,24 @@ impl WebDeviceManager {
                     OperationPushResult::Full => {}
                 }
             }
+            ServerToDeviceFrame::TerminalCommand { command } => {
+                let mut commands = self
+                    .terminal_commands
+                    .lock()
+                    .map_err(|_| "web device terminal command lock poisoned")?;
+                if commands.len() >= MAX_TERMINAL_COMMANDS {
+                    commands.pop_front();
+                }
+                commands.push_back(command);
+            }
             ServerToDeviceFrame::OperationAck {
                 operation_id,
                 status,
             } => {
+                self.outbound
+                    .lock()
+                    .map_err(|_| "web device send lock poisoned")?
+                    .acknowledge_operation(&operation_id, &status);
                 let mut operations = self
                     .operations
                     .lock()
@@ -475,7 +563,24 @@ impl WebDeviceManager {
                     );
                 }
             }
+            ServerToDeviceFrame::ConversationAck {
+                operation_id,
+                sequence,
+            } => {
+                self.outbound
+                    .lock()
+                    .map_err(|_| "web device send lock poisoned")?
+                    .acknowledge_event(&operation_id, sequence);
+            }
             ServerToDeviceFrame::Ack { .. } => {}
+            ServerToDeviceFrame::Error { code, message } if code == "invalid_terminal_output" => {
+                if let Ok(mut runtime) = self.runtime.lock() {
+                    if self.generation.load(Ordering::SeqCst) == generation {
+                        runtime.last_error = Some(format!("terminal output rejected: {message}"));
+                    }
+                }
+                self.emit_status(app);
+            }
             ServerToDeviceFrame::Error { code, message } => {
                 return Err(format!(
                     "server rejected web device frame ({code}): {message}"
@@ -496,21 +601,13 @@ fn send_frame(socket: &mut DeviceSocket, frame: &DeviceToServerFrame) -> Result<
         .map_err(|err| format!("send web device frame failed: {err}"))
 }
 
-fn set_read_timeout(socket: &mut DeviceSocket) -> Result<(), String> {
-    match socket.get_mut() {
-        MaybeTlsStream::Plain(stream) => stream.set_read_timeout(Some(READ_TIMEOUT)),
-        MaybeTlsStream::Rustls(stream) => stream.sock.set_read_timeout(Some(READ_TIMEOUT)),
-        _ => Ok(()),
-    }
-    .map_err(|err| format!("configure web device socket failed: {err}"))
-}
-
 fn default_capabilities() -> Vec<String> {
     vec![
         "history.snapshot".to_string(),
         "conversation".to_string(),
         "conversation.start".to_string(),
         "conversation.prompt".to_string(),
+        "terminal.stream".to_string(),
         "project.management".to_string(),
         "ssh.management".to_string(),
         "file.management".to_string(),
@@ -537,6 +634,8 @@ fn new_profile(
         .unwrap_or(crate::app_paths::machine_id()?);
     Ok(WebDeviceProfile {
         server_url: request.server_url,
+        trusted_network: request.trusted_network,
+        public_access_url: crate::web_daemon::normalize_public_url(&request.public_access_url, request.trusted_network)?,
         client_id: client_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
         machine_id,
         client_kind: client_kind().to_string(),
@@ -614,7 +713,8 @@ fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn validate_profile(profile: &WebDeviceProfile) -> Result<(), String> {
-    normalize_server_url(&profile.server_url)?;
+    crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
+    crate::web_daemon::normalize_public_url(&profile.public_access_url, profile.trusted_network)?;
     validate_bounded("client id", &profile.client_id, 1, 128)?;
     validate_bounded("machine id", &profile.machine_id, 1, 128)?;
     validate_bounded("device name", &profile.name, 1, 128)?;
@@ -637,37 +737,14 @@ fn validate_bounded(label: &str, value: &str, min: usize, max: usize) -> Result<
     Ok(())
 }
 
+#[cfg(test)]
 fn normalize_server_url(raw: &str) -> Result<String, String> {
-    let raw = raw.trim();
-    let uri = raw
-        .parse::<tungstenite::http::Uri>()
-        .map_err(|_| "invalid web device server URL".to_string())?;
-    let scheme = uri
-        .scheme_str()
-        .ok_or_else(|| "web device server URL requires a scheme".to_string())?;
-    let host = uri
-        .host()
-        .ok_or_else(|| "web device server URL requires a host".to_string())?;
-    let secure = matches!(scheme, "https" | "wss");
-    if !secure && !matches!(scheme, "http" | "ws") {
-        return Err("web device server URL must use http, https, ws, or wss".to_string());
-    }
-    if !secure && !is_loopback_host(host) {
-        return Err("remote web device server must use TLS".to_string());
-    }
-    let authority = uri
-        .authority()
-        .ok_or_else(|| "web device server URL requires an authority".to_string())?;
-    Ok(format!(
-        "{}://{}/ws/device",
-        if secure { "wss" } else { "ws" },
-        authority
-    ))
+    crate::web_daemon::normalize_device_url(raw, false)
 }
 
 fn is_loopback_host(host: &str) -> bool {
     host.eq_ignore_ascii_case("localhost")
-        || host
+        || host.trim_start_matches('[').trim_end_matches(']')
             .parse::<IpAddr>()
             .map(|ip| ip.is_loopback())
             .unwrap_or(false)
@@ -760,12 +837,53 @@ fn daemon_executable_path() -> Result<PathBuf, String> {
     Ok(current.with_file_name(name))
 }
 
+fn use_web_daemon() -> Result<bool, String> {
+    match ensure_web_daemon() {
+        Ok(()) => Ok(true),
+        Err(error) => {
+            if crate::web_daemon::read_discovery()?.is_some() || daemon_executable_path()?.is_file()
+            {
+                return Err(error);
+            }
+            // Source-only development may not have built the helper yet.
+            Ok(false)
+        }
+    }
+}
+
 fn ensure_web_daemon() -> Result<(), String> {
+    static UPGRADE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = UPGRADE_LOCK
+        .lock()
+        .map_err(|_| "web daemon upgrade lock poisoned")?;
     if let Some(info) = crate::web_daemon::read_discovery()? {
-        if crate::daemon::discovery::is_pid_alive(info.pid) {
-            if daemon_call::<serde_json::Value>(crate::web_daemon::Request::GetStatus).is_ok() {
+        if !crate::web_daemon::discovery_process_is_stale(&info) {
+            if info.protocol_version == crate::web_daemon::PROTOCOL_VERSION {
+                daemon_call::<serde_json::Value>(crate::web_daemon::Request::GetStatus)?;
                 return Ok(());
             }
+            let status = crate::web_daemon::upgrade_control::<WebDeviceStatus>(crate::web_daemon::Request::GetStatus)
+                .map_err(|_| "web_daemon_upgrade_blocked: existing daemon cannot be inspected; close it after its operations finish")?;
+            if status.pending_operations != 0 {
+                return Err("web_daemon_upgrade_busy: finish pending Web operations before upgrading the daemon".into());
+            }
+            // Verify the replacement exists before stopping an otherwise healthy daemon.
+            if !daemon_executable_path()?.is_file() {
+                return Err(
+                    "web_daemon_upgrade_blocked: replacement daemon executable is missing".into(),
+                );
+            }
+            crate::web_daemon::upgrade_control::<()>(crate::web_daemon::Request::Shutdown)?;
+            for _ in 0..20 {
+                if !crate::daemon::discovery::is_pid_alive(info.pid) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            if crate::daemon::discovery::is_pid_alive(info.pid) {
+                return Err("web_daemon_upgrade_blocked: existing daemon has not exited".into());
+            }
+            crate::web_daemon::remove_discovery();
         } else {
             crate::web_daemon::remove_discovery();
         }
@@ -804,9 +922,25 @@ fn ensure_web_daemon() -> Result<(), String> {
     Err("web daemon did not become ready in time".to_string())
 }
 
+// Blocking socket, credential and filesystem work must not occupy UI or Tokio workers.
+async fn run_web_device_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|err| format!("web device worker failed: {err}"))?
+}
+
 #[tauri::command]
-pub fn web_device_get_status(
+pub async fn web_device_get_status(
     manager: State<'_, WebDeviceManager>,
+) -> Result<WebDeviceStatus, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_get_status_blocking(manager)).await
+}
+
+pub(crate) fn web_device_get_status_blocking(
+    manager: WebDeviceManager,
 ) -> Result<WebDeviceStatus, String> {
     if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::GetStatus) {
         return Ok(status);
@@ -815,48 +949,69 @@ pub fn web_device_get_status(
 }
 
 #[tauri::command]
-pub fn web_device_save_profile(
+pub async fn web_device_save_profile(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
     request: SaveProfileRequest,
 ) -> Result<WebDeviceStatus, String> {
-    if ensure_web_daemon().is_ok() {
-        if let Ok(status) =
-            daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::SaveProfile {
-                server_url: request.server_url.clone(),
-                name: request.name.clone(),
-                auto_start: request.auto_start,
-                upload_wallpaper: request.upload_wallpaper,
-            })
-        {
-            return Ok(status);
-        }
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_save_profile_blocking(app, manager, request)).await
+}
+
+pub(crate) fn web_device_save_profile_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
+    request: SaveProfileRequest,
+) -> Result<WebDeviceStatus, String> {
+    if use_web_daemon()? {
+        return daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::SaveProfile {
+            server_url: request.server_url.clone(),
+            trusted_network: request.trusted_network,
+            public_access_url: request.public_access_url.clone(),
+            name: request.name.clone(),
+            auto_start: request.auto_start,
+            upload_wallpaper: request.upload_wallpaper,
+        });
     }
     let mut profile = new_profile(request, load_profile()?)?;
-    profile.server_url = normalize_server_url(&profile.server_url)?;
+    profile.server_url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
     save_profile_file(&profile)?;
     manager.emit_status(&app);
     manager.status()
 }
 
 #[tauri::command]
-pub fn web_device_start(
+pub async fn web_device_start(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
-    if ensure_web_daemon().is_ok() {
-        if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start) {
-            return Ok(status);
-        }
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_start_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_start_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
+) -> Result<WebDeviceStatus, String> {
+    if use_web_daemon()? {
+        return daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start);
     }
     manager.start(app)?;
     manager.status()
 }
 
 #[tauri::command]
-pub fn web_device_stop(
+pub async fn web_device_stop(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+) -> Result<WebDeviceStatus, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_stop_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_stop_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
 ) -> Result<WebDeviceStatus, String> {
     if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Stop) {
         return Ok(status);
@@ -866,14 +1021,20 @@ pub fn web_device_stop(
 }
 
 #[tauri::command]
-pub fn web_device_restart(
+pub async fn web_device_restart(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
 ) -> Result<WebDeviceStatus, String> {
-    if ensure_web_daemon().is_ok() {
-        if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Restart) {
-            return Ok(status);
-        }
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_restart_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_restart_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
+) -> Result<WebDeviceStatus, String> {
+    if use_web_daemon()? {
+        return daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Restart);
     }
     manager.stop(&app);
     manager.start(app)?;
@@ -881,9 +1042,17 @@ pub fn web_device_restart(
 }
 
 #[tauri::command]
-pub fn web_device_create_pairing(
+pub async fn web_device_create_pairing(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+) -> Result<PairingResult, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_create_pairing_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_create_pairing_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
 ) -> Result<PairingResult, String> {
     if let Ok(result) = daemon_call::<PairingResult>(crate::web_daemon::Request::CreatePairing) {
         return Ok(result);
@@ -916,9 +1085,17 @@ pub fn web_device_create_pairing(
 }
 
 #[tauri::command]
-pub fn web_device_clear_pairing(
+pub async fn web_device_clear_pairing(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+) -> Result<WebDeviceStatus, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_clear_pairing_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_clear_pairing_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
 ) -> Result<WebDeviceStatus, String> {
     if let Ok(status) = daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::ClearPairing) {
         return Ok(status);
@@ -953,9 +1130,17 @@ pub fn web_device_clear_pairing(
 }
 
 #[tauri::command]
-pub fn web_device_take_operations(
+pub async fn web_device_take_operations(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+) -> Result<Vec<OperationView>, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_take_operations_blocking(app, manager)).await
+}
+
+pub(crate) fn web_device_take_operations_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
 ) -> Result<Vec<OperationView>, String> {
     if let Ok(operations) =
         daemon_call::<Vec<OperationView>>(crate::web_daemon::Request::TakeOperations)
@@ -972,19 +1157,23 @@ pub fn web_device_take_operations(
 }
 
 #[tauri::command]
-pub fn web_device_publish_history(
+pub async fn web_device_publish_history(
     manager: State<'_, WebDeviceManager>,
     request: PublishHistoryRequest,
 ) -> Result<(), String> {
-    if ensure_web_daemon().is_ok() {
-        if daemon_call::<()>(crate::web_daemon::Request::PublishHistory {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_publish_history_blocking(manager, request)).await
+}
+
+pub(crate) fn web_device_publish_history_blocking(
+    manager: WebDeviceManager,
+    request: PublishHistoryRequest,
+) -> Result<(), String> {
+    if use_web_daemon()? {
+        return daemon_call::<()>(crate::web_daemon::Request::PublishHistory {
             sessions: request.sessions.clone(),
             workspace: request.workspace.clone(),
-        })
-        .is_ok()
-        {
-            return Ok(());
-        }
+        });
     }
     let sequence = {
         let mut runtime = manager
@@ -1011,9 +1200,19 @@ pub async fn web_device_validate_context(request: ValidateContextRequest) -> Res
 }
 
 #[tauri::command]
-pub fn web_device_operation_accepted(
+pub async fn web_device_operation_accepted(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+    request: OperationIdRequest,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_operation_accepted_blocking(app, manager, request))
+        .await
+}
+
+pub(crate) fn web_device_operation_accepted_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
     request: OperationIdRequest,
 ) -> Result<(), String> {
     if let Ok(()) = daemon_call::<()>(crate::web_daemon::Request::OperationAccepted {
@@ -1034,9 +1233,19 @@ pub fn web_device_operation_accepted(
 }
 
 #[tauri::command]
-pub fn web_device_operation_running(
+pub async fn web_device_operation_running(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+    request: OperationIdRequest,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_operation_running_blocking(app, manager, request))
+        .await
+}
+
+pub(crate) fn web_device_operation_running_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
     request: OperationIdRequest,
 ) -> Result<(), String> {
     if let Ok(()) = daemon_call::<()>(crate::web_daemon::Request::OperationRunning {
@@ -1057,9 +1266,19 @@ pub fn web_device_operation_running(
 }
 
 #[tauri::command]
-pub fn web_device_operation_completed(
+pub async fn web_device_operation_completed(
     app: AppHandle,
     manager: State<'_, WebDeviceManager>,
+    request: OperationCompletedRequest,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_operation_completed_blocking(app, manager, request))
+        .await
+}
+
+pub(crate) fn web_device_operation_completed_blocking(
+    app: AppHandle,
+    manager: WebDeviceManager,
     request: OperationCompletedRequest,
 ) -> Result<(), String> {
     if !request.status.is_terminal() {
@@ -1088,14 +1307,227 @@ pub fn web_device_operation_completed(
     Ok(())
 }
 
+pub(crate) fn conversation_operation(
+    app: &AppHandle,
+    operation_id: &str,
+) -> Result<OperationView, String> {
+    web_device_take_operations_blocking(
+        app.clone(),
+        app.state::<WebDeviceManager>().inner().clone(),
+    )?
+    .into_iter()
+    .find(|operation| operation.id == operation_id)
+    .ok_or_else(|| "conversation_operation_not_found".to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MobileTicket {
+    url: String,
+    expires_at: i64,
+}
+
+#[tauri::command]
+pub async fn web_device_mobile_ticket(revoke: bool) -> Result<Option<MobileTicket>, String> {
+    let profile = load_profile()?.ok_or("web device profile is not configured")?;
+    let socket_url = crate::web_daemon::normalize_device_url(&profile.server_url, profile.trusted_network)?;
+    let mut url = reqwest::Url::parse(&socket_url).map_err(|_| "invalid server URL")?;
+    let http_scheme = if url.scheme() == "wss" { "https" } else { "http" };
+    url.set_scheme(http_scheme).map_err(|_| "invalid server URL")?;
+    let public_url = if profile.public_access_url.trim().is_empty() {
+        let mut origin = url.clone();
+        origin.set_path("/");
+        origin.to_string()
+    } else {
+        profile.public_access_url.clone()
+    };
+    let normalized = crate::web_daemon::normalize_public_url(&public_url, profile.trusted_network)?;
+    let mut browser_url = reqwest::Url::parse(&normalized).map_err(|_| "invalid public access URL")?;
+    if is_loopback_host(browser_url.host_str().unwrap_or("")) {
+        return Err("mobile_pairing_requires_public_https".into());
+    }
+    url.set_path(if revoke {
+        "/api/mobile/device-ticket/revoke"
+    } else {
+        "/api/mobile/device-ticket"
+    });
+    url.set_query(None);
+    url.set_fragment(None);
+    let token = crate::credential_store::get(&token_account(&profile.client_id))?
+        .ok_or("web device is not paired")?;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "mobile request initialization failed")?
+        .post(url.clone())
+        .bearer_auth(token)
+        .json(&serde_json::json!({"deviceId": profile.client_id}))
+        .send()
+        .await
+        .map_err(|_| "mobile_authorization_service_unreachable")?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "mobile_authorization_failed:{}",
+            response.status().as_u16()
+        ));
+    }
+    if revoke {
+        return Ok(None);
+    }
+    let payload: Value = response
+        .json()
+        .await
+        .map_err(|_| "invalid mobile authorization response")?;
+    let token = payload
+        .get("token")
+        .and_then(Value::as_str)
+        .ok_or("missing mobile ticket")?;
+    let expires_at = payload
+        .get("expiresAt")
+        .and_then(Value::as_i64)
+        .ok_or("missing ticket expiry")?;
+    browser_url.set_fragment(Some(&format!("mobileToken={token}")));
+    Ok(Some(MobileTicket {
+        url: browser_url.to_string(),
+        expires_at,
+    }))
+}
+
+pub(crate) fn publish_conversation_event(
+    app: &AppHandle,
+    event: ConversationEvent,
+) -> Result<(), String> {
+    match daemon_call::<()>(crate::web_daemon::Request::ConversationEvent {
+        event: event.clone(),
+    }) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let manager = app.state::<WebDeviceManager>();
+            if manager
+                .runtime
+                .lock()
+                .map_err(|_| "web device state lock poisoned")?
+                .running
+            {
+                manager.queue(DeviceToServerFrame::ConversationEvent { event })
+            } else {
+                Err(error)
+            }
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn web_device_take_terminal_commands(
+    manager: State<'_, WebDeviceManager>,
+) -> Result<Vec<TerminalCommand>, String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_take_terminal_commands_blocking(manager)).await
+}
+
+pub(crate) fn web_device_take_terminal_commands_blocking(
+    manager: WebDeviceManager,
+) -> Result<Vec<TerminalCommand>, String> {
+    if let Ok(commands) = daemon_call(crate::web_daemon::Request::TakeTerminalCommands) {
+        return Ok(commands);
+    }
+    Ok(manager
+        .terminal_commands
+        .lock()
+        .map_err(|_| "web device terminal command lock poisoned")?
+        .drain(..)
+        .collect())
+}
+
+#[tauri::command]
+pub async fn web_device_terminal_output(
+    manager: State<'_, WebDeviceManager>,
+    request: TerminalOutputRequest,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_terminal_output_blocking(manager, request)).await
+}
+
+pub(crate) fn web_device_terminal_output_blocking(
+    manager: WebDeviceManager,
+    request: TerminalOutputRequest,
+) -> Result<(), String> {
+    let frame = DeviceToServerFrame::TerminalOutput {
+        session_id: request.session_id.clone(),
+        sequence: request.sequence,
+        frames: request.frames.clone(),
+    };
+    if daemon_call::<()>(crate::web_daemon::Request::TerminalOutput {
+        session_id: request.session_id,
+        sequence: request.sequence,
+        frames: request.frames,
+    })
+    .is_ok()
+    {
+        return Ok(());
+    }
+    manager.queue(frame)
+}
+
+#[tauri::command]
+pub async fn web_device_terminal_status(
+    manager: State<'_, WebDeviceManager>,
+    request: TerminalStatusRequest,
+) -> Result<(), String> {
+    let manager = manager.inner().clone();
+    run_web_device_blocking(move || web_device_terminal_status_blocking(manager, request)).await
+}
+
+pub(crate) fn web_device_terminal_status_blocking(
+    manager: WebDeviceManager,
+    request: TerminalStatusRequest,
+) -> Result<(), String> {
+    let frame = DeviceToServerFrame::TerminalStatus {
+        session_id: request.session_id.clone(),
+        status: request.status.clone(),
+        exit_code: request.exit_code,
+        control_mode: request.control_mode.clone(),
+    };
+    if daemon_call::<()>(crate::web_daemon::Request::TerminalStatus {
+        session_id: request.session_id,
+        status: request.status,
+        exit_code: request.exit_code,
+        control_mode: request.control_mode,
+    })
+    .is_ok()
+    {
+        return Ok(());
+    }
+    manager.queue(frame)
+}
+
+pub(crate) fn complete_conversation_operation(
+    app: &AppHandle,
+    operation_id: &str,
+    status: OperationStatus,
+    result: Option<Value>,
+    error: Option<OperationError>,
+) -> Result<(), String> {
+    web_device_operation_completed_blocking(
+        app.clone(),
+        app.state::<WebDeviceManager>().inner().clone(),
+        OperationCompletedRequest {
+            operation_id: operation_id.to_string(),
+            status,
+            result,
+            error,
+        },
+    )
+}
+
 pub fn auto_start(app: &AppHandle) -> Result<(), String> {
     let Some(profile) = load_profile()? else {
         return Ok(());
     };
     if profile.auto_start {
-        if ensure_web_daemon().is_ok()
-            && daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start).is_ok()
-        {
+        if use_web_daemon()? {
+            daemon_call::<WebDeviceStatus>(crate::web_daemon::Request::Start)?;
             return Ok(());
         }
         app.state::<WebDeviceManager>().start(app.clone())?;
@@ -1113,6 +1545,24 @@ pub fn shutdown(app: &AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_device_blocking_work_runs_off_the_calling_thread() {
+        let caller = std::thread::current().id();
+        let worker = tauri::async_runtime::block_on(run_web_device_blocking(|| {
+            Ok(std::thread::current().id())
+        }))
+        .unwrap();
+        assert_ne!(caller, worker);
+    }
+
+    #[test]
+    fn web_device_blocking_work_preserves_errors() {
+        let result = tauri::async_runtime::block_on(run_web_device_blocking(|| {
+            Err::<(), _>("transport unavailable".to_string())
+        }));
+        assert_eq!(result.unwrap_err(), "transport unavailable");
+    }
 
     #[test]
     fn normalizes_and_secures_server_urls() {
@@ -1144,6 +1594,8 @@ mod tests {
     #[test]
     fn profile_validation_rejects_invalid_bounds() {
         let valid = WebDeviceProfile {
+            trusted_network: false,
+            public_access_url: String::new(),
             server_url: "https://example.com".to_string(),
             client_id: "client-1".to_string(),
             machine_id: "machine-1".to_string(),
@@ -1165,6 +1617,8 @@ mod tests {
     #[test]
     fn save_request_preserves_device_id_and_resets_capabilities() {
         let existing = WebDeviceProfile {
+            trusted_network: false,
+            public_access_url: String::new(),
             server_url: "wss://old.example/ws/device".to_string(),
             client_id: "stable-client".to_string(),
             machine_id: "stable-machine".to_string(),
@@ -1176,6 +1630,8 @@ mod tests {
         };
         let profile = new_profile(
             SaveProfileRequest {
+                trusted_network: false,
+                public_access_url: String::new(),
                 server_url: "https://example.com".to_string(),
                 name: "Desktop".to_string(),
                 auto_start: true,
@@ -1232,6 +1688,8 @@ mod tests {
     #[test]
     fn profile_json_is_camel_case_and_contains_no_token() {
         let profile = WebDeviceProfile {
+            trusted_network: false,
+            public_access_url: String::new(),
             server_url: "wss://example.com/ws/device".to_string(),
             client_id: "client-1".to_string(),
             machine_id: "machine-1".to_string(),

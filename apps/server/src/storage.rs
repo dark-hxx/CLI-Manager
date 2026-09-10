@@ -537,7 +537,10 @@ impl Storage {
         let sequence = i64::try_from(sequence).map_err(|_| {
             AppError::bad_request("invalid_sequence", "sequence exceeds supported range")
         })?;
-        let mut tx = self.pool.begin().await?;
+        // Acquire the writer reservation before reading the cursor. Deferred
+        // read-to-write upgrades can fail immediately under WAL contention,
+        // bypassing busy_timeout and falsely rejecting a valid snapshot.
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let last: Option<i64> = sqlx::query_scalar(
             "SELECT last_sequence FROM device_event_cursors WHERE device_id = ?1 AND stream = 'history'",
         )
@@ -1420,6 +1423,38 @@ mod tests {
         assert_eq!(stored_workspace.updated_at, 2);
         assert_eq!(stored_workspace.terminals, Some(vec![]));
         assert!(sessions[0].cwd.is_none());
+    }
+
+    #[tokio::test]
+    async fn history_snapshot_waits_for_concurrent_writer_and_keeps_cursor_atomic() {
+        let path = std::env::temp_dir().join(format!("web-history-lock-{}.db", Uuid::new_v4()));
+        let storage = Storage::open(&path).await.unwrap();
+        storage.ensure_single_user("admin", "unused").await.unwrap();
+        let user = storage.find_user_by_username("admin").await.unwrap().unwrap();
+        storage.upsert_device_hello("device", "PC", "windows", "1", &[], None, None, None, None).await.unwrap();
+        let mut blocker = storage.pool().begin_with("BEGIN IMMEDIATE").await.unwrap();
+        sqlx::query("UPDATE devices SET last_seen_at = 123 WHERE id = 'device'")
+            .execute(&mut *blocker).await.unwrap();
+        let writer_storage = storage.clone();
+        let owner = user.id.clone();
+        let writer = tokio::spawn(async move {
+            let workspace = WorkspaceSnapshot { terminals: Some(vec![]), groups: vec![],
+                projects: vec![], worktrees: vec![], updated_at: 7 };
+            writer_storage.replace_history_snapshot("device", &owner, 7, &[], Some(&workspace)).await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!writer.is_finished(), "snapshot must wait for the reserved writer");
+        blocker.commit().await.unwrap();
+        assert!(writer.await.unwrap().unwrap());
+        assert_eq!(storage.workspace_snapshot("device").await.unwrap().unwrap().updated_at, 7);
+        assert!(!storage.replace_history_snapshot("device", &user.id, 6, &[], None).await.unwrap());
+        let sequence: i64 = sqlx::query_scalar("SELECT last_sequence FROM device_event_cursors WHERE device_id = 'device' AND stream = 'history'")
+            .fetch_one(storage.pool()).await.unwrap();
+        assert_eq!(sequence, 7);
+        storage.pool().close().await;
+        for file in [path.clone(), path.with_extension("db-wal"), path.with_extension("db-shm")] {
+            let _ = std::fs::remove_file(file);
+        }
     }
 
     #[test]

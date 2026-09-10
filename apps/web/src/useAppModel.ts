@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createRequestId } from "./requestId";
 import type {
   AuthUser,
   ConversationEvent,
@@ -735,7 +736,7 @@ export function useAppModel() {
     setComposerMessage("");
     const generation = viewGenerationRef.current;
     const signature = JSON.stringify([selectedDevice.id, selectedProjectContext.key, selectedSessionId, text]);
-    const promptId = pendingRequestRef.current?.signature === signature ? pendingRequestRef.current.id : crypto.randomUUID();
+    const promptId = pendingRequestRef.current?.signature === signature ? pendingRequestRef.current.id : createRequestId();
     pendingRequestRef.current = { signature, id: promptId };
     sendingRef.current = true; setSending(true);
     setTimeline((current) => [...current, { id: promptId, type: "prompt", text, occurredAt: Date.now() }]);
@@ -791,7 +792,7 @@ export function useAppModel() {
       setSending(true);
       setTerminalStatus("connecting");
     }
-    const idempotencyKey = crypto.randomUUID();
+    const idempotencyKey = createRequestId();
     const contextualPayload: JsonObject = { ...payload };
     if (!kind.startsWith("ssh.") && !kind.startsWith("hook.") && !kind.startsWith("project.")) {
       if (!selectedProjectContext) {

@@ -20,6 +20,7 @@ const MAX_OPERATION_PAYLOAD_BYTES: usize = 256 * 1024;
 const ENABLED_OPERATION_KINDS: &[&str] = &[
     "conversation.start",
     "conversation.prompt",
+    "conversation.history",
     "project.tree.reorder",
     "project.start",
     "project.action",
@@ -34,6 +35,8 @@ const ENABLED_OPERATION_KINDS: &[&str] = &[
     "file.list",
     "file.search",
     "file.search_content",
+    "file.read_text",
+    "file.read_image",
     "file.create",
     "file.create_directory",
     "file.rename",
@@ -42,6 +45,7 @@ const ENABLED_OPERATION_KINDS: &[&str] = &[
     "file.delete",
     "git.status",
     "git.branches",
+    "git.diff",
     "git.fetch",
     "git.checkout",
     "git.create_branch",
@@ -119,6 +123,11 @@ pub async fn auth_status(
     let user = optional_user(&state, &headers).await?;
     Ok(Json(AuthStatusResponse {
         authenticated: user.is_some(),
+        device_scope: if user.is_some() {
+            crate::auth::device_scope(&state, &headers).await?
+        } else {
+            None
+        },
         user,
     }))
 }
@@ -171,6 +180,7 @@ pub async fn login(
         .map_err(|err| AppError::Internal(format!("invalid session cookie: {err}")))?;
     let mut response = Json(AuthStatusResponse {
         authenticated: true,
+        device_scope: None,
         user: Some(cli_manager_web_protocol::UserView {
             id: user.id,
             username: user.username,
@@ -214,7 +224,16 @@ pub async fn list_devices(
 ) -> Result<Json<DevicesResponse>, AppError> {
     let user = require_user(&state, &headers).await?;
     Ok(Json(DevicesResponse {
-        devices: state.storage.list_devices(&user.id).await?,
+        devices: {
+            let scope = crate::auth::device_scope(&state, &headers).await?;
+            state
+                .storage
+                .list_devices(&user.id)
+                .await?
+                .into_iter()
+                .filter(|device| scope.as_ref().is_none_or(|id| id == &device.id))
+                .collect()
+        },
     }))
 }
 
@@ -223,7 +242,7 @@ pub async fn remove_device(
     headers: HeaderMap,
     Path(device_id): Path<String>,
 ) -> Result<Json<OkResponse>, AppError> {
-    let user = require_user(&state, &headers).await?;
+    let user = crate::auth::require_full_user(&state, &headers).await?;
     if !state
         .storage
         .remove_device_for_user(&user.id, &device_id)
@@ -240,6 +259,7 @@ pub async fn get_device_wallpaper(
     Path(device_id): Path<String>,
 ) -> Result<Response, AppError> {
     let user = require_user(&state, &headers).await?;
+    crate::auth::require_device_scope(&state, &headers, &device_id).await?;
     let wallpaper = state
         .storage
         .device_wallpaper_for_user(&user.id, &device_id)
@@ -285,7 +305,7 @@ pub async fn claim_pairing(
     headers: HeaderMap,
     Json(request): Json<PairingClaimRequest>,
 ) -> Result<Json<PairingClaimResponse>, AppError> {
-    let user = require_user(&state, &headers).await?;
+    let user = crate::auth::require_full_user(&state, &headers).await?;
     let code = normalize_pairing_code(&request.code)?;
     let device_token = random_token();
     let claim = state
@@ -365,9 +385,18 @@ pub struct HistoryResponse {
 pub async fn list_history(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(query): Query<HistoryQuery>,
+    Query(mut query): Query<HistoryQuery>,
 ) -> Result<Json<HistoryResponse>, AppError> {
     let user = require_user(&state, &headers).await?;
+    if let Some(scope) = crate::auth::device_scope(&state, &headers).await? {
+        if query.device_id.as_ref().is_some_and(|id| id != &scope) {
+            return Err(AppError::forbidden(
+                "device_scope_forbidden",
+                "device is outside this browser authorization",
+            ));
+        }
+        query.device_id = Some(scope);
+    }
     if let Some(device_id) = query.device_id.as_deref() {
         state
             .storage
@@ -414,6 +443,7 @@ pub async fn create_operation(
 ) -> Result<(StatusCode, Json<OperationResponse>), AppError> {
     let user = require_user(&state, &headers).await?;
     validate_operation_request(&request)?;
+    crate::auth::require_device_scope(&state, &headers, &request.device_id).await?;
     let device = state
         .storage
         .device_for_user(&user.id, &request.device_id)
@@ -512,6 +542,7 @@ pub async fn get_operation(
         .operation_for_user(&user.id, &operation_id)
         .await?
         .ok_or_else(|| AppError::not_found("operation_not_found", "operation not found"))?;
+    crate::auth::require_device_scope(&state, &headers, &operation.device_id).await?;
     Ok(Json(OperationResponse { operation }))
 }
 
@@ -564,6 +595,56 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "invalid_operation_payload",
             "payload.prompt must be a non-empty string",
         ));
+    }
+    for forbidden in [
+        "cwd",
+        "rootPath",
+        "projectPath",
+        "projectKey",
+        "envVars",
+        "startupCmd",
+        "identityFile",
+        "proxyCommand",
+        "credentialRef",
+    ] {
+        if payload.contains_key(forbidden) {
+            return Err(AppError::bad_request(
+                "local_context_forbidden",
+                "operation payload must use registered project and Worktree IDs",
+            ));
+        }
+    }
+    if matches!(
+        request.kind.as_str(),
+        "conversation.start" | "conversation.prompt" | "conversation.history"
+    ) {
+        if payload
+            .get("source")
+            .and_then(Value::as_str)
+            .is_none_or(|source| !matches!(source, "claude" | "codex"))
+            || payload
+                .get("projectId")
+                .and_then(Value::as_str)
+                .is_none_or(|project_id| project_id.trim().is_empty())
+        {
+            return Err(AppError::bad_request(
+                "invalid_operation_payload",
+                "conversation operations require source and projectId",
+            ));
+        }
+        if matches!(
+            request.kind.as_str(),
+            "conversation.prompt" | "conversation.history"
+        ) && payload
+            .get("sessionId")
+            .and_then(Value::as_str)
+            .is_none_or(|session_id| session_id.trim().is_empty())
+        {
+            return Err(AppError::bad_request(
+                "invalid_operation_payload",
+                "this conversation operation requires sessionId",
+            ));
+        }
     }
     if (operation_requires_confirmation(&request.kind)
         || project_action_requires_confirmation(&request.kind, payload))
@@ -660,15 +741,44 @@ mod tests {
     }
 
     #[test]
+    fn conversation_operation_requires_registered_context_ids() {
+        assert!(validate_operation_request(&request(
+            "conversation.history",
+            serde_json::json!({"source":"codex","projectId":"project-1","sessionId":"session"})
+        ))
+        .is_ok());
+        assert!(validate_operation_request(&request(
+            "conversation.history",
+            serde_json::json!({"source":"codex","projectId":"project-1"})
+        ))
+        .is_err());
+        assert!(validate_operation_request(&request(
+            "conversation.start",
+            serde_json::json!({ "prompt": "hello", "source": "codex" }),
+        ))
+        .is_err());
+        assert!(validate_operation_request(&request(
+            "conversation.start",
+            serde_json::json!({ "prompt": "hello", "source": "codex", "projectId": "project-1" }),
+        ))
+        .is_ok());
+        assert!(validate_operation_request(&request(
+            "conversation.start",
+            serde_json::json!({ "prompt": "hello", "source": "codex", "projectId": "project-1", "cwd": "C:/repo" }),
+        ))
+        .is_err());
+    }
+
+    #[test]
     fn management_operation_requires_explicit_confirmation() {
         assert!(validate_operation_request(&request(
             "file.delete",
-            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "path": "a.txt" }),
+            serde_json::json!({ "projectId": "p", "path": "a.txt" }),
         ))
         .is_err());
         assert!(validate_operation_request(&request(
             "file.delete",
-            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "path": "a.txt", "confirmed": true }),
+            serde_json::json!({ "projectId": "p", "path": "a.txt", "confirmed": true }),
         ))
         .is_ok());
     }
@@ -677,7 +787,7 @@ mod tests {
     fn management_read_operation_does_not_require_confirmation() {
         assert!(validate_operation_request(&request(
             "git.status",
-            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo" }),
+            serde_json::json!({ "projectId": "p" }),
         ))
         .is_ok());
         assert_eq!(operation_capability("hook.status"), "hook.management");
@@ -708,6 +818,26 @@ mod tests {
     }
 
     #[test]
+    fn p1_file_and_diff_operations_are_enabled_without_confirmation() {
+        assert!(validate_operation_request(&request(
+            "file.read_text",
+            serde_json::json!({ "projectId": "project-1", "path": "src/main.rs" }),
+        ))
+        .is_ok());
+        assert!(validate_operation_request(&request(
+            "file.read_image",
+            serde_json::json!({ "projectId": "project-1", "path": "docs/logo.png" }),
+        ))
+        .is_ok());
+        assert!(validate_operation_request(&request(
+            "git.diff",
+            serde_json::json!({ "projectId": "project-1", "path": "src/main.rs", "status": "M" }),
+        ))
+        .is_ok());
+        assert_eq!(operation_capability("git.diff"), "git.management");
+    }
+
+    #[test]
     fn project_action_destructive_operation_requires_confirmation() {
         assert!(validate_operation_request(&request(
             "project.action",
@@ -734,12 +864,12 @@ mod tests {
     fn git_fetch_requires_explicit_confirmation() {
         assert!(validate_operation_request(&request(
             "git.fetch",
-            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo" }),
+            serde_json::json!({ "projectId": "p" }),
         ))
         .is_err());
         assert!(validate_operation_request(&request(
             "git.fetch",
-            serde_json::json!({ "projectKey": "p", "cwd": "C:/repo", "confirmed": true }),
+            serde_json::json!({ "projectId": "p", "confirmed": true }),
         ))
         .is_ok());
     }

@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Badge, Button, Card, Group, Stack, Switch, Text, TextInput } from "@mantine/core";
 import { Copy, Link2, Play, RefreshCw, Save, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../lib/i18n";
 import { webDeviceApi, type WebDeviceStatus } from "../../lib/webDevice";
+import { webServerApi } from "../../lib/webServer";
+import { WebMobileAccess } from "./WebMobileAccess";
 
 const STATUS_EVENT = "web-device-status-changed";
 
@@ -16,16 +18,21 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const { t } = useI18n();
   const [status, setStatus] = useState<WebDeviceStatus | null>(null);
   const [serverUrl, setServerUrl] = useState("");
+  const [trustedNetwork, setTrustedNetwork] = useState(false);
+  const [publicAccessUrl, setPublicAccessUrl] = useState("");
   const [deviceName, setDeviceName] = useState("");
   const [autoStart, setAutoStart] = useState(true);
   const [uploadWallpaper, setUploadWallpaper] = useState(true);
   const [working, setWorking] = useState<string | null>(null);
+  const formDirtyRef = useRef(false);
 
   const applyStatus = useCallback((next: WebDeviceStatus) => {
     setStatus(next);
     onStatusChange?.(next);
-    if (next.profile) {
+    if (next.profile && !formDirtyRef.current) {
       setServerUrl(next.profile.serverUrl);
+      setTrustedNetwork(next.profile.trustedNetwork ?? false);
+      setPublicAccessUrl(next.profile.publicAccessUrl ?? "");
       setDeviceName(next.profile.name);
       setAutoStart(next.profile.autoStart);
       setUploadWallpaper(next.profile.uploadWallpaper);
@@ -49,7 +56,9 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const run = async (key: string, action: () => Promise<WebDeviceStatus>, successKey: TranslationKey) => {
     setWorking(key);
     try {
-      applyStatus(await action());
+      const next = await action();
+      if (key === "save") formDirtyRef.current = false;
+      applyStatus(next);
       toast.success(t(successKey));
     } catch (caught) {
       toast.error(t("settings.webDevice.toast.actionFailed"), { description: String(caught) });
@@ -60,10 +69,25 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
 
   const save = () => run("save", () => webDeviceApi.saveProfile({
     serverUrl: serverUrl.trim(),
+    trustedNetwork,
+    publicAccessUrl: publicAccessUrl.trim(),
     name: deviceName.trim() || t("settings.webDevice.defaultName"),
     autoStart,
     uploadWallpaper,
   }), "settings.webDevice.toast.saved");
+
+  const useLocalServer = async () => {
+    setWorking("localServer");
+    try {
+      const local = await webServerApi.getStatus();
+      formDirtyRef.current = true;
+      setServerUrl(local.localDeviceUrl);
+    } catch (caught) {
+      toast.error(t("settings.webDevice.toast.actionFailed"), { description: String(caught) });
+    } finally {
+      setWorking(null);
+    }
+  };
 
   const createPairing = async () => {
     setWorking("pair");
@@ -97,10 +121,13 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
       </Group>
 
       <Stack gap="sm" mt="md">
-        <TextInput label={t("settings.webDevice.serverUrl")} description={t("settings.webDevice.serverUrlHint")} placeholder="https://example.com" value={serverUrl} onChange={(event) => setServerUrl(event.currentTarget.value)} />
-        <TextInput label={t("settings.webDevice.deviceName")} placeholder={t("settings.webDevice.defaultName")} value={deviceName} onChange={(event) => setDeviceName(event.currentTarget.value)} />
-        <Switch checked={autoStart} onChange={(event) => setAutoStart(event.currentTarget.checked)} label={t("settings.webDevice.autoStart")} description={t("settings.webDevice.autoStartHint")} />
-        <Switch checked={uploadWallpaper} onChange={(event) => setUploadWallpaper(event.currentTarget.checked)} label={t("settings.webDevice.uploadWallpaper")} description={t("settings.webDevice.uploadWallpaperHint")} />
+        <Button size="xs" variant="subtle" disabled={busy} loading={working === "localServer"} onClick={() => void useLocalServer()}>{t("settings.webDevice.useLocalServer")}</Button>
+        <Switch checked={trustedNetwork} onChange={(event) => { formDirtyRef.current = true; setTrustedNetwork(event.currentTarget.checked); }} label={t("settings.webDevice.trustedNetwork")} description={t("settings.webDevice.trustedNetworkHint")} />
+        <TextInput label={t("settings.webDevice.publicAccessUrl")} description={t("settings.webDevice.publicAccessUrlHint")} placeholder="https://cli.example.com" value={publicAccessUrl} onChange={(event) => { formDirtyRef.current = true; setPublicAccessUrl(event.currentTarget.value); }} />
+        <TextInput label={t("settings.webDevice.serverUrl")} description={t("settings.webDevice.serverUrlHint")} placeholder="https://example.com" value={serverUrl} onChange={(event) => { formDirtyRef.current = true; setServerUrl(event.currentTarget.value); }} />
+        <TextInput label={t("settings.webDevice.deviceName")} placeholder={t("settings.webDevice.defaultName")} value={deviceName} onChange={(event) => { formDirtyRef.current = true; setDeviceName(event.currentTarget.value); }} />
+        <Switch checked={autoStart} onChange={(event) => { formDirtyRef.current = true; setAutoStart(event.currentTarget.checked); }} label={t("settings.webDevice.autoStart")} description={t("settings.webDevice.autoStartHint")} />
+        <Switch checked={uploadWallpaper} onChange={(event) => { formDirtyRef.current = true; setUploadWallpaper(event.currentTarget.checked); }} label={t("settings.webDevice.uploadWallpaper")} description={t("settings.webDevice.uploadWallpaperHint")} />
         {status?.profile && <Text size="xs" c="var(--text-muted)" style={{ overflowWrap: "anywhere" }}>{t("settings.webDevice.clientId")}: {status.profile.clientId}</Text>}
         {status?.lastError && <Text size="xs" c="red">{status.lastError}</Text>}
 
@@ -116,6 +143,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
           </Card>
         )}
 
+        <WebMobileAccess serverUrl={status?.profile?.serverUrl ?? ""} publicAccessUrl={status?.profile?.publicAccessUrl ?? ""} trustedNetwork={status?.profile?.trustedNetwork ?? false} paired={Boolean(status?.paired)} />
         <Group gap="xs">
           <Button size="xs" color="cliPrimary" leftSection={<Save size={14} />} loading={working === "save"} disabled={busy || !serverUrl.trim()} onClick={() => void save()}>{t("common.save")}</Button>
           <Button size="xs" variant="light" leftSection={<Play size={14} />} loading={working === "start"} disabled={busy || !status?.configured || !!status?.running} onClick={() => void run("start", webDeviceApi.start, "settings.webDevice.toast.started")}>{t("settings.webDevice.start")}</Button>

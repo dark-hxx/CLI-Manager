@@ -708,7 +708,7 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
                             }
                             Err(error) => {
                                 tracing::warn!(%error, %device_id, "history snapshot rejected");
-                                if !send_device_error(&mut sender, "invalid_history_snapshot", "history snapshot was rejected").await {
+                                if !send_device_error(&mut sender, "history_storage_failed", "history snapshot could not be stored; see server log").await {
                                     break;
                                 }
                             }
@@ -1140,22 +1140,9 @@ fn validate_browser_origin(state: &AppState, headers: &HeaderMap) -> Result<(), 
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::forbidden("origin_required", "Origin header is required"))?;
-    if let Some(allowed) = state.config.allowed_origin.as_deref() {
-        if origin == allowed {
-            return Ok(());
-        }
-    } else if let Some(host) = headers
-        .get(header::HOST)
-        .and_then(|value| value.to_str().ok())
-    {
-        let scheme = if state.config.cookie_secure {
-            "https"
-        } else {
-            "http"
-        };
-        if origin == format!("{scheme}://{host}") {
-            return Ok(());
-        }
+    if state.config.allows_browser_origin(origin, headers
+        .get(header::HOST).and_then(|value| value.to_str().ok())) {
+        return Ok(());
     }
     Err(AppError::forbidden(
         "origin_forbidden",

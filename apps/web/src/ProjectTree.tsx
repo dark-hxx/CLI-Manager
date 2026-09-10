@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode, type SVGProps } from "react";
+import { launchContextKey } from "./conversation";
 import type { JsonObject, Operation, ProjectContext, WorkspaceGroup, WorkspaceProject, WorkspaceSnapshot, WorkspaceWorktree } from "./domain";
 import type { TranslationKey } from "./i18n";
 
@@ -51,6 +52,8 @@ type Props = {
   onSelectProjectContext: (key: string) => void;
   onSubmit: (kind: string, payload: JsonObject) => Promise<Operation>;
   onReload: () => void;
+  operations: Operation[];
+  onOpenPanel: (panel: "file" | "history", contextKey: string) => void;
 };
 
 type ContextMenuState = {
@@ -62,7 +65,7 @@ type ContextMenuState = {
 
 type MenuEntry =
   | { kind: "separator"; key: string }
-  | { kind: "item"; key: string; label: string; icon: ReactNode; danger?: boolean; disabled?: boolean; onClick: () => void };
+  | { kind: "item"; key: string; label: string; icon: ReactNode; danger?: boolean; disabled?: boolean; reason?: string; onClick: () => void };
 
 const DND_TRANSITION = { duration: 100, easing: "cubic-bezier(0.2, 0, 0, 1)" };
 
@@ -196,7 +199,7 @@ function SortableTreeItem(props: ItemProps) {
         >
           {worktrees.length ? <button className="web-tree-chevron" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => props.onToggle(project.id)} aria-expanded={open}><ChevronRight size={12} /></button> : <span className="web-tree-chevron" />}
           <ProjectIcon source={project.source} />
-          <button className="web-tree-label" type="button" disabled={!context} onClick={() => context && props.onSelect(context.key)} title={project.cwd ?? project.name}>
+          <button className="web-tree-label" type="button" disabled={!context} onClick={() => context && props.onSelect(context.key)} title={project.name}>
             <strong>{project.name}</strong>
           </button>
           {props.managementEnabled && <button className="web-tree-quick-action" type="button" onPointerDown={(event) => event.stopPropagation()} onClick={() => props.onQuickStart("project", project.id)} aria-label={`${props.t("quickStart")} ${project.name}`} title={props.t("quickStart")}><Play size={13} /></button>}
@@ -205,7 +208,7 @@ function SortableTreeItem(props: ItemProps) {
           const worktreeContext = props.contexts.find((item) => item.worktreeId === worktree.id);
           return (
             <div className={`web-tree-worktree${props.selected?.worktreeId === worktree.id ? " active" : ""}`} style={{ paddingLeft: paddingLeft + 29 }} key={worktree.id} onContextMenu={(event) => props.onContextMenu(event, { kind: "worktree", id: worktree.id })}>
-              <button className="web-tree-worktree-main" type="button" disabled={!worktreeContext} onClick={() => worktreeContext && props.onSelect(worktreeContext.key)} title={worktree.cwd}>
+              <button className="web-tree-worktree-main" type="button" disabled={!worktreeContext} onClick={() => worktreeContext && props.onSelect(worktreeContext.key)} title={worktree.name}>
                 <WorktreeIcon /><span><strong>{worktree.name}</strong><small>{worktree.branch}</small></span>
               </button>
               {props.managementEnabled && <button className="web-tree-quick-action" type="button" onClick={() => props.onQuickStart("worktree", worktree.id)} aria-label={`${props.t("quickStart")} ${worktree.name}`} title={props.t("quickStart")}><Play size={13} /></button>}
@@ -251,6 +254,12 @@ function previewWorkspace(workspace: WorkspaceSnapshot, itemType: "group" | "pro
 }
 
 export function ProjectTree(props: Props) {
+  const [pendingAction, setPendingAction] = useState<{ action: string; targetType: "project" | "group" | "worktree"; targetId: string; name: string; named: boolean } | null>(null);
+  const [actionName, setActionName] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [lastOperationId, setLastOperationId] = useState<string>();
+  const [submitting, setSubmitting] = useState(false);
+  const lastOperation = props.operations.find((operation) => operation.id === lastOperationId);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
   const [preview, setPreview] = useState<WorkspaceSnapshot | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -298,16 +307,46 @@ export function ProjectTree(props: Props) {
     return next;
   });
 
+  const submit = async (kind: string, payload: JsonObject) => {
+    setActionError("");
+    setSubmitting(true);
+    try {
+      const operation = await props.onSubmit(kind, payload);
+      setLastOperationId(operation.id);
+      return operation;
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String((error as { message?: string })?.message ?? props.t("requestFailed")));
+      return null;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const submitStart = (targetType: "project" | "group" | "worktree", targetId: string, launchMode: "internal" | "external" | "split" = "internal", direction?: "horizontal" | "vertical") => {
+    const contextKey = launchContextKey(props.projectContexts, targetType, targetId);
+    if (contextKey) props.onSelectProjectContext(contextKey);
     const payload: JsonObject = { targetType, targetId, launchMode };
     if (direction) payload.direction = direction;
-    void props.onSubmit("project.start", payload).catch(() => undefined);
+    void submit("project.start", payload);
   };
 
   const submitAction = (action: string, targetType: "project" | "group" | "worktree", targetId: string, confirmed = false) => {
+    if (action.endsWith(".history") || action.endsWith(".openFiles")) {
+      const contextKey = launchContextKey(props.projectContexts, targetType, targetId);
+      if (contextKey) props.onOpenPanel(action.endsWith(".history") ? "history" : "file", contextKey);
+      else setActionError(props.t("projectContextRequired"));
+      return;
+    }
+    const named = action.endsWith(".rename") || action === "project.clone";
+    if (confirmed || named) {
+      const collection = targetType === "project" ? workspace?.projects : targetType === "group" ? workspace?.groups : workspace?.worktrees;
+      const name = collection?.find((item) => item.id === targetId)?.name ?? targetId;
+      setActionName(action === "project.clone" ? `${name} (${props.t("clone")})` : name);
+      setPendingAction({ action, targetType, targetId, name, named });
+      return;
+    }
     const payload: JsonObject = { action, targetType, targetId };
-    if (confirmed) payload.confirmed = true;
-    void props.onSubmit("project.action", payload).catch(() => undefined);
+    void submit("project.action", payload);
   };
 
   const handleQuickStart = (targetType: "project" | "group" | "worktree", targetId: string) => submitStart(targetType, targetId);
@@ -354,7 +393,8 @@ export function ProjectTree(props: Props) {
   const menuEntries = useMemo<MenuEntry[]>(() => {
     if (!contextMenu || !workspace || !props.managementEnabled) return [];
     const close = () => setContextMenu(null);
-    const item = (key: string, label: string, icon: ReactNode, onClick: () => void, options: { danger?: boolean; disabled?: boolean } = {}): MenuEntry => ({ kind: "item", key, label, icon, onClick: () => { close(); onClick(); }, ...options });
+    const desktopOnly = new Set(["project-external", "project-split-right", "project-split-down", "project-directory", "project-provider", "project-edit", "worktree-external", "worktree-finish", "worktree-directory", "worktree-provider", "group-external", "group-child", "group-project", "group-batch", "group-focus"]);
+    const item = (key: string, label: string, icon: ReactNode, onClick: () => void, options: { danger?: boolean; disabled?: boolean } = {}): MenuEntry => ({ kind: "item", key, label, icon, onClick: () => { close(); onClick(); }, ...options, disabled: options.disabled || submitting || desktopOnly.has(key), reason: desktopOnly.has(key) ? props.t("desktopOnlyMenu") : undefined });
     const separator = (key: string): MenuEntry => ({ kind: "separator", key });
     if (contextMenu.kind === "project") {
       const project = workspace.projects.find((candidate) => candidate.id === contextMenu.id);
@@ -374,7 +414,7 @@ export function ProjectTree(props: Props) {
           return next;
         })),
         item("project-launch-selected", props.t("launchSelected"), <Terminal size={14} />, () => {
-          if (selectedIds.length > 0) void props.onSubmit("project.start", { targetType: "selection", targetIds: selectedIds, launchMode: "internal" }).catch(() => undefined);
+          if (selectedIds.length > 0) void submit("project.start", { targetType: "selection", targetIds: selectedIds, launchMode: "internal" });
         }, { disabled: selectedIds.length === 0 }),
         separator("project-file-separator"),
         item("project-directory", props.t("openDirectory"), <FolderOpen size={14} />, () => submitAction("project.openDirectory", "project", project.id)),
@@ -418,7 +458,7 @@ export function ProjectTree(props: Props) {
       separator("group-danger-separator"),
       item("group-delete", props.t("deleteAction"), <Trash2 size={14} />, () => submitAction("group.delete", "group", group.id, true), { danger: true }),
     ];
-  }, [contextMenu, props, selectedProjectIds, workspace]);
+  }, [contextMenu, props, selectedProjectIds, workspace, submitting]);
 
   useEffect(() => {
     if (!contextMenu || menuEntries.length === 0) return;
@@ -470,7 +510,7 @@ export function ProjectTree(props: Props) {
       <div ref={menuRef} className="web-context-menu" role="menu" style={{ left: menuPosition?.left ?? contextMenu.x, top: menuPosition?.top ?? contextMenu.y }}>
         {menuEntries.map((entry) => entry.kind === "separator"
           ? <div key={entry.key} className="web-context-menu-separator" role="separator" />
-          : <button key={entry.key} className={`web-context-menu-item${entry.danger ? " danger" : ""}`} type="button" role="menuitem" disabled={entry.disabled} onMouseEnter={() => setMenuIndex(menuEntries.filter((candidate): candidate is Extract<MenuEntry, { kind: "item" }> => candidate.kind === "item" && !candidate.disabled).findIndex((candidate) => candidate.key === entry.key))} onClick={entry.onClick}>{entry.icon}<span>{entry.label}</span></button>
+          : <button key={entry.key} className={`web-context-menu-item${entry.danger ? " danger" : ""}`} type="button" role="menuitem" disabled={entry.disabled} title={entry.reason} onMouseEnter={() => { if (!entry.disabled) setMenuIndex(menuEntries.filter((candidate): candidate is Extract<MenuEntry, { kind: "item" }> => candidate.kind === "item" && !candidate.disabled).findIndex((candidate) => candidate.key === entry.key)); }} onClick={entry.onClick}>{entry.icon}<span>{entry.label}{entry.reason && <small> · {props.t("desktopOnlyShort")}</small>}</span></button>
         )}
       </div>,
       document.body,
@@ -489,6 +529,20 @@ export function ProjectTree(props: Props) {
         <DragOverlay>{activeId ? <div className="web-tree-drag-overlay">{workspace.groups.find((group) => group.id === activeId)?.name ?? workspace.projects.find((project) => project.id === activeId)?.name}</div> : null}</DragOverlay>
       </DndContext>
       {menu}
+      {(actionError || lastOperation) && <p role="status" className="muted">{actionError || (lastOperation?.error ? `${props.t("requestFailed")}: ${lastOperation.error.message}` : lastOperation?.status === "succeeded" ? props.t("succeeded") : lastOperation?.status === "canceled" ? props.t("canceled") : lastOperation?.status === "timed_out" ? props.t("timedOut") : props.t("operationSubmitted"))}</p>}
+      {pendingAction && createPortal(<div className="overlay" role="presentation"><form className="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="project-action-title" onSubmit={(event) => {
+        event.preventDefault();
+        if (submitting || (pendingAction.named && !actionName.trim())) return;
+        const payload: JsonObject = { action: pendingAction.action, targetType: pendingAction.targetType, targetId: pendingAction.targetId, confirmed: true };
+        if (pendingAction.named) payload.name = actionName.trim();
+        void submit("project.action", payload).then((operation) => { if (operation) setPendingAction(null); });
+      }} onKeyDown={(event) => { if (event.key === "Escape" && !submitting) setPendingAction(null); }}>
+        <h2 id="project-action-title">{pendingAction.named ? props.t(pendingAction.action === "project.clone" ? "clone" : "rename") : props.t("confirmMenuAction")}</h2>
+        <p>{pendingAction.named ? pendingAction.name : props.t("confirmRiskyOperation").replace("{operation}", pendingAction.action).replace("{target}", pendingAction.name)}</p>
+        {pendingAction.named && <label>{props.t("name")}<input autoFocus required maxLength={255} value={actionName} onChange={(event) => setActionName(event.target.value)} /></label>}
+        {actionError && <p role="alert">{actionError}</p>}
+        <div className="confirm-dialog-actions"><button autoFocus={!pendingAction.named} type="button" className="secondary-button" disabled={submitting} onClick={() => setPendingAction(null)}>{props.t("cancel")}</button><button type="submit" className={pendingAction.named ? "primary-button" : "danger-button"} disabled={submitting || (pendingAction.named && !actionName.trim())}>{props.t("confirmMenuAction")}</button></div>
+      </form></div>, document.body)}
     </>
   );
 }

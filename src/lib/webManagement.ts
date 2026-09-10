@@ -6,7 +6,7 @@ import { useTerminalStore } from "../stores/terminalStore";
 import { useWorktreeStore } from "../stores/worktreeStore";
 import type { CreateSshHostInput, Project, SshAuthMode, UpdateSshHostInput, WorktreeRecord } from "./types";
 import { buildSshConnectionSpec } from "./ssh";
-import { findProjectByPath, findWorktreeByPath, projectWithWorktreeProviderOverrides } from "./terminalProject";
+import { projectWithWorktreeProviderOverrides } from "./terminalProject";
 import { resolveProjectStartupCommand } from "./projectStartupCommand";
 import { parseProjectEnvVars } from "./providerSwitching";
 import { openWindowsTerminal } from "./externalTerminal";
@@ -19,9 +19,9 @@ const MANAGEMENT_KINDS = new Set([
   "project.action",
   "ssh.hosts.list", "ssh.client_status", "ssh.test_connection", "ssh.check_path", "ssh.list_directories",
   "ssh.host.create", "ssh.host.update", "ssh.host.delete",
-  "file.list", "file.search", "file.search_content", "file.create", "file.create_directory",
+  "file.list", "file.search", "file.search_content", "file.read_text", "file.read_image", "file.create", "file.create_directory",
   "file.rename", "file.copy", "file.move", "file.delete",
-  "git.status", "git.branches", "git.fetch", "git.checkout", "git.create_branch", "git.stage",
+  "git.status", "git.branches", "git.diff", "git.fetch", "git.checkout", "git.create_branch", "git.stage",
   "git.unstage", "git.commit", "git.pull", "git.push", "git.discard", "git.delete_untracked",
   "worktree.list", "worktree.create", "worktree.check_deps", "worktree.merge", "worktree.remove",
   "hook.status", "hook.install", "hook.repair", "hook.test", "hook.uninstall",
@@ -355,30 +355,71 @@ function projectActionTarget(payload: Payload): { action: string; targetType: We
 }
 
 async function validateProjectAction(payload: Payload) {
-  projectActionTarget(payload);
+  const { action } = projectActionTarget(payload);
+  if (["project.rename", "project.clone", "group.rename"].includes(action)) requiredString(payload, "name", 255);
   await loadedProjectStore();
 }
 
 async function executeProjectAction(payload: Payload): Promise<unknown> {
-  return requestWebDeviceAction(projectActionTarget(payload));
+  const target = projectActionTarget(payload);
+  const store = await loadedProjectStore();
+  if (target.action === "project.rename" || target.action === "project.clone") {
+    const project = store.projects.find((item) => item.id === target.targetId);
+    if (!project) managementError("project_not_found");
+    const name = requiredString(payload, "name", 255);
+    if (target.action === "project.rename") {
+      await store.updateProject(project.id, { name });
+      return { renamed: true, projectId: project.id };
+    }
+    const created = await store.createProject({ ...project, name });
+    return { cloned: true, projectId: created.id };
+  }
+  if (target.action === "group.rename") {
+    if (!store.groups.some((group) => group.id === target.targetId)) managementError("group_not_found");
+    await store.renameGroup(target.targetId!, requiredString(payload, "name", 255));
+    return { renamed: true, groupId: target.targetId };
+  }
+  if (target.action === "worktree.installDeps") {
+    const context = (await resolveProjectStartTargets({ targetType: "worktree", targetId: target.targetId }))[0]!;
+    const launch = projectLaunch(context);
+    const deps = await useWorktreeStore.getState().checkDeps(context.worktree!);
+    if (!deps.needsInstall || !deps.command) return { started: false, reason: deps.reason };
+    const sessionId = await useTerminalStore.getState().createSession(
+      launch.project.id, launch.cwd, launch.title, deps.command, launch.envVars, launch.shell,
+      undefined, context.worktree!.id,
+    );
+    await useWorktreeStore.getState().dismissDepsPrompt(context.worktree!.id);
+    return { started: true, sessionIds: [sessionId] };
+  }
+  return requestWebDeviceAction({ ...target, confirmed: payload.confirmed === true });
 }
 
 async function resolveLocalContext(payload: Payload): Promise<LocalContext> {
-  requiredString(payload, "projectKey", 512);
-  const cwd = requiredString(payload, "cwd");
+  const projectId = requiredString(payload, "projectId", 128);
+  const worktreeId = optionalString(payload, "worktreeId", 128);
   const projectStore = useProjectStore.getState();
   if (!projectStore.loaded) await projectStore.fetchAll("startup");
   const { projects, worktrees } = useProjectStore.getState();
-  const worktree = findWorktreeByPath(worktrees, cwd);
-  const project = worktree
-    ? projects.find((item) => item.id === worktree.project_id) ?? null
-    : findProjectByPath(projects, cwd);
+  const project = projects.find((item) => item.id === projectId) ?? null;
   if (!project) managementError("project_not_found", "desktop project context was not found");
+  const worktree = worktreeId
+    ? worktrees.find((item) => item.id === worktreeId && item.project_id === project.id) ?? null
+    : null;
+  if (worktreeId && !worktree) managementError("worktree_not_found", "Worktree was not found");
   if (project.environment_type === "ssh") managementError("ssh_project_unsupported", "local management is unavailable for SSH projects");
   if (worktree?.status === "missing") managementError("worktree_missing", "target Worktree no longer exists");
   const rootPath = worktree?.path ?? project.path;
-  await webDeviceApi.validateContext(rootPath, cwd);
+  await webDeviceApi.validateContext(rootPath, rootPath);
   return { project, worktree: worktree ?? null, rootPath };
+}
+
+const MAX_WEB_RESULT_BYTES = 700 * 1024;
+
+function boundedResult<T>(value: T, code: string, message: string): T {
+  const serialized = JSON.stringify(value);
+  const encoded = serialized ? new TextEncoder().encode(serialized).byteLength : 0;
+  if (encoded > MAX_WEB_RESULT_BYTES) managementError(code, message);
+  return value;
 }
 
 async function ensureSshHostsLoaded() {
@@ -500,9 +541,24 @@ async function executeSsh(operation: WebDeviceOperation, payload: Payload): Prom
 async function executeFile(operation: WebDeviceOperation, payload: Payload): Promise<unknown> {
   const { rootPath } = await resolveLocalContext(payload);
   switch (operation.kind) {
-    case "file.list": return invoke("file_list_dir", { rootPath, relativePath: optionalString(payload, "path") ?? "" });
-    case "file.search": return invoke("file_search", { rootPath, query: requiredString(payload, "query", 512) });
-    case "file.search_content": return invoke("file_search_content", { rootPath, query: requiredString(payload, "query", 512) });
+    case "file.list":
+      return boundedResult(await invoke("file_list_dir", { rootPath, relativePath: optionalString(payload, "path") ?? "" }), "file_result_too_large", "the file list is too large to transfer to the browser");
+    case "file.search":
+      return boundedResult(await invoke("file_search", { rootPath, query: requiredString(payload, "query", 512) }), "file_result_too_large", "the search result is too large to transfer to the browser");
+    case "file.search_content":
+      return boundedResult(await invoke("file_search_content", { rootPath, query: requiredString(payload, "query", 512) }), "file_result_too_large", "the content search result is too large to transfer to the browser");
+    case "file.read_text":
+      return boundedResult(
+        await invoke("file_read_project_text", { rootPath, relativePath: requiredString(payload, "path") }),
+        "file_result_too_large",
+        "the text file is too large to transfer to the browser",
+      );
+    case "file.read_image":
+      return boundedResult(
+        await invoke("file_read_image", { rootPath, relativePath: requiredString(payload, "path") }),
+        "file_result_too_large",
+        "the image is too large to transfer to the browser",
+      );
     case "file.create":
       await invoke("file_create_file", { rootPath, parentPath: optionalString(payload, "parentPath") ?? "", name: requiredString(payload, "name", 255), overwrite: booleanValue(payload, "overwrite") });
       break;
@@ -534,6 +590,24 @@ async function executeGit(operation: WebDeviceOperation, payload: Payload): Prom
       return { changes, branch };
     }
     case "git.branches": return invoke("git_list_branches", { projectPath: rootPath });
+    case "git.diff": {
+      const whitespace = optionalString(payload, "whitespace", 16) ?? "exact";
+      if (!new Set(["exact", "ignore-eol", "ignore-all"]).has(whitespace)) {
+        managementError("invalid_operation_payload", "invalid diff whitespace mode");
+      }
+      const contextLines = numberValue(payload, "contextLines", 3, 3, 20);
+      if (![3, 10, 20].includes(contextLines)) managementError("invalid_operation_payload", "invalid diff context lines");
+      return boundedResult(
+        await invoke("git_get_file_diff", {
+          projectPath: rootPath,
+          filePath: requiredString(payload, "path"),
+          status: requiredString(payload, "status", 8),
+          options: { whitespace, contextLines },
+        }),
+        "git_result_too_large",
+        "the diff is too large to transfer to the browser",
+      );
+    }
     case "git.fetch": await invoke("git_fetch", { projectPath: rootPath }); break;
     case "git.checkout": await invoke("git_checkout_branch", { projectPath: rootPath, branch: requiredString(payload, "branch", 255), remote: booleanValue(payload, "remote") }); break;
     case "git.create_branch": await invoke("git_create_branch", { projectPath: rootPath, branch: requiredString(payload, "branch", 255) }); break;
@@ -723,6 +797,8 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
     switch (operation.kind) {
       case "file.search":
       case "file.search_content": requiredString(payload, "query", 512); break;
+      case "file.read_text":
+      case "file.read_image": requiredString(payload, "path"); break;
       case "file.create":
       case "file.create_directory": requiredString(payload, "name", 255); break;
       case "file.rename": requiredString(payload, "path"); requiredString(payload, "name", 255); break;
@@ -738,6 +814,15 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
     switch (operation.kind) {
       case "git.checkout":
       case "git.create_branch": requiredString(payload, "branch", 255); break;
+      case "git.diff": {
+        requiredString(payload, "path");
+        requiredString(payload, "status", 8);
+        const whitespace = optionalString(payload, "whitespace", 16) ?? "exact";
+        if (!new Set(["exact", "ignore-eol", "ignore-all"]).has(whitespace)) managementError("invalid_operation_payload", "invalid diff whitespace mode");
+        const contextLines = numberValue(payload, "contextLines", 3, 3, 20);
+        if (![3, 10, 20].includes(contextLines)) managementError("invalid_operation_payload", "invalid diff context lines");
+        break;
+      }
       case "git.stage":
       case "git.unstage":
       case "git.delete_untracked": stringArray(payload, "paths"); break;

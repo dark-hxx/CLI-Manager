@@ -5,6 +5,7 @@ export type WebDeviceActionRequest = {
   targetType: WebDeviceActionTarget;
   targetId?: string;
   targetIds?: string[];
+  confirmed?: boolean;
 };
 
 type WebDeviceActionHandler = (request: WebDeviceActionRequest) => Promise<unknown> | unknown;

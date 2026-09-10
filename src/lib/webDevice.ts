@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 
 export interface WebDeviceProfile {
   serverUrl: string;
+  trustedNetwork: boolean;
+  publicAccessUrl: string;
   clientId: string;
   machineId: string;
   clientKind: "development" | "release";
@@ -25,6 +27,8 @@ export interface WebDeviceStatus {
 
 export interface WebDeviceProfileInput {
   serverUrl: string;
+  trustedNetwork: boolean;
+  publicAccessUrl: string;
   name: string;
   autoStart: boolean;
   uploadWallpaper: boolean;
