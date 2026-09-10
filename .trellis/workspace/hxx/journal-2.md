@@ -1616,3 +1616,24 @@ v1.3.9-history-detail-ordering-persistence-codex-thread-name-and-descending-tran
 ### Status
 
 [OK] **Completed**
+
+
+## Session 116: 修复大型仓库 Git 面板卡顿 #257
+
+**Date**: 2026-09-10
+**Task**: 修复大型仓库 Git 面板卡顿 #257
+**Branch**: `master`
+
+### Summary
+
+V1.4.0：虚拟化变更树、Worker 建树及刷新合并；64887 文件浏览器验证、38 项回归、构建与严格架构检查通过，用户验证成功。提交正文 Fixes #257。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ae116d6b` | (see git log) |
+
+### Status
+
+[OK] **Completed**
