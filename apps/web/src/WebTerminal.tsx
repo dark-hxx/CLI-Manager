@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { ArrowDown } from "lucide-react";
+import { MobileTerminalInput } from "./MobileTerminalInput";
 import type { TerminalControlMode, TerminalOutputFrame } from "./domain";
 import type { TerminalStream } from "./terminalStream";
 
@@ -98,6 +99,8 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   const resizeRef = useRef(onResize);
   const controlModeRef = useRef(controlMode);
   const activeRef = useRef(active);
+  const enabledRef = useRef(active && status === "running");
+  enabledRef.current = active && status === "running";
   const sourceRef = useRef(source);
   const layoutRef = useRef<(() => void) | null>(null);
   const wakeRef = useRef<(() => void) | null>(null);
@@ -335,8 +338,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
         const ratio = prefs.mode === "width" ? widthLimit / screen.offsetWidth
           : Math.min(1, widthLimit / screen.offsetWidth, availableHeight / screen.offsetHeight);
         terminal.options.fontSize = Math.max(1, Math.min(96, Math.floor(prefs.fontSize * ratio * 10) / 10));
-        // Rounding font metrics must not push the last column offscreen.
-        for (let attempt = 0; attempt < 3 && screen.offsetWidth > widthLimit; attempt++) {
+        // Pixel-rounded row metrics must also keep the last input row visible.
+        for (let attempt = 0; attempt < 32 && terminal.options.fontSize! > 1 &&
+          (screen.offsetWidth > widthLimit || (prefs.mode === "contain" && screen.offsetHeight > availableHeight)); attempt++) {
           terminal.options.fontSize = Math.max(1, terminal.options.fontSize - 0.1);
         }
       }
@@ -351,7 +355,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       if (sizeFrame !== null || disposed) return;
       sizeFrame = requestAnimationFrame(() => { sizeFrame = null; if (!disposed) reportSize(); });
     };
-    const input = terminal.onData((data) => inputRef.current(data));
+    const input = terminal.onData((data) => { if (enabledRef.current) inputRef.current(data); });
     layoutRef.current = scheduleSize;
     wakeRef.current = () => {
       if (hiddenFlushTimer !== null) { clearTimeout(hiddenFlushTimer); hiddenFlushTimer = null; }
@@ -372,7 +376,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     };
     container.addEventListener("wheel", zoom, { passive: false, capture: true });
     const resizeFrame = requestAnimationFrame(reportSize);
-    if (activeRef.current) terminal.focus();
+    if (enabledRef.current && !window.matchMedia("(pointer: coarse), (max-width: 767px)").matches) terminal.focus();
 
     return () => {
       disposed = true;
@@ -427,7 +431,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     if (!active) { terminalRef.current?.blur(); return; }
     wakeRef.current?.();
     layoutRef.current?.();
-    if (status === "running") terminalRef.current?.focus();
+    if (status === "running" && !window.matchMedia("(pointer: coarse), (max-width: 767px)").matches) terminalRef.current?.focus();
   }, [active, status, controlMode]);
 
   return <div className="web-terminal-shell" ref={shellRef}>
@@ -449,6 +453,10 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     <div className="web-terminal-display-area" style={{ width: `${display.width}%`, height: `${display.height}%` }}>
       <div className="web-terminal" ref={containerRef} data-status={status} />
     </div>
+    <MobileTerminalInput enabled={active && status === "running"} t={t}
+      onFocus={() => { if (enabledRef.current) terminalRef.current?.focus(); }}
+      onPaste={(text) => { if (enabledRef.current) terminalRef.current?.paste(text); }}
+      onKey={(key) => { if (enabledRef.current) inputRef.current(key); }} />
     {active && scrolledAway && <button className="web-terminal-scroll-bottom" type="button" onClick={() => terminalRef.current?.scrollToBottom()} aria-label={scrollLabel} title={scrollLabel}><ArrowDown size={16} aria-hidden="true" /></button>}
   </div>;
 }

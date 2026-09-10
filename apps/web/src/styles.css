@@ -512,7 +512,7 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 
 
 .web-subagent-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-left: 1px solid var(--border, #343a40); background: var(--surface, #171b20); color: var(--text, #d5dce5); font-size: 14px; line-height: 1.55; }
-.web-subagent-panel.expanded { flex: 0 0 40%; }
+.web-subagent-panel.expanded { flex: 0 0 50%; overflow: hidden; }
 .web-subagent-panel.collapsed { flex: 0 0 auto; }
 .web-subagent-panel > header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px; }
 .web-subagent-panel > header button { display: flex; align-items: center; gap: 6px; font: inherit; }
@@ -538,8 +538,38 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .web-subagent-follow { position: absolute; bottom: 12px; right: 16px; padding: 6px 10px; border: 1px solid currentColor; border-radius: 16px; background: var(--surface, #171b20); color: inherit; }
 @media (max-width: 899px) {
   .web-terminal-frame:has(.web-subagent-panel) { flex-direction: column; }
-  .web-terminal-frame:has(.web-subagent-panel) > .web-terminal { min-height: 0; }
+  .web-terminal-frame:has(.web-subagent-panel) > .web-terminal-shell { min-height: 0; }
   .web-subagent-panel { border-left: 0; border-top: 1px solid var(--border, #343a40); }
-  .web-subagent-panel.expanded { flex-basis: 45%; }
+  .web-subagent-panel.expanded { flex-basis: 50%; }
   .web-subagent-panel.collapsed { flex: 0 0 auto; }
+}
+
+/* Keep the terminal workspace inside the visible area, including soft keyboards. */
+:root[data-mobile-viewport="true"] .app-shell { position: fixed; inset: auto 0; top: var(--mobile-viewport-top, 0px); height: var(--mobile-viewport-height, 100dvh); min-height: 0; overflow: hidden; }
+:root[data-mobile-viewport="true"] .main-panel,
+:root[data-mobile-viewport="true"] .sidebar,
+:root[data-mobile-viewport="true"] .app-shell .action-panel { height: 100%; }
+:root[data-mobile-viewport="true"] .app-shell .bottom-nav { position: absolute; bottom: 0; }
+:root[data-mobile-viewport="true"] .app-shell .composer { position: absolute; bottom: calc(77px + env(safe-area-inset-bottom)); }
+:root[data-mobile-keyboard="true"] .desktop-header,
+:root[data-mobile-keyboard="true"] .terminal-workspace .source-banner { display: none; }
+:root[data-mobile-keyboard="true"] .terminal-workspace { gap: 4px; padding: 4px; }
+:root[data-mobile-keyboard="true"] .main-panel { padding-bottom: 0; }
+:root[data-mobile-keyboard="true"] .bottom-nav { display: none; }
+.mobile-terminal-input { display: none; }
+@media (max-width: 767px), (pointer: coarse) {
+  .web-terminal-shell { flex-direction: column; }
+  .web-terminal-display-area { flex-shrink: 1; }
+  .mobile-terminal-input { display: flex; flex-direction: column; flex: none; gap: 4px; padding: 4px; color: var(--text); background: var(--surface); border-top: 1px solid var(--border); max-height: 65%; overflow: auto; }
+  .mobile-terminal-input button { min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: inherit; font-size: 12px; }
+  .mobile-terminal-input button:disabled { opacity: .45; }
+  .mobile-terminal-input textarea { width: 100%; min-height: 40px; resize: vertical; font-size: 16px; color: inherit; background: var(--surface-raised); border: 1px solid var(--border); border-radius: 6px; }
+  .mobile-terminal-input p { margin: 2px; font-size: 11px; }
+  .mobile-terminal-input-toolbar { display: flex; gap: 4px; flex-wrap: wrap; }
+  .mobile-terminal-input-fallback { display: flex; align-items: flex-start; gap: 4px; }
+  .mobile-terminal-input-fallback textarea { min-width: 0; flex: 1; }
+  .web-terminal-display-panel { max-height: min(450px, calc(var(--mobile-viewport-height, 100dvh) - 100px)); }
+  :root[data-mobile-keyboard="true"] .mobile-header { height: 44px; flex-shrink: 0; }
+  :root[data-mobile-keyboard="true"] .main-panel { padding-bottom: 0; }
+  :root[data-mobile-keyboard="true"] .bottom-nav { display: none; }
 }

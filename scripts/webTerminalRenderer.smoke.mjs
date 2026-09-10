@@ -195,6 +195,11 @@ async function run() {
   const handoffId = 'geometry-short';
   mount(handoffId, [], 'web');
   await pause(150);
+  result.takeoverLayout = Object.fromEntries(['.web-terminal-shell', '.web-terminal-display-area', '.web-terminal', '.web-terminal-display', '.mobile-terminal-input', '.xterm-screen'].map(selector => {
+    const element = document.querySelector(selector);
+    return [selector, { width: element.clientWidth, height: element.clientHeight, display: getComputedStyle(element).display }];
+  }));
+  result.takeoverLayout.mobile = matchMedia('(pointer: coarse), (max-width: 767px)').matches;
   check(terminal().options.fontSize === 14 && terminal().cols > 120 && terminal().rows > 32, 'Web takeover retained tiny mirror font or stale source grid: ' + JSON.stringify({ fontSize: terminal().options.fontSize, cols: terminal().cols, rows: terminal().rows }));
   mount(handoffId, [], 'desktop');
   publish(handoffId, 4, '\\x1b[2J\\x1b[HLAST-ROW', { cols: 60, rows: 32 });
@@ -534,6 +539,60 @@ async function run() {
     xtermWrites: (result.writeCount || 0) - writesBefore,
     elapsedMs: Math.round(performance.now() - startedAt),
   };
+  // Exercise the actual mobile controls, including IME and disconnected gating.
+  const savedMatchMedia = window.matchMedia;
+  window.matchMedia = query => query === '(pointer: coarse), (max-width: 767px)'
+    ? { matches: true } : savedMatchMedia.call(window, query);
+  try {
+    terminal()?.blur();
+    const mobileId = 'mobile-input';
+    const renderMobile = (status = 'running', active = true) => flushSync(() => root.render(React.createElement(WebTerminal, {
+      sessionId: mobileId, active, status, stream, controlMode: 'desktop', theme: 'dark',
+      t: key => translate('en-US', key), errorLabel: 'error', scrollLabel: 'bottom',
+      onInput: data => (result.mobileSent ??= []).push(data), onResize() {},
+    })));
+    renderMobile();
+    await pause(80);
+    check(!document.activeElement?.classList.contains('xterm-helper-textarea'), 'Mobile mount automatically opened keyboard');
+    const button = text => Array.from(document.querySelectorAll('.mobile-terminal-input button')).find(node => node.textContent === text);
+    button('Keyboard').click();
+    check(document.activeElement?.classList.contains('xterm-helper-textarea'), 'Explicit mobile keyboard button did not focus xterm');
+    button('Fallback input').click();
+    await pause(20);
+    const textarea = document.querySelector('.mobile-terminal-input textarea');
+    const fill = async value => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, value);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      await pause(20);
+    };
+    textarea.focus();
+    textarea.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    await fill('中文输入');
+    button('Send text').click();
+    check(!(result.mobileSent ?? []).length && textarea.value === '中文输入', 'IME composition was sent prematurely');
+    textarea.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: '中文输入' }));
+    await fill('中文输入\\n第二行\\t测试\\x1b\\x03');
+    button('Send text').click();
+    await pause(20);
+    check(result.mobileSent?.join('') === '中文输入 第二行 测试', 'Fallback paste lost CJK text or transmitted control characters');
+    button('Enter').click();
+    check(result.mobileSent.at(-1) === '\\r', 'Explicit Enter did not use terminal input channel');
+    await fill('保留草稿');
+    renderMobile('disconnected');
+    const sentBefore = result.mobileSent.length;
+    button('Send text').click();
+    button('Enter').click();
+    check(textarea.disabled && textarea.value === '保留草稿' && result.mobileSent.length === sentBefore, 'Disconnected input dropped draft or sent data');
+    renderMobile('running', false);
+    renderMobile('running', true);
+    check(!document.activeElement?.classList.contains('xterm-helper-textarea'), 'Mobile tab activation automatically opened keyboard');
+    check(textarea.value === '保留草稿', 'Tab change lost fallback draft');
+    result.mobileInput = { chineseIme: true, explicitEnter: true, safePaste: true, disabledDraft: true, noAutoFocus: true };
+  } finally {
+    window.matchMedia = savedMatchMedia;
+  }
+  mount(liveId, [], 'desktop');
+  await pause(100);
   const screen = document.querySelector('.xterm-screen')?.getBoundingClientRect();
   result.screen = screen ? { width: screen.width, height: screen.height } : null;
   result.tail = tail().slice(-500);
@@ -626,9 +685,13 @@ if (process.argv.includes("--run")) {
       });
       ws.send(JSON.stringify({ id: requestId, method, params, ...(sessionId ? { sessionId } : {}) }));
     });
-    const { targetId } = await call("Target.createTarget", { url: server.resolvedUrls.local[0] });
+    const { targetId } = await call("Target.createTarget", { url: "about:blank" });
     const { sessionId } = await call("Target.attachToTarget", { targetId, flatten: true });
+    // Root widths below exercise split panes; keep the browser itself desktop
+    // so an unrelated default headless viewport cannot activate mobile chrome.
+    await call("Emulation.setDeviceMetricsOverride", { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
     await call("Runtime.enable", {}, sessionId);
+    await call("Page.navigate", { url: server.resolvedUrls.local[0] }, sessionId);
     console.log(JSON.stringify({ phase: "browser-attached" }));
     const deadline = Date.now() + 90000;
     let result;

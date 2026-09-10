@@ -514,13 +514,6 @@ function OperationCard({ t, item }: { t: T; item: Extract<TimelineItem, { type: 
 }
 
 function Composer({ t, value, disabled, offline, message, onChange, onSend }: { t: T; value: string; disabled: boolean; offline: boolean; message: string; onChange: (value: string) => void; onSend: () => void }) {
-  useEffect(() => {
-    const viewport = window.visualViewport;
-    if (!viewport) return;
-    const update = () => document.documentElement.style.setProperty("--keyboard-height", `${Math.max(0, window.innerHeight - viewport.height - viewport.offsetTop)}px`);
-    viewport.addEventListener("resize", update); viewport.addEventListener("scroll", update); update();
-    return () => { viewport.removeEventListener("resize", update); viewport.removeEventListener("scroll", update); document.documentElement.style.removeProperty("--keyboard-height"); };
-  }, []);
   const submit = (event: FormEvent) => { event.preventDefault(); if (!disabled) onSend(); };
   return <form className="composer" onSubmit={submit}><label className="sr-only" htmlFor="task-composer">{t("composerLabel")}</label><textarea id="task-composer" value={value} onChange={(event) => onChange(event.target.value)} placeholder={offline ? t("offlineComposerPlaceholder") : t("composerPlaceholder")} rows={3} /><div className="composer-toolbar"><span className={`composer-state ${offline ? "offline" : "online"}`}>{offline ? <WifiOff size={17} /> : <Radio size={17} />}{t(offline ? "offlineDraftOnly" : "ready")}</span><button className="send-button" type="submit" aria-label={t("send")} disabled={disabled}><Send size={20} /></button></div>{message && <p className="composer-feedback" role="alert">{localizedError(t, message)}</p>}</form>;
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { LanguageMode, TranslationKey, resolveLanguage, translate } from "./i18n";
 import { useAppModel } from "./useAppModel";
+import { useMobileViewport } from "./useMobileViewport";
 import { MobileAccess } from "./BrowserAccess";
 import { GlobalErrorPage, HostHome, LoadingPage, LoginPage, SessionExpiredPage, Workbench } from "./views";
 
@@ -15,6 +16,7 @@ function loadStored<T extends string>(key: string, allowed: readonly T[], fallba
 }
 
 export function App() {
+  useMobileViewport();
   const [page, setPage] = useState<"hosts" | "workbench">("hosts");
   const [themeMode, setThemeMode] = useState<ThemeMode>(() =>
     loadStored(THEME_KEY, ["system", "light", "dark"], "system"),

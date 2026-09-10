@@ -3,6 +3,7 @@ export type ResolvedLanguage = Exclude<LanguageMode, "auto">;
 
 const dictionary = {
   "zh-CN": {
+    mobileKeyboard: "打开键盘", mobileFallback: "备用输入", mobileInput: "终端备用输入", mobileInputHint: "发送仅粘贴文本，换行和 Tab 转为空格，其他控制字符移除；按 Enter 执行。草稿不保存。", mobileSend: "发送文本", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C",
     terminalDisplay: "显示设置",
     terminalDisplayHint: "仅调整此网页显示，不改桌面行列数。Ctrl + 滚轮调整字号；超出区域可滚动。设置保存在当前浏览器。",
     terminalDisplayMode: "适配方式",
@@ -340,6 +341,7 @@ const dictionary = {
     close: "关闭",
   },
   "en-US": {
+    mobileKeyboard: "Keyboard", mobileFallback: "Fallback input", mobileInput: "Terminal fallback input", mobileInputHint: "Send pastes text only: newlines and tabs become spaces; other control characters are removed. Press Enter to execute. Drafts are not saved.", mobileSend: "Send text", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C",
     terminalDisplay: "Display settings",
     terminalDisplayHint: "Browser display only; desktop grid is unchanged. Ctrl + wheel changes font size. Scroll to reach overflow. Saved in this browser.",
     terminalDisplayMode: "Fit mode",
