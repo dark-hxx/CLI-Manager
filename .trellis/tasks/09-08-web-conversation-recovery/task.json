@@ -1,0 +1,10 @@
+{
+  "id": "web-conversation-recovery",
+  "name": "web-conversation-recovery",
+  "title": "Web 真实对话、消息恢复与手机授权",
+  "status": "completed",
+  "priority": "P0",
+  "createdAt": "2026-09-08",
+  "branch": "feat/web-management-capabilities-v2",
+  "notes": "已完成真实 PTY Web 终端：主界面使用 xterm 连接桌面同一 PTY，支持原始输出、输入、resize、重放和切换 detach；内嵌服务等待 bind/初始化就绪后才报告运行。协议、服务端、桌面编译和 NSIS 打包通过。"
+}

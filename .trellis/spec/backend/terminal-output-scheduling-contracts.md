@@ -31,6 +31,11 @@ interface ScheduledTerminalWrite {
 - When the document is hidden, pending terminal writes use a timer fallback instead of depending only on `requestAnimationFrame`; the visible path keeps rAF and a watchdog timer, and `visibilitychange` reschedules the pending entry. A fallback callback cancels the other scheduled handle before consuming work.
 - Per-terminal FIFO, Replay/Reset barriers, and frame ownership stay in `useTerminalDisplay`.
 - `TerminalOutputDelivery.commit()` and daemon ACK happen only after the matching xterm write callback.
+- Desktop xterm is the sole renderer-side protocol responder, including hidden tabs/workspans. Web mirrors consume device/status queries without writing replies into the PTY; normal keyboard/paste forwarding stays independent.
+- A newly created PTY can emit its first handshake before renderer mount. A replay label alone does not prove prior processing: use creation identity and last parsed source sequence. Advance that sequence after the write callback, not on enqueue, so cancelled queued output does not consume the handshake.
+- Cold daemon historical replay cannot produce terminal replies. Existing Rust OSC 10/11 and host OSC 52 ownership still applies.
+- Query suppression preserves mixed color setters and queries, their order relative to following text, and fragmented input. Use bounded output-side filtering, not reentrant terminal.write from parser hooks.
+
 
 ### 4. Validation & Error Matrix
 

@@ -1,0 +1,19 @@
+{
+  "id": "web-terminal-network-fix",
+  "name": "web-terminal-network-fix",
+  "title": "Web 终端双端隔离与可配置网卡监听",
+  "description": "隔离桌面与 Web 的 PTY replay/ACK 链路，建立单一 resize 所有权，并允许内嵌 Web 服务监听用户指定的本机网卡地址。",
+  "status": "completed",
+  "priority": "P0",
+  "createdAt": "2026-09-08",
+  "branch": "feat/web-management-capabilities-v2",
+  "base_branch": "master",
+  "scope": "Web terminal transport and embedded Web server binding",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "completedAt": "2026-09-09",
+  "notes": "Completed: isolated Web PTY observer/replay/ACK from the desktop connection, added single resize ownership, ordered per-frame Web xterm playback, and enabled validated local-interface/unspecified bind addresses with exact Origin handling. Protocol, server, desktop Rust, TypeScript and production builds passed. NSIS: src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_x64-setup.exe; SHA256 78FFA29BF319F43AD3C80F0CF84D1FA3445ED9D2F1AFFB5C7BE70A7E9A2759C5.",
+  "meta": {}
+}

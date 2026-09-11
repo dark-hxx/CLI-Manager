@@ -555,6 +555,23 @@ npm run tauri dev
 npm run tauri build
 ```
 
+#### Web management service
+
+The standalone Web service listens on `127.0.0.1:8787` by default. Override its bind address or port from the development script, environment, or `web-server.toml` in the data directory:
+
+Installed builds can configure the administrator password, bind IP, port, and allowed browser origin under Settings -> Remote connections -> Local Web service. The default mode is manual: click Start service when needed. It only starts with CLI-Manager when auto-start is enabled. A local LAN or private-overlay adapter IP can be selected; `0.0.0.0` / `::` listens on all interfaces and requires an exact Origin. Non-loopback HTTP is intended only for a trusted LAN or encrypted overlay network; use an HTTPS reverse proxy for public access.
+
+```powershell
+# Development mode: frontend 5173, backend 9000
+.\scripts\start-web-dev.ps1 -BackendPort 9000
+
+# Standalone service: command-line flags have highest priority
+$env:CLI_MANAGER_ADMIN_PASSWORD = "change-me"
+npm run web:server:run -- --bind 0.0.0.0:9000
+```
+
+Precedence is command-line `--bind` / `--port` > `CLI_MANAGER_WEB_BIND` / `CLI_MANAGER_WEB_PORT` > `data/web-server.toml` > defaults. Non-loopback binds require `CLI_MANAGER_COOKIE_SECURE=true` and HTTPS.
+
 #### Other Useful Commands
 
 ```bash

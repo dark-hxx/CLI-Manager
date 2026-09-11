@@ -38,6 +38,66 @@
 - 增强工具复用项目的 Modal、确认和输入弹窗；补充读取 generation、写操作互斥与仓库上下文过期检查。仍需人工验证仓库切换期间的确认取消、Tab/Shift+Tab、Escape 和焦点恢复。
 
 ---
+# 桌面 Web 后台失效卡顿修复（2026-09-09）
+
+## Web 终端关闭与桌面首帧重绘（后续增量）
+
+- Web `Workbench` 将现有 `closeTerminal/detach` 接入终端右上角关闭按钮；关闭只发送设备端 `detach`，不关闭桌面 PTY。
+- 桌面 `XTermTerminal` 在首次打开后的两个 animation frame 再执行 fit 与 viewport refresh，并在卸载时取消待执行帧，覆盖窗口恢复和初始 PTY 重连的首帧绘制边界。
+- 触点清单：`apps/web/src/App.tsx`、`views.tsx`、`styles.css`、`i18n.ts`；`src/components/XTermTerminal.tsx`；确认 Web 协议、PTY daemon、服务端路由和项目选择逻辑无需变化。
+
+- 根因：桌面 React 每 75ms 触发同步 Tauri 命令，命令在界面线程读取失效 Web daemon 发现信息并阻塞连接；实机失效端口 57658 连续三次失败耗时 2064/2034/2022ms。发现记录 PID 16816 已被 Lsf 复用，不能以 PID 存活认定后台正常。重装保留发现记录，因此重现。
+- 触点清单：`useWebDeviceBridge` / 新 `webBridgePolling`（调用频率与卸载）；`commands/web_device`（15 个命令的任务池边界、启动身份识别、原生直接调用）；`web_daemon`（TCP 期限、仅连接失败冷却、PID 身份）；`web_conversation`（4 个直接调用对接同步实现）。App 入口、webDevice.ts IPC 参数、PTY/Provider/数据库/认证协议确认不需更改。
+- 场景：未启用/未配对、在线、后台退出/失效端口、PID 复用、停服后设备断开、同端口/新身份重连、慢命令、卸载期间请求返回；窗口焦点/分屏/折叠/最小化不再决定原生网络执行线程，WSL/SSH/Worktree/Hook 不改变此回环边界。真实安装版按钮与长期输出仍需现场验证。
+- GitNexus 工具和 `.gitnexus` runner 不可用；按分诊闸机降级为 memory 刷新、契约、rg 与源码调用者检查。当前分支相对 origin/master 领先 20/落后 56，不同步、不提交、不覆盖其他既有改动。
+- 前端轮询新增 5 项测试已通过：离线 30 秒零高频 IPC、连接/停服/重连、100 次唤醒不重叠与卸载、错误/未配对、慢操作不阻塞终端。
+- Rust `cargo test --manifest-path src-tauri/Cargo.toml --lib web_ -- --test-threads=1`：47 通过、1 项既有本机 CLI 环境探测忽略。新增验证线程分离/错误保真、失效端口 100 次冷却快速返回、同端点恢复、新发现身份绕过冷却、实际 TCP 鉴权请求、PID 复用与进程消失。测试不修改真实发现信息。
+- `npx tsc --noEmit` 通过；Node 轮询/分片/stream/重连共 17 项通过；`git diff --check` 通过（仅既有 CRLF 提示）。memory 完成后刷新，3 个新增关键符号均可检索并与源码核对。
+- 初次 cargo check 因 PATH 缺 RC.EXE 失败；加入已安装 Windows SDK x64 路径后上述 Rust 测试编译成功。`npm run tauri:build:local -- --bundles nsis` 退出码 0，Release 22m14s，桌面与 Web 前端生产构建均通过。
+- 交付包：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_desktop-stall-fix_20260909_x64-setup.exe`，25,867,946 字节，SHA256 `FAFCE2FD73BA314C27877F1BD4BCD0A99458AAD090D2A1F8C3CE786D5A435FF3`。NSIS 脚本第 42/624/637–639 行确认打入本轮主程序、Web 静态资源及三个辅助程序；主程序写入时间 15:06:51，安装包 15:07:18。独立命名，不覆盖之前命名的重打包文件。
+- 安装：正常退出旧版（含托盘）后运行新包，不需要卸载或清空配置。仅失效发现文件已改名备份；其他真实配置、会话及配对数据未改动。未替用户安装；安装后按钮响应及长期使用仍需现场确认。回滚可使用保留的旧安装包，但旧包仍含同步轮询阻塞缺陷。
+- 等待打包期间，经权限批准，复核发现端口 57658 无监听、PID 16816 为 Lsf.exe 后，将真实失效 `C:/Users/lenovo/.cli-manager/web-daemon.json` 改名备份为同目录 `web-daemon.stale-20260909.json`。没有删除数据或终止任何用户进程；保留备份，不自动恢复这份已失效地址。临时操作效果仍待用户反馈。
+- 独立复核未发现本次修改引入的重大回归；终端输出仍经现有 publishQueue 串行。已知非本次触点：内嵌 HTTP 服务 `web_server_start/stop/restart` 仍有同步启动/退出等待，本次消除的是设备轮询反复阻塞，不代表所有原生服务生命周期都已异步化，也不代表旧 Web 渲染性能的未验收边界完成。
+
+# Web 终端性能及重新打包（2026-09-09）
+
+- 根因触点：useAppModel 的输出 state 导致 App/Workbench 随字节更新；WebTerminal 逐帧排队写入；bridge 重复 attach 强制完整 replay。已接入 terminalStream、动画帧合并、回放收集及可选 afterSequence 协议字段。
+- 上轮验证：Web/桌面 TypeScript 和生产构建通过；Web server 46 个单测及 4 个集成测试通过；桌面 web_ 41 项通过、1 项环境探测忽略；协议 7 项通过；stream/分片测试 7 项通过。
+- Chrome 隔离测试：1,000,025 字节回放及 10 次卸载/恢复通过；5,001 个同步突发小帧合并为 1 次 xterm.write，观察到 62ms 完成。这不是持续网络吞吐基准，也没有测量真实 Workbench render count 或重连中间帧像素。
+- 尚未覆盖：断网时原帧只到达部分分片、积压输出与增量 replay 重叠、多尺寸回放、后台持续输出及真实桌面/手机验收。性能任务保持 in_progress。
+- 当前用户另报桌面启动卡顿；采样显示 WebView2 GPU、renderer 和主程序占用，尚未证明根因。重新打包不代表此问题修复。
+- 已知检查限制：普通 Node 22 strip-only 无法运行 reconnect.test.mjs 引入的 parameter property；src-tauri cargo fmt --check 被本轮未改动的 provider/database.rs 格式差异阻止。GitNexus 不可用，已使用 memory 刷新、调用链和源码复核；相对 master 的差异包含大量既有分支变更。
+- 本次按用户要求重新构建现有 1.3.9 工作区，不更改用户安装目录或数据。产物和 SHA256 在构建完成后追加。
+- 重新打包时补验：`node --experimental-transform-types --test apps/web/src/reconnect.test.mjs` 5/5 通过；此前 strip-only 运行限制可用 Node 的 transform-types 选项解决，无需改业务代码。
+- 重新打包完成：`npm run tauri:build:local -- --bundles nsis` 退出码 0，Rust release 20m12s；产物 `src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_repack_20260909_x64-setup.exe`，25,833,968 字节，SHA256 `279CF7748FFC5384916D027EFF7EE6CC7134FDFDFDB1D2C84C4A275109B3F573`。NSIS 脚本确认包含新 Web `index-DKZdhkyd.js`、主程序及三个本轮编译的辅助程序。没有替用户安装或清理数据。
+
+# Web 停服端口残留与终端黑屏复核（2026-09-09）
+
+交付包：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-lifecycle_20260909_x64-setup.exe`，25,830,721 字节；SHA256 `85190FB79490C89A84F0B1DF6180C8D7C35F548C84159C5B2D358DDB7BD5D298`。`npm run tauri:build:local -- --bundles nsis` 成功，release 编译 23m59s，11:41 完成。NSIS 脚本确认主程序、三个新版辅助程序及 `index-NN_A9RLU.js` 入包；保留上次独立命名的 web-reconnect 包。安装前完整退出旧版，安装后网页 Ctrl+F5；本轮无数据迁移，回滚可安装保留的旧包（旧包仍有本次已修问题）。
+
+根因：安装版 `src-tauri/Cargo.lock` 使用 mio 1.1.1，Windows socket 可继承；启动 Web 服务后再生成辅助进程时，子进程保留 socket，主服务线程正常退出后端口仍占用。此前独立 Web 服务的测试使用 mio 1.2.2，已经含禁止继承修复，未覆盖安装版依赖。本次仅将桌面 mio 1.1.1 更新到 1.2.2，并修复启停并发与停止超时管理。终端边界另有单个超大帧不拆分的问题，已在桌面转发源头按字节分片。
+
+发现清单：桌面依赖锁定、WebServerManager/设置状态、终端 bridge/分片 helper、服务端输出校验、daemon/fallback 错误分级、WebTerminal/model/views；Provider、PTY 创建、认证规则及数据库 schema 不变。GitNexus 不可用；memory 刷新报告成功但新增分片符号仍查不到，以源码、依赖源码和实际测试为准。
+
+- Windows 根因先失败后通过：`cargo test --manifest-path src-tauri/Cargo.toml --test web_listener -- --nocapture --test-threads=1`。原依赖两项失败（继承标志 1；线程退出后同端口重绑 10048），更新后两项通过。十轮保留活跃隐藏辅助进程，交替服务先停/设备先断，包含不完整 HTTP 和 WebSocket；每轮原端口可重新绑定，监听、客户端、accepted socket 均不可继承。
+- 服务端 `cargo test --manifest-path apps/server/Cargo.toml --locked`：46 项单测、4 项真实 TCP/WS 集成通过。新增验证超限输出拒收后，同一认证设备连接继续收到心跳 ACK，正常输出继续到达同一认证浏览器。
+- 桌面 Web 相关测试：首次 40 通过/1 失败/1 忽略；失败为既有握手取消测试的两秒等待超时。同一个已编译测试程序单独复跑通过，完整复跑 41 通过/1 既有环境探测忽略，未放宽测试期限。保留这次时序敏感结果，不把首次失败抹去。
+- 浏览器/分片 JS：19 项通过，新增覆盖大于 600 KiB UTF-8/ANSI 字节完全一致、编码批次上限、原始 ACK 仅最终分片提交、密集元数据边界。桌面/Web TypeScript 和两端生产前端构建通过，Web JS 为 `index-NN_A9RLU.js`。
+- 真实 Chrome 渲染：`node scripts/webTerminalRenderer.smoke.mjs --run` 通过。直接挂载生产 WebTerminal 与分片 helper，1,000,025 字节 ANSI/中文/emoji 回放，首次和十次写入中断后切换/卸载重建均显示最终标记（11/11），errors=[]，xterm screen 984×608。截图已检查：`C:/Users/lenovo/AppData/Local/Temp/cli-manager-terminal-smoke-y8gKEB/terminal-smoke.png`。独立浏览器与测试服务已关闭。
+- 生命周期锁、启动就绪、停止超时管理和状态展示经独立只读复核，无阻塞问题。未替换用户正在使用的安装版、未重启真实 Provider 或终端；未在用户真实桌面设置页手动切换语言，新增中英文文案已同步且通过类型/生产构建检查。
+
+# Web 断线恢复验证（2026-09-09）
+
+安装包：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-reconnect_20260909_x64-setup.exe`，25,826,088 字节；SHA256 `B39AFABC5B965F9CDF4006262DD47D5D7EA98AECC2D65B01CCD581A99B6D2271`。`npm run tauri:build:local -- --bundles nsis` 成功，NSIS 脚本第 625/639 行确认最终 Web JS 与新版 Web daemon 入包。主程序及三个辅助程序均为本轮编译。先完整退出旧版，再安装新包并 Ctrl+F5 刷新网页；不需要删除配置、配对或项目数据。回滚可重新安装此前保留的安装包，本轮未新增数据库迁移。
+
+根因与发现清单：浏览器每条历史失效通知触发两次 HTTP 请求且连接依赖选择状态；服务停止没有取消独立 WebSocket 升级任务；设备握手先于超时设置且 Stop 无法关闭连接，旧代次仍能回写状态；旧 daemon 升级认证错误使用新版本号。修复触点为 apps/web 的 useAppModel/webClient/historyRefresh、apps/server 的 state/ws/lib、web-protocol heartbeat、src-tauri 的 web_daemon/commands/web_device。Provider 调用、PTY 进程和认证权限边界不做无关扩展。
+
+- 浏览器回归：15 项通过，含一万次失效通知合并、请求取消、握手失败、旧回调隔离、授权失败停止重试和心跳丢失恢复。
+- 服务端：45 项单测与 3 项真实 TCP/WebSocket 集成测试通过。覆盖升级后未发 hello 的连接、已配对设备同凭据同端口重启 3 次、认证浏览器从 0 回放一万条通知且保留会话正文，以及停服实际关闭 socket。
+- 桌面 Rust：`cargo test --manifest-path src-tauri/Cargo.toml --lib web_ -- --test-threads=1`，39 通过、1 项既有环境探测忽略。包含握手超时、Stop 中断后新代次连接、旧线程状态隔离和旧 1–4 版 daemon 升级认证。
+- 协议：7 项通过；Web 类型检查和生产构建、桌面打包前置 TypeScript/Vite 构建通过。最终 Web 资源为 index-n0V_X8iX.js，包含设备晚于浏览器上线时补发 attach 和过滤历史启动重放。
+- GitNexus 不可用；memory 刷新报告成功但新符号仍无结果，按可能过期处理，以实际源码、契约与上述测试为准。
+- 安装包版本沿用 1.3.9，CHANGELOG 使用 TEMP。未替换用户正在运行的安装版；实际虚拟组网、物理手机和真实 Provider 的长期交互尚未现场验证。此前 invalid terminal frame 的具体帧异常未被单独复现，不能把它宣称为已确认修复。
 
 # 桌面宠物渲染边界验证（2026-09-06）
 
@@ -1177,3 +1237,98 @@
 - `node --test scripts/gitHistory.test.mjs scripts/gitStoreRemote.test.mjs scripts/gitDiffViewerArchitecture.test.mjs`：16 项通过，新增默认收起/点击切换与稳定 Diff 加载器回归检查。
 - Desktop 与 SSH Agent `cargo fmt --check`、`git diff --check`：通过。
 - 当前 Windows 环境无法枚举 WSL distro（`Wsl/EnumerateDistros/Service/E_ACCESSDENIED`），因此 WSL Linux 文件系统和真实 SSH 主机交互未做本机人工冒烟；相关固定 argv、解析、能力协商和路径校验由自动测试与编译覆盖。
+## Web 真实 PTY 终端交付（22:39）
+
+根因陈述：问题位于 Web 展示层与桌面 PTY 的跨边界设计，旧主流程消费结构化 conversation 事件并渲染聊天卡片，不能保证呈现 CLI 的原始 TUI 输出；连接故障另位于内嵌服务启动就绪边界，线程创建即报告 running 且 bind 前已触碰存储。修复落在真实 PTY 传输协议、桌面 bridge、浏览器 xterm 和服务生命周期源头，不在卡片组件或浏览器重试处增加兜底。
+
+发现清单：
+
+- crates/web-protocol、apps/server/src/ws.rs：新增并验证 terminal attach/detach/input/resize/output/status 帧；设备归属、移动 scope、Session ID、输入大小和 resize 范围已覆盖。
+- src-tauri/src/web_daemon.rs、commands/web_device.rs：daemon 与非 daemon 兼容路径均接入有界终端命令队列，local daemon 协议升至 3，旧 1/2 协议升级可回收。
+- src/hooks/useWebDeviceBridge.ts：复用现有 TerminalProcessManager / PtyHostSocket，16ms 合并输出，PTY replay reset 转为 xterm reset；不创建第二套 CLI 进程。
+- apps/web/src/WebTerminal.tsx、views.tsx、useAppModel.ts：主工作区替换为 xterm，按项目启动结果中的 PTY ID attach，输入/resize 双向转发；项目、设备、主机页和登录状态切换时 detach。
+- apps/server/src/lib.rs、commands/web_server.rs：先 bind 再打开存储和更新设备状态，完整初始化后才置 running，失败/20 秒未就绪会回收线程。
+- 历史会话、文件/Git 管理、Provider、主数据库 usage schema：确认不属于真实终端数据面，本轮不扩展修改；既有结构化会话数据仍可保留，但不再由 Web 主界面自动导入或渲染。
+
+验证结果：
+
+- npm run web:typecheck、npm run web:build、npm run build：通过。
+- cargo test --manifest-path crates/web-protocol/Cargo.toml：7/7 通过，含终端帧 serde round-trip。
+- cargo test --manifest-path apps/server/Cargo.toml：45/45 通过，含终端 scope/边界及 bind 失败无数据库副作用。
+- cargo check --manifest-path src-tauri/Cargo.toml：通过；cargo test --manifest-path src-tauri/Cargo.toml --lib web_ 初跑 30/31 通过、1 项环境测试忽略，唯一失败为测试写死 local daemon 旧版本 2；改为跟随 PROTOCOL_VERSION 后聚焦复测通过。
+- node apps/web/src/conversation.test.mjs：10/10 通过；git diff --check 无 whitespace error，仅有仓库现有 CRLF 提示。
+- codebase-memory moderate 索引已刷新；detect_changes(compare master) 因当前长期功能分支相对 master 包含大量既有变化而输出噪声，未报告额外 impacted symbols，最终范围继续以本轮触点 diff、契约和上述构建/测试界定。
+
+交付边界：自动化已覆盖协议、认证范围、服务生命周期、类型和构建；没有替用户安装新包，因此尚未在物理手机和当前真实 Provider 上执行新安装版的键入、Ctrl+C、审批、刷新重连与桌面/Web 同屏人工验收。当前实现交付单个活动 Web 终端；多 PTY 标签列表和多端输入/resize 控制权仲裁留作后续增强。
+
+打包结果：src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_x64-setup.exe，25,819,538 字节，2026-09-08 23:05:07，SHA-256 340503EFC01BFE14D1BFB026B859E6CF62D5D239712C3324DD981CD765B5210C。NSIS installer.nsi 第 637-639 行确认包含 codex proxy、PTY daemon 和 Web daemon；主程序及三个后台 release 二进制均为本轮新编译产物。最终重打包已包含异步项目启动防串上下文与防重复提交检查，打包命令退出码 0。
+
+## Web 终端双端隔离与网卡监听（2026-09-09）
+
+### 根因与发现清单
+
+- 桌面终端空白、灰块和 TUI 错乱的根因位于 PTY 多观察端边界：Web attach 原先复用桌面全局 `PtyHostSocket`，全量 replay/reset 会同时进入桌面 xterm；桌面与 Web 还会按各自 viewport 反复 resize 同一个 ConPTY。
+- Web bridge 现在为每个 Web 终端建立独立 observer 连接，replay、ACK、监听和断开均与桌面连接隔离；detach 只释放 observer，不关闭真实 PTY。输出批次保留逐帧 sequence、尺寸、reset/replay 类型和 replay 结束标记，并串行发布有界批次。
+- PTY 尺寸采用单一所有权：桌面存在活动输出 consumer 时由桌面控制，Web 只按真实帧尺寸镜像；桌面没有 consumer 时 Web 取得 resize 权限。浏览器 xterm 按帧顺序等待 write callback，再执行后续 reset/resize/write，避免异步解析越序。
+- 内嵌 Web 服务监听地址从固定回环扩展为用户可配置的本机网卡 IP，也支持显式 `0.0.0.0` / `::`。具体非回环地址必须属于本机；所有网卡监听必须配置精确 Origin。运行中保存会重启服务，若新监听失败则恢复旧配置与旧监听。
+- HTTP 局域网或虚拟组网访问可以工作，但传输安全依赖组网；HTTPS Origin 自动使用 Secure Cookie。设置页补齐中英文地址、Origin 和网络暴露提示。
+
+### 验证结果
+
+- `npm run web:typecheck`、`npx tsc --noEmit`、`npm run web:build`、`npm run build`：通过；最终打包前置构建分别完成 1764 和 6890 个模块，Web 构建仅有既有 chunk 大小警告。
+- `cargo test --manifest-path crates/web-protocol/Cargo.toml`：7/7 通过。
+- `cargo test --manifest-path apps/server/Cargo.toml`：45/45 通过。
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib web_`：35 项通过、1 项环境探测忽略。
+- `cargo check --manifest-path src-tauri/Cargo.toml`、本轮 Rust 文件 `rustfmt --check`、`git diff --check`：通过；仅有仓库既有 CRLF 转换提示。
+- codebase-memory 已以 moderate 模式刷新；`detect_changes(scope=working)` 因长期功能分支已有 53 个改动文件而噪声较大，未报告额外 impacted symbols，最终以协议构造点检索、聚焦源码复核和上述测试界定影响范围。
+- `npm run tauri:build:local -- --bundles nsis`：退出码 0。安装包为 `src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_x64-setup.exe`，25,830,378 字节，2026-09-09 01:03:38，SHA-256 `78FFA29BF319F43AD3C80F0CF84D1FA3445ED9D2F1AFFB5C7BE70A7E9A2759C5`。
+
+### 未覆盖与现场边界
+
+- 未替用户安装新包，也未在用户真实桌面/Web 双端执行长时间 TUI、浏览器刷新重连、桌面卸载/重新挂载后的尺寸所有权切换人工回归。
+- 未使用真实异地组网设备验证防火墙、虚拟网卡路由、HTTP/HTTPS 证书和 Origin；这些环境项需在安装后按实际网络验证。
+
+## Web 终端关闭按钮与桌面首帧重绘交付（2026-09-09）
+
+### 验证结果
+
+- `npx tsc --noEmit`、`npm run web:build`、`git diff --check`：通过；Web 构建仅保留既有 chunk 体积警告。
+- `npm run tauri:build:local -- --bundles nsis`：退出码 0，前端资源与 Rust 桌面程序均重新编译。
+- 交付安装包：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_terminal-close-first-frame_20260909_x64-setup.exe`。
+- 文件大小：25,861,698 字节；SHA256：`9C5BA611B884A72F08F9770279A091D616DC3EA9AD0C6D54DEDC44058368FAE2`。
+## Web 终端关闭语义修复（2026-09-09）
+
+### 根因与发现清单
+
+- 根因位于 Web 终端生命周期协议：网页关闭原先只发送 `detach`，桌面 bridge 仅释放观察连接，因此真实 PTY 仍继续运行；修复落在协议和桌面 PTY 关闭入口。
+- 已覆盖协议枚举、服务端命令校验、桌面端 Web bridge、浏览器模型关闭入口；`detach` 继续用于页面切换、刷新和断线。
+- 关闭请求调用现有 `TerminalProcessManager.close`，随后清理 Web observer 并发布终止状态；重复关闭和已退出会话保持幂等。
+
+### 验证结果
+
+- `npx tsc --noEmit`：通过。
+- `cargo test --manifest-path crates/web-protocol/Cargo.toml`：7 项通过，含 `close` 帧序列化往返。
+- `cargo test --manifest-path apps/server/Cargo.toml ws::tests:: --lib`：8 项通过。
+- `git diff --check`：通过（仅仓库既有 CRLF 转换提示）。
+- `npm run tauri:build:local -- --bundles nsis`：退出码 0；交付包为 `src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-close_20260909_x64-setup.exe`，25,869,891 字节，SHA256 `2569D3F7C0AAB4AA7E4336A8DA40158DFB97B6B823774AD8D891A30464E1DF20`。
+
+### 后续回归修复
+
+- 现场日志显示旧实现只结束 PTY/观察连接，没有调用桌面 `terminalStore.closeSession`，导致桌面标签状态残留。
+- Web close 现复用 `closeSession`，并在会话仍受保护未关闭时上报错误状态，避免虚报退出。
+- `npx tsc --noEmit`、`node scripts/terminalExitCleanup.test.mjs`、`node scripts/ptyHostSocket.test.mjs`：通过。
+- `npm run tauri:build:local -- --bundles nsis`：退出码 0；修复包为 `src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-close-sync_20260909_x64-setup.exe`，25,872,006 字节，SHA256 `80CE66AD4778007DC1070ADA19DCAEA2682DDE26132CF38E3554F0353D3DDE75`。
+
+## Web 多终端标签与可见性调度（2026-09-10）
+
+### 验证结果
+
+- `npm run web:typecheck`、`npx tsc --noEmit`、`npm run web:build`：通过；仅保留既有前端 chunk 体积警告。
+- `node apps/web/src/terminalStream.test.mjs`：3 项通过，覆盖多会话独立缓冲、渲染游标和清理。
+- `node src/lib/webTerminalFrames.test.mjs`：4 项通过；`node src/lib/webBridgePolling.test.mjs`：5 项通过；`git diff --check`：通过。
+- Chrome 实机冒烟：启动 `cpa` 与 `amazon` 两个真实终端，页面出现两个标签；切换后上下文和可见面板同步，分别关闭后标签归零。
+- NSIS 安装包：`src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-multi-terminal-tabs_20260910_x64-setup.exe`，25,870,506 字节，SHA256 `58D7D2E3BD4C1AE9456531724DFEB4A7E3FE22C89D237621FF7BAAC2FAD3FC19`。
+
+### 发布说明
+
+- 构建最后提示未配置 `TAURI_SIGNING_PRIVATE_KEY`，因此更新签名步骤返回码为 1；NSIS 安装包已正常生成，可直接安装测试。

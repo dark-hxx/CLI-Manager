@@ -1,0 +1,2 @@
+{"file":".trellis/spec/backend/web-service-contracts.md","reason":"按 Web 协议契约核对 ID-only 上下文、脱敏快照和操作状态"}
+{"file":".trellis/spec/backend/app-data-persistence-contracts.md","reason":"核对 SQLite migration、历史快照持久化和兼容性"}

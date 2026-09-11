@@ -552,6 +552,23 @@ npm run tauri dev
 npm run tauri build
 ```
 
+#### Web 管理服务
+
+独立 Web 服务默认监听 `127.0.0.1:8787`，需要时可以通过开发脚本参数、环境变量或数据目录中的 `web-server.toml` 修改监听地址和端口：
+
+安装版也可以直接在“设置 -> 远程连接 -> 本机 Web 服务”中配置管理员密码、监听 IP、端口和允许的访问来源。服务默认采用手动模式，点击“启动服务”后才会运行；只有开启“启动应用时自动启动 Web 服务”后才会随 CLI-Manager 启动。可选择本机局域网或虚拟组网网卡 IP；`0.0.0.0` / `::` 会监听全部网卡并要求填写精确 Origin。HTTP 非回环访问仅适用于受信局域网或加密虚拟组网，公网访问应使用 HTTPS 反向代理。
+
+```powershell
+# 开发模式：前端 5173，服务端 9000
+.\scripts\start-web-dev.ps1 -BackendPort 9000
+
+# 独立服务：命令行优先级最高
+$env:CLI_MANAGER_ADMIN_PASSWORD = "change-me"
+npm run web:server:run -- --bind 0.0.0.0:9000
+```
+
+配置优先级为：命令行 `--bind` / `--port` > `CLI_MANAGER_WEB_BIND` / `CLI_MANAGER_WEB_PORT` > `data/web-server.toml` > 默认值。监听非回环地址时必须同时启用 `CLI_MANAGER_COOKIE_SECURE=true` 并通过 HTTPS 提供服务。
+
 #### 其他常用命令
 
 ```bash

@@ -1,3 +1,4 @@
+import { parseTranscriptLines, type RenderedMessage } from "../../../shared/lib/subagentTranscriptMessages";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
 import { useI18n } from "../../../shared/i18n/index";
@@ -11,12 +12,6 @@ interface Props {
   title?: string;
   /** 面板是否可见（与 XTermTerminal 同条件）；隐藏时不订阅 content、不解析、不滚动。 */
   isVisible: boolean;
-}
-
-interface RenderedMessage {
-  id: number;
-  role: string;
-  text: string;
 }
 
 /** 增量解析缓存：resetSeq 不变且 content 只增长时，仅解析新增后缀。 */
@@ -62,98 +57,6 @@ interface ScrollbarMetrics {
   visible: boolean;
   thumbHeight: number;
   thumbTop: number;
-}
-
-/** 从 Claude transcript 的 message.content（string 或 block 数组）提取可读文本。 */
-function extractText(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const b = block as Record<string, unknown>;
-    const type = typeof b.type === "string" ? b.type : "";
-    if ((type === "text" || type === "output_text" || type === "input_text") && typeof b.text === "string") {
-      parts.push(b.text);
-    } else if (type === "thinking" && typeof b.thinking === "string") {
-      parts.push(`💭 ${b.thinking}`);
-    } else if (type === "tool_use" && typeof b.name === "string") {
-      parts.push(`⚙ 调用工具：${b.name}`);
-    } else if (type === "function_call" && typeof b.name === "string") {
-      const args = typeof b.arguments === "string" && b.arguments.trim() ? `\n${b.arguments}` : "";
-      parts.push(`⚙ 调用工具：${b.name}${args}`);
-    } else if (type === "function_call_output") {
-      const output = typeof b.output === "string" ? b.output : "";
-      parts.push(output ? `↳ 工具结果：${output}` : "↳ 工具结果");
-    } else if (type === "tool_result") {
-      const inner = b.content;
-      const text = typeof inner === "string" ? inner : Array.isArray(inner) ? extractText(inner) : "";
-      parts.push(text ? `↳ 工具结果：${text}` : "↳ 工具结果");
-    }
-  }
-  return parts.join("\n").trim();
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
-
-function parseClaudeTranscriptItem(obj: Record<string, unknown>, id: number): RenderedMessage | null {
-  const type = typeof obj.type === "string" ? obj.type : "";
-  if (type !== "user" && type !== "assistant") return null;
-  const message = asRecord(obj.message);
-  if (!message) return null;
-  const role = typeof message.role === "string" ? message.role : type;
-  const text = extractText(message.content);
-  if (!text) return null;
-  return { id, role, text };
-}
-
-function parseCodexResponseItem(obj: Record<string, unknown>, id: number): RenderedMessage | null {
-  if (obj.type !== "response_item") return null;
-  const payload = asRecord(obj.payload);
-  if (!payload) return null;
-
-  const message = asRecord(payload.message) ?? (payload.type === "message" ? payload : null);
-  if (message) {
-    const role = typeof message.role === "string" ? message.role : "assistant";
-    const text = extractText(message.content);
-    if (!text) return null;
-    return { id, role, text };
-  }
-
-  if (payload.type === "function_call" && typeof payload.name === "string") {
-    const args = typeof payload.arguments === "string" && payload.arguments.trim() ? `\n${payload.arguments}` : "";
-    return { id, role: "tool", text: `⚙ 调用工具：${payload.name}${args}` };
-  }
-
-  if (payload.type === "function_call_output") {
-    const output = typeof payload.output === "string" ? payload.output : "";
-    return { id, role: "tool", text: output ? `↳ 工具结果：${output}` : "↳ 工具结果" };
-  }
-
-  return null;
-}
-
-/** 逐行解析 jsonl 片段为可渲染消息（跳过解析失败行），id 从 firstId 起连续分配。 */
-function parseTranscriptLines(chunk: string, firstId: number): { messages: RenderedMessage[]; nextId: number } {
-  const out: RenderedMessage[] = [];
-  let nextId = firstId;
-  for (const line of chunk.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    let obj: Record<string, unknown>;
-    try {
-      obj = JSON.parse(trimmed) as Record<string, unknown>;
-    } catch {
-      continue;
-    }
-    const message = parseClaudeTranscriptItem(obj, nextId) ?? parseCodexResponseItem(obj, nextId);
-    if (!message) continue;
-    out.push(message);
-    nextId += 1;
-  }
-  return { messages: out, nextId };
 }
 
 /** 全量解析累积的 jsonl 文本（超过 2MB 仅解析尾部并记录诊断日志）。 */
