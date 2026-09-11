@@ -69,6 +69,8 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - `file_search_content` scans supported user-project text encodings within the project root, skips large/binary/undecodable files and common binary extensions, and returns at most one representative match per file with 1-based line numbers and bounded context snippets.
 - `overwrite=false` must return `target_exists` when the destination exists.
 - `overwrite=true` may replace the target after Rust revalidates the destination stays inside root.
+- `file_delete` and `file_move` reject symlink/reparse components in the source relative path before canonicalizing it; otherwise a source link could be dereferenced and its target destructively operated on. The selected project root itself remains canonicalized normally.
+- The frontend skips same-parent moves. Direct same-source commands retain the existing `source_equals_target` rejection. Moving over an ancestor containing the source is rejected before any destination removal.
 
 ### 4. Validation & Error Matrix
 
@@ -86,6 +88,8 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 | Child name contains path separator | `name_contains_separator` |
 | Delete target is root | `cannot_delete_root` |
 | Copy/move directory into itself | `target_inside_source` |
+| Delete/move source has a symlink/reparse component | `path_is_symlink` |
+| Move destination is an ancestor of the source | `target_contains_source` |
 | Destination exists without overwrite | `target_exists` |
 | Text file is too large | `file_too_large` |
 | Text path has a known video extension | `video_preview_unsupported` |

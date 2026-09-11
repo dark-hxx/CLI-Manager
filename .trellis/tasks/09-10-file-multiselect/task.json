@@ -1,0 +1,23 @@
+{
+  "id": "file-multiselect",
+  "name": "file-multiselect",
+  "title": "File explorer Ctrl multi-selection and batch operations",
+  "description": "Port the approved multi-selection feature to the upstream domain layout without changing IPC or persistence.",
+  "status": "in_progress",
+  "priority": "P2",
+  "creator": "Blackwindow6",
+  "assignee": "Blackwindow6",
+  "createdAt": "2026-09-10",
+  "completedAt": null,
+  "branch": "contrib/file-explorer-multiselect",
+  "base_branch": "master",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "meta": {
+    "changelogVersion": "TEMP",
+    "upstreamBase": "bcc7604a9bd8e8b0c10e219c1e04a96e238a83f8",
+    "dispatchMode": "inline"
+  }
+}

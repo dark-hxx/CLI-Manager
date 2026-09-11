@@ -16,6 +16,11 @@ import { translateCurrent } from "../../../shared/i18n/index";
 import { isSameProjectFileContext, isSameProjectFileLocation } from "../../terminal/api/terminalProject";
 import { projectSupportsCapability } from "../../projects/api/projectCapabilities";
 import { activateProjectFileSurface } from "../../git/api/gitDiffWorkspaceStore";
+import { isFileExplorerIgnoreCaseInsensitive } from "../lib/fileExplorerIgnore";
+import {
+  fileActionEntries, fileOperationRootKey, filePathContains, normalizeFileOperationEntries, runFileOperationBatch, selectFileEntries,
+  type FileBatchResult, type FileOperationEntry, type FileOperationMode,
+} from "../lib/fileExplorerOperations";
 import {
   buildSshRemoteFileContext,
   releaseSshRemoteFileContext,
@@ -35,10 +40,12 @@ type DecodedProjectTextFilePayload = ProjectTextFilePayload & {
   guessed: boolean;
 };
 
-interface FileClipboard {
+export interface FileClipboard {
+  id: number;
   mode: ClipboardMode;
-  path: string;
-  name: string;
+  entries: FileOperationEntry[];
+  project: Project;
+  generation: number;
 }
 
 export interface ActiveProjectFile {
@@ -110,6 +117,11 @@ interface FileExplorerStore {
   searchLoading: boolean;
   expandedPaths: Set<string>;
   selectedTreePath: string | null;
+  selectedEntries: FileOperationEntry[];
+  mutationBusy: boolean;
+  selectEntry: (entry: FileOperationEntry, toggle?: boolean) => void;
+  clearSelection: () => void;
+  getActionEntries: (entry: FileOperationEntry) => FileOperationEntry[];
   loading: boolean;
   openFiles: ActiveProjectFile[];
   activeFilePath: string | null;
@@ -144,8 +156,9 @@ interface FileExplorerStore {
   createEntry: (parentPath: string, name: string, kind: FileEntryKind, overwrite: boolean) => Promise<void>;
   renameEntry: (path: string, newName: string, overwrite: boolean) => Promise<void>;
   deleteEntry: (path: string) => Promise<void>;
-  setClipboard: (clipboard: FileClipboard | null) => void;
-  pasteInto: (targetParentPath: string, overwrite: boolean) => Promise<void>;
+  deleteEntries: (entries: FileOperationEntry[], project: Project) => Promise<FileBatchResult>;
+  setClipboard: (clipboard: Pick<FileClipboard, "mode" | "entries"> | null) => void;
+  pasteInto: (targetParentPath: string, overwrite: boolean, snapshot?: FileClipboard) => Promise<FileBatchResult>;
 }
 
 export const DEFAULT_COLLAPSED_DIRECTORY_NAMES = [
@@ -649,6 +662,9 @@ function collectRefreshPaths(
     if (path === ".git" || path.startsWith(".git/")) continue;
     addDirectoryPathWithAncestors(paths, parentPath(path));
   }
+  for (const path of expandedPaths) {
+    if (shouldRefreshOpenFile(path, changedPaths)) addDirectoryPathWithAncestors(paths, path);
+  }
   for (const file of openFiles) {
     if (shouldRefreshOpenFile(file.path, changedPaths)) {
       addDirectoryPathWithAncestors(paths, parentPath(file.path));
@@ -700,6 +716,105 @@ async function waitForRemoteFileContextRelease(context: SshRemoteFileContext): P
   await remoteFileContextReleases.get(remoteFileContextReleaseKey(context));
 }
 
+let fileMutationRevision = 0;
+let fileClipboardSequence = 0;
+let pendingMutationRefresh = false;
+
+// 串行复用单项 IPC；刷新和冲突重试绑定来源快照，成功项不重放，等待期间的新编辑不丢弃。
+async function performFileBatch(
+  project: Project, entries: FileOperationEntry[], mode: FileOperationMode,
+  targetParentPath = "", overwrite = false, clipboard?: FileClipboard,
+): Promise<FileBatchResult> {
+  const store = useFileExplorerStore;
+  const sameRoot = (other: Project | null) => Boolean(other && fileOperationRootKey(other.path) === fileOperationRootKey(project.path));
+  if (project.environment_type === "ssh") throw new Error("remote_project_read_only");
+  if (!isSameProjectFileContext(store.getState().project, project) || !sameRoot(store.getState().project)) throw new Error("file_operation_context_changed");
+  if (store.getState().mutationBusy) throw new Error("file_operation_busy");
+  if (clipboard && clipboard.generation !== openProjectRequestSeq) throw new Error("file_operation_context_changed");
+  const generation = openProjectRequestSeq;
+  const ignoreCase = isFileExplorerIgnoreCaseInsensitive(project.path);
+  const affected = (root: string, path: string) => filePathContains(root, path, ignoreCase);
+  const isCurrent = () => generation === openProjectRequestSeq
+    && isSameProjectFileContext(store.getState().project, project) && sameRoot(store.getState().project);
+  const changedPaths = new Set<string>();
+  fileMutationRevision += 1;
+  store.setState({ mutationBusy: true });
+  try {
+    // Let an older refresh finish without publishing its pre-mutation snapshot.
+    if (refreshVisibleStateInFlight) await refreshVisibleStateInFlight;
+    const result = await runFileOperationBatch({
+      entries, mode, targetParentPath, ignoreCase, shouldContinue: isCurrent,
+      guard: (entry, targetPath) => {
+        const state = store.getState();
+        const files = isCurrent() ? state.openFiles : findEditorWorkspace(state.editorWorkspaces, project)?.openFiles ?? [];
+        for (const file of files) {
+          if (file.content === file.savedContent) continue;
+          if ((mode !== "copy" && affected(entry.path, file.path))
+            || (mode !== "delete" && affected(targetPath, file.path))) {
+            throw new Error(`file_operation_unsaved: ${file.path}`);
+          }
+        }
+      },
+      execute: async (entry) => {
+        if (mode === "delete") {
+          await invoke("file_delete", { rootPath: project.path, relativePath: entry.path });
+        } else {
+          await invoke(mode === "copy" ? "file_copy" : "file_move", {
+            rootPath: project.path, sourcePath: entry.path, targetParentPath, name: entry.name, overwrite,
+          });
+        }
+      },
+      onSuccess: (entry, targetPath) => {
+        fileMutationRevision += 1;
+        // refreshVisibleState accepts changed entries, not parent directories.
+        if (mode !== "copy") changedPaths.add(entry.path);
+        if (mode !== "delete") changedPaths.add(targetPath);
+        // Never throw away a buffer edited while the IPC operation was pending.
+        const keepFile = (file: ActiveProjectFile) => file.content !== file.savedContent
+          || !((mode !== "copy" && affected(entry.path, file.path))
+            || (mode !== "delete" && overwrite && affected(targetPath, file.path)));
+        store.setState((state) => {
+          const workspaces = state.editorWorkspaces.map((workspace) => {
+            if (!isSameProjectFileLocation(workspace.project, project) || !sameRoot(workspace.project)) return workspace;
+            const openFiles = workspace.openFiles.filter(keepFile);
+            return { ...workspace, openFiles, activeFilePath: openFiles.find((file) => file.path === workspace.activeFilePath)?.path ?? openFiles[0]?.path ?? null };
+          });
+          if (!isSameProjectFileLocation(state.project, project) || !sameRoot(state.project)) return { editorWorkspaces: workspaces };
+          const openFiles = state.openFiles.filter(keepFile);
+          const activeFile = openFiles.find((file) => file.path === state.activeFilePath) ?? openFiles[0] ?? null;
+          return {
+            editorWorkspaces: workspaces, openFiles, activeFile, activeFilePath: activeFile?.path ?? null,
+            ...(mode !== "copy" ? {
+              selectedEntries: state.selectedEntries.filter((item) => !affected(entry.path, item.path)),
+              selectedTreePath: state.selectedTreePath && affected(entry.path, state.selectedTreePath) ? null : state.selectedTreePath,
+              expandedPaths: new Set([...state.expandedPaths].filter((path) => !affected(entry.path, path))),
+            } : {}),
+          };
+        });
+      },
+    });
+    const currentClipboard = store.getState().clipboard;
+    if (clipboard?.mode === "move" && currentClipboard?.id === clipboard.id) {
+      const completed = [...result.succeeded, ...result.skipped];
+      const remaining = currentClipboard.entries.filter((entry) => !completed.some((done) => affected(done.path, entry.path)));
+      store.setState({ clipboard: remaining.length ? { ...currentClipboard, entries: remaining } : null });
+    }
+    return result;
+  } finally {
+    store.setState({ mutationBusy: false });
+    const refreshAll = pendingMutationRefresh;
+    pendingMutationRefresh = false;
+    if (isCurrent() || refreshAll) {
+      try {
+        // Watcher events suppressed during a batch require a full visible refresh.
+        await store.getState().refreshVisibleState(!refreshAll && changedPaths.size ? [...changedPaths] : undefined);
+      } catch (error) {
+        logError("Failed to refresh files after batch operation", error);
+      }
+    }
+  }
+}
+
 export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   project: null,
   remoteFileContext: null,
@@ -711,6 +826,11 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   searchLoading: false,
   expandedPaths: new Set([""]),
   selectedTreePath: null,
+  selectedEntries: [],
+  mutationBusy: false,
+  selectEntry: (entry, toggle = false) => set((state) => ({ selectedEntries: selectFileEntries(state.selectedEntries, entry, toggle) })),
+  clearSelection: () => set({ selectedEntries: [] }),
+  getActionEntries: (entry) => fileActionEntries(get().selectedEntries, entry),
   loading: false,
   openFiles: [],
   activeFilePath: null,
@@ -764,6 +884,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       searchLoading: false,
       expandedPaths: new Set([""]),
       selectedTreePath: null,
+      selectedEntries: [],
       openFiles,
       activeFilePath: activeFile?.path ?? null,
       activeFile,
@@ -826,6 +947,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       searchLoading: false,
       expandedPaths: new Set([""]),
       selectedTreePath: null,
+      selectedEntries: [],
       openFiles: [],
       activeFilePath: null,
       activeFile: null,
@@ -903,6 +1025,11 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   refreshVisibleStateOnce: async (changedPaths, options) => {
     const state = get();
+    if (state.mutationBusy) {
+      pendingMutationRefresh = true;
+      return;
+    }
+    const mutationRevision = fileMutationRevision;
     const project = state.project;
     if (!project) return;
 
@@ -982,14 +1109,22 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       if (
         !isSameProjectFileContext(currentState.project, project)
         || currentState.remoteFileContext?.consumerId !== remoteFileContext?.consumerId
+        || currentState.mutationBusy || mutationRevision !== fileMutationRevision
       ) {
         return;
       }
 
-      const activeFile = nextOpenFiles.find((file) => file.path === get().activeFilePath) ?? nextOpenFiles[0] ?? null;
+      const refreshedByPath = new Map(nextOpenFiles.map((file) => [file.path, file]));
+      const originalByPath = new Map(openFiles.map((file) => [file.path, file]));
+      const mergedOpenFiles = currentState.openFiles.flatMap((file) => {
+        if (file !== originalByPath.get(file.path)) return [file];
+        const refreshed = refreshedByPath.get(file.path);
+        return refreshed ? [refreshed] : [];
+      });
+      const activeFile = mergedOpenFiles.find((file) => file.path === get().activeFilePath) ?? mergedOpenFiles[0] ?? null;
       set({
         tree: nextTree,
-        openFiles: nextOpenFiles,
+        openFiles: mergedOpenFiles,
         activeFilePath: activeFile?.path ?? null,
         activeFile,
       });
@@ -1085,6 +1220,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   },
 
   setSearchMode: (mode) => {
+    if (get().searchMode !== mode) get().clearSelection();
     if (searchDebounceTimer) {
       clearTimeout(searchDebounceTimer);
       searchDebounceTimer = null;
@@ -1101,6 +1237,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   },
 
   setSearchQuery: async (query) => {
+    if (get().searchQuery !== query) get().clearSelection();
     const project = get().project;
     const mode = get().searchMode;
     const requestSeq = searchRequestSeq + 1;
@@ -1288,6 +1425,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         ...directoryPathsToExpand,
       ]),
       selectedTreePath: target.path,
+      selectedEntries: [target],
       searchQuery: "",
       searchResults: [],
       contentSearchResults: [],
@@ -1397,6 +1535,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   },
 
   createEntry: async (parent, name, kind, overwrite) => {
+    if (get().mutationBusy) throw new Error("file_operation_busy");
     const project = get().project;
     if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
@@ -1408,6 +1547,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   },
 
   renameEntry: async (path, newName, overwrite) => {
+    if (get().mutationBusy) throw new Error("file_operation_busy");
     const project = get().project;
     if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
@@ -1427,54 +1567,31 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   deleteEntry: async (path) => {
     const project = get().project;
-    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     if (!project) return;
-    await invoke("file_delete", { rootPath: project.path, relativePath: path });
-    await get().loadDir(parentPath(path));
-    await get().refreshGitChanges();
-    const openFiles = get().openFiles.filter((file) => !isSameOrChildPath(file.path, path));
-    const activeFile = openFiles.find((file) => file.path === get().activeFilePath) ?? openFiles[0] ?? null;
-    set({ openFiles, activeFilePath: activeFile?.path ?? null, activeFile });
-    if (get().searchQuery.trim()) await get().setSearchQuery(get().searchQuery);
+    const result = await get().deleteEntries([{ path, name: basename(path), kind: "file" }], project);
+    if (result.failures.length) throw new Error(result.failures[0].error);
   },
 
-  setClipboard: (clipboard) => set({ clipboard }),
+  deleteEntries: (entries, project) => performFileBatch(project, entries, "delete"),
 
-  pasteInto: async (targetParentPath, overwrite) => {
+  setClipboard: (clipboard) => {
     const project = get().project;
-    if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
-    const clipboard = get().clipboard;
-    if (!project || !clipboard) return;
-    const command = clipboard.mode === "copy" ? "file_copy" : "file_move";
-    await invoke(command, {
-      rootPath: project.path,
-      sourcePath: clipboard.path,
-      targetParentPath,
-      name: clipboard.name,
-      overwrite,
-    });
-    const refreshPaths = clipboard.mode === "move"
-      ? [targetParentPath, parentPath(clipboard.path)]
-      : [targetParentPath];
-    const uniqueRefreshPaths = Array.from(new Set(refreshPaths)).sort((a, b) => pathDepth(a) - pathDepth(b));
-    const refreshedDirs = await Promise.all(uniqueRefreshPaths.map(async (path) => ({
-      path,
-      children: await listDir(project.path, path),
-    })));
-    set((state) => ({
-      tree: refreshedDirs.reduce(
-        (tree, dir) => replaceChildrenKeepingLoadedSubtrees(tree, dir.path, dir.children),
-        state.tree
-      ),
-    }));
-    await get().refreshGitChanges();
-    if (clipboard.mode === "move") {
-      const openFiles = get().openFiles.filter((file) => !isSameOrChildPath(file.path, clipboard.path));
-      const activeFile = openFiles.find((file) => file.path === get().activeFilePath) ?? openFiles[0] ?? null;
-      set({ openFiles, activeFilePath: activeFile?.path ?? null, activeFile });
+    if (!clipboard || !project || project.environment_type === "ssh") {
       set({ clipboard: null });
+      return;
     }
-    if (get().searchQuery.trim()) await get().setSearchQuery(get().searchQuery);
+    set({ clipboard: {
+      ...clipboard,
+      id: ++fileClipboardSequence,
+      entries: normalizeFileOperationEntries(clipboard.entries, isFileExplorerIgnoreCaseInsensitive(project.path)),
+      project: { ...project }, generation: openProjectRequestSeq,
+    } });
+  },
+
+  pasteInto: async (targetParentPath, overwrite, snapshot) => {
+    const clipboard = snapshot ?? get().clipboard;
+    if (!clipboard) return { succeeded: [], skipped: [], failures: [], conflicts: [] };
+    return performFileBatch(clipboard.project, clipboard.entries, clipboard.mode, targetParentPath, overwrite, clipboard);
   },
 }));
 
