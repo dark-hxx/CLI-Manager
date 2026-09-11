@@ -318,7 +318,10 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
 .web-terminal-frame { position: absolute; inset: 0; min-height: 0; display: flex; visibility: hidden; pointer-events: none; }
 .web-terminal-frame.active { visibility: visible; pointer-events: auto; }
 .web-terminal-frame > .web-terminal { min-width: 0; flex: 1; }
-.web-terminal { position: relative; min-width: 0; min-height: 0; flex: 1; overflow-x: auto; overflow-y: hidden; touch-action: pan-y; padding: 6px 4px 4px 8px; background: #0b0d10; }
+.web-terminal { position: relative; min-width: 0; min-height: 0; flex: 1; overflow: auto; touch-action: pan-y; padding: 6px 4px 4px 8px; background: #0b0d10; }
+.web-terminal[data-vertical-overflow="true"] { touch-action: none; }
+.terminal-image-status { position: absolute; z-index: 19; left: 8px; bottom: 58px; max-width: calc(100% - 70px); padding: 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; }
+.terminal-image-status button { margin-left: 8px; }
 .web-terminal-display-area { flex: none; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
 .web-terminal-display { position: absolute; top: 6px; right: 20px; z-index: 5; font-size: 12px; color: #edf1f5; }
 .web-terminal-display summary { cursor: pointer; padding: 6px 10px; border: 1px solid #48515c; border-radius: 8px; background: #171b20eb; }
@@ -580,7 +583,10 @@ button.web-tree-chevron:hover { background: color-mix(in srgb, var(--border) 75%
   .terminal-workspace > .source-banner { display: none; }
   .web-terminal-shell { flex-direction: column; }
   .web-terminal-display-area { flex-shrink: 1; }
-  .mobile-terminal-image-picker { display: none; }
+  .mobile-terminal-image-button { position: relative; display: grid; place-items: center; flex: 0 0 44px; min-height: 44px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); overflow: hidden; }
+  .mobile-terminal-image-button:has(input:disabled) { opacity: .45; }
+  .mobile-terminal-image-button:focus-within { outline: 2px solid var(--primary); }
+  .mobile-terminal-image-picker { display: block; position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
   .mobile-terminal-input { display: flex; flex-direction: column; flex: none; gap: 4px; padding: 4px; color: var(--text); background: var(--surface); border-top: 1px solid var(--border); max-height: 65%; overflow: auto; }
   .mobile-terminal-input button { min-width: 36px; min-height: 36px; padding: 4px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: inherit; font-size: 12px; }
   .mobile-terminal-input button:disabled { opacity: .45; }

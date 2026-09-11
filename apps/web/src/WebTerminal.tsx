@@ -23,7 +23,7 @@ type WebTerminalProps = {
   t?: (key: TranslationKey) => string;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
-  onImageUpload: (file: File) => void;
+  onImageUpload: (file: File) => Promise<void>;
   onMobileToolbarCollapsed?: (collapsed: boolean) => void;
 };
 
@@ -95,6 +95,24 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   };
   const [renderFailed, setRenderFailed] = useState(false);
   const [scrolledAway, setScrolledAway] = useState(false);
+  const [outerScrolledAway, setOuterScrolledAway] = useState(false);
+  const [imageStatus, setImageStatus] = useState<"sending" | "submitted" | "failed" | null>(null);
+  const imageSending = useRef(false);
+  const uploadImage = async (file: File) => {
+    if (!enabledRef.current || imageSending.current) return;
+    imageSending.current = true;
+    setImageStatus("sending");
+    try {
+      await onImageUpload(file);
+      setImageStatus("submitted");
+    } catch {
+      setImageStatus("failed");
+    } finally {
+      imageSending.current = false;
+    }
+  };
+  const uploadRef = useRef(uploadImage);
+  uploadRef.current = uploadImage;
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const inputRef = useRef(onInput);
@@ -334,6 +352,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       const prefs = displayRef.current;
       const layout = `${availableWidth}:${availableHeight}:${terminal.cols}:${terminal.rows}:${window.devicePixelRatio}:${prefs.mode}:${prefs.fontSize}`;
       if (layout === lastDesktopLayout) return;
+      const followBottom = container.scrollHeight - container.clientHeight - container.scrollTop <= 1;
       terminal.options.fontSize = prefs.fontSize;
       const widthLimit = Math.max(1, availableWidth - 16);
       if (prefs.mode !== "manual") {
@@ -348,6 +367,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       }
       element.style.width = `${screen.offsetWidth + 16}px`;
       element.style.height = `${screen.offsetHeight}px`;
+      container.dataset.verticalOverflow = String(screen.offsetHeight > availableHeight);
+      if (followBottom) container.scrollTop = container.scrollHeight;
+      setOuterScrolledAway(container.scrollHeight - container.clientHeight - container.scrollTop > 1);
       lastDesktopLayout = layout;
     };
     let lastReportedSize = "";
@@ -371,7 +393,16 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     observer.observe(container);
     if (shellRef.current) observer.observe(shellRef.current);
     const zoom = (event: WheelEvent) => {
-      if (!event.ctrlKey) return;
+      if (!event.ctrlKey) {
+        if (container.dataset.verticalOverflow !== "true" || !event.deltaY || event.shiftKey) return;
+        const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? container.clientHeight : 1);
+        const before = container.scrollTop;
+        container.scrollTop += delta;
+        if (container.scrollTop === before) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       updateDisplay({ mode: "manual", fontSize: displayRef.current.fontSize + (event.deltaY < 0 ? 1 : -1) });
@@ -417,11 +448,11 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       if (!image) return;
       event.preventDefault();
       event.stopPropagation();
-      onImageUpload(image);
+      void uploadRef.current(image);
     };
     container.addEventListener("paste", onPaste, true);
     return () => container.removeEventListener("paste", onPaste, true);
-  }, [onImageUpload]);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -430,11 +461,15 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     let startY = 0;
     let startScrollLeft = 0;
     let horizontal = false;
+    let previousY = 0;
+    let pendingLines = 0;
     const onTouchStart = (event: TouchEvent) => {
       const touch = event.touches[0];
       if (!touch) return;
       startX = touch.clientX;
       startY = touch.clientY;
+      previousY = touch.clientY;
+      pendingLines = 0;
       startScrollLeft = container.scrollLeft;
       horizontal = false;
     };
@@ -444,6 +479,22 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       const dx = touch.clientX - startX;
       const dy = touch.clientY - startY;
       if (!horizontal && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.15) horizontal = true;
+      if (!horizontal && container.dataset.verticalOverflow === "true" && Math.abs(dy) > 8) {
+        event.preventDefault();
+        event.stopPropagation();
+        const delta = previousY - touch.clientY;
+        previousY = touch.clientY;
+        const before = container.scrollTop;
+        container.scrollTop += delta;
+        const terminal = terminalRef.current;
+        if (terminal) {
+          const rowHeight = (container.querySelector<HTMLElement>(".xterm-screen")?.offsetHeight ?? 0) / terminal.rows || 16;
+          pendingLines += (delta - (container.scrollTop - before)) / rowHeight;
+          const lines = Math.trunc(pendingLines);
+          if (lines) { terminal.scrollLines(lines); pendingLines -= lines; }
+        }
+        return;
+      }
       if (!horizontal || container.scrollWidth <= container.clientWidth) return;
       event.preventDefault();
       event.stopPropagation();
@@ -506,14 +557,23 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       </div>
     </details>
     <div className="web-terminal-display-area" style={{ width: `${display.width}%`, height: `${display.height}%` }}>
-      <div className="web-terminal" ref={containerRef} data-status={status} />
+      <div className="web-terminal" ref={containerRef} data-status={status}
+        onScroll={(event) => { const host = event.currentTarget; setOuterScrolledAway(host.scrollHeight - host.clientHeight - host.scrollTop > 1); }} />
     </div>
     <MobileTerminalInput enabled={active && status === "running"} t={t}
       onFocus={() => { if (enabledRef.current) terminalRef.current?.focus(); }}
       onPaste={(text) => { if (enabledRef.current) terminalRef.current?.paste(text); }}
       onKey={(key) => { if (enabledRef.current) inputRef.current(key); }}
-      onImageUpload={onImageUpload}
+      onImageUpload={(file) => { void uploadImage(file); }}
       onCollapsedChange={onMobileToolbarCollapsed} />
-    {active && scrolledAway && <button className="web-terminal-scroll-bottom" type="button" onClick={() => terminalRef.current?.scrollToBottom()} aria-label={scrollLabel} title={scrollLabel}><ArrowDown size={16} aria-hidden="true" /></button>}
+    {active && imageStatus && <div className="terminal-image-status" role={imageStatus === "failed" ? "alert" : "status"}>
+      {t(imageStatus === "sending" ? "terminalImageSending" : imageStatus === "submitted" ? "terminalImageSubmitted" : "terminalImageFailed")}
+      {imageStatus !== "sending" && <button type="button" onClick={() => setImageStatus(null)}>{t("close")}</button>}
+    </div>}
+    {active && (scrolledAway || outerScrolledAway) && <button className="web-terminal-scroll-bottom" type="button" onClick={() => {
+      terminalRef.current?.scrollToBottom();
+      const host = containerRef.current;
+      if (host) host.scrollTop = host.scrollHeight;
+    }} aria-label={scrollLabel} title={scrollLabel}><ArrowDown size={16} aria-hidden="true" /></button>}
   </div>;
 }

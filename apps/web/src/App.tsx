@@ -120,7 +120,7 @@ export function App() {
       onTheme={cycleTheme}
       onLanguage={cycleLanguage}
       onLogout={() => void model.logout()}
-      onBackToHosts={() => { model.closeTerminal(); setPage("hosts"); }}
+      onBackToHosts={() => setPage("hosts")}
       onRefresh={() => void model.loadWorkspace()}
       onSelectDevice={model.selectDevice}
       onSelectSession={model.selectSession}
@@ -133,7 +133,7 @@ export function App() {
       onClaimPairing={model.claimPairing}
       onResetPairing={() => model.setPairing({ status: "idle" })}
       onSubmitManagement={model.submitManagementOperation}
-      onSubmitTerminalImage={(sessionId, file) => { void model.submitTerminalImage(sessionId, file); }}
+      onSubmitTerminalImage={model.submitTerminalImage}
     />
   );
 }

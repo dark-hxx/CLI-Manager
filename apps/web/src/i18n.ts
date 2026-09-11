@@ -4,6 +4,9 @@ export type ResolvedLanguage = Exclude<LanguageMode, "auto">;
 const dictionary = {
   "zh-CN": {
     mobileToolbarExpand: "展开操作栏", mobileToolbarCollapse: "收起操作栏", mobileUploadImage: "上传图片",
+    terminalImageSending: "正在处理并提交图片…",
+    terminalImageSubmitted: "图片已提交到主机，请查看终端结果。",
+    terminalImageFailed: "图片未能提交，请确认连接正常，或选择较小的 JPG/PNG 图片重试。",
     mobileDirections: "方向",
     mobileKeyboard: "打开键盘", mobileFallback: "备用输入", mobileInput: "终端备用输入", mobileInputHint: "发送仅粘贴文本，换行和 Tab 转为空格，其他控制字符移除；按 Enter 执行。草稿不保存。", mobileSend: "发送文本", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C", mobileArrowLeft: "左方向键", mobileArrowUp: "上方向键", mobileArrowDown: "下方向键", mobileArrowRight: "右方向键",
     terminalDisplay: "显示设置",
@@ -346,6 +349,9 @@ const dictionary = {
   },
   "en-US": {
     mobileToolbarExpand: "Show controls", mobileToolbarCollapse: "Hide controls", mobileUploadImage: "Upload image",
+    terminalImageSending: "Processing and submitting image…",
+    terminalImageSubmitted: "Image submitted to the host. Check the terminal for the result.",
+    terminalImageFailed: "Image could not be submitted. Check the connection or try a smaller JPG/PNG image.",
     mobileDirections: "Arrows",
     mobileKeyboard: "Keyboard", mobileFallback: "Fallback input", mobileInput: "Terminal fallback input", mobileInputHint: "Send pastes text only: newlines and tabs become spaces; other control characters are removed. Press Enter to execute. Drafts are not saved.", mobileSend: "Send text", mobileEnter: "Enter", mobileTab: "Tab", mobileEscape: "Esc", mobileInterrupt: "Ctrl+C", mobileArrowLeft: "Left arrow", mobileArrowUp: "Up arrow", mobileArrowDown: "Down arrow", mobileArrowRight: "Right arrow",
     terminalDisplay: "Display settings",

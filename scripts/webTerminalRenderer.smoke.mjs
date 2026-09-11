@@ -15,6 +15,7 @@ import { Terminal } from '@xterm/xterm';
 import { WebTerminal } from '/apps/web/src/WebTerminal.tsx';
 import { translate } from '/apps/web/src/i18n.ts';
 import { useAppModel } from '/apps/web/src/useAppModel.ts';
+import { App } from '/apps/web/src/App.tsx';
 import { webClient } from '/apps/web/src/webClient.ts';
 import { createTerminalStream } from '/apps/web/src/terminalStream.ts';
 import { batchWebTerminalFrames } from '/src/lib/webTerminalFrames.ts';
@@ -125,6 +126,30 @@ async function run() {
     await waitFor(() => appModel.workspace?.subagents?.[0]?.content === 'real child transcript', 'Workspace event lost subagent transcript');
     check(historyCalls === beforePush, 'Workspace event triggered a full history fetch');
     check(sentCommands.some(entry => entry.command.type === 'attach' && entry.command.sessionId === 'parent'), 'Workspace inventory did not attach new terminal');
+    const commandsBeforeReselect = sentCommands.length;
+    flushSync(() => appModel.selectDevice('device'));
+    check(appModel.terminalTabs.length === 1 && sentCommands.length === commandsBeforeReselect, 'Same-device navigation detached existing sessions');
+    const uploaded = [];
+    webClient.createOperation = async input => { uploaded.push(input); return { operation: { id: 'image-op', ...input, status: 'succeeded', createdAt: 1, updatedAt: 1 } }; };
+    const png = new File([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC1sAAAAASUVORK5CYII='), c => c.charCodeAt(0))], 'photo.png', { type: 'image/png' });
+    await appModel.submitTerminalImage('parent', png);
+    check(uploaded.at(-1)?.kind === 'terminal.attach_image' && uploaded.at(-1).payload.sessionId === 'parent', 'Image missed real terminal operation entry');
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1800;
+    const context = canvas.getContext('2d');
+    const noise = context.createImageData(1800, 1800);
+    for (let i = 0; i < noise.data.length; i += 4) { noise.data[i] = (i * 73) % 251; noise.data[i + 1] = (i * 31) % 253; noise.data[i + 2] = (i * 17) % 255; noise.data[i + 3] = 255; }
+    context.putImageData(noise, 0, 0);
+    const bigBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    const savedBitmap = window.createImageBitmap;
+    window.createImageBitmap = undefined;
+    try { await appModel.submitTerminalImage('parent', new File([bigBlob], 'phone.png', { type: '' })); }
+    finally { window.createImageBitmap = savedBitmap; }
+    check(atob(uploaded.at(-1).payload.dataBase64).length <= 180000 && uploaded.at(-1).payload.fileName === 'web-image.jpg', 'Phone conversion exceeds transport ceiling or requires ImageBitmap');
+    const uploadedBeforeInvalid = uploaded.length;
+    let invalidRejected = false;
+    try { await appModel.submitTerminalImage('parent', new File(['invalid'], 'photo.heic', { type: 'image/heic' })); } catch { invalidRejected = true; }
+    check(invalidRejected && uploaded.length === uploadedBeforeInvalid, 'Undecodable image was silently submitted');
+    result.imagePipeline = { smallPng: true, phoneConversionWithoutImageBitmap: true, boundedPayload: true, unsupportedRejected: true };
     delayHistory = true;
     hookSocket.receive({ type: 'event', sequence: 2, payload: { type: 'history.updated', deviceId: 'device', latestUpdatedAt: 2 } });
     await waitFor(() => releaseHistory, 'History invalidation stopped refreshing history');
@@ -136,6 +161,30 @@ async function run() {
     await pause(150);
     check(appModel.workspace.updatedAt === 3 && appModel.workspace.terminals.length === 0, 'Delayed old HTTP snapshot overwrote a newer workspace push');
     result.workspacePush = { noHistoryFetch: true, subagentsPreserved: true, terminalAttachDetach: true, staleHttpIgnored: true };
+    // Drive the real App back arrow and host card with two live tabs.
+    flushSync(() => root.render(null));
+    webClient.browserSessions = async () => ({ sessions: [] });
+    webClient.devices = async () => ({ devices: [{ id: 'device', name: 'Device', status: 'online', capabilities: [], lastSeenAt: null }] });
+    webClient.history = async () => ({ items: [], workspace: { ...nextWorkspace, subagents: [], terminals: [{ sessionId: 'first', projectId: 'project', title: 'First' }, { sessionId: 'second', projectId: 'project', title: 'Second' }] } });
+    flushSync(() => root.render(React.createElement(App)));
+    await waitFor(() => document.querySelector('.host-card'), 'App host list did not render');
+    hookSocket.onopen?.(); hookSocket.receive({ type: 'ready', latestSequence: 0 });
+    document.querySelector('.host-card').click();
+    await waitFor(() => document.querySelectorAll('.terminal-tab').length === 2, 'App did not display both terminal tabs');
+    document.querySelectorAll('.terminal-tab > button:first-child')[1].click();
+    await pause(50);
+    const selectedTab = document.querySelector('.terminal-tab.active')?.textContent;
+    const closesBeforeBack = sentCommands.filter(entry => entry.command?.type === 'close').length;
+    document.querySelector('.mobile-header [aria-label="Back to hosts"], .mobile-header [aria-label="返回主机列表"]').click();
+    await waitFor(() => document.querySelector('.host-card'), 'Back arrow did not return to hosts');
+    document.querySelector('.host-card').click();
+    await waitFor(() => document.querySelectorAll('.terminal-tab').length === 2, 'Returning to device lost tabs');
+    check(sentCommands.filter(entry => entry.command?.type === 'close').length === closesBeforeBack, 'Back navigation sent close');
+    check(document.querySelector('.terminal-tab.active')?.textContent === selectedTab, 'Back navigation changed selected tab');
+    document.querySelector('.terminal-tab.active .terminal-tab-close').click();
+    await pause(50);
+    check(document.querySelectorAll('.terminal-tab').length === 1 && sentCommands.filter(entry => entry.command?.type === 'close').length === closesBeforeBack + 1, 'Tab X did not close exactly one session');
+    result.backNavigation = { twoTabsPreserved: true, selectionPreserved: true, noCloseOnBack: true, explicitCloseOnly: true };
   } finally {
     flushSync(() => root.render(null));
     window.WebSocket = savedWebSocket;
@@ -540,19 +589,73 @@ async function run() {
     elapsedMs: Math.round(performance.now() - startedAt),
   };
   // Exercise the actual mobile controls, including IME and disconnected gating.
+  result.mobileViewportRequested = true;
+  while (!result.mobileViewportReady) await pause(50);
+  document.getElementById('root').style.width = '390px';
+  document.getElementById('root').style.height = '500px';
   const savedMatchMedia = window.matchMedia;
   window.matchMedia = query => query === '(pointer: coarse), (max-width: 767px)'
     ? { matches: true } : savedMatchMedia.call(window, query);
   try {
     terminal()?.blur();
     const mobileId = 'mobile-input';
+    let rejectImage = false;
     const renderMobile = (status = 'running', active = true) => flushSync(() => root.render(React.createElement(WebTerminal, {
       sessionId: mobileId, active, status, stream, controlMode: 'desktop', theme: 'dark',
       t: key => translate('en-US', key), errorLabel: 'error', scrollLabel: 'bottom',
       onInput: data => (result.mobileSent ??= []).push(data), onResize() {},
+      onImageUpload: async file => { if (rejectImage) throw new Error('test-upload-failure'); (result.mobileImages ??= []).push(file.name); },
     })));
     renderMobile();
     await pause(80);
+    await change('select[data-display-mode]', 'manual');
+    await change('input[data-display-font]', 24);
+    const mobileHost = document.querySelector('.web-terminal');
+    check(getComputedStyle(mobileHost).overflowY === 'auto' && mobileHost.scrollHeight > mobileHost.clientHeight, 'Manual phone grid cannot scroll vertically');
+    check(mobileHost.scrollHeight - mobileHost.clientHeight - mobileHost.scrollTop <= 1, 'Manual font change lost bottom anchoring');
+    mobileHost.scrollTop = 0;
+    await pause(50);
+    document.querySelector('.web-terminal-scroll-bottom').click();
+    await pause(50);
+    check(document.querySelector('.xterm-screen').getBoundingClientRect().bottom <= mobileHost.getBoundingClientRect().bottom + 1, 'Bottom button leaves input row clipped');
+    const touch = (type, x, y) => {
+      const target = document.querySelector('.xterm-screen');
+      const point = new Touch({ identifier: 1, target, clientX: x, clientY: y, pageX: x, pageY: y });
+      const touches = type === 'touchend' ? [] : [point];
+      target.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches: [point] }));
+    };
+    mobileHost.scrollTop = 0;
+    touch('touchstart', 180, 240); touch('touchmove', 180, 100); touch('touchend', 180, 100);
+    check(mobileHost.scrollTop > 0, 'Vertical touch cannot reveal oversized phone grid');
+    mobileHost.scrollLeft = 0;
+    touch('touchstart', 280, 180); touch('touchmove', 60, 180); touch('touchend', 60, 180);
+    check(mobileHost.scrollLeft > 0, 'Horizontal touch regressed');
+    document.getElementById('root').style.height = '250px';
+    await pause(120);
+    document.querySelector('.web-terminal-scroll-bottom')?.click();
+    await pause(50);
+    check(document.querySelector('.xterm-screen').getBoundingClientRect().bottom <= mobileHost.getBoundingClientRect().bottom + 1, 'Keyboard-height pane cannot reach last row');
+    document.getElementById('root').style.height = '500px';
+    control('button[data-display-reset]').click();
+    await pause(100);
+    const picker = document.querySelector('input[type=file]');
+    const pickerRect = picker.getBoundingClientRect();
+    check(pickerRect.width >= 36 && pickerRect.height >= 36 && getComputedStyle(picker).display !== 'none', 'Phone picker has no native hit area');
+    check(document.elementFromPoint(pickerRect.x + pickerRect.width / 2, pickerRect.y + pickerRect.height / 2) === picker, 'Phone upload icon does not directly hit file input');
+    result.pickerRequest = { x: pickerRect.x + pickerRect.width / 2, y: pickerRect.y + pickerRect.height / 2 };
+    while (!result.pickerChecked) await pause(50);
+    check(result.pickerOpened, 'Trusted click did not open native file chooser');
+    const selectImage = () => {
+      const transfer = new DataTransfer(); transfer.items.add(new File(['image'], 'phone.png', { type: 'image/png' }));
+      Object.defineProperty(picker, 'files', { configurable: true, value: transfer.files });
+      picker.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    selectImage(); await pause(50);
+    check(result.mobileImages?.length === 1 && document.querySelector('.terminal-image-status')?.textContent.includes('submitted'), 'Image selection lacks success feedback');
+    rejectImage = true; selectImage(); await pause(50);
+    check(document.querySelector('.terminal-image-status[role=alert]')?.textContent.includes('could not'), 'Upload failure is silent');
+    document.querySelector('.terminal-image-status button').click();
+    result.mobileGeometryAndPicker = { twoAxisTouch: true, bottomReachable: true, keyboardHeight: true, nativeChooser: true, imageSuccessAndFailure: true };
     check(!document.activeElement?.classList.contains('xterm-helper-textarea'), 'Mobile mount automatically opened keyboard');
     const button = text => Array.from(document.querySelectorAll('.mobile-terminal-input button')).find(node => node.textContent === text);
     button('Keyboard').click();
@@ -577,7 +680,9 @@ async function run() {
     check(result.mobileSent?.join('') === '中文输入 第二行 测试', 'Fallback paste lost CJK text or transmitted control characters');
     button('Enter').click();
     check(result.mobileSent.at(-1) === '\\r', 'Explicit Enter did not use terminal input channel');
-    const arrowButtons = label => Array.from(document.querySelectorAll('.mobile-terminal-input button')).find(node => node.getAttribute('aria-label') === label);
+    button('Arrows').click();
+    await pause(30);
+    const arrowButtons = label => Array.from(document.querySelectorAll('.mobile-direction-pad button')).find(node => node.getAttribute('aria-label') === label);
     arrowButtons('Left arrow').click(); arrowButtons('Up arrow').click(); arrowButtons('Down arrow').click(); arrowButtons('Right arrow').click();
     check(result.mobileSent.slice(-4).join('') === '\\x1b[D\\x1b[A\\x1b[B\\x1b[C', 'Mobile direction buttons did not send standard terminal key sequences');
     await fill('保留草稿');
@@ -615,7 +720,7 @@ run().catch(error => { result.errors.push(String(error)); result.status = 'faile
 const server = await createServer({
   root: fileURLToPath(new URL("../", import.meta.url)),
   configFile: false,
-  optimizeDeps: { noDiscovery: true, include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client", "@xterm/xterm", "@xterm/addon-fit"] },
+  optimizeDeps: { noDiscovery: true, include: ["react", "react/jsx-runtime", "react/jsx-dev-runtime", "react-dom", "react-dom/client", "@xterm/xterm", "@xterm/addon-fit", "react-markdown", "remark-gfm"] },
   esbuild: { jsx: "automatic" },
   plugins: [{
     name: "isolated-terminal-renderer-smoke",
@@ -665,6 +770,7 @@ if (process.argv.includes("--run")) {
       ws.onclose = () => { clearTimeout(timeout); reject(new Error("Chrome closed before connection: " + browserLog)); };
     });
     let id = 0;
+    let fileChooserOpened = false;
     const pending = new Map();
     ws.onclose = () => {
       for (const request of pending.values()) request.reject(new Error("Chrome debugging connection closed"));
@@ -672,6 +778,7 @@ if (process.argv.includes("--run")) {
     };
     ws.onmessage = event => {
       const response = JSON.parse(event.data);
+      if (response.method === "Page.fileChooserOpened") fileChooserOpened = true;
       if (response.method === "Runtime.exceptionThrown") console.error(JSON.stringify({ browserException: response.params.exceptionDetails }));
       const request = pending.get(response.id);
       if (!request) return;
@@ -702,6 +809,19 @@ if (process.argv.includes("--run")) {
     while (Date.now() < deadline) {
       const response = await call("Runtime.evaluate", { expression: "window.terminalSmoke", returnByValue: true }, sessionId);
       result = response.result.value;
+      if (result?.mobileViewportRequested && !result.mobileViewportReady) {
+        await call("Emulation.setDeviceMetricsOverride", { width: 390, height: 700, deviceScaleFactor: 1, mobile: false }, sessionId);
+        await call("Emulation.setTouchEmulationEnabled", { enabled: true }, sessionId);
+        await call("Runtime.evaluate", { expression: "window.terminalSmoke.mobileViewportReady = true" }, sessionId);
+      }
+      if (result?.pickerRequest && !result.pickerChecked) {
+        await call("Page.enable", {}, sessionId);
+        await call("Page.setInterceptFileChooserDialog", { enabled: true }, sessionId);
+        await call("Input.dispatchMouseEvent", { type: "mousePressed", ...result.pickerRequest, button: "left", clickCount: 1 }, sessionId);
+        await call("Input.dispatchMouseEvent", { type: "mouseReleased", ...result.pickerRequest, button: "left", clickCount: 1 }, sessionId);
+        await new Promise(resolve => setTimeout(resolve, 100));
+        await call("Runtime.evaluate", { expression: "Object.assign(window.terminalSmoke, { pickerChecked: true, pickerOpened: " + fileChooserOpened + " })" }, sessionId);
+      }
       const progress = result && JSON.stringify({ phase: "render-progress", status: result.status, rounds: result.rounds?.length });
       if (progress && progress !== lastProgress) { console.log(progress); lastProgress = progress; }
       if (result && result.status !== "running" && (result.status === "failed" || result.visualReady)) break;
