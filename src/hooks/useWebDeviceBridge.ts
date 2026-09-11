@@ -233,7 +233,16 @@ async function executeTerminalCommand(command: WebTerminalCommand) {
   }
   const bridge = terminalBridges.get(command.sessionId);
   if (!bridge) return;
-  if (command.type === "input") await bridge.socket.write(command.sessionId, command.data);
+  if (command.type === "input") {
+    await bridge.socket.write(command.sessionId, command.data);
+    if (command.data) {
+      useTerminalStore.getState().markAttentionInputHandled(command.sessionId);
+      const statuses = Object.values(useTerminalStore.getState().tabStatuses);
+      if (!statuses.some((status) => status.hook === "attention" || status.hook === "done" || status.hook === "failed")) {
+        await invoke("set_taskbar_attention", { mode: null }).catch((error) => logWarn("Failed to clear Web input attention", error));
+      }
+    }
+  }
   if (command.type === "resize") {
     const nextMode = terminalControlMode(command.sessionId);
     if (nextMode !== bridge.controlMode) {

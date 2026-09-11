@@ -5,13 +5,45 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+Add-Type -TypeDefinition @'
+using System;
+using System.Text;
+using System.Runtime.InteropServices;
+public static class InstallerProcessPath {
+    [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr OpenProcess(uint access, bool inherit, int id);
+    [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process, uint flags, StringBuilder name, ref int size);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static string Read(int id) {
+        var handle = OpenProcess(0x1000, false, id);
+        if (handle == IntPtr.Zero) {
+            if (Marshal.GetLastWin32Error() == 87) return "<exited>";
+            return null;
+        }
+        try {
+            var name = new StringBuilder(32768);
+            int size = name.Capacity;
+            return QueryFullProcessImageName(handle, 0, name, ref size) ? name.ToString() : null;
+        } finally { CloseHandle(handle); }
+    }
+}
+'@
+
 function Get-InstalledProcesses([string[]]$ExecutablePaths) {
     # An inaccessible process path is never guessed from its name.
     $names = @($ExecutablePaths | ForEach-Object { [IO.Path]::GetFileNameWithoutExtension($_) } | Select-Object -Unique)
     @(Get-Process -Name $names -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            if ($_.Path -and $ExecutablePaths -contains [IO.Path]::GetFullPath($_.Path)) { $_ }
-        } catch { }
+        $candidate = $_
+        $processPath = [InstallerProcessPath]::Read($candidate.Id)
+        if ($processPath -eq '<exited>') { return }
+        if (-not $processPath) {
+            # Windows can retain terminated process objects while other handles
+            # reference them. They have no threads and cannot hold image files.
+            $details = Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.Id)"
+            if (-not $details -or ($null -ne $details.ThreadCount -and $details.ThreadCount -eq 0)) { return }
+            if (Get-Process -Id $candidate.Id -ErrorAction SilentlyContinue) {
+                throw "Cannot verify executable path for PID $($candidate.Id). Close the application or retry with administrator permissions."
+            }
+        } elseif ($ExecutablePaths -contains [IO.Path]::GetFullPath($processPath)) { $candidate }
     })
 }
 
@@ -21,7 +53,7 @@ function Stop-VerifiedProcess($Process, [string[]]$ExecutablePaths) {
     try {
         $current = Get-Process -Id $Process.Id -ErrorAction Stop
         if ($current.StartTime -eq $Process.StartTime -and
-            $ExecutablePaths -contains [IO.Path]::GetFullPath($current.Path)) {
+            $ExecutablePaths -contains [IO.Path]::GetFullPath([InstallerProcessPath]::Read($current.Id))) {
             $current.Kill()
             if (-not $current.WaitForExit(2000)) { throw 'Process did not exit.' }
         }
@@ -36,7 +68,7 @@ function Request-DaemonShutdown([string]$InfoFile, [string]$ExecutablePath, [boo
     try {
         $info = Get-Content -LiteralPath $InfoFile -Raw | ConvertFrom-Json
         $owner = Get-Process -Id ([int]$info.pid) -ErrorAction Stop
-        if ([IO.Path]::GetFullPath($owner.Path) -ine $ExecutablePath) { return }
+        if ([IO.Path]::GetFullPath([InstallerProcessPath]::Read($owner.Id)) -ine $ExecutablePath) { return }
         $client = New-Object Net.Sockets.TcpClient
         $connect = $client.BeginConnect('127.0.0.1', [int]$info.port, $null, $null)
         try {
@@ -117,5 +149,5 @@ function Invoke-InstallationCleanup {
 
 if ($MyInvocation.InvocationName -ne '.') {
     try { Invoke-InstallationCleanup; exit 0 }
-    catch { Write-Error 'CLI-Manager installation cleanup failed.'; exit 1 }
+    catch { [Console]::Error.WriteLine("CLI-Manager installation cleanup failed: " + $_.Exception.Message); exit 1 }
 }

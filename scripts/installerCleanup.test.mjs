@@ -133,6 +133,7 @@ test('NSIS compiles both embedded lifecycle hooks', windowsOnly, async t => {
 !macroend
 !include "${hooks}"
 Name "Cleanup hook compile test"
+InstallDir "${f.install}"
 OutFile "${path.join(f.root, 'compile-only.exe')}"
 RequestExecutionLevel user
 Section
@@ -147,4 +148,19 @@ SectionEnd
 `);
   const result = spawnSync(compiler, ['/V2', source], { encoding: 'utf8', windowsHide: true });
   assert.equal(result.status, 0, result.stdout + result.stderr);
+  const executable = path.join(f.root, 'compile-only.exe');
+  const run = (exe, args) => spawnSync(exe, args, { encoding: 'utf8', windowsHide: true, timeout: 45000 });
+  const installed = run(executable, ['/S', `/D=${f.install}`]);
+  assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+  const target = await f.start(f.install, 'cli-manager-web-daemon.exe');
+  const unrelated = await f.start(f.other, 'cli-manager-web-daemon.exe');
+  const removed = run(path.join(f.install, 'uninstall.exe'), ['/S']);
+  assert.equal(removed.status, 0, removed.stdout + removed.stderr);
+  // spawnSync blocks delivery of child exit events, so let Node observe them.
+  const deadline = Date.now() + 35000;
+  while (target.exitCode === null && target.signalCode === null && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  assert.notEqual(target.exitCode ?? target.signalCode, null);
+  assert.equal(unrelated.exitCode ?? unrelated.signalCode, null);
 });
