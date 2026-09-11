@@ -190,8 +190,11 @@
 
 ### Tauri 开发构建与缓存优化
 
-- Windows `npm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
-- 开发 profile 保留主程序基本源码定位并关闭依赖的完整调试符号，降低 `.pdb`、对象文件和增量缓存占用；新增 `npm run tauri:clean:dev` 与 `npm run tauri:clean`，用于手动清理当前仓库的开发或全部 Cargo 产物。
+- Windows 
+pm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
+- 开发 profile 保留主程序基本源码定位并关闭依赖的完整调试符号，降低 `.pdb`、对象文件和增量缓存占用；新增 
+pm run tauri:clean:dev` 与 
+pm run tauri:clean`，用于手动清理当前仓库的开发或全部 Cargo 产物。
 - Tauri 开发 wrapper 增加 Rust 预构建阶段和耗时日志，Codex proxy 仍在 Windows 启动 Tauri 前准备，release、跨平台和自定义 target/profile/target-dir 行为保持不变。
 - Vite 冷启动或依赖重新优化较慢时，开发服务探测会保留更长等待窗口，避免 Tauri 将尚未完成响应的 CLI-Manager 服务误判为端口冲突。
 
@@ -279,7 +282,8 @@
 - SSH Agent 升级到 `0.1.12` / protocol `1.13`，新增 `filePut` 直传能力；旧 Agent 会明确提示升级，不会回退为终端附件协议或把本机路径发送到远端。
 - SSH 项目文件浏览器新增 SFTP 入口并复用 Host 附件面板；远程文件支持下载到用户选择的本地路径和确认后删除，目录仅允许删除空目录，Agent 升级到 `0.1.13` / protocol `1.14`，新增 `fileGet` 分块下载与 `fileDelete` 能力。
 - 远程目录新增文件夹选择器入口；可通过远程目录列表进入子目录、返回上级并选择当前目录作为上传目标，保留手动输入远程路径方式。
-- 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 `no such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
+- 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 
+o such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
 - 修复 SSH Agent 发布测试中 `ATTACHMENT_NAMESPACE` 未导入导致 `0.1.11` CI 构建失败的问题。
 - 修复 SSH Agent 原地升级后 SFTP 删除仍沿用旧 bridge 能力缓存的问题；检测到能力缺失时会精确失效对应 bridge、重新握手并最多重试一次，旧 Agent 仍保留明确的升级提示。
 
@@ -336,7 +340,8 @@
 
 ### 修复文件浏览器残留拖拽预览导致前端类型检查失败
 
-- 文件浏览器侧边栏在拖拽预览逻辑迁入共享 Hook 后残留了一段引用已删除局部状态（`dragPreview` / `Portal`）的 JSX，使 `tsc` 报 11 个错误、`npm run build` 无法通过；该死代码已删除，拖拽预览仍由 `useTerminalFilePointerDrag` 统一渲染。
+- 文件浏览器侧边栏在拖拽预览逻辑迁入共享 Hook 后残留了一段引用已删除局部状态（`dragPreview` / `Portal`）的 JSX，使 `tsc` 报 11 个错误、
+pm run build` 无法通过；该死代码已删除，拖拽预览仍由 `useTerminalFilePointerDrag` 统一渲染。
 
 ### 供应商面板不可入队过滤与固定头部
 
@@ -351,15 +356,18 @@
 
 ### 非 Git 目录的 Git 变更面板空态
 
-- 打开的目录不是 Git 仓库时，Git 变更面板不再把 libgit2 原始错误（`不是 Git 仓库或无法访问: could not find repository at '...'; class=Repository (6); code=NotFound (-3)`）当成提示语铺满面板，改为显示图标 + 「当前目录不是 Git 仓库」+ 初始化提示的友好空态；WSL 项目也不再显示裸错误码 `not_git_repository`。
-- 后端 `git_get_changes` 的 native/libgit2 链路现在遵守既有稳定错误码合约：libgit2 `NotFound` 映射为 `not_git_repository`，所有权误判、权限不足、仓库损坏等真实故障保留原始错误并继续按原样提示，不会被伪装成友好空态。SSH Agent 的 Git 错误映射同步识别该场景（需要更新远端 Agent 后生效）。
+- 打开的目录不是 Git 仓库时，Git 变更面板不再把 libgit2 原始错误（`不是 Git 仓库或无法访问: could not find repository at '...'; class=Repository (6); code=NotFound (-3)`）当成提示语铺满面板，改为显示图标 + 「当前目录不是 Git 仓库」+ 初始化提示的友好空态；WSL 项目也不再显示裸错误码 
+ot_git_repository`。
+- 后端 `git_get_changes` 的 native/libgit2 链路现在遵守既有稳定错误码合约：libgit2 `NotFound` 映射为 
+ot_git_repository`，所有权误判、权限不足、仓库损坏等真实故障保留原始错误并继续按原样提示，不会被伪装成友好空态。SSH Agent 的 Git 错误映射同步识别该场景（需要更新远端 Agent 后生效）。
 - 顺带修好文件浏览器的非 Git 负缓存：Windows 本地非 Git 项目此前因为拿不到稳定错误码而每次刷新都重复查询 Git 状态，现在与 WSL 链路一致只探测一次。
 - Git 推送、拉取、Fetch、切换分支等操作在非 Git 目录失败时，toast 也改为「当前目录不是 Git 仓库」而不是原始错误串。
 
 ### 内置 Live Server
 
 - 本地项目与 Worktree 的 `.html` / `.htm` 文件右键菜单新增“使用 Live Server 打开”，覆盖普通文件树、文件搜索和代码搜索结果；使用系统默认浏览器打开，项目根右键菜单可显式停止当前服务。SSH、WSL 与非 HTML 文件不显示可执行入口。
-- Live Server 由应用内 Rust 后端直接提供，不调用 `npx`、Python、VS Code 或全局命令。同一项目根复用动态端口，不同项目独立运行；项目文件变化通过 250 ms 防抖 watcher 推进版本，浏览器内注入的客户端在正常本地文件系统条件下于一秒内自动刷新。
+- Live Server 由应用内 Rust 后端直接提供，不调用 
+px`、Python、VS Code 或全局命令。同一项目根复用动态端口，不同项目独立运行；项目文件变化通过 250 ms 防抖 watcher 推进版本，浏览器内注入的客户端在正常本地文件系统条件下于一秒内自动刷新。
 - 服务仅绑定 `127.0.0.1`，校验精确 Host、请求方法、相对路径、规范化根目录与 canonical containment；拒绝路径穿越、反斜杠、非 HTML 入口、缺失目标及 symlink/reparse 越界，不生成目录列表。应用退出时统一关闭监听器与 watcher。
 
 ### 历史会话智能命名自定义 Prompt
@@ -369,7 +377,8 @@
 - Prompt 保存完成后会显示本地化成功提示，写入期间按钮显示加载状态并阻止重复提交；写入失败不会误报成功。
 - 标题候选消息仍由程序独立提取并作为 Provider 的 user/input 发送，不新增 IPC Prompt 字段、数据库迁移或 Provider 协议分支；该设置继续排除在设置同步之外，日志不记录 Prompt 或候选正文。
 - 生成智能标题的 Tauri command 改为异步响应路径，Provider 请求等待不再由同步 `block_on` 占用 IPC handler，数秒的模型响应期间应用界面仍可交互；点击后会立即将对应会话标为生成中，详情按钮显示加载图标并禁止重复触发，列表同步显示进度。
-- 正式版与 `npm run tauri dev` 按设计共享本机 SQLite 时，智能命名的预留/落库事务会先获取写锁并最多等待 15 秒，避免读后写竞争被误报为 Provider、模型或网络故障；耗尽等待后返回稳定的“本地历史数据库正忙”类别和本地化提示。
+- 正式版与 
+pm run tauri dev` 按设计共享本机 SQLite 时，智能命名的预留/落库事务会先获取写锁并最多等待 15 秒，避免读后写竞争被误报为 Provider、模型或网络故障；耗尽等待后返回稳定的“本地历史数据库正忙”类别和本地化提示。
 
 ### Grok TUI 鼠标交互
 
@@ -379,7 +388,8 @@
 
 - 项目行的终端数徽章现在按 CLI 工具着色：Claude Code 橙色、Codex 绿色、Gemini CLI 紫色，其余工具保持默认蓝色。徽章取 `resolveCliToolIconKey` 归一化后的图标 key，`cli_tool` 存的是自由文本命令（可能带参数），此前无法匹配到已有配色，所有圆点都是同一个蓝色。
 - 分组行新增项目数徽章：统计含子分组递归、不计 Worktree，超过 99 显示 `99+`，折叠分组后仍能看出规模。统计口径与折叠侧边栏窄条徽章统一为 `countProjectsInNode`，避免两处各写一份递归；该徽章不带工具色圆点，与项目行的终端数徽章在视觉上区分。
-- 外观列增加缺列自愈：每次打开数据库前的 `db_repair_known_migration_drift` 会检查 `groups` / `projects` 的 `icon`、`color` 列与 migration 34 的登记状态是否一致 —— 无论 migration 34 是否已登记，缺列都会先补齐；版本未登记时按同一 checksum 补登记，避免 sqlx 重放 `ADD COLUMN` 撞 `duplicate column name`，修复项目列表外观标记时报 `no such column: color`。已登记旧版外观 migration 33 的数据库会先补齐远端的路由用量诊断字段，再校正 v33 登记并补记外观 migration 34，避免更新后因 checksum 冲突无法启动。
+- 外观列增加缺列自愈：每次打开数据库前的 `db_repair_known_migration_drift` 会检查 `groups` / `projects` 的 `icon`、`color` 列与 migration 34 的登记状态是否一致 —— 无论 migration 34 是否已登记，缺列都会先补齐；版本未登记时按同一 checksum 补登记，避免 sqlx 重放 `ADD COLUMN` 撞 `duplicate column name`，修复项目列表外观标记时报 
+o such column: color`。已登记旧版外观 migration 33 的数据库会先补齐远端的路由用量诊断字段，再校正 v33 登记并补记外观 migration 34，避免更新后因 checksum 冲突无法启动。
 - 分组与项目新增外观标记（migration 34，`groups` / `projects` 各增加 `icon`、`color` 两列，默认空串）：颜色只存 10 色调色板 token 不存任意 hex，图标可存单个 emoji（含 ZWJ 组合、旗帜、CJK 单字）或内置图标 key。**未设置时不做任何自动配色**，节点跟随统一的系统色，只有用户显式设置才改变。调色板亮/暗主题分别取值，10 色对 `#ffffff` / `#141414` 的非文本对比度均 ≥ 3:1（实测 3.30–11.04）。写入路径做归一化，非法颜色一律落成空串，不写脏值进库；新建分组时外观随同一条 INSERT 落库，修改外观只更新单行的 `icon`/`color` 列。
 - 外观标记有两个入口且共用同一面板：新建分组内联行的图标位（点开快选，不点直接回车仍是一步建组）、分组/项目右键菜单「外观标记」（菜单内内联展开）；项目新建/编辑/克隆弹框不再显示该项，编辑项目也不会覆盖原有标记。点击紧凑标记输入框会打开本地 Emoji 15 数据直接渲染的选择器，提供搜索、九个可切换分类和原生可见滚动条；同时增加离线可用的飞书、小红书、哔哩哔哩品牌标记。自定义输入仍可用且不再显示“1 个 emoji 或字符”占位提示。项目与分组行设置颜色后均显示左侧细色条，默认没有任何多余竖线；显式颜色也会作用于单色图标。折叠侧边栏窄条图标同样跟随。emoji 与 CLI 品牌图标自带颜色，运行态背景（`data-status`）语义不被覆盖。Worktree 行保持既有的绿色身份，不继承项目颜色。
 - 侧边栏右键菜单按实际尺寸在视口四边翻转并钳制；展开外观面板时保留原菜单位置，只有确实放不下才收敛并内部滚动，避免点击外观编辑后菜单跳到窗口顶部。Emoji 选择器优先向右弹出并按视口边缘自动翻转/位移；不再在 Radix 弹层内命令式挂载异步 Emoji Mart Web Component，避免其连接生命周期被右键菜单重渲染中断而出现空白。分类按钮由 React 状态直接驱动，滚动容器使用应用样式的原生滚动条，避免内容被裁切、无法切换分类或无法下拉。
@@ -454,7 +464,8 @@
 - SSH 主机「CLI 集成」打开时自动检查 `cli-manager-ssh-agent` 的签名发布版本（优先安装包内置，不建立 SSH 连接）。若已记录或最近检测到的远端版本更旧，展示可用新版本，并可通过「更新」进入现有预览确认后升级。
 - 解析本机 Codex 启动器时跳过 cc-connect 托管 wrapper 目录，避免 PATH 里的 wrapper 把自己当成真实 `codex`。
 - 修正 SSH Agent 新版本检测相关 Rust 测试导入的格式，恢复后端格式检查通过。
-- 将仅供 Unix 回归测试使用的 Codex 启动器解析辅助函数限定为 Unix 编译，Windows `npm run tauri dev` 不再输出未使用函数告警。
+- 将仅供 Unix 回归测试使用的 Codex 启动器解析辅助函数限定为 Unix 编译，Windows 
+pm run tauri dev` 不再输出未使用函数告警。
 
 ### 项目配置
 
@@ -489,7 +500,8 @@
 
 - 修复故障转移候选处于 circuit-open 或 Key cooldown 时被误计为真实 provider 失败、错误消耗重试预算并快速打开全部 circuit 的问题；候选跳过现在不累计熔断失败，队列后方仍可尝试的供应商会继续接收请求，所有候选不可用时仍保留 fail-fast `503 routing_provider_circuit_open`。
 - 修复同一供应商多密钥或整流重试的真实上游请求未逐次消耗 attempt 预算的问题；现在每次 HTTP send 都使用唯一 attempt index，失败发送逐条落库，且不会超过配置的最大请求次数。
-- 路由失败/候选跳过且没有 Token 的记录改为 `not_applicable`，不再污染成功响应缺少 usage 的数据质量提示；成功响应确实缺少 usage 时仍显示 `missing`，请求日志同步提供中英文状态文案。
+- 路由失败/候选跳过且没有 Token 的记录改为 
+ot_applicable`，不再污染成功响应缺少 usage 的数据质量提示；成功响应确实缺少 usage 时仍显示 `missing`，请求日志同步提供中英文状态文案。
 - 自动故障转移关闭时不再显示上一次运行留下的熔断/降级状态；每次开启或关闭自动故障转移都会重置当前 CLI 类型的 daemon 熔断状态，避免旧状态跨开关周期残留。
 
 ### 路由历史用量异常详情
@@ -971,7 +983,8 @@
 - **远程 Codex 托管启动链路**：Windows 改用随应用打包的 GUI 子系统原生代理启动 Codex app-server，避免连接、对话和停止托管时弹出命令窗口；原生 shim 仅拦截首个子命令为 `app-server` 的调用，其他 Codex 命令继续透传参数、Provider 覆盖和退出码。macOS/Linux wrapper 会在内容写入或复用后统一校正为 `0755`，并在 PATH 注入前解析 wrapper 目录之外的真实 Codex 绝对路径，避免自递归启动。恢复会话时严格校验目标 Session，并压缩超过 cc-connect 扫描上限的恢复响应；API Key 仅通过子进程环境变量传递，不进入命令行参数或日志。
 - **macOS Universal 辅助程序打包**：Universal 构建会同时合并 `cli-manager-daemon` 与 `cli-manager-codex-proxy` 的 Apple Silicon、Intel 产物，避免新增代理程序后 Universal 应用缺少对应架构二进制。
 - **跨平台 Tauri 构建配置**：`macos-private-api` 仅在 macOS 目标启用，Windows/Linux 的直接 Cargo 检查与 Codex proxy 端到端构建不再因 macOS 专属 feature 和平台配置不一致而中断。
-- **Windows Tauri 开发启动**：`npm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并同步 Tauri/Cargo runner 区域指定的 Rust target、release/profile 与 target-dir；第二个 `--` 后的应用参数不会影响 proxy 构建，避免开发版运行时缺少或读取错误目录的代理程序。
+- **Windows Tauri 开发启动**：
+pm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并同步 Tauri/Cargo runner 区域指定的 Rust target、release/profile 与 target-dir；第二个 `--` 后的应用参数不会影响 proxy 构建，避免开发版运行时缺少或读取错误目录的代理程序。
 - **SSH 显式地址直连**：未配置跳板机的手工地址连接在私钥、密码、凭据引用和交互认证模式下不再读取无关的用户 `~/.ssh/config`，避免该文件 ACL/语法异常在认证前阻断连接；Agent 与 SSH Config 模式继续读取默认配置，以保留 `IdentityAgent` 和 `Host *` 等设置。Config 别名、跳板路由与用户明确选择的自定义配置文件继续按原逻辑生效。
 - **后台探测进程树回收**：外部命令探测在 Windows 使用 Job Object、macOS/Linux 使用独立进程组；超时、等待失败或启动器提前退出时都会回收所属后代进程，避免真实 Codex 等后代继续运行或持有输出管道导致后台残留和等待卡死。
 - **Worktree 创建失败诊断与防重入**：阻止同一项目同一任务名的自动、手动和分屏 Worktree 创建并发撞路径；Git 检出失败会保留最终错误信息，前端改为双语可读提示，不再产生未处理 Promise。
@@ -987,7 +1000,8 @@
 - 修复打开 SSH 项目历史用量统计时默认强制刷新历史索引并反复全量聚合，导致统计面板长时间读取、远程会话历史加载被拖慢的问题；远程统计现在默认读取已落库 catalog 与聚合缓存，只有手动刷新才强制同步，且按 `sourceInstanceId` 在 SQLite 层过滤。
 - 修复应用刚启动后直接打开 SSH 项目会话历史时，远程历史命令早于 PtyHost daemon 就绪并返回 `daemon_unavailable` 的问题；远程历史命令现在会等待 daemon 初始化，空结果会再执行一次强制远端刷新，历史面板刷新 SSH 项目时也不再弹出本地“没有找到可同步的 Codex/Claude 项目”提示。
 - 修复升级或重装 SSH Agent 后立即打开远程会话历史时，catalog 将可轮换的 Agent `installationId` 误判为远程来源变化并返回 `history_remote_identity_changed` 的问题；machine/user/source/config-root 不变时会原子更新安装元数据，真正的远端来源变化仍拒绝覆盖旧缓存。
-- 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON `null`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
+- 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON 
+ull`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
 - 降低第三方 HTTP/2 网络库在 debug 模式下的连接复位日志噪声，避免 GitHub 更新检查或连接池关闭时反复输出 `Connection::poll; IO error error=ConnectionReset`，应用自身调试日志仍保持可见。
 
 ### SSH
@@ -1096,7 +1110,8 @@
 - **WSL Hook 与 cc-switch 数据库环境兼容**：Claude/Codex Hook 配置目录与 cc-switch 数据库位置不再强制同环境；Windows 版可为 WSL CLI 配置同步 Windows 数据库，也可通过对应 WSL 发行版内的 SQLite 安全读取和事务更新 WSL 数据库，避免 UNC 直写造成锁与 WAL 风险。
 - **历史会话缺失项目恢复修复**：恢复会话未找到匹配项目时不再直接报错，改为展示全部项目和“使用新窗口”；使用新窗口会先进入历史会话工作目录，再执行 Claude/Codex 恢复命令。
 - **终端缩放滚动位置修复**：横向尺寸变化触发 xterm 历史行 reflow 时，使用临时 marker 跟踪用户正在查看的首行，并在 xterm 完成异步视口同步后恢复位置，避免侧栏、分屏或窗口缩放把滚动条推到顶部；位于实时底部和 alternate buffer 的终端保持原有行为。
-- **Tauri 开发 WebView2 启动修复**：Windows 下 `npm run tauri dev` 为子进程注入独立的 WebView2 用户数据目录，避免已安装生产版仍运行旧 WebView2 时，dev 因运行时环境冲突而创建窗口失败，同时继续共享项目、设置和 SQLite 数据。
+- **Tauri 开发 WebView2 启动修复**：Windows 下 
+pm run tauri dev` 为子进程注入独立的 WebView2 用户数据目录，避免已安装生产版仍运行旧 WebView2 时，dev 因运行时环境冲突而创建窗口失败，同时继续共享项目、设置和 SQLite 数据。
 - **VS Code 终端替换正确性加固**：补齐 Attach replay/attached/live 写入屏障，未提交输出由 `TerminalProcessManager` 持有并可在 Pane 卸载重挂后继续写入；初始与断线重连 Replay 均按历史尺寸串行写入，完成当前容器 fit 后才释放 live 输出，历史 resize 不再误发给 live PTY。关闭失败会以 tombstone 阻止重连复活，并取消最后会话关闭后的待执行重连，避免残留空闲 WebSocket/心跳。WebSocket 增加鉴权、请求和心跳超时；daemon 改为独立 writer queue、原子 create、递增 resize sequence 与磁盘 spool，慢客户端不再持全局锁阻塞其他会话，后台会话也不会被 UI active list 对账误杀。
 - **WSL Codex 子 Agent 分屏输出修复**：Codex rollout discovery 透传 WSL 发行版与父 transcript 路径，优先沿父会话定位真实 sessions 根，否则在 Linux `$HOME/.codex/sessions` 内通过 `wsl.exe` 查找子会话；兼容 Linux、`\\wsl.localhost`、`\\wsl$` 与 Windows 配置目录转换，修复不同 WSL 用户及并行子任务分屏长期停留在 PENDING 的问题。
 - **Claude 状态栏 Powerline 符号修复**：WebView 直接加载应用内置符号字体，不再依赖 Windows 用户字体缓存，修复实时预览、Powerline 选项和应用内终端中的分隔符与端帽显示为方框的问题。
@@ -1157,7 +1172,8 @@
 - **终端 OSC 路径模块缺失修复**：补齐终端工作目录解析模块，恢复 Vite 开发启动，并按运行平台处理 OSC 7 的 Windows 盘符、UNC 与 macOS/Linux 本地路径，避免实时统计使用错误项目路径。
 - **终端切换渐进重绘修复**：保留隐藏终端恢复时的积压输出续写和整视口刷新，在 xterm 完成整屏渲染前临时隐藏绘制层并通过超时兜底恢复显示，避免切换终端时出现从左上到右下的可见重绘，同时不重新引入偶发白屏。
 - **WSL Codex 历史会话兼容修复**：历史查看与恢复回读按 rollout 的 `cwd` 校准真实项目，避免把日期年份误当项目而报 `session_file_not_indexed`；历史缓存会按当前配置根过滤旧的 Windows Codex 条目，避免切到 WSL 后误报 `session_file_outside_history_scope`；转换到 WSL Codex 时写入 Linux rollout 路径并停止从 Windows 跨 UNC 写入 Codex WAL 状态库，避免 `codex_state_register_failed: database is locked`。
-- **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，并统一解析 dev/local 自定义配置路径，修复 `npm run tauri dev` 在 `cargo metadata` 阶段把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 而启动失败。
+- **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，并统一解析 dev/local 自定义配置路径，修复 
+pm run tauri dev` 在 `cargo metadata` 阶段把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 而启动失败。
 - **Codex 供应商通用配置解析修复**：切换 Codex 供应商时按 TOML 合并 `common_config_codex` 与供应商 `config`，不再把 Codex 通用配置误当 JSON 解析，修复 AnyRouter 等供应商提示“配置解析失败、无法应用”。
 - **Codex 供应商重复配置修复**：合并通用配置与供应商配置时按 TOML 键语义识别单双引号等价表头，避免 Hook 状态表被重复写入 profile 并触发 `duplicate key`。
 - **Codex 供应商切换 CODEX_HOME 修复**：切换 Codex 供应商时不再把 `CODEX_HOME` 重定向到 `~/.cli-manager/providers/codex` 隔离空目录，改为将生成的 profile 写入用户真实 Codex home（自定义目录或 `~/.codex`），与用户的 `config.toml`、`auth.json` 同处，修复切换后丢失账号认证与基础配置的问题；`codex --profile <name>` 仍按 `$CODEX_HOME/<name>.config.toml` 加载，WSL/Bash 下注入的 `CODEX_HOME` 会转换为 `/mnt/<drive>/...`；切换时自动清理遗留在旧隔离目录的 `cli-manager-*` profile。
@@ -1431,7 +1447,8 @@
 ### 终端、分屏与主题
 
 - **终端输入提示**：内置终端新增类似 fish autosuggestions 的内联 ghost 提示，基于本地命令历史和命令模板推测当前输入后缀；有候选时 `Tab` / `Ctrl+Space` 只补全后缀、不自动执行，无候选时 `Tab` 继续交给 shell/CLI，并预留 `gpt-5.3-codex-spark` AI provider 接口但当前不发起模型请求。
-- **孤儿 PTY 进程清理**：前端会低频上报当前仍存在的终端会话 ID，后端按 `PtyManager` 持有的 sessionId 对账；对缺失会话先标记并等待宽限期，只清理确认失联的 PTY 根进程树，避免按 `node.exe`、`bash.exe` 等进程名误杀外部任务。
+- **孤儿 PTY 进程清理**：前端会低频上报当前仍存在的终端会话 ID，后端按 `PtyManager` 持有的 sessionId 对账；对缺失会话先标记并等待宽限期，只清理确认失联的 PTY 根进程树，避免按 
+ode.exe`、`bash.exe` 等进程名误杀外部任务。
 - **分屏终端底部空白修复**：终端分屏尺寸变化后会在 xterm fit 完成时刷新当前视口，避免下方区域残留空白且不继续输出内容。
 - **中文字符宽度修复**：内置终端接入 xterm Unicode 11 宽字符表，改善中文、Emoji 等宽字符在 Claude / Codex TUI 中的对齐和显示问题。
 - **终端分屏项目选择样式修复**：右键分屏选择终端时，项目列表默认态改为透明背景，仅在悬浮或聚焦时高亮，避免整列项目呈现灰色块。
@@ -1466,7 +1483,8 @@
 - **WSL 文件浏览修复**：文件浏览器打开 `\\wsl.localhost\...` 或 `\\wsl$\...` 项目时，目录列表改由 WSL 内部枚举，避免 Windows 原生 `canonicalize` 导致 `path_canonicalize_failed`。
 - **文件树刷新展开状态修复**：手动点击文件浏览器刷新时会保留并刷新当前已展开目录，不再出现目录内容折叠但箭头仍显示展开、下次需要点击两次才能展开的问题。
 - **文件浏览器自动刷新精确化**：文件 watcher 事件现在会携带变更路径，前端按受影响目录刷新，并串行合并连续刷新，降低 Codex 批量改文件后的重复 IO 和刷新乱序风险。
-- **文件浏览器自动刷新性能优化**：文件 watcher 事件会在前端合并后再刷新，并在后端忽略 `node_modules`、`target`、`dist`、`.gitnexus` 等高噪音目录，减少频繁保存或构建时的无效刷新。
+- **文件浏览器自动刷新性能优化**：文件 watcher 事件会在前端合并后再刷新，并在后端忽略 
+ode_modules`、`target`、`dist`、`.gitnexus` 等高噪音目录，减少频繁保存或构建时的无效刷新。
 - **文件浏览器自动刷新**：项目文件浏览器改为监听项目目录变化；在终端或外部工具修改并保存文件后，文件树、Git 状态点和未脏的已打开文件预览会自动刷新，无需再手动点击刷新。watcher 不可用时会降级为低频轮询，未保存文件不会被自动覆盖。
 - **文件浏览器 Git 状态标记**：文件树和文件搜索结果会用不同颜色标记已修改、新增、删除、重命名、冲突和未跟踪文件；打开有变更的文本文件时，编辑器左侧与概览标尺会显示新增、修改、删除位置，便于直接定位改动。
 - **文件浏览器内嵌 Diff**：有 Git 变更的文件可通过右键菜单在文件编辑器 Tab 中打开 Diff，并支持文件、代码块和选中行回滚；内嵌 Diff 会跟随当前终端主题背景。
@@ -1477,7 +1495,8 @@
 
 - **Git 面板子仓库扫描启动修复**：补注册后端 `git_list_repositories` 命令，避免启动后前端枚举项目 Git 仓库时调用失败，并消除对应 Rust 未使用警告。
 - **Git 变更右键打开源文件**：Git 变更文件列表右键菜单新增“打开源文件”，可直接在文件编辑器 Pane 中打开对应源文件；删除状态文件会禁用该入口。文件编辑器页激活时，右侧 Git 面板也会关联到该文件所属项目。
-- **Git 面板多子仓库监控**：项目根目录下存在多个 git 仓库（主仓库 + 嵌套子仓库，或纯文件夹 + 多个仓库）时，Git 面板顶部新增仓库切换下拉，可切换到任意子仓库查看变更、暂存、提交、推拉；扫描限深并排除 `node_modules` 等大目录，单仓库项目 UI 保持不变；子仓库内文件改动同样触发面板自动刷新。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
+- **Git 面板多子仓库监控**：项目根目录下存在多个 git 仓库（主仓库 + 嵌套子仓库，或纯文件夹 + 多个仓库）时，Git 面板顶部新增仓库切换下拉，可切换到任意子仓库查看变更、暂存、提交、推拉；扫描限深并排除 
+ode_modules` 等大目录，单仓库项目 UI 保持不变；子仓库内文件改动同样触发面板自动刷新。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
 - **嵌套 git 子仓库扫描兼容**：主仓库下存在嵌套 git 子仓库时，变更列表不再把子仓库目录当作未跟踪文件展示，点击未跟踪条目也不会再出现"读取文件失败：文件名、目录名或卷标语法不正确 (os error 123)"等原始系统错误；目录条目改为返回友好提示。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
 - **Git Diff 弹窗 Esc 关闭**：文件 Diff 弹窗支持按 Esc 键关闭，与其它弹窗交互习惯一致。
 
@@ -1695,12 +1714,14 @@
 
 ### 开发体验
 
-- **开发版单实例兼容正式版**：`npm run tauri dev` 自动使用 dev Tauri 配置，并通过版本化单实例锁与已安装正式版共存；dev 仍共享正式版数据目录，避免项目和设置配置丢失。
+- **开发版单实例兼容正式版**：
+pm run tauri dev` 自动使用 dev Tauri 配置，并通过版本化单实例锁与已安装正式版共存；dev 仍共享正式版数据目录，避免项目和设置配置丢失。
 
 ### macOS 兼容性
 
 - **macOS Dock 图标点击恢复窗口**：注册 `RunEvent::Reopen` 事件，当用户在 macOS 上点击 Dock 图标且应用无可见窗口时，自动唤回主窗口。
-- **macOS 设置弹窗顶部偏移修复**：通过 `navigator.platform` 检测 macOS 环境，设置弹窗 `top-0` 而非 `top-[26px]`，消除设置页面顶部多余间隙。
+- **macOS 设置弹窗顶部偏移修复**：通过 
+avigator.platform` 检测 macOS 环境，设置弹窗 `top-0` 而非 `top-[26px]`，消除设置页面顶部多余间隙。
 
 ### 界面优化
 
@@ -1776,7 +1797,8 @@
 
 ### 项目文件浏览器
 
-- **文件搜索性能优化**：文件树搜索支持按文件名和项目相对路径匹配，跳过 `.git`、`.trellis`、`node_modules`、`dist`、`build`、`target` 等重目录，并限制最大结果数，减少大项目搜索卡顿。
+- **文件搜索性能优化**：文件树搜索支持按文件名和项目相对路径匹配，跳过 `.git`、`.trellis`、
+ode_modules`、`dist`、`build`、`target` 等重目录，并限制最大结果数，减少大项目搜索卡顿。
 - **全项目代码片段搜索**：文件浏览器搜索区新增「文件 / 代码」模式切换；代码模式由 Rust 后端在项目根目录内扫描 UTF-8 文本文件，返回文件路径、行号、命中行和上下文片段。
 - **搜索请求防抖与过期保护**：前端搜索增加 220ms 防抖和请求序号校验，快速输入或慢请求返回时不会用旧结果覆盖新查询。
 - **命中行跳转高亮**：点击代码片段搜索结果会打开对应文件，自动切到源码视图，滚动到命中行并高亮当前行与匹配片段。
@@ -1826,7 +1848,8 @@
 
 - **文件 Git 状态着色**：项目文件浏览器按现有 Git 变更数据展示文件状态，修改、新增/未跟踪和未保存编辑状态使用不同文字颜色区分。
 - **创建入口收敛**：移除文件浏览器顶部显式新建按钮，保留目录右键和空白区域右键的新建文件/文件夹操作，减少侧栏顶部噪声。
-- **目录自动折叠**：文件树默认折叠 `.git`、`.trellis`、`node_modules`、`target`、`dist` 等本地工具/产物目录，并支持按项目忽略或恢复特定目录。
+- **目录自动折叠**：文件树默认折叠 `.git`、`.trellis`、
+ode_modules`、`target`、`dist` 等本地工具/产物目录，并支持按项目忽略或恢复特定目录。
 - **文件树交互增强**：支持 `F2` 原地重命名、`Ctrl/Cmd+C/X/V` 复制/剪切/粘贴文件，目录链显示统一改为 `/` 分隔。
 - **AI 路径复制**：文件、目录、搜索结果和项目根节点支持复制 AI 路径或目录树；新增 `Alt+P` 快捷键复制当前文件/目录 AI 路径。
 - **终端文件拖拽**：从文件浏览器拖拽文件/目录到内置终端时，按当前项目 CLI 自动生成 Claude/Codex 友好的路径文本；从系统文件管理器拖入终端时自动粘贴 shell 引号包裹的本地路径。
@@ -1921,7 +1944,8 @@
 
 ### 修复
 
-- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 `nomatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
+- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 
+omatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
 
 ### 字体设置
 
@@ -2034,7 +2058,9 @@
 
 #### fs-watcher 替代定时轮询
 
-- **实时文件监听**：新增 `git_watcher` 桥接（基于 `notify` + `notify-debouncer-mini`），监听当前项目目录，去抖 400ms 后向前端发 `git-changed` 事件；面板由事件驱动刷新，去掉原 4s 固定轮询与最长 4s 延迟。
+- **实时文件监听**：新增 `git_watcher` 桥接（基于 
+otify` + 
+otify-debouncer-mini`），监听当前项目目录，去抖 400ms 后向前端发 `git-changed` 事件；面板由事件驱动刷新，去掉原 4s 固定轮询与最长 4s 延迟。
 - **精准监听范围**：监听工作区文件变化与 `.git/index`、`.git/HEAD`（覆盖编辑 / 暂存 / 提交 / 切分支），过滤 `.git/objects`、`.git/logs`、`*.lock` 等噪声。
 - **降级兜底**：watcher 初始化失败（网络盘 / WSL 等 notify 不可用）时自动降级为 15s 慢轮询；保留失焦/隐藏不刷新、重新聚焦立即刷新一次。
 - **生命周期与多窗口隔离**：单 watcher 绑定当前活动项目，切项目/关闭面板即释放；`git-changed` 事件携带 `projectPath`，各窗口按自身当前项目过滤，天然隔离。
@@ -2158,7 +2184,8 @@
 - **数据层**：新增 SQLite migration v11 建 `model_prices` 表（`model` 主键 + 四类单价 + `source`/`source_model_id`/`raw_json`/时间戳）；前端 `modelPricingStore` 负责 CRUD、种子初始化与候选应用，DB 为唯一权威源。
 - **前后端桥接**：前端启动/变更时通过 `model_prices_set_cache` 把价格推送到后端内存缓存（`OnceLock<RwLock<HashMap>>`），后端费用计算读缓存，避免后端猜测 DB 落盘路径。
 - **远程同步命令**：新增 `model_prices_sync`（`reqwest` 拉取 + per-token×1e6 换算 + 分级匹配 + 候选评分），新增 `model_pricing` 命令模块。
-- **复用归一化**：「识别本地模型」复用 `historyStore` 的 `normalizeStats` 兜底 snake/camel 与缺失字段，修复直接读原始返回导致的 `undefined.map` 报错。
+- **复用归一化**：「识别本地模型」复用 `historyStore` 的 
+ormalizeStats` 兜底 snake/camel 与缺失字段，修复直接读原始返回导致的 `undefined.map` 报错。
 
 ### 终端侧边面板（实时统计 / Git 变更）
 
@@ -2339,7 +2366,8 @@
   - 新增 `get_os_platform` 命令返回当前平台（`windows` / `macos` / `linux` / `unknown`）。
   - `PtyManager::resolve_shell` 与外部终端 `shell_exe` 增加 `zsh` / `fish` / `sh` 支持；`bash` 与默认分支用 `cfg!(target_os)` 区分平台（Windows 用 `bash.exe` / `powershell.exe`，Unix 回退用户登录 Shell `$SHELL`，再回退 macOS=zsh / 其它=bash）。
 - 前端（TS/React）：
-  - `ShellKey` 扩展 Unix Shell；`normalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
+  - `ShellKey` 扩展 Unix Shell；
+ormalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
   - 新增 `getOsPlatform`、`getDefaultShellForPlatform`、`defaultShellForOs` 辅助与 `getShellOptions(os)` 平台选项映射。
   - `ConfigModal`、`ThemeSettingsPage`、`settingsStore` 接入平台检测。
 
@@ -2675,7 +2703,8 @@
 
 ### 精简模式与命令面板体验
 
-- `npm run dev` 改为通过 `scripts/dev-server.mjs` 启动 Vite：端口 1420 已有 CLI-Manager 开发服务时自动复用，若被其他进程占用则明确报错，减少 Tauri 开发启动冲突。
+- 
+pm run dev` 改为通过 `scripts/dev-server.mjs` 启动 Vite：端口 1420 已有 CLI-Manager 开发服务时自动复用，若被其他进程占用则明确报错，减少 Tauri 开发启动冲突。
 - 命令面板接入共享弹层、输入框与卡片样式，并优化分组标题与选中态，使 Ctrl+P 入口与精简模式视觉保持一致。
 - 项目树 CLI 工具徽标改为轻量点状色标，降低 Claude / Codex / Gemini 标识在侧栏中的视觉噪音。
 
@@ -2722,7 +2751,9 @@
 
 - 新增 Codex CLI hook 桥接，复用本地回环通知服务接收 `PermissionRequest` / `Stop` 事件，并按来源区分 `claude` / `codex` 通知来源。
 - 终端标签通知逻辑扩展为兼容 Claude 与 Codex，切换到目标标签后自动清理对应通知。
-- 新增 Codex hook 安装/卸载逻辑，写入 `~/.codex/hooks.json` 与 `~/.codex/config.toml`，并生成 `notify-cli-manager-codex-attention.ps1` / `notify-cli-manager-codex-finished.ps1`。
+- 新增 Codex hook 安装/卸载逻辑，写入 `~/.codex/hooks.json` 与 `~/.codex/config.toml`，并生成 
+otify-cli-manager-codex-attention.ps1` / 
+otify-cli-manager-codex-finished.ps1`。
 
 ### Hook 设置调整
 
@@ -2752,7 +2783,9 @@
 
 ### Hook 设置
 
-- 设置页新增「Hook 设置」入口，可选择 Claude 配置目录，一键安装或删除 `notify-cli-manager-approval.ps1` 与 `notify-cli-manager-finished.ps1`。
+- 设置页新增「Hook 设置」入口，可选择 Claude 配置目录，一键安装或删除 
+otify-cli-manager-approval.ps1` 与 
+otify-cli-manager-finished.ps1`。
 - 安装逻辑会合并写入 Claude `settings.json` 的 `Notification`、`Stop`、`StopFailure` hook，不删除用户自定义 hook；删除时只清理 CLI-Manager 自己的脚本与命令。
 - Hook 设置页展示 Claude 配置目录、hooks 目录、settings.json 路径与安装状态，并统一 Notification 脚本和 Stop / StopFailure 脚本检测框尺寸。
 
@@ -3132,7 +3165,8 @@
 - **[Medium]** `Sidebar.tsx` — "外部 PowerShell" 标签改为 "外部终端"，匹配多 Shell 支持
 
 ### 其他变更
-- 替换应用图标为 folder+shell 风格图标（512x512 PNG → `npx tauri icon` 生成全尺寸）
+- 替换应用图标为 folder+shell 风格图标（512x512 PNG → 
+px tauri icon` 生成全尺寸）
 
 ### 设置系统
 

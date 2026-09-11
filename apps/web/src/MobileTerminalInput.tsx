@@ -66,11 +66,14 @@ export function MobileTerminalInput({ enabled, t, onFocus, onPaste, onKey, onIma
     onPaste(draft.replace(/[\r\n\t]+/g, " ").replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/g, ""));
     setDraft("");
   };
+  const imagePicker = <input ref={imageInput} className="mobile-terminal-image-picker" type="file" accept="image/*" tabIndex={-1} onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file && file.type.startsWith("image/")) onImageUpload(file); }} />;
   if (toolbarCollapsed) return <div className="mobile-terminal-input collapsed">
+    {imagePicker}
     <button className="mobile-terminal-input-expand" type="button" onClick={() => setToolbarCollapsed(false)}
       aria-label={t("mobileToolbarExpand")} title={t("mobileToolbarExpand")}><ChevronUp size={20} /></button>
   </div>;
   return <div className="mobile-terminal-input expanded">
+    {imagePicker}
     <div className="mobile-terminal-input-toolbar">
       <div className="mobile-terminal-input-tools">
       <button className="mobile-terminal-input-collapse" type="button" onClick={() => setToolbarCollapsed(true)}

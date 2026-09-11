@@ -410,6 +410,59 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   }, [display]);
 
   useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const image = Array.from(event.clipboardData?.files ?? []).find((file) => file.type.startsWith("image/"));
+      if (!image) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onImageUpload(image);
+    };
+    container.addEventListener("paste", onPaste, true);
+    return () => container.removeEventListener("paste", onPaste, true);
+  }, [onImageUpload]);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let horizontal = false;
+    const onTouchStart = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      startScrollLeft = container.scrollLeft;
+      horizontal = false;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      const dx = touch.clientX - startX;
+      const dy = touch.clientY - startY;
+      if (!horizontal && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy) * 1.15) horizontal = true;
+      if (!horizontal || container.scrollWidth <= container.clientWidth) return;
+      event.preventDefault();
+      event.stopPropagation();
+      container.scrollLeft = startScrollLeft - dx;
+    };
+    const reset = () => { horizontal = false; };
+    container.addEventListener("touchstart", onTouchStart, { capture: true, passive: true });
+    container.addEventListener("touchmove", onTouchMove, { capture: true, passive: false });
+    container.addEventListener("touchend", reset, { capture: true, passive: true });
+    container.addEventListener("touchcancel", reset, { capture: true, passive: true });
+    return () => {
+      container.removeEventListener("touchstart", onTouchStart, true);
+      container.removeEventListener("touchmove", onTouchMove, true);
+      container.removeEventListener("touchend", reset, true);
+      container.removeEventListener("touchcancel", reset, true);
+    };
+  }, []);
+
+  useEffect(() => {
     const sync = () => setDisplay(readDisplay());
     const storage = (event: StorageEvent) => { if (event.key === DISPLAY_KEY || event.key === null) sync(); };
     window.addEventListener(DISPLAY_KEY, sync);

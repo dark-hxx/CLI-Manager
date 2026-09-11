@@ -11,6 +11,7 @@ import { hasVisibleDesktopViewport, restoreDesktopViewportSize } from "../lib/te
 import { useTerminalStore } from "../stores/terminalStore";
 import { PtyHostSocket, type TerminalBinaryFrame } from "../terminal/transport/PtyHostSocket";
 import { normalizeProjectPath, projectWithWorktreeProviderOverrides } from "../lib/terminalProject";
+import { formatShellPathList } from "../lib/terminalShellPath";
 import { resolveProjectPath } from "../lib/groupPath";
 import { resolveProjectStartupCommand } from "../lib/projectStartupCommand";
 import { parseWebConversationLaunch } from "../lib/webConversationLaunch";
@@ -246,6 +247,22 @@ async function executeTerminalCommand(command: WebTerminalCommand) {
   }
 }
 
+async function executeTerminalImageAttachment(operation: WebDeviceOperation) {
+  const payload = operation.payload;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("invalid_operation_payload");
+  const data = payload as Record<string, unknown>;
+  const sessionId = String(data.sessionId ?? "");
+  const bridge = terminalBridges.get(sessionId);
+  const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
+  if (!bridge || !session) throw new Error("terminal_session_not_found");
+  const path = await invoke<string>("file_attach_data", {
+    fileName: String(data.fileName ?? "web-image.jpg"),
+    dataBase64: String(data.dataBase64 ?? ""),
+  });
+  await bridge.socket.write(sessionId, formatShellPathList([path], session.shell));
+  return { path };
+}
+
 async function drainTerminalCommands() {
   if (drainingTerminalCommands) return;
   drainingTerminalCommands = true;
@@ -394,7 +411,9 @@ async function executeOperation(operation: WebDeviceOperation) {
       await webDeviceApi.accepted(operation.id);
       await webDeviceApi.running(operation.id);
       executionStarted = true;
-      const result = await executeWebManagementOperation(operation, true);
+      const result = operation.kind === "terminal.attach_image"
+        ? await executeTerminalImageAttachment(operation)
+        : await executeWebManagementOperation(operation, true);
       await reportCompletion(operation.id, "succeeded", result, null);
       activeOperationIds.delete(operation.id);
       return;
