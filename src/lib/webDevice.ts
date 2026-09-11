@@ -48,6 +48,7 @@ export interface WebDeviceOperation {
 }
 
 export interface WebWorkspaceSnapshot {
+  subagents?: Array<{ sessionId: string; parentSessionId: string; title: string; sourceKind: string; ended: boolean; content: string; truncated: boolean }>;
   terminals?: Array<{ sessionId: string; projectId: string; worktreeId: string | null; title: string }>;
   groups: Array<{ id: string; name: string; parentId: string | null; sortOrder: number }>;
   projects: Array<{
@@ -128,8 +129,8 @@ export const webDeviceApi = {
   ) => invoke<void>("web_device_terminal_status", {
     request: { sessionId, status, exitCode, controlMode },
   }),
-  publishWorkspace: (workspace: WebWorkspaceSnapshot, sessions: WebHistorySessionSummary[] = []) =>
-    invoke<void>("web_device_publish_history", { request: { sessions, workspace } }),
+  publishWorkspace: (workspace: WebWorkspaceSnapshot, sessions: WebHistorySessionSummary[] = [], workspaceOnly = false) =>
+    invoke<void>("web_device_publish_history", { request: { sessions, workspace, workspaceOnly } }),
   validateContext: (rootPath: string, cwd: string) => invoke<void>("web_device_validate_context", { request: { rootPath, cwd } }),
   accepted: (operationId: string) => invoke<void>("web_device_operation_accepted", { request: { operationId } }),
   running: (operationId: string) => invoke<void>("web_device_operation_running", { request: { operationId } }),

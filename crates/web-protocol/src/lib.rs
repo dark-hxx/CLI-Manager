@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const DEVICE_PROTOCOL_VERSION: u16 = 3;
+pub const DEVICE_PROTOCOL_VERSION: u16 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -257,11 +257,25 @@ pub struct WorkspaceWorktreeSummary {
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceSnapshot {
     #[serde(default)]
+    pub subagents: Vec<WorkspaceSubagentSummary>,
+    #[serde(default)]
     pub terminals: Option<Vec<WorkspaceTerminalSummary>>,
     pub groups: Vec<WorkspaceGroupSummary>,
     pub projects: Vec<WorkspaceProjectSummary>,
     pub worktrees: Vec<WorkspaceWorktreeSummary>,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSubagentSummary {
+    pub session_id: String,
+    pub parent_session_id: String,
+    pub title: String,
+    pub source_kind: String,
+    pub ended: bool,
+    pub content: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -346,6 +360,8 @@ pub enum DeviceToServerFrame {
     },
     HistorySnapshot {
         sequence: u64,
+        #[serde(default)]
+        workspace_only: bool,
         sessions: Vec<HistorySessionSummary>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         workspace: Option<WorkspaceSnapshot>,
@@ -421,6 +437,11 @@ pub enum BrowserEventPayload {
     HistoryUpdated {
         device_id: String,
         latest_updated_at: i64,
+    },
+    #[serde(rename = "workspace.updated")]
+    WorkspaceUpdated {
+        device_id: String,
+        workspace: WorkspaceSnapshot,
     },
     #[serde(rename = "pairing.updated")]
     PairingUpdated {
@@ -719,16 +740,19 @@ mod tests {
             "sessions": []
         });
         let frame: DeviceToServerFrame = serde_json::from_value(legacy).unwrap();
-        let DeviceToServerFrame::HistorySnapshot { workspace, .. } = frame else {
+        let DeviceToServerFrame::HistorySnapshot { workspace, workspace_only, .. } = frame else {
             panic!("expected history snapshot");
         };
         assert!(workspace.is_none());
+        assert!(!workspace_only);
 
         let value = serde_json::to_value(DeviceToServerFrame::HistorySnapshot {
+            workspace_only: false,
             sequence: 2,
             sessions: vec![],
             workspace: Some(WorkspaceSnapshot {
-                terminals: None,
+                subagents: vec![],
+            terminals: None,
                 groups: vec![],
                 projects: vec![WorkspaceProjectSummary {
                     id: "project-1".to_string(),
@@ -747,5 +771,10 @@ mod tests {
         assert_eq!(value["workspace"]["projects"][0]["groupId"], Value::Null);
         assert!(value["workspace"]["projects"][0].get("cwd").is_none());
         assert_eq!(value["workspace"]["updatedAt"], 7);
+        assert_eq!(value["workspaceOnly"], false);
+        let workspace: WorkspaceSnapshot = serde_json::from_value(value["workspace"].clone()).unwrap();
+        let event = serde_json::to_value(BrowserEventPayload::WorkspaceUpdated { device_id: "device-1".into(), workspace }).unwrap();
+        assert_eq!(event["type"], "workspace.updated");
+        assert_eq!(event["deviceId"], "device-1");
     }
 }

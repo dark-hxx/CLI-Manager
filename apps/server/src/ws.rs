@@ -148,7 +148,7 @@ async fn handle_browser_socket(
             // Ready triggers a current HTTP snapshot. Historical invalidations
             // add no data and must not launch thousands of duplicate refreshes.
             // Retain the high-water event so legacy clients advance their cursor.
-            if matches!(&frame, BrowserSocketFrame::Event { sequence, payload: BrowserEventPayload::HistoryUpdated { .. }, .. } if *sequence < latest_sequence)
+            if matches!(&frame, BrowserSocketFrame::Event { sequence, payload: BrowserEventPayload::HistoryUpdated { .. } | BrowserEventPayload::WorkspaceUpdated { .. }, .. } if *sequence < latest_sequence)
             {
                 continue;
             }
@@ -266,6 +266,7 @@ fn browser_frame_in_scope(frame: &BrowserSocketFrame, scope: Option<&str>) -> bo
         BrowserEventPayload::DeviceUpdated { device } => &device.id,
         BrowserEventPayload::OperationUpdated { operation } => &operation.device_id,
         BrowserEventPayload::HistoryUpdated { device_id, .. }
+        | BrowserEventPayload::WorkspaceUpdated { device_id, .. }
         | BrowserEventPayload::ConversationUpdated { device_id, .. } => device_id,
         BrowserEventPayload::PairingUpdated { .. } => return false,
     };
@@ -670,7 +671,7 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
                             }
                         }
                     }
-                    DeviceToServerFrame::HistorySnapshot { sequence, sessions, workspace } => {
+                    DeviceToServerFrame::HistorySnapshot { sequence, sessions, workspace, workspace_only } => {
                         let Some(owner_id) = user_id.as_deref() else {
                             if !send_device_error(&mut sender, "pairing_required", "pair the device before sending history").await {
                                 break;
@@ -691,20 +692,24 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
                                 continue;
                             }
                         }
-                        match state.storage.replace_history_snapshot(&device_id, owner_id, sequence, &sessions, workspace.as_ref()).await {
+                        match state.storage.replace_history_snapshot(&device_id, owner_id, sequence, &sessions, workspace.as_ref(), workspace_only).await {
                             Ok(changed) => {
                                 if !send_json(&mut sender, &ServerToDeviceFrame::Ack { sequence }).await {
                                     break;
                                 }
                                 if changed {
-                                    let latest_updated_at = sessions.iter().map(|session| session.updated_at).max().unwrap_or_else(now_ms);
-                                    if let Err(error) = state.publish_event(
-                                        owner_id,
+                                    let event = if workspace_only {
+                                        BrowserEventPayload::WorkspaceUpdated {
+                                            device_id: device_id.clone(),
+                                            workspace: crate::storage::sanitize_workspace(workspace.as_ref().expect("validated workspace-only snapshot")),
+                                        }
+                                    } else {
                                         BrowserEventPayload::HistoryUpdated {
                                             device_id: device_id.clone(),
-                                            latest_updated_at,
-                                        },
-                                    ).await {
+                                            latest_updated_at: sessions.iter().map(|session| session.updated_at).max().unwrap_or_else(now_ms),
+                                        }
+                                    };
+                                    if let Err(error) = state.publish_event(owner_id, event).await {
                                         tracing::warn!(%error, %device_id, "history event publish failed");
                                     }
                                 }
@@ -1024,6 +1029,20 @@ fn validate_workspace_snapshot(
         }) {
             return Err("invalid workspace terminals".to_string());
         }
+    }
+    let mut subagent_ids = std::collections::HashSet::new();
+    let parent_ids: std::collections::HashSet<_> = snapshot.terminals.iter().flatten().map(|terminal| terminal.session_id.as_str()).collect();
+    if snapshot.subagents.len() > 64
+        || snapshot.subagents.iter().map(|agent| agent.content.len()).sum::<usize>() > 128 * 1024
+        || snapshot.subagents.iter().any(|agent| {
+            agent.session_id.is_empty() || agent.session_id.len() > 512
+                || !subagent_ids.insert(agent.session_id.as_str())
+                || !parent_ids.contains(agent.parent_session_id.as_str())
+                || agent.title.len() > 512
+                || agent.content.len() > 32 * 1024
+                || !matches!(agent.source_kind.as_str(), "pending" | "child-jsonl" | "parent-jsonl" | "lifecycle-only")
+        }) {
+        return Err("invalid workspace subagents".to_string());
     }
     if snapshot.groups.len() > 2_000
         || snapshot.projects.len() > 10_000
@@ -1369,6 +1388,7 @@ mod tests {
     #[test]
     fn workspace_validation_rejects_unknown_project_source() {
         let snapshot = cli_manager_web_protocol::WorkspaceSnapshot {
+            subagents: vec![],
             terminals: None,
             groups: vec![],
             projects: vec![cli_manager_web_protocol::WorkspaceProjectSummary {
@@ -1385,4 +1405,33 @@ mod tests {
         };
         assert!(validate_workspace_snapshot(&snapshot).is_err());
     }
+    #[test]
+    fn subagent_snapshot_validates_parent_uniqueness_and_content_limits() {
+        use cli_manager_web_protocol::{WorkspaceSnapshot, WorkspaceTerminalSummary, WorkspaceSubagentSummary};
+        let mut snapshot = WorkspaceSnapshot {
+            subagents: vec![WorkspaceSubagentSummary {
+                session_id: "parent::agent::child".into(), parent_session_id: "parent".into(),
+                title: "Child".into(), source_kind: "child-jsonl".into(), ended: false,
+                content: "actual transcript".into(), truncated: false,
+            }],
+            terminals: Some(vec![WorkspaceTerminalSummary {
+                session_id: "parent".into(), project_id: "project".into(), worktree_id: None, title: "Parent".into(),
+            }]),
+            groups: vec![], projects: vec![], worktrees: vec![], updated_at: 1,
+        };
+        assert!(validate_workspace_snapshot(&snapshot).is_ok());
+        snapshot.subagents[0].parent_session_id = "missing".into();
+        assert!(validate_workspace_snapshot(&snapshot).is_err());
+        snapshot.subagents[0].parent_session_id = "parent".into();
+        snapshot.subagents.push(snapshot.subagents[0].clone());
+        assert!(validate_workspace_snapshot(&snapshot).is_err());
+        snapshot.subagents.pop();
+        snapshot.subagents[0].content = "x".repeat(32 * 1024 + 1);
+        assert!(validate_workspace_snapshot(&snapshot).is_err());
+        snapshot.subagents[0].content = "x".repeat(32 * 1024);
+        let agent = snapshot.subagents[0].clone();
+        snapshot.subagents = (0..5).map(|index| WorkspaceSubagentSummary { session_id: format!("child-{index}"), ..agent.clone() }).collect();
+        assert!(validate_workspace_snapshot(&snapshot).is_err());
+    }
+
 }

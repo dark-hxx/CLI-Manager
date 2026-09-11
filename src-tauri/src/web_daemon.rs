@@ -42,7 +42,7 @@ const PAIRING_LIFETIME_MS: i64 = 5 * 60 * 1000;
 const IDLE_EXIT_AFTER: Duration = Duration::from_secs(10 * 60);
 const CONTROL_CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const CONTROL_RETRY_DELAY: Duration = Duration::from_secs(3);
-pub(crate) const PROTOCOL_VERSION: u16 = 8;
+pub(crate) const PROTOCOL_VERSION: u16 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,6 +131,8 @@ pub enum Request {
         control_mode: Option<String>,
     },
     PublishHistory {
+        #[serde(default)]
+        workspace_only: bool,
         sessions: Vec<HistorySessionSummary>,
         workspace: WorkspaceSnapshot,
     },
@@ -485,6 +487,7 @@ impl DaemonState {
             Request::PublishHistory {
                 sessions,
                 workspace,
+                workspace_only,
             } => {
                 let sequence = {
                     let mut runtime = self
@@ -498,6 +501,7 @@ impl DaemonState {
                     sequence,
                     sessions,
                     workspace: Some(workspace),
+                    workspace_only,
                 })?;
                 Ok(None)
             }
@@ -1176,7 +1180,7 @@ fn request_with_info<T: for<'de> Deserialize<'de>>(
 }
 
 fn control_protocol_version(discovered: u16, upgrade: bool) -> Result<u16, String> {
-    if discovered == PROTOCOL_VERSION || (upgrade && matches!(discovered, 1..=7)) {
+    if discovered == PROTOCOL_VERSION || (upgrade && matches!(discovered, 1..=8)) {
         Ok(discovered)
     } else {
         Err("web_daemon_protocol_mismatch: finish pending operations before upgrading the Web daemon".into())

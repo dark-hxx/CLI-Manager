@@ -533,7 +533,14 @@ impl Storage {
         sequence: u64,
         sessions: &[HistorySessionSummary],
         workspace: Option<&WorkspaceSnapshot>,
+        workspace_only: bool,
     ) -> Result<bool, AppError> {
+        if workspace_only && (workspace.is_none() || !sessions.is_empty()) {
+            return Err(AppError::bad_request(
+                "invalid_history_snapshot",
+                "workspace-only update requires a workspace and no history sessions",
+            ));
+        }
         let sequence = i64::try_from(sequence).map_err(|_| {
             AppError::bad_request("invalid_sequence", "sequence exceeds supported range")
         })?;
@@ -550,50 +557,52 @@ impl Storage {
         if last.is_some_and(|last| sequence <= last) {
             return Ok(false);
         }
-        sqlx::query("DELETE FROM history_sessions WHERE device_id = ?1")
-            .bind(device_id)
-            .execute(&mut *tx)
-            .await?;
-        for session in sessions {
-            if session.device_id != device_id {
-                return Err(AppError::bad_request(
-                    "invalid_history_snapshot",
-                    "history session deviceId does not match connection",
-                ));
+        if !workspace_only {
+            sqlx::query("DELETE FROM history_sessions WHERE device_id = ?1")
+                .bind(device_id)
+                .execute(&mut *tx)
+                .await?;
+            for session in sessions {
+                if session.device_id != device_id {
+                    return Err(AppError::bad_request(
+                        "invalid_history_snapshot",
+                        "history session deviceId does not match connection",
+                    ));
+                }
+                sqlx::query(
+                    "INSERT INTO history_sessions
+                        (device_id, session_id, user_id, source, project_key, project_id, worktree_id, title, cwd,
+                         created_at, updated_at, message_count, branch, freshness)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, ?12, 'live')
+                     ON CONFLICT(device_id, session_id) DO UPDATE SET
+                        user_id = excluded.user_id,
+                        source = excluded.source,
+                        project_key = excluded.project_key,
+                        project_id = excluded.project_id,
+                        worktree_id = excluded.worktree_id,
+                        title = excluded.title,
+                        cwd = NULL,
+                        created_at = excluded.created_at,
+                        updated_at = excluded.updated_at,
+                        message_count = excluded.message_count,
+                        branch = excluded.branch,
+                        freshness = 'live'",
+                )
+                .bind(device_id)
+                .bind(&session.session_id)
+                .bind(user_id)
+                .bind(&session.source)
+                .bind(&session.project_key)
+                .bind(&session.project_id)
+                .bind(&session.worktree_id)
+                .bind(&session.title)
+                .bind(session.created_at)
+                .bind(session.updated_at)
+                .bind(session.message_count as i64)
+                .bind(&session.branch)
+                .execute(&mut *tx)
+                .await?;
             }
-            sqlx::query(
-                "INSERT INTO history_sessions
-                    (device_id, session_id, user_id, source, project_key, project_id, worktree_id, title, cwd,
-                     created_at, updated_at, message_count, branch, freshness)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, ?12, 'live')
-                 ON CONFLICT(device_id, session_id) DO UPDATE SET
-                    user_id = excluded.user_id,
-                    source = excluded.source,
-                    project_key = excluded.project_key,
-                    project_id = excluded.project_id,
-                    worktree_id = excluded.worktree_id,
-                    title = excluded.title,
-                    cwd = NULL,
-                    created_at = excluded.created_at,
-                    updated_at = excluded.updated_at,
-                    message_count = excluded.message_count,
-                    branch = excluded.branch,
-                    freshness = 'live'",
-            )
-            .bind(device_id)
-            .bind(&session.session_id)
-            .bind(user_id)
-            .bind(&session.source)
-            .bind(&session.project_key)
-            .bind(&session.project_id)
-            .bind(&session.worktree_id)
-            .bind(&session.title)
-            .bind(session.created_at)
-            .bind(session.updated_at)
-            .bind(session.message_count as i64)
-            .bind(&session.branch)
-            .execute(&mut *tx)
-            .await?;
         }
         if let Some(workspace) = workspace {
             let safe_workspace = sanitize_workspace(workspace);
@@ -881,14 +890,30 @@ impl Storage {
         payload: BrowserEventPayload,
     ) -> Result<BrowserSocketFrame, AppError> {
         let occurred_at = now_ms();
+        let mut tx = self.pool.begin().await?;
         let result = sqlx::query(
             "INSERT INTO browser_events (user_id, occurred_at, payload_json) VALUES (?1, ?2, ?3)",
         )
         .bind(user_id)
         .bind(occurred_at)
         .bind(serde_json::to_string(&payload)?)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+        // Workspace events contain replaceable transcript snapshots. Retain only
+        // the latest per device; Ready restores current state over HTTP on reconnect.
+        if let BrowserEventPayload::WorkspaceUpdated { device_id, .. } = &payload {
+            sqlx::query(
+                "DELETE FROM browser_events WHERE user_id = ?1 AND sequence < ?2
+                 AND json_extract(payload_json, '$.type') = 'workspace.updated'
+                 AND json_extract(payload_json, '$.deviceId') = ?3",
+            )
+            .bind(user_id)
+            .bind(result.last_insert_rowid())
+            .bind(device_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         Ok(BrowserSocketFrame::Event {
             sequence: result.last_insert_rowid(),
             occurred_at,
@@ -1009,11 +1034,13 @@ fn public_project_key(value: String) -> String {
     trimmed.chars().take(512).collect()
 }
 
-fn sanitize_workspace(workspace: &WorkspaceSnapshot) -> WorkspaceSnapshot {
+pub(crate) fn sanitize_workspace(workspace: &WorkspaceSnapshot) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
+        subagents: workspace.subagents.clone(),
         terminals: workspace.terminals.clone(),
         groups: workspace.groups.clone(),
-        // Authenticated device owners need cwd to identify their open terminals.
+        // This snapshot is reachable only after user authentication and device
+        // ownership checks. Keep cwd so remote users can identify open terminals.
         projects: workspace.projects.clone(),
         worktrees: workspace.worktrees.clone(),
         updated_at: workspace.updated_at,
@@ -1350,6 +1377,7 @@ mod tests {
             freshness: "live".to_string(),
         };
         let workspace = |name: &str, updated_at: i64| WorkspaceSnapshot {
+            subagents: vec![],
             terminals: None,
             groups: vec![],
             projects: vec![WorkspaceProjectSummary {
@@ -1376,6 +1404,7 @@ mod tests {
                 1,
                 &[session("session-a"), session("session-b")],
                 Some(&first_workspace),
+                false,
             )
             .await
             .unwrap();
@@ -1389,6 +1418,7 @@ mod tests {
                 2,
                 &[session("session-b")],
                 Some(&next_workspace),
+                false,
             )
             .await
             .unwrap();
@@ -1408,6 +1438,30 @@ mod tests {
         assert_eq!(stored_workspace.updated_at, 2);
         assert_eq!(stored_workspace.terminals, Some(vec![]));
         assert!(sessions[0].cwd.is_none());
+        next_workspace.updated_at = 3;
+        assert!(storage.replace_history_snapshot("device-1", &user.id, 3, &[], Some(&next_workspace), true).await.unwrap());
+        let retained = storage.list_history(&user.id, Some("device-1"), 50, 0).await.unwrap();
+        assert_eq!(retained.len(), 1, "workspace-only update must retain history");
+        assert_eq!(retained[0].session_id, "session-b");
+        assert_eq!(storage.workspace_snapshot("device-1").await.unwrap().unwrap().updated_at, 3);
+        assert!(!storage.replace_history_snapshot("device-1", &user.id, 2, &[], Some(&first_workspace), true).await.unwrap());
+        assert!(storage.replace_history_snapshot("device-1", &user.id, 4, &[], None, true).await.is_err());
+        assert!(storage.replace_history_snapshot("device-1", &user.id, 4, &[session("invalid")], Some(&next_workspace), true).await.is_err());
+        assert_eq!(storage.list_history(&user.id, Some("device-1"), 50, 0).await.unwrap()[0].session_id, "session-b");
+        let history = storage.append_browser_event(&user.id, BrowserEventPayload::HistoryUpdated {
+            device_id: "device-1".into(), latest_updated_at: 2,
+        }).await.unwrap();
+        let first_event = storage.append_browser_event(&user.id, BrowserEventPayload::WorkspaceUpdated {
+            device_id: "device-1".into(), workspace: first_workspace,
+        }).await.unwrap();
+        let latest_event = storage.append_browser_event(&user.id, BrowserEventPayload::WorkspaceUpdated {
+            device_id: "device-1".into(), workspace: next_workspace,
+        }).await.unwrap();
+        let events = storage.browser_events_after(&user.id, 0).await.unwrap();
+        assert_eq!(events, vec![history, latest_event.clone()], "retain history invalidation and only the latest workspace payload");
+        let BrowserSocketFrame::Event { sequence: first_sequence, .. } = first_event else { panic!("event expected") };
+        let BrowserSocketFrame::Event { sequence: latest_sequence, .. } = latest_event else { panic!("event expected") };
+        assert!(latest_sequence > first_sequence);
     }
 
     #[tokio::test]
@@ -1423,16 +1477,17 @@ mod tests {
         let writer_storage = storage.clone();
         let owner = user.id.clone();
         let writer = tokio::spawn(async move {
-            let workspace = WorkspaceSnapshot { terminals: Some(vec![]), groups: vec![],
+            let workspace = WorkspaceSnapshot { subagents: vec![],
+            terminals: Some(vec![]), groups: vec![],
                 projects: vec![], worktrees: vec![], updated_at: 7 };
-            writer_storage.replace_history_snapshot("device", &owner, 7, &[], Some(&workspace)).await
+            writer_storage.replace_history_snapshot("device", &owner, 7, &[], Some(&workspace), false).await
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
         assert!(!writer.is_finished(), "snapshot must wait for the reserved writer");
         blocker.commit().await.unwrap();
         assert!(writer.await.unwrap().unwrap());
         assert_eq!(storage.workspace_snapshot("device").await.unwrap().unwrap().updated_at, 7);
-        assert!(!storage.replace_history_snapshot("device", &user.id, 6, &[], None).await.unwrap());
+        assert!(!storage.replace_history_snapshot("device", &user.id, 6, &[], None, false).await.unwrap());
         let sequence: i64 = sqlx::query_scalar("SELECT last_sequence FROM device_event_cursors WHERE device_id = 'device' AND stream = 'history'")
             .fetch_one(storage.pool()).await.unwrap();
         assert_eq!(sequence, 7);

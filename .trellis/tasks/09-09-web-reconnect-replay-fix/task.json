@@ -1,0 +1,12 @@
+{
+  "id": "web-reconnect-replay-fix",
+  "title": "修复 Web 请求风暴与断开后无法重连",
+  "status": "completed",
+  "followup": "已修复 mio Windows socket 继承导致停服端口残留，以及大终端回放拒收与状态显示；十轮同端口启停、1MB真实Chrome渲染及同连接错误恢复验证通过，新包已生成。",
+  "completedAt": "2026-09-09",
+  "artifact": "src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-lifecycle_20260909_x64-setup.exe",
+  "sha256": "85190FB79490C89A84F0B1DF6180C8D7C35F548C84159C5B2D358DDB7BD5D298",
+  "createdAt": "2026-09-09",
+  "branch": "feat/web-management-capabilities-v2",
+  "description": "合并历史刷新、修正浏览器连接生命周期、取消设备阻塞连接、显式停止升级后的 WebSocket；回归验证并打包。"
+}

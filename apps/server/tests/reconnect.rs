@@ -369,3 +369,67 @@ async fn replay_from_zero_skips_ten_thousand_stale_history_notifications_but_kee
         .unwrap();
     storage.pool().close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn workspace_only_push_preserves_history_and_broadcasts_current_transcript() {
+    let config = test_config();
+    let storage = Storage::open(&config.database_path).await.unwrap();
+    storage.ensure_single_user("admin", "unused").await.unwrap();
+    let user = storage.find_user_by_username("admin").await.unwrap().unwrap();
+    storage.create_browser_session(&auth::hash_secret("workspace-test"), &user.id, i64::MAX).await.unwrap();
+    storage.upsert_device_hello("workspace-device", "test", "windows", "test", &[], None, None, None, None).await.unwrap();
+    sqlx::query("UPDATE devices SET user_id = ?1, device_token_hash = ?2 WHERE id = 'workspace-device'")
+        .bind(&user.id).bind(auth::hash_secret("workspace-token"))
+        .execute(storage.pool()).await.unwrap();
+    let (stop, server) = start(config.clone()).await;
+    let bind = config.bind;
+    tokio::task::spawn_blocking(move || {
+        let mut device = upgrade(bind, "/ws/device", "");
+        write_json_frame(&mut device, &serde_json::json!({
+            "type": "hello", "protocolVersion": cli_manager_web_protocol::DEVICE_PROTOCOL_VERSION,
+            "deviceId": "workspace-device", "deviceToken": "workspace-token",
+            "name": "test", "platform": "windows", "appVersion": "test", "capabilities": [],
+        }));
+        assert_eq!(read_json_frame(&mut device)["paired"], true);
+        let mut browser = upgrade(bind, "/ws/browser?afterSequence=0", "cli_manager_session=workspace-test");
+        assert_eq!(read_json_frame(&mut browser)["type"], "ready");
+        let mut workspace = serde_json::json!({
+            "groups": [], "projects": [{ "id": "project", "name": "Project", "sortOrder": 0, "source": "codex", "environmentType": "local", "cwd": "private-path" }],
+            "worktrees": [], "terminals": [{ "sessionId": "parent", "projectId": "project", "title": "Parent" }], "subagents": [], "updatedAt": 1,
+        });
+        write_json_frame(&mut device, &serde_json::json!({
+            "type": "history_snapshot", "sequence": 1, "workspace": workspace,
+            "sessions": [{ "deviceId": "workspace-device", "sessionId": "history", "source": "codex", "projectKey": "project", "projectId": "project", "title": "Keep history", "createdAt": 1, "updatedAt": 1, "messageCount": 1, "freshness": "live" }],
+        }));
+        assert_eq!(read_until_type(&mut device, "ack")["sequence"], 1);
+        loop {
+            let event = read_until_type(&mut browser, "event");
+            if event["payload"]["type"] == "history.updated" { break; }
+        }
+        workspace["updatedAt"] = 2.into();
+        workspace["subagents"] = serde_json::json!([{
+            "sessionId": "child", "parentSessionId": "parent", "title": "Child", "sourceKind": "child-jsonl",
+            "ended": false, "content": "live child transcript", "truncated": false,
+        }]);
+        write_json_frame(&mut device, &serde_json::json!({
+            "type": "history_snapshot", "sequence": 2, "workspaceOnly": true,
+            "sessions": [], "workspace": workspace,
+        }));
+        assert_eq!(read_until_type(&mut device, "ack")["sequence"], 2);
+        let event = read_until_type(&mut browser, "event");
+        assert_eq!(event["payload"]["type"], "workspace.updated");
+        assert_eq!(event["payload"]["deviceId"], "workspace-device");
+        assert_eq!(event["payload"]["workspace"]["subagents"][0]["content"], "live child transcript");
+        assert_eq!(event["payload"]["workspace"]["projects"][0]["cwd"], "private-path");
+    }).await.unwrap();
+    let history = storage.list_history(&user.id, Some("workspace-device"), 50, 0).await.unwrap();
+    assert_eq!(history.len(), 1);
+    assert_eq!(history[0].session_id, "history");
+    assert_eq!(storage.workspace_snapshot("workspace-device").await.unwrap().unwrap().subagents[0].content, "live child transcript");
+    stop.send(()).unwrap();
+    server.await.unwrap().unwrap();
+    storage.pool().close().await;
+    for file in [config.database_path.clone(), config.database_path.with_extension("db-wal"), config.database_path.with_extension("db-shm")] {
+        let _ = std::fs::remove_file(file);
+    }
+}

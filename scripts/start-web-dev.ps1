@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
-    [string]$AdminPassword = $env:CLI_MANAGER_ADMIN_PASSWORD
+    [string]$AdminPassword = $env:CLI_MANAGER_ADMIN_PASSWORD,
+    [ValidateRange(1, 65535)]
+    [int]$FrontendPort = 5173,
+    [ValidateRange(1, 65535)]
+    [int]$BackendPort = 8787,
+    [string]$BackendHost = "127.0.0.1"
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
-$FrontendPort = 5173
-$BackendPort = 8787
 
 function Stop-PortListener {
     param(
@@ -74,9 +77,25 @@ function Wait-HttpEndpoint {
     throw "$Name did not become ready within $TimeoutSeconds seconds. Last error: $lastError"
 }
 
+function Format-HostForUri {
+    param(
+        [Parameter(Mandatory)]
+        [string]$HostName
+    )
+
+    if ($HostName.Contains(":") -and -not $HostName.StartsWith("[")) {
+        return "[$HostName]"
+    }
+    return $HostName
+}
+
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $webRoot = Join-Path $projectRoot "apps\web"
 Set-Location -LiteralPath $projectRoot
+$backendBindHost = Format-HostForUri -HostName $BackendHost
+$backendBind = "$backendBindHost`:$BackendPort"
+$backendProbeHost = if ($BackendHost -in @("0.0.0.0", "::")) { "127.0.0.1" } else { $BackendHost }
+$backendProbeUriHost = Format-HostForUri -HostName $backendProbeHost
 
 Stop-PortListener -Port $FrontendPort
 Stop-PortListener -Port $BackendPort
@@ -102,6 +121,18 @@ $previousPassword = [Environment]::GetEnvironmentVariable(
     "CLI_MANAGER_ADMIN_PASSWORD",
     [EnvironmentVariableTarget]::Process
 )
+$previousBind = [Environment]::GetEnvironmentVariable(
+    "CLI_MANAGER_WEB_BIND",
+    [EnvironmentVariableTarget]::Process
+)
+$previousPort = [Environment]::GetEnvironmentVariable(
+    "CLI_MANAGER_WEB_PORT",
+    [EnvironmentVariableTarget]::Process
+)
+$previousWebTarget = [Environment]::GetEnvironmentVariable(
+    "VITE_WEB_SERVER_URL",
+    [EnvironmentVariableTarget]::Process
+)
 
 try {
     [Environment]::SetEnvironmentVariable(
@@ -109,11 +140,39 @@ try {
         $AdminPassword,
         [EnvironmentVariableTarget]::Process
     )
+    [Environment]::SetEnvironmentVariable(
+        "CLI_MANAGER_WEB_BIND",
+        $backendBind,
+        [EnvironmentVariableTarget]::Process
+    )
+    [Environment]::SetEnvironmentVariable(
+        "CLI_MANAGER_WEB_PORT",
+        [string]$BackendPort,
+        [EnvironmentVariableTarget]::Process
+    )
     $backend = Start-Process `
         -FilePath $shellPath `
         -WorkingDirectory $projectRoot `
         -ArgumentList @("-NoExit", "-NoProfile", "-Command", "npm run web:server:run") `
         -PassThru
+
+    [Environment]::SetEnvironmentVariable(
+        "VITE_WEB_SERVER_URL",
+        "http://$backendProbeUriHost`:$BackendPort",
+        [EnvironmentVariableTarget]::Process
+    )
+    # npm.ps1 consumes the standalone `--`, turning Vite options into positional arguments.
+    $frontendCommand = "npm.cmd run dev -- --host 127.0.0.1 --port $FrontendPort --strictPort"
+    $frontend = Start-Process `
+        -FilePath $shellPath `
+        -WorkingDirectory $webRoot `
+        -ArgumentList @("-NoExit", "-NoProfile", "-Command", $frontendCommand) `
+        -PassThru
+
+    Wait-HttpEndpoint -Name "Backend" -Uri "http://$backendProbeUriHost`:$BackendPort/api/health"
+    Wait-HttpEndpoint -Name "Frontend" -Uri "http://127.0.0.1:$FrontendPort/"
+    Write-Host "Backend PID: $($backend.Id)"
+    Write-Host "Frontend PID: $($frontend.Id)"
 }
 finally {
     [Environment]::SetEnvironmentVariable(
@@ -121,18 +180,19 @@ finally {
         $previousPassword,
         [EnvironmentVariableTarget]::Process
     )
+    [Environment]::SetEnvironmentVariable(
+        "CLI_MANAGER_WEB_BIND",
+        $previousBind,
+        [EnvironmentVariableTarget]::Process
+    )
+    [Environment]::SetEnvironmentVariable(
+        "CLI_MANAGER_WEB_PORT",
+        $previousPort,
+        [EnvironmentVariableTarget]::Process
+    )
+    [Environment]::SetEnvironmentVariable(
+        "VITE_WEB_SERVER_URL",
+        $previousWebTarget,
+        [EnvironmentVariableTarget]::Process
+    )
 }
-
-# npm.ps1 consumes the standalone `--`, turning Vite options into positional arguments.
-$frontendCommand = "npm.cmd run dev -- --host 127.0.0.1 --port $FrontendPort --strictPort"
-$frontend = Start-Process `
-    -FilePath $shellPath `
-    -WorkingDirectory $webRoot `
-    -ArgumentList @("-NoExit", "-NoProfile", "-Command", $frontendCommand) `
-    -PassThru
-
-Wait-HttpEndpoint -Name "Backend" -Uri "http://127.0.0.1:$BackendPort/api/health"
-Wait-HttpEndpoint -Name "Frontend" -Uri "http://127.0.0.1:$FrontendPort/"
-
-Write-Host "Backend PID: $($backend.Id)"
-Write-Host "Frontend PID: $($frontend.Id)"

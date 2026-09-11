@@ -1,0 +1,12 @@
+{
+  "id": "web-terminal-performance",
+  "title": "优化 Web 终端持续输出性能与回放闪烁",
+  "status": "completed",
+  "artifact": "src-tauri/target/release/bundle/nsis/CLI-Manager_1.3.9_web-multi-terminal-tabs_20260910_x64-setup.exe",
+  "sha256": "58D7D2E3BD4C1AE9456531724DFEB4A7E3FE22C89D237621FF7BAAC2FAD3FC19",
+  "notes": "2026-09-10 完成 Web 多真实终端标签：多个 PTY 独立订阅、输出缓冲与渲染游标，当前标签高频刷新、后台标签低频有界刷新，支持切换和单独关闭。Web typecheck/build、终端流及桥接测试通过；Chrome 实机启动 cpa+amazon 双终端、切换、分别关闭通过。NSIS 包 25,870,506 字节；缺少 TAURI_SIGNING_PRIVATE_KEY，仅更新签名步骤返回 1，安装包已生成。",
+  "priority": "P0",
+  "createdAt": "2026-09-09",
+  "branch": "feat/web-management-capabilities-v2",
+  "description": "隔离实时终端字节流与 React 页面状态，按动画帧合并 xterm 写入，并使用浏览器已渲染游标进行断线增量回放，降低持续输出卡顿和重复 reset 闪烁。"
+}

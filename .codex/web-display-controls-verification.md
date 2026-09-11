@@ -1,6 +1,16 @@
 # Web display controls1.3.10
 
+## Active terminal project/cwd follow-up
+
+Root cause: the status card had access only to opaque project IDs because the desktop publisher wrote project/worktree cwd as null and server sanitization removed any legacy value. A frontend-only label could show the project name but could not truthfully show its working directory, so the fix lands at the authenticated workspace DTO boundary plus its Web consumer.
+
+Discovery: desktop `publishWorkspace` resolves project/group paths and Worktree paths; protocol DTO already has optional cwd; server validates each path length, persists the latest workspace, and returns it only after user authentication plus device ownership/scope checks; Web `useAppModel` maps cwd into `ProjectContext`; `Workbench` resolves context from the active terminal tab rather than a separately selected sidebar item. History cwd remains redacted/null, browser operations still send opaque IDs, SSH contexts remain excluded, and terminal/subagent/PTY paths are otherwise unchanged. Memory impact classified `publishWorkspace` and `sanitize_workspace` as CRITICAL and was reported before editing.
+
+Scenarios verified: project and Worktree paths; Windows and POSIX forms; current tab switch; selected-sidebar context differing from active terminal; long mobile wrapping/selectable text; missing legacy cwd -> localized Unknown; authenticated live workspace broadcast; persisted workspace reload; anonymous API rejection; device-scoped live-event isolation. Web typecheck, desktop TypeScript check, protocol compatibility, server storage/live reconnect/auth/scope tests and real browser Workbench smoke pass. Phone screenshot visually reviewed with project and full cwd in the status card.
+
 ## Mobile/split follow-up (2026-09-10)
+
+Packaging subsequently authorized and completed: rebuilt Web only (Vite7.61s), NSIS bundle exit0 from committed9aec4f14. Generated installer script includes index-CJDRDaFw.js, index-BK5vEKm5.css and all helper executables. Delivered CLI-Manager_1.3.10_web-mobile_9aec4f14_x64-setup.exe (26006724bytes), SHA25660DC9DD93FC42D2C39DA21DCD0883B45916B47EDA5C965A172ADB4F095BA4715. Helper hashes unchanged. Main EXE was not recompiled but Tauri patched NSIS bundle-type metadata; resulting hashC57513AB93E6C64DB0DB91399F75B013BBF2A30D7A2E8508E859976E764977B4. Old root installers preserved; no installation into the user's live environment performed.
 
 User added this scope to the existing task and explicitly clarified that keyboard means the phone OS keyboard, not a custom keyboard. The button focuses xterm synchronously within the user click; fallback is a normal textarea using the same OS IME. Enter/Tab/Esc/Ctrl+C are auxiliary terminal keys. No automatic mobile focus on mount/tab activation. Draft send is explicit, converts CR/LF/Tab to spaces and removes control bytes; execution requires explicit Enter. Inactive/disconnected/exited terminals cannot forward input, and mounted fallback drafts survive disabled state.
 

@@ -98,7 +98,43 @@ async fn ensure_usage_error_detail_schema(connection: &mut SqliteConnection) -> 
     }
 }
 
+async fn usage_schema_ready(connection: &mut SqliteConnection) -> Result<bool, String> {
+    let object_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_schema
+         WHERE (type = 'table' AND name IN ('request_logs', 'request_log_sync', 'usage_records', 'usage_daily_rollups'))
+            OR (type = 'view' AND name = 'unified_usage_records')
+            OR (type = 'index' AND name IN (
+                'idx_request_logs_time', 'idx_request_logs_source_project',
+                'idx_request_logs_session', 'idx_request_logs_model',
+                'idx_usage_records_time', 'idx_usage_records_project',
+                'idx_usage_records_session', 'idx_usage_records_provider',
+                'idx_usage_records_source', 'idx_usage_records_project_path',
+                'idx_usage_records_route_dedup'
+            ))",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_schema_inspect_failed:{err}"))?;
+    if object_count != 16 {
+        return Ok(false);
+    }
+    let column_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('usage_records')
+         WHERE name IN ('record_id', 'project_path', 'error_detail')",
+    )
+    .fetch_one(&mut *connection)
+    .await
+    .map_err(|err| format!("usage_schema_inspect_failed:{err}"))?;
+    Ok(column_count == 3)
+}
+
 pub(crate) async fn ensure_usage_schema(connection: &mut SqliteConnection) -> Result<(), String> {
+    // The v27 migration contains a one-time request_logs -> usage_records backfill. Replaying the
+    // full migration on every statistics/sync connection scans millions of rows and monopolizes
+    // SQLite's writer lock. Healthy databases take this read-only fast path instead.
+    if usage_schema_ready(connection).await? {
+        return Ok(());
+    }
     for (name, sql) in [
         ("request_logs", crate::MIGRATION_CREATE_REQUEST_LOGS_SQL),
         ("usage_records", crate::MIGRATION_CREATE_USAGE_RECORDS_SQL),
@@ -220,6 +256,28 @@ mod tests {
         assert_eq!(
             migration.get::<Vec<u8>, _>("checksum"),
             Sha384::digest(crate::MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL.as_bytes()).to_vec()
+        );
+
+        sqlx::query(
+            "INSERT INTO request_logs(
+                request_id, source, project_key, session_id, file_path, event_key, event_index,
+                timestamp_ms, model, input_tokens, output_tokens, cache_read_tokens,
+                cache_creation_tokens, created_at_ms, updated_at_ms
+             ) VALUES ('late', 'codex', '', 'session', 'file', 'event', 0,
+                       1, NULL, 0, 0, 0, 0, 1, 1)",
+        )
+        .execute(&mut connection)
+        .await
+        .unwrap();
+        ensure_usage_schema(&mut connection).await.unwrap();
+        let late_backfill: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM usage_records WHERE record_id = 'late'")
+                .fetch_one(&mut connection)
+                .await
+                .unwrap();
+        assert_eq!(
+            late_backfill, 0,
+            "healthy schema must not replay the v27 data migration"
         );
     }
 

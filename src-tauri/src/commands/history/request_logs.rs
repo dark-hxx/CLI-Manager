@@ -396,19 +396,25 @@ async fn replace_document(
     synced_at_ms: i64,
 ) -> Result<u64, String> {
     let mut tx = conn
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|err| format!("request_logs_transaction_failed: {err}"))?;
+    // request_logs is indexed by file_path and usage_records by record_id. Resolve the small
+    // affected ID set before deleting its source rows; filtering the multi-gigabyte usage table
+    // directly by its unindexed file_path otherwise holds SQLite's writer lock for tens of seconds.
+    sqlx::query(
+        "DELETE FROM usage_records
+         WHERE record_id IN (SELECT request_id FROM request_logs WHERE file_path = ?1)",
+    )
+    .bind(&document.file_path)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| format!("usage_records_session_cleanup_failed: {err}"))?;
     sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
         .bind(&document.file_path)
         .execute(&mut *tx)
         .await
         .map_err(|err| format!("request_logs_delete_failed: {err}"))?;
-    sqlx::query("DELETE FROM usage_records WHERE data_source = 'session_log' AND file_path = ?1")
-        .bind(&document.file_path)
-        .execute(&mut *tx)
-        .await
-        .map_err(|err| format!("usage_records_session_cleanup_failed: {err}"))?;
 
     for event in &document.events {
         let timestamp_ms = event
@@ -532,22 +538,23 @@ async fn remove_missing_files(
         return Ok(0);
     }
     let mut tx = conn
-        .begin()
+        .begin_with("BEGIN IMMEDIATE")
         .await
         .map_err(|err| format!("request_logs_cleanup_transaction_failed: {err}"))?;
     for path in stale_paths {
-        sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
-            .bind(path)
-            .execute(&mut *tx)
-            .await
-            .map_err(|err| format!("request_logs_cleanup_failed: {err}"))?;
         sqlx::query(
-            "DELETE FROM usage_records WHERE data_source = 'session_log' AND file_path = ?1",
+            "DELETE FROM usage_records
+             WHERE record_id IN (SELECT request_id FROM request_logs WHERE file_path = ?1)",
         )
         .bind(path)
         .execute(&mut *tx)
         .await
         .map_err(|err| format!("usage_records_cleanup_failed: {err}"))?;
+        sqlx::query("DELETE FROM request_logs WHERE file_path = ?1")
+            .bind(path)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| format!("request_logs_cleanup_failed: {err}"))?;
         sqlx::query("DELETE FROM request_log_sync WHERE file_path = ?1")
             .bind(path)
             .execute(&mut *tx)

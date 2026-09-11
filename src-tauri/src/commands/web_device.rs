@@ -96,6 +96,8 @@ pub struct PairingResult {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PublishHistoryRequest {
+    #[serde(default)]
+    pub workspace_only: bool,
     pub sessions: Vec<HistorySessionSummary>,
     pub workspace: WorkspaceSnapshot,
 }
@@ -1195,6 +1197,7 @@ pub(crate) fn web_device_publish_history_blocking(
         return daemon_call::<()>(crate::web_daemon::Request::PublishHistory {
             sessions: request.sessions.clone(),
             workspace: request.workspace.clone(),
+            workspace_only: request.workspace_only,
         });
     }
     let sequence = {
@@ -1209,6 +1212,7 @@ pub(crate) fn web_device_publish_history_blocking(
         sequence,
         sessions: request.sessions,
         workspace: Some(request.workspace),
+        workspace_only: request.workspace_only,
     })
 }
 

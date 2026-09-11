@@ -9,6 +9,7 @@ import {
   type IViewportRange,
 } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { canAnswerTerminalQuery, installTerminalQueryPolicy } from "../lib/terminalQueryPolicy";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -1278,6 +1279,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       };
       if (windowsPty.backend === "conpty") {
         baseDisposables.push(terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
+          if (!canAnswerTerminalQuery(terminal)) return true;
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
             terminalProcessManager
               .write(sessionId, "\x1b[?61;4c")
@@ -1289,6 +1291,7 @@ export function XTermTerminal({ sessionId, isActive = true, isVisible = true, fo
       }
     };
     applyProcessTraits(terminalProcessManager.getProcessTraits(sessionId));
+    baseDisposables.push(installTerminalQueryPolicy(terminal, () => canAnswerTerminalQuery(terminal)));
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
     baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
 

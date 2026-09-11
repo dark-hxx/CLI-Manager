@@ -5,9 +5,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-replay-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
+
+// Bundle real pure helpers so their relative dependencies resolve in this temporary harness.
+for (const name of ["terminalQueryPolicy", "terminalColorQueryFilter"]) {
+  await build({ entryPoints: [fileURLToPath(new URL(`../src/lib/${name}.ts`, import.meta.url))], bundle: true, platform: "node", format: "esm", outfile: join(tempDir, `${name}.mjs`) });
+}
+
 
 let nextTimerId = 1;
 const timerCallbacks = new Map();
@@ -148,6 +156,8 @@ const transpiled = ts.transpileModule(source, {
   },
   fileName: "useTerminalDisplay.ts",
 }).outputText
+  .replace('from "../lib/terminalQueryPolicy"', 'from "./terminalQueryPolicy.mjs"')
+  .replace('from "../lib/terminalColorQueryFilter"', 'from "./terminalColorQueryFilter.mjs"')
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "@xterm/addon-webgl"', 'from "./webgl.mjs"')
   .replace('from "../lib/terminalVisibility"', 'from "./visibility.mjs"')
@@ -162,6 +172,7 @@ const transpiled = ts.transpileModule(source, {
 const modulePath = join(tempDir, "useTerminalDisplay.mjs");
 writeFileSync(modulePath, transpiled, "utf8");
 
+const queryPolicy = await import(pathToFileURL(join(tempDir, "terminalQueryPolicy.mjs")).href);
 const { useTerminalDisplay } = await import(pathToFileURL(modulePath).href);
 const managerStub = await import(pathToFileURL(join(tempDir, "manager.mjs")).href);
 const resizeStub = await import(pathToFileURL(join(tempDir, "resize.mjs")).href);
@@ -720,4 +731,52 @@ test("hidden terminal is not starved by continuous visible output", async () => 
   hiddenOutput.dispose();
   visible.detachViewport();
   hidden.detachViewport();
+});
+
+
+test("display permits first startup replay, consumes on callback, suppresses repeat, then allows live", async () => {
+  managerStub.resetManager();
+  const sessionId = "query-startup";
+  queryPolicy.createTerminalQuerySession(sessionId);
+  const { display, terminal, events, detachViewport } = createDisplay(undefined, { sessionId });
+  const output = display.attachPtyOutput({ waitForReplay: true });
+  await output.ready;
+  const replay = { ...frame(1, "\x1b[c", 80, 24, true), sessionId };
+  const completion = output.completeReplay([replay]);
+  await Promise.resolve();
+  assert.equal(queryPolicy.canAnswerTerminalQuery(terminal), true);
+  assert.equal(queryPolicy.canAnswerTerminalQueryFrame(sessionId, 1, true), true);
+  terminal.finishNextWrite();
+  assert.equal(await completion, true);
+  assert.equal(queryPolicy.canAnswerTerminalQueryFrame(sessionId, 1, true), false);
+  managerStub.emitOutput(delivery(replay, []), sessionId);
+  flushAnimationFrames();
+  assert.equal(queryPolicy.canAnswerTerminalQuery(terminal), false);
+  terminal.finishNextWrite();
+  managerStub.emitOutput(delivery({ ...frame(2, "\x1b[c", 80, 24), kind: "output", sessionId }, []), sessionId);
+  flushAnimationFrames();
+  assert.equal(queryPolicy.canAnswerTerminalQuery(terminal), true);
+  terminal.finishNextWrite();
+  assert.equal(events.filter(value => value === "write:\x1b[c").length, 3);
+  output.dispose();
+  detachViewport();
+  queryPolicy.forgetTerminalQuerySession(sessionId);
+});
+
+test("display suppresses old-process replay colors while retaining setter order", async () => {
+  managerStub.resetManager();
+  const sessionId = "query-old-process";
+  queryPolicy.forgetTerminalQuerySession(sessionId);
+  const { display, terminal, events, detachViewport } = createDisplay(undefined, { sessionId });
+  const output = display.attachPtyOutput({ waitForReplay: true });
+  await output.ready;
+  const completion = output.completeReplay([{ ...frame(9, "\x1b]4;1;#ff0000;2;?\x07\x1b[31mRED\x1b[c", 80, 24, true), sessionId }]);
+  await Promise.resolve();
+  assert.equal(queryPolicy.canAnswerTerminalQuery(terminal), false);
+  assert.ok(events.includes("write:\x1b]4;1;#ff0000\x07\x1b[31mRED\x1b[c"));
+  terminal.finishNextWrite();
+  assert.equal(await completion, true);
+  output.dispose();
+  detachViewport();
+  queryPolicy.forgetTerminalQuerySession(sessionId);
 });
