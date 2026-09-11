@@ -93,20 +93,11 @@ export function NativeProviderGlobalSection({
           )}
           {state.preview && (
             <Stack gap="xs">
-              <Text size="xs" c="dimmed">
-                {t("providerCatalog.global.previewFingerprint", { fingerprint: state.preview.fingerprint })}
-              </Text>
               {state.preview.targets.map((target) => (
                 <Group key={target.target} justify="space-between" wrap="nowrap" className="rounded-md border border-border/50 px-2 py-1">
                   <Stack gap={0} miw={0}>
                     <Text size="sm" truncate>{target.target}</Text>
                     <Text size="xs" c="dimmed" truncate>{target.path}</Text>
-                    <Text size="xs" c="dimmed" truncate>
-                      {t("providerCatalog.global.liveFingerprint", { fingerprint: target.liveFingerprint })}
-                    </Text>
-                    <Text size="xs" c="dimmed" truncate>
-                      {t("providerCatalog.global.desiredFingerprint", { fingerprint: target.desiredFingerprint })}
-                    </Text>
                     <Text size="xs" c="dimmed" truncate title={target.ownedFields.join(", ")}>
                       {t("providerCatalog.global.ownedFields", { fields: target.ownedFields.join(", ") })}
                     </Text>

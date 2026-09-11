@@ -235,6 +235,29 @@ pub(crate) fn merge_common_into_settings(
         .map_err(|_| error("provider_config_merge_failed", app_type))
 }
 
+// 仅投影生效视图的 Codex 模型，不改存储文档；无效文档保持原状供原有修复界面展示。
+pub(super) fn project_effective_model(app_type: &str, raw: &str) -> String {
+    if app_type != "codex" {
+        return raw.to_string();
+    }
+    let Ok(mut settings) = serde_json::from_str::<JsonValue>(raw) else {
+        return raw.to_string();
+    };
+    if !settings.is_object() {
+        return raw.to_string();
+    }
+    let config = settings
+        .get("config")
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    let Ok(mut document) = config.parse::<DocumentMut>() else {
+        return raw.to_string();
+    };
+    crate::provider::global::project_codex_model(&settings, &mut document);
+    settings["config"] = JsonValue::String(document.to_string());
+    settings.to_string()
+}
+
 // 按项类型分派脱敏；表数组使用 any，首个返回 true 的表之后不会继续遍历。
 fn redact_toml_item(item: &mut Item) -> bool {
     match item {
@@ -682,6 +705,65 @@ pub(crate) async fn update_provider_document(
 mod tests {
     use super::{documents_from_settings, patch_settings_document, redact_toml_document};
     use serde_json::Value;
+
+    // 双模型记录经公共合并和生效投影后，预览必须与实际 materialize 一致且保留未知项。
+    #[test]
+    fn effective_codex_model_matches_global_materialization() {
+        let provider = serde_json::json!({
+            "model": "abc/sdf",
+            "config": "# provider comment\nmodel = \"old-model\" # model note\ncustom_setting = 42\n"
+        })
+        .to_string();
+        for common in [None, Some("model = \"common-model\"\ncommon_setting = true\n")] {
+            let effective = match common {
+                Some(common) => super::merge_common_into_settings("codex", common, &provider).unwrap(),
+                None => provider.clone(),
+            };
+            let preview: serde_json::Value =
+                serde_json::from_str(&super::project_effective_model("codex", &effective)).unwrap();
+            let preview_doc = preview["config"]
+                .as_str().unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+            let effective: serde_json::Value = serde_json::from_str(&effective).unwrap();
+            let (written, _) = crate::provider::global::materialize_codex_config(None, &effective).unwrap();
+            let written_doc = String::from_utf8(written)
+                .unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+            assert_eq!(preview_doc["model"].as_str(), Some("abc/sdf"));
+            assert_eq!(preview_doc["model"].as_str(), written_doc["model"].as_str());
+            assert_eq!(preview_doc["custom_setting"].as_integer(), Some(42));
+            if common.is_some() {
+                assert_eq!(preview_doc["common_setting"].as_bool(), Some(true));
+            }
+            // 公共合并可能已调整文档前导注释；投影只负责保留传入结果中的格式。
+            assert_eq!(
+                preview["config"].as_str().unwrap().contains("# provider comment"),
+                effective["config"].as_str().unwrap().contains("# provider comment")
+            );
+            assert!(preview["config"].as_str().unwrap().contains("# model note"));
+        }
+    }
+
+    #[test]
+    fn effective_codex_model_keeps_toml_when_explicit_model_is_empty() {
+        for model in [serde_json::Value::Null, serde_json::json!(""), serde_json::json!("  ")] {
+            let raw = serde_json::json!({"model": model, "config": "model = \"abc/sdf\"\n"}).to_string();
+            let preview: serde_json::Value =
+                serde_json::from_str(&super::project_effective_model("codex", &raw)).unwrap();
+            assert_eq!(preview["config"], "model = \"abc/sdf\"\n");
+        }
+    }
+
+    #[test]
+    fn effective_model_preserves_other_types_and_invalid_drafts() {
+        for (app_type, raw) in [
+            ("claude", r#"{"model":"abc/sdf"}"#),
+            ("grokbuild", r#"{"model":"abc/sdf","config":"model = 'old'"}"#),
+            ("codex", r#"{"model":"abc/sdf","config":"model ="}"#),
+            ("codex", "not-json"),
+            ("codex", "[]"),
+        ] {
+            assert_eq!(super::project_effective_model(app_type, raw), raw);
+        }
+    }
 
     #[test]
     // 验证样例 TOML 脱敏保留注释与端点、移除密钥，并返回有效和敏感命中标记。

@@ -1,5 +1,5 @@
 use super::common::get_common_config_value;
-use super::documents::merge_common_into_settings;
+use super::documents::{merge_common_into_settings, project_effective_model};
 use super::documents::{documents_from_settings, preserve_toml_secrets};
 use super::dto::{ProviderCard, ProviderCreateInput, ProviderDetail, ProviderUpdateInput};
 use super::support::{
@@ -41,7 +41,7 @@ pub(crate) async fn list_providers(app_type: Option<String>) -> Result<Vec<Provi
     Ok(providers)
 }
 
-// 汇总供应商卡片、密钥摘要和配置文档；有效配置合并失败时回退原脱敏设置，再对展示配置执行脱敏。
+// 汇总卡片、密钥和文档；合并失败保留原配置，生效模型按写入规则投影后再脱敏。
 pub(crate) async fn get_provider(
     app_type: String,
     provider_id: String,
@@ -61,6 +61,7 @@ pub(crate) async fn get_provider(
     } else {
         settings_config.clone()
     };
+    let effective_settings_config = project_effective_model(&app_type, &effective_settings_config);
     let (effective_settings_config, _, _) =
         super::support::redact_settings_config(&effective_settings_config);
     let claude_config = (app_type == "claude")
