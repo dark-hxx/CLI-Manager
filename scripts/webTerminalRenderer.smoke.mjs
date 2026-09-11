@@ -422,6 +422,15 @@ async function run() {
   result.replayDimensions = dimensions;
 
   const sentinelId = 'standalone-replay-end';
+  const strictId = 'strict-buffered-replay';
+  stream.start(strictId);
+  stream.publish(strictId, { sequence: 1, frames: [{ kind: 'output', sequence: 1, cols: 80, rows: 24, data: btoa('STRICT-BUFFERED-READY') }] });
+  flushSync(() => root.render(React.createElement(React.StrictMode, null,
+    React.createElement(WebTerminal, { sessionId: strictId, active: true, status: 'running', stream, controlMode: 'desktop', theme: 'dark', onInput() {}, onResize() {} }))));
+  await pause(300);
+  check(tail().includes('STRICT-BUFFERED-READY'), 'StrictMode remount lost buffered terminal output');
+  result.strictBufferedReplay = true;
+
   mount(sentinelId, []);
   publish(sentinelId, 1, '', { kind: 'reset', sequence: 0, cols: 0, rows: 0, sequenceEnd: false });
   publish(sentinelId, 2, 'HISTORY-READY\\r\\n', { kind: 'replay', sequence: 7, replayBatchEnd: false });

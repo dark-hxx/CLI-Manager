@@ -318,10 +318,16 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       void drain();
     };
 
-    const unsubscribe = stream.subscribe(sessionId, (chunk) => {
-      if (disposed || chunk.sequence <= lastChunkSequence) return;
-      queuedChunks.push(chunk);
-      scheduleFlush();
+    let unsubscribe = () => {};
+    // StrictMode cleans up its probe mount before this microtask. Do not drain
+    // buffered replay into a renderer that will be disposed before its first frame.
+    queueMicrotask(() => {
+      if (disposed) return;
+      unsubscribe = stream.subscribe(sessionId, (chunk) => {
+        if (disposed || chunk.sequence <= lastChunkSequence) return;
+        queuedChunks.push(chunk);
+        scheduleFlush();
+      });
     });
 
     const handleVisibilityChange = () => {
