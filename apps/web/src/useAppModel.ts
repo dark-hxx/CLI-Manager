@@ -896,7 +896,28 @@ export function useAppModel() {
     if (selectedDeviceRef.current !== deviceId || !terminalTabsRef.current.some((tab) => tab.sessionId === sessionId)) {
       throw new Error("terminal_no_longer_attached");
     }
-    await submitManagementOperation("terminal.attach_image", { sessionId, fileName: upload.name || "web-image.jpg", dataBase64: btoa(binary) });
+    let operation = await submitManagementOperation("terminal.attach_image", { sessionId, fileName: upload.name || "web-image.jpg", dataBase64: btoa(binary) });
+    const deadline = AbortSignal.timeout(30_000);
+    const checkTarget = () => {
+      if (selectedDeviceRef.current !== deviceId || !terminalTabsRef.current.some((tab) => tab.sessionId === sessionId)) {
+        throw new Error("terminal_no_longer_attached");
+      }
+      deadline.throwIfAborted();
+    };
+    while (OPERATION_STATUS_RANK[operation.status] !== 4) {
+      checkTarget();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      checkTarget();
+      operation = (await webClient.operation(operation.id, deadline)).operation;
+    }
+    checkTarget();
+    if (operation.status !== "succeeded") throw new Error(operation.error?.code ?? "image_preparation_failed");
+    const result = operation.result;
+    if (!result || typeof result !== "object" || Array.isArray(result) || result.delivery !== "browser_paste"
+      || result.sessionId !== sessionId || typeof result.pasteText !== "string" || !result.pasteText) {
+      throw new Error("image_bridge_upgrade_required");
+    }
+    return result.pasteText;
   };
 
   const openTerminal = async () => {

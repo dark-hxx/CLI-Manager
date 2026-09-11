@@ -130,9 +130,19 @@ async function run() {
     flushSync(() => appModel.selectDevice('device'));
     check(appModel.terminalTabs.length === 1 && sentCommands.length === commandsBeforeReselect, 'Same-device navigation detached existing sessions');
     const uploaded = [];
-    webClient.createOperation = async input => { uploaded.push(input); return { operation: { id: 'image-op', ...input, status: 'succeeded', createdAt: 1, updatedAt: 1 } }; };
+    let imageOperation;
+    let imagePolls = 0;
+    webClient.createOperation = async input => { uploaded.push(input); imageOperation = { id: 'image-op', ...input, status: 'submitted', createdAt: 1, updatedAt: 1 }; return { operation: imageOperation }; };
+    webClient.operation = async () => ({ operation: { ...imageOperation, status: ++imagePolls % 2 ? 'running' : 'succeeded', result: { delivery: 'browser_paste', sessionId: 'parent', pasteText: '"C:/test photo.png"' } } });
     const png = new File([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jC1sAAAAASUVORK5CYII='), c => c.charCodeAt(0))], 'photo.png', { type: 'image/png' });
-    await appModel.submitTerminalImage('parent', png);
+    const preparedImage = await appModel.submitTerminalImage('parent', png);
+    check(imagePolls === 2 && preparedImage === '"C:/test photo.png"', 'Image resolved before desktop preparation completed');
+    const pollSuccess = webClient.operation;
+    webClient.operation = async () => ({ operation: { ...imageOperation, status: 'failed', error: { code: 'disk_full' } } });
+    let preparationRejected = false;
+    try { await appModel.submitTerminalImage('parent', png); } catch { preparationRejected = true; }
+    check(preparationRejected, 'Desktop image failure was reported as success');
+    webClient.operation = pollSuccess;
     check(uploaded.at(-1)?.kind === 'terminal.attach_image' && uploaded.at(-1).payload.sessionId === 'parent', 'Image missed real terminal operation entry');
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1800;
     const context = canvas.getContext('2d');
@@ -255,6 +265,19 @@ async function run() {
   await pause(100);
   check(terminal().options.fontSize === 14 && terminal().cols === 60 && terminal().rows === 32, 'Desktop takeover retained the Web grid');
   result.geometryHandoff = true;
+  mount(handoffId, [], 'web');
+  await pause(100);
+  const originalGrid = [terminal().cols, terminal().rows];
+  mount(handoffId, [], 'desktop', false);
+  publish(handoffId, 5, 'HIDDEN', { cols: 60, rows: 32 });
+  await pause(350);
+  mount(handoffId, [], 'web', false);
+  await pause(50);
+  mount(handoffId, [], 'web', true);
+  await pause(150);
+  check(terminal().cols === originalGrid[0] && terminal().rows === originalGrid[1], 'Hidden desktop/web roundtrip retained stale grid');
+  check(terminal().element.style.height === document.querySelector('.xterm-screen').offsetHeight + 'px', 'Restored screen dimensions disagree with wrapper');
+  result.hiddenOwnershipRoundtrip = true;
 
   const scrollId = 'geometry-scrollback';
   mount(scrollId, []);
@@ -604,7 +627,7 @@ async function run() {
       sessionId: mobileId, active, status, stream, controlMode: 'desktop', theme: 'dark',
       t: key => translate('en-US', key), errorLabel: 'error', scrollLabel: 'bottom',
       onInput: data => (result.mobileSent ??= []).push(data), onResize() {},
-      onImageUpload: async file => { if (rejectImage) throw new Error('test-upload-failure'); (result.mobileImages ??= []).push(file.name); },
+      onImageUpload: async file => { if (rejectImage) throw new Error('test-upload-failure'); (result.mobileImages ??= []).push(file.name); return '"C:/test photo.png"'; },
     })));
     renderMobile();
     await pause(80);
@@ -652,10 +675,17 @@ async function run() {
     };
     selectImage(); await pause(50);
     check(result.mobileImages?.length === 1 && document.querySelector('.terminal-image-status')?.textContent.includes('submitted'), 'Image selection lacks success feedback');
+    check(result.mobileSent.includes('"C:/test photo.png"'), 'Prepared image never reached xterm paste');
+    await new Promise(resolve => terminal().write('\\x1b[?2004h', resolve));
+    selectImage();
+    await pause(80);
+    check(result.mobileSent.includes('\\x1b[200~"C:/test photo.png"\\x1b[201~'), 'Image lacks CLI bracketed-paste framing');
     rejectImage = true; selectImage(); await pause(50);
     check(document.querySelector('.terminal-image-status[role=alert]')?.textContent.includes('could not'), 'Upload failure is silent');
     document.querySelector('.terminal-image-status button').click();
     result.mobileGeometryAndPicker = { twoAxisTouch: true, bottomReachable: true, keyboardHeight: true, nativeChooser: true, imageSuccessAndFailure: true };
+    result.mobileSent = [];
+    await new Promise(resolve => terminal().write('\\x1b[?2004l', resolve));
     check(!document.activeElement?.classList.contains('xterm-helper-textarea'), 'Mobile mount automatically opened keyboard');
     const button = text => Array.from(document.querySelectorAll('.mobile-terminal-input button')).find(node => node.textContent === text);
     button('Keyboard').click();
@@ -724,6 +754,11 @@ const server = await createServer({
   esbuild: { jsx: "automatic" },
   plugins: [{
     name: "isolated-terminal-renderer-smoke",
+    transform(code, id) {
+      if (process.argv.includes("--geometry-baseline") && id.replaceAll("\\", "/").endsWith("/apps/web/src/WebTerminal.tsx")) {
+        return code.replace('invalidateLayoutRef.current?.();', '').replace(/lastDesktopLayout = "";\s*const cols/, 'const cols');
+      }
+    },
     resolveId(id) { if (id === "/terminal-smoke.js") return "\0terminal-smoke"; },
     load(id) { if (id === "\0terminal-smoke") return harness; },
     configureServer(vite) {

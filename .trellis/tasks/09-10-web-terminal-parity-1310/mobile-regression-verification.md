@@ -1,5 +1,48 @@
 # 1.3.10 mobile regression follow-up — 2026-09-11
 
+## Second regression follow-up
+
+- Root cause (geometry): hidden tabs skip reportSize, so desktop/Web ownership
+  changes can retain the old Web workspace key after the incoming grid changed.
+  The next activation consequently skips grid restoration. Temporary 14px
+  measurement must also invalidate the display cache before its early return.
+  Invalidate both caches on visibility/control transitions; output-only updates
+  and display preferences still do not repeatedly resize the PTY.
+- Root cause (images): desktop typed the saved path via socket.write, bypassing
+  xterm paste framing; Web considered HTTP acceptance successful preparation.
+  Desktop now returns an explicit browser_paste result without input side effects.
+  Web polls the existing authenticated operation endpoint (30s deadline), validates
+  the original device/session and result marker, then invokes that xterm's paste.
+  No Enter, no automatic retry of input, no silent legacy-result double injection.
+  Hidden/disposed or disconnected destinations fail instead of targeting another tab.
+  Submission feedback is NOT proof that the CLI recognized an image attachment.
+- Discovery: WebTerminal (visibility/metrics/paste), useAppModel (operation completion),
+  views (return type), webClient (existing GET endpoint), useWebDeviceBridge (prepare
+  only) changed. Server get_operation ownership/device-scope authorization verified
+  unchanged; file_attach_data and shell quoting reused; desktop input serves as
+  reference; mobile native chooser, PTY protocol, output scheduler, hooks and
+  installer cleanup logic unchanged by this fix.
+- Scenarios: visible/hidden ownership roundtrip, split/unsplit, narrow/wide/short,
+  manual/width/contain, keyboard viewport, image preparation running/success/failure,
+  missing session, ordinary/bracketed paste tested. WSL path conversion and actual
+  iPhone Safari/CLI attachment badge remain unverified; no universal support claim.
+- GitNexus unavailable; memory traces flag reportSize/WebTerminal as critical
+  callers. Source/contracts and focused browser tests establish the actual scope.
+  Branch remains ahead 36 / behind 56 before this fix; no remote synchronization.
+- npm run build and npm run web:build passed. Browser renderer and subagent suites
+  passed with zero browser errors. Added --geometry-baseline removes only cache
+  invalidation in the test server and FAILS at hidden ownership stale-grid assertion;
+  fixed code passes the same assertion. No checkout/source mutation for baseline.
+- webTerminalImageBridge.test.mjs passes preparation-only/no-write, save error and
+  missing-target assertions. Renderer checks submitted -> running -> succeeded,
+  failed operation, actual xterm input and bracketed-paste bytes. Native file chooser
+  is driven by a trusted Chrome click, not an assertion on click handler presence.
+- An initial test failure was test-state contamination: new paste assertions left
+  input history and bracketed mode enabled before the existing IME test. Reset both
+  between scenarios; complete rerun passed. Physical iPhone testing not performed.
+- Packaging requires a newly built desktop executable, because the desktop bridge
+  is embedded frontend code. Reusing the installed main executable is not valid.
+
 User authorized implementation and rebundling under the existing Web task.
 Branch feat/web-management-capabilities-v2 is ahead 35 / behind 56 relative to
 the locally recorded origin/master. No synchronization or remote push.
@@ -68,7 +111,14 @@ is preserved. SHA256 before bundling:
 - cli-manager-codex-proxy.exe: 02207E56FAE6DC6BFC322D936A42BFA76EF22A71048A2AEA2872D94471C4CFA4
 
 Rebundle command: npm run tauri -- bundle --config src-tauri/tauri.local.conf.json --bundles nsis.
-Bundle result and exact artifact hash will be appended after generation.
+Code committed before bundling: e0ba07fc. NSIS bundle exited 0.
+Delivered at repository root: CLI-Manager_1.3.10_mobile-fix_e0ba07fc_x64-setup.exe
+(26011781 bytes), SHA256 EF19144174EBF03A466075AE3A9F4B2C56A0BC9052B9BFB20CDD760D73830A99.
+Generated installer.nsi includes index-BwSTMLzf.js, index-C7YtLU9w.css, all four
+executables, cleanup hooks and architecture-specific ConPTY resources.
+The bundler warned that the unpatched bundle marker was absent; byte inspection
+confirmed the reused installed executable already contains exactly one NSIS NSS
+marker, zero UNK/MSI markers. Its hash remains identical to the installed baseline.
 Install after saving active terminal work, then refresh the Safari page to load
 the new hashed assets. Existing installed bundle remains at F:/cli-manager/
 CLI-Manager_1.3.10_x64-setup.exe for rollback if required.

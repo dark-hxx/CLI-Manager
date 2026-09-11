@@ -21,9 +21,9 @@ type WebTerminalProps = {
   scrollLabel: string;
   source?: string | null;
   t?: (key: TranslationKey) => string;
-  onInput: (data: string) => void;
+  onInput: (data: string) => boolean | void;
   onResize: (cols: number, rows: number) => void;
-  onImageUpload: (file: File) => Promise<void>;
+  onImageUpload: (file: File) => Promise<string>;
   onMobileToolbarCollapsed?: (collapsed: boolean) => void;
 };
 
@@ -98,12 +98,18 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   const [outerScrolledAway, setOuterScrolledAway] = useState(false);
   const [imageStatus, setImageStatus] = useState<"sending" | "submitted" | "failed" | null>(null);
   const imageSending = useRef(false);
+  const inputRejected = useRef(false);
   const uploadImage = async (file: File) => {
     if (!enabledRef.current || imageSending.current) return;
     imageSending.current = true;
     setImageStatus("sending");
+    const target = terminalRef.current;
     try {
-      await onImageUpload(file);
+      const pasteText = await onImageUpload(file);
+      if (!target || terminalRef.current !== target || !enabledRef.current) throw new Error("terminal_no_longer_active");
+      inputRejected.current = false;
+      target.paste(pasteText);
+      if (inputRejected.current) throw new Error("terminal_disconnected");
       setImageStatus("submitted");
     } catch {
       setImageStatus("failed");
@@ -124,6 +130,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
   const sourceRef = useRef(source);
   const layoutRef = useRef<(() => void) | null>(null);
   const wakeRef = useRef<(() => void) | null>(null);
+  const invalidateLayoutRef = useRef<(() => void) | null>(null);
   sourceRef.current = source;
   inputRef.current = onInput;
   resizeRef.current = onResize;
@@ -343,6 +350,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       if (controlModeRef.current === "web" && workspace !== lastReportedSize) {
         if (draining || replayFrames || renderQueue.length || queuedChunks.length) return;
         terminal.options.fontSize = 14;
+        lastDesktopLayout = "";
         const cols = Math.max(2, Math.min(500, Math.floor((shell.clientWidth - 28) / (screen.offsetWidth / terminal.cols))));
         const rows = Math.max(1, Math.min(300, Math.floor((shell.clientHeight - 10) / (screen.offsetHeight / terminal.rows))));
         terminal.resize(cols, rows);
@@ -379,8 +387,15 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       if (sizeFrame !== null || disposed) return;
       sizeFrame = requestAnimationFrame(() => { sizeFrame = null; if (!disposed) reportSize(); });
     };
-    const input = terminal.onData((data) => { if (enabledRef.current) inputRef.current(data); });
+    const input = terminal.onData((data) => {
+      if (enabledRef.current && inputRef.current(data) === false) inputRejected.current = true;
+    });
     layoutRef.current = scheduleSize;
+    invalidateLayoutRef.current = () => {
+      lastReportedSize = "";
+      lastDesktopLayout = "";
+      scheduleSize();
+    };
     wakeRef.current = () => {
       if (hiddenFlushTimer !== null) { clearTimeout(hiddenFlushTimer); hiddenFlushTimer = null; }
       if (queuedChunks.length || renderQueue.length) scheduleFlush();
@@ -435,6 +450,10 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
       terminal.dispose();
     };
   }, [sessionId, stream]);
+
+  useEffect(() => {
+    invalidateLayoutRef.current?.();
+  }, [active, controlMode]);
 
   useEffect(() => {
     layoutRef.current?.();

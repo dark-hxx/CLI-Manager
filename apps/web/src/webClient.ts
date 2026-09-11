@@ -41,6 +41,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const webClient = {
+  operation: (id: string, signal?: AbortSignal) => request<{ operation: Operation }>(`/operations/${encodeURIComponent(id)}`, { signal }),
   authStatus: () => request<AuthStatus>("/auth/status"),
   redeemMobile: (token: string, name: string) => request<AuthStatus>("/mobile/redeem", { method: "POST", body: JSON.stringify({ token, name }) }),
   browserSessions: () => request<{ sessions: BrowserSession[] }>("/mobile/sessions"),

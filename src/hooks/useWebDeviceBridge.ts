@@ -268,8 +268,9 @@ async function executeTerminalImageAttachment(operation: WebDeviceOperation) {
     fileName: String(data.fileName ?? "web-image.jpg"),
     dataBase64: String(data.dataBase64 ?? ""),
   });
-  await bridge.socket.write(sessionId, formatShellPathList([path], session.shell));
-  return { path };
+  // The browser's xterm owns paste framing (including bracketed-paste mode).
+  // Preparing a file must not type its path as ordinary keyboard input.
+  return { delivery: "browser_paste", sessionId, pasteText: formatShellPathList([path], session.shell) };
 }
 
 async function drainTerminalCommands() {
