@@ -178,7 +178,6 @@
   color: var(--terminal-theme-foreground, #f8fafc);
 }
 
-.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-inline-code,
 .ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-link,
 .ui-file-editor-markdown-preview .ui-markdown-terminal li::marker {
   color: var(--terminal-theme-accent, #60a5fa);
@@ -190,11 +189,32 @@
   border-color: var(--file-editor-border);
 }
 
-.ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-inline-code,
 .ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table-wrap,
 .ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-code-block {
   border-color: var(--file-editor-border);
   background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-theme-foreground, #f8fafc) 7%);
+}
+
+/* Unlabeled fenced Markdown is emitted as a direct code child by the shared renderer. */
+.ui-file-editor-markdown-preview .ui-markdown-terminal > .ui-markdown-inline-code {
+  display: block;
+  box-sizing: border-box;
+  max-width: 100%;
+  margin: 0 0 0.88rem;
+  overflow: auto;
+  border: 1px solid var(--file-editor-border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  background-color: color-mix(in srgb, var(--terminal-theme-background, #0c0e10) 82%, var(--terminal-theme-foreground, #f8fafc) 7%);
+  color: var(--terminal-theme-foreground, #f8fafc);
+  font-family: var(--font-ui-mono);
+  font-size: 0.88em;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.ui-file-editor-markdown-preview .ui-markdown-terminal > .ui-markdown-inline-code:last-child {
+  margin-bottom: 0;
 }
 
 .ui-file-editor-markdown-preview .ui-markdown-terminal .ui-markdown-table {

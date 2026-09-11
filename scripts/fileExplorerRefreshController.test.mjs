@@ -64,4 +64,8 @@ test("file Markdown preview passes its wheel zoom size through the renderer root
     componentStyles,
     /\.ui-file-editor-markdown-preview \.ui-markdown-terminal \{[\s\S]*?font-size: var\(--markdown-preview-font-size, var\(--font-size-ui\)\);/,
   );
+  assert.match(
+    componentStyles,
+    /\.ui-file-editor-markdown-preview \.ui-markdown-terminal > \.ui-markdown-inline-code \{[\s\S]*?display: block;[\s\S]*?color: var\(--terminal-theme-foreground, #f8fafc\);[\s\S]*?white-space: pre;/,
+  );
 });

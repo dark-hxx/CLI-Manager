@@ -51,6 +51,13 @@ $$
 
 ---
 
+\`\`\`
+  ┌──────┐
+  │  1   │
+  └──┬───┘
+     ▼
+\`\`\`
+
 \`\`\`tsx
 function MarkdownPreview() {
   const rows = ["heading", "table", "list", "code"];
