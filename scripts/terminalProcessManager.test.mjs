@@ -5,10 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import ts from "typescript";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-process-manager-"));
 // 退出时清理进程管理器测试的临时转译目录。
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
+
+// Bundle real pure helpers so their relative dependencies resolve in this temporary harness.
+for (const name of ["terminalQueryPolicy"]) {
+  await build({ entryPoints: [fileURLToPath(new URL(`../src/shared/lib/${name}.ts`, import.meta.url))], bundle: true, platform: "node", format: "esm", outfile: join(tempDir, `${name}.mjs`) });
+}
+
 
 writeFileSync(join(tempDir, "tauriCore.mjs"), "export async function invoke() { throw new Error('unused invoke'); }\n");
 writeFileSync(join(tempDir, "resourceDiagnosticsLog.mjs"), `
@@ -57,6 +65,7 @@ const transpiled = ts.transpileModule(source, {
   },
   fileName: "TerminalProcessManager.ts",
 }).outputText
+  .replace('from "../../../shared/lib/terminalQueryPolicy"', 'from "./terminalQueryPolicy.mjs"')
   .replace('from "@tauri-apps/api/core"', 'from "./tauriCore.mjs"')
   .replace('from "../../../shared/platform/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"')
   .replace('from "../capabilities/TerminalCapabilityStore"', 'from "./capabilities.mjs"')

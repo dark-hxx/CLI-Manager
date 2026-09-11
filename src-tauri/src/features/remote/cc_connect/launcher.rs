@@ -96,7 +96,7 @@ pub(super) fn resolve_codex_launcher_from_path(
 }
 
 // 按工作目录解析显式程序路径，否则搜索 PATH 并避开 Codex 包装器。
-pub(super) fn resolve_local_agent_program(
+pub(crate) fn resolve_local_agent_program(
     program: &str,
     work_dir: &Path,
 ) -> Result<PathBuf, String> {

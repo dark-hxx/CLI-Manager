@@ -52,6 +52,7 @@
 | 36 | 2026-08-03 | 修复子任务分屏滚动条与工具栏 | `b7c148b7` | `master` |
 | 35 | 2026-07-31 | 终端状态标记设置预览 | `2e73f3a7` | `feat/terminal-status-marker-settings` |
 | 34 | 2026-07-31 | 终端状态标记设置与视觉优化 | `5603bde1` | `feat/terminal-status-marker-settings` |
+| 34 | 2026-07-22 | 修复 Web Server 迁移校验漂移 | `2663048e` | `feat/web-management-capabilities` |
 | 33 | 2026-07-24 | 完善终端 Tab 悬浮信息卡 | `592729e9` | `master` |
 | 32 | 2026-07-23 | 修复跨 Workspan 终端空白 | `5cd5011d` | `master` |
 | 31 | 2026-07-23 | 修复 Codex 子任务窗格自动关闭 | `0347ab8e` | `master` |

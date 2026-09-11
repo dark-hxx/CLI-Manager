@@ -4,6 +4,7 @@ export type BackupSettingDomain = "preferences" | "notifications" | "excluded";
 
 // 穷尽分类：Settings 新增字段但未明确分类时，TypeScript 会直接报错。
 export const SETTING_BACKUP_POLICY = {
+  webTerminalBatchKiB: "excluded",
   language: "preferences",
   theme: "preferences",
   lightThemePalette: "preferences",

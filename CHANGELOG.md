@@ -119,6 +119,142 @@
 - 内置终端新增 `Alt+V` 图片粘贴桥接：从 Windows 剪贴板读取位图或复制的图片文件，转换为受控附件目录中的 PNG 后再交给 CLI，Codex/Claude 不再依赖 WSL 内的 `wl-paste`、`xclip` 或 PATH 中的 PowerShell。
 - 增加 PNG/APNG、JPEG/JPG/JFIF、GIF、WebP、BMP/DIB、TIFF 和 ICO 的识别与转换；HEIC/HEIF 明确拒绝，无法安全解码的 SVG/AVIF 失败关闭，并保留大小、像素、符号链接和附件数量限制。
 - 为 Claude/Codex、Gemini/Qwen/OpenCode/Kimi/Crush/Pi 及 Aider 增加图片输入能力分级；WSL shell 路径会自动转换为 `/mnt/<drive>/...`，恢复会话时 Claude 也会识别固化的会话工具。
+## [1.3.10] - 2026-09-10
+
+- Web 手机终端切换标签时在可见布局完成后重绘完整 xterm 画布，修复 Safari 隐藏标签切回后内容空白；手机项目抽屉首次打开时默认收起分组和 Worktree 分支。
+- Web 开发代理支持显式后端 Origin，方便通过局域网/虚拟组网地址在真机上实时验证前端，同时保留后端浏览器 Origin 校验。
+
+- Web 终端切换/桌面控制权往返后重新计算显示与网格，避免隐藏标签沿用旧尺寸；保持显示设置不改变桌面 PTY 尺寸。
+- Web 图片等待主机保存完成，再由原终端按当前粘贴模式提交路径；主机失败、窗口关闭或断线时显示失败，不再把接口受理当成附件完成。需同步升级桌面程序。
+
+- Web 手机回归修复：手动字号/适合宽度的超高终端可双向滚动，字号变化保持底部位置，滑到底部同时定位历史和显示区域；不修改共享 PTY 行列。
+- Web 图片选择直接使用原生文件控件，补齐提交中/已提交/失败提示；手机图片使用兼容解码和有界多轮压缩，无法解码时明确提示。
+- Web 返回设备列表不再关闭终端，同一设备重新进入保留标签及选中状态；标签 × 仍只关闭指定会话。
+
+- Web 审批输入后同步更新桌面 Hook 提醒状态；无其他待处理提醒时清理任务栏闪烁。
+- NSIS 安装/卸载使用原生位数 PowerShell 清理进程；无法核实进程路径时阻止继续卸载，避免留下运行中的程序。
+
+- Web 手机终端：收起操作栏时同步收起底部导航并释放输入区；桌面 Web 恢复图片粘贴，手机端新增图片上传按钮。
+- Web 设备列表：阻止历史回放重新追加已删除设备，设备类型徽标改用正常分隔符。
+
+
+- Web 手机终端：移除重复的项目名/工作目录提示；辅助操作栏支持收起并记忆选择，收起后仅保留终端右下角展开按钮，释放更多终端显示高度。
+
+- Web 手机辅助栏：四个方向键合并为可展开的十字方向盘，连续按键保持展开且保留输入焦点；Enter 固定在最右侧，其他辅助键可横向滚动，切换终端或断线收起方向盘。
+
+- Web 手机项目树：顶部新增常驻文件夹按钮，点击展开现有项目/Worktree 目录树，支持选择并新建终端；新终端运行后收起，空终端仍可进入，离线可浏览但禁用启动，电脑 Web 侧栏保持原布局。
+
+- Web 手机终端：隐藏占空间的完整终端状态卡，改为标签下方紧凑显示当前项目与工作目录；辅助键栏新增标准 ←/↑/↓/→ 方向键，弥补部分手机系统键盘缺少终端方向键。
+
+- Web 终端识别：状态卡按当前终端标签显示项目名称和完整工作目录，手机端长路径自动换行且可选中复制；目录仅在登录并通过设备归属校验的工作区响应中返回。
+
+- Web 手机适配：主终端与子代理宽屏左右各半、窄屏上下各半并可收起；工作台跟随浏览器可见视口，新增主动打开键盘、备用文本输入及 Enter/Tab/Esc/Ctrl+C，避免手机切换会话自动弹键盘。键盘高度依据浏览器能力估算，不承诺识别无几何信息的浮动键盘。
+
+- Web 显示设置：终端右上角新增字号滑块/加减、Ctrl+滚轮、手动/适合宽度/完整显示、显示区域宽高滑块和恢复默认；参数仅保存在当前浏览器并同步标签，放大超出时可滚动，不由显示参数触发共享 PTY 行列调整。
+- 兼容性：设备 Web 协议升级为 4，本机 Web daemon 协议升级为 9；独立部署的 Web 服务需与桌面端同时升级。旧服务会拒绝新版设备连接，避免将仅工作区更新误处理为空历史覆盖。
+
+- Web 终端：桌面镜像按宽高完整适配，默认字号不放大；桌面子任务分屏收窄主终端时不再出现巨字，取消 CSS transform 避免鼠标定位偏移。Web 接管时恢复正常字号并按容器调整网格。
+- 终端协议：Web 镜像不再回复设备/状态查询，桌面保留唯一应答；按会话输出序号区分首次启动握手与重复历史，避免恢复时出现设备应答字符残片。
+- Web 子任务：同步桌面真实子代理转录、结束及移除状态，提供独立只读面板、多任务切换、Markdown 和中英文状态；窄屏可收起，内容限长并提示截断。
+
+## [1.3.9] - 2026-09-10
+
+- Web 终端渲染：按桌面可见视口确定尺寸所有权，隐藏视口不再覆盖 Web 尺寸；宽屏显示保留固定滚动条宽度，回放保留历史网格变化。
+- Web 输出：事件唤醒发送、复用已鉴权本地连接、多会话公平调度；新增本机最大批次 96（默认）/256/512 KiB 设置，小消息不等待满批。拥塞采用有界背压并保留错误反馈容量。
+- Web 恢复与光标：分片增加起止标记，原帧收齐后绘制，避免半帧断线续传重复；取消光标闪烁，Codex 显示光标延迟确认，隐藏标签不抢焦点。
+- 安装与卸载：NSIS 在覆盖安装和卸载前按当前安装目录精确停止主程序、Web/PTY daemon、proxy 与 ConPTY helper，保留用户数据，不按名称误停其他安装副本；Web daemon 协议升级为 8。
+- 安装资源：修复 ConPTY 多架构文件被通配映射到同一路径而覆盖的问题，保留 x64/x86/ARM64 子目录，与运行时加载路径一致。
+
+- 网络访问：增加显式受信任内网 HTTP/WS 配置、网卡选择、独立浏览器域名/二维码地址；指定组网网卡同时保留本机设备回环通道，兼容 HTTPS 反向代理。
+- 修复普通 HTTP 环境下 UUID API 不可用导致 Web 菜单请求未发出；浏览器内接入重命名、克隆、历史/文件入口和删除确认，桌面专属操作明确禁用。
+- 修复工作区快照并发写入 SQLite 时的锁升级失败，存储错误与格式错误分别报告。
+
+- Web 首次连接及重连同步桌面已有终端清单；桌面关闭窗口后同步移除网页标签，刷新和断线不关闭进程。
+- Web 标签使用桌面同款 CLI 图标和圆角样式，移除重复项目标题；保持桌面控制的终端列数，通过显示缩放适配网页可用宽度。
+
+
+## [TEMP] - 2026-09-09
+
+### Web 关闭同步桌面终端
+
+- 修复网页端关闭后桌面端标签仍残留的问题；Web close 现在复用桌面端 `closeSession`，同步清理 PTY、标签、Workspan 和持久化状态。
+- 修复网页关闭按钮将 React `MouseEvent` 误当作设备 ID、导致 close 命令被服务端丢弃的问题；关闭回调现在显式无参数调用，并对已失效的桌面会话按幂等关闭处理。
+- 关闭命令增加待发送记录，浏览器连接未就绪或设备重连时自动补发，并在桌面端报告会话已退出后清理记录，避免网络抖动导致网页已关闭而桌面标签残留。
+- Web 工作台支持同时保留多个真实终端标签；启动第二个项目时不再断开第一个终端，可通过项目名标签切换并单独关闭，标签切换同步对应项目上下文。
+- 当前终端标签使用动画帧高频刷新，后台标签改用低频定时器和有界批次；各标签独立保存输出缓冲和渲染游标，切回时不会集中重放造成卡顿或闪屏。
+
+### Web 终端关闭与桌面首帧重绘
+
+- Web 工作台终端右上角新增关闭按钮，复用现有 detach 链路关闭当前网页终端视图，不结束桌面端 PTY。
+- 桌面终端首次布局完成后增加二帧 fit/viewport 刷新，降低窗口启动恢复或 PTY 重连时出现灰色未绘制区域和乱码的概率。
+
+### 桌面 Web 后台失效时全局卡顿
+
+- Web 设备同步网络/凭据/启停命令从界面线程移到阻塞任务池，保持 IPC 名称、参数及操作输出顺序不变。
+- 本地后台连接使用明确 IPv4 回环地址、200ms 连接期限和按发现身份隔离的 3 秒失败冷却；不自动重放可能已执行的请求。
+- 未连接或未配对时暂停终端/操作高频轮询，只保留不重叠的 3 秒状态检查；恢复后自动续接轮询与工作区发布。
+- 识别重启后后台 PID 被无关程序复用的失效发现记录；不结束无关进程、不清空项目、会话或配对配置。
+
+### Web 终端输出性能（待现场验收）
+
+- 实时终端输出改为独立订阅流，避免每批字节触发整个工作台 React 状态更新；同尺寸小帧按动画帧合并写入 xterm。
+- 完整回放收齐后提交 reset 与数据；attach 新增可选 afterSequence 字段，支持浏览器提供渲染游标，并跳过同一启动结果的重复 attach。
+- 已通过类型、构建、协议及隔离 Chrome 回放/突发输出测试；持续输出、断线分片恢复和现场闪烁仍需验收，本条不代表桌面启动卡顿已经修复。
+
+### Web 停服端口残留与终端黑屏
+
+- 修复安装版 Windows socket 被辅助进程继承、服务线程退出后 9090 仍占用并导致 10048/10060 的根因：桌面依赖锁定中的 mio 从 1.1.1 更新至 1.2.2。新增基于桌面依赖的句柄检查与十轮辅助进程存活期间停服/重启回归。
+- 串行化服务启动、停止、重启与运行中配置变更；停止超时保留线程管理权并显示“正在停止”，不再允许启动第二份。设置页后台状态刷新不覆盖未保存的表单。
+- 单个大终端回放帧拆为有界批次，保留 ANSI/UTF-8 字节、尺寸、重置和 ACK 顺序；取消旧挂接排队输出，修复 xterm 卸载后的异步写入。
+- 终端输出拒收提供不含正文的具体诊断并显示终端错误，不再断开整个设备；离线状态优先于旧“运行中”。本地 Web daemon 协议升至 6，支持旧 1–5 版受限升级。
+
+### Web 断线恢复
+
+- 合并浏览器历史刷新请求，跳过回放中已由当前快照覆盖的历史失效通知；首次连接不再按每条历史通知发起两次 HTTP 请求。
+- 浏览器连接与项目/会话选择解耦，清理旧连接回调；握手与心跳超时自动重连，HTTP 请求有超时和取消机制。
+- 内嵌 Web 服务停止时显式取消独立的 WebSocket 升级任务，支持带活跃连接停止后在同一端口重启。
+- 设备 daemon 与兼容内置设备连接均支持连接取消、读写期限和代次校验，停止后的旧线程不能覆盖新连接状态；本地 daemon 协议升至 5，修正旧 1–4 版的受限升级握手。
+
+## [TEMP] - 2026-09-08
+
+### Web 真实对话与手机授权
+
+- 修复 Web attach 已在桌面显示的 PTY 时把 replay/reset 再次广播给桌面 xterm、导致 TUI 空白和灰块的问题；Web 终端改用独立 PTY observer 连接，replay 与 ACK 按连接隔离，Web 断开不会关闭真实 PTY。
+- 终端尺寸改为单一控制端：桌面 xterm 已挂载时由桌面控制，Web 按输出帧中的真实行列数镜像；桌面未挂载时 Web 自动取得 resize 权限，避免两个不同 viewport 反复改写同一个 ConPTY 尺寸。
+- 内嵌 Web 服务允许监听指定的本机局域网或虚拟网卡 IP，也可显式使用 `0.0.0.0` / `::`；具体地址必须属于本机网卡，所有网卡监听必须配置精确 Origin，设置页显示网络暴露风险。
+- 运行中的 Web 服务保存新监听地址、端口或 Origin 后会立即重启；新监听启动失败时自动恢复原配置和原监听，HTTPS Origin 自动启用 Secure Cookie，HTTP 虚拟组网地址保持可用但依赖组网本身的传输安全。
+- Web 终端批次保留每个 PTY 帧的 reset/replay、行列数和顺序，并限制单批大小；设备协议升至 3、本地 Web daemon 协议升至 4，升级时会回收不兼容的旧 daemon。
+- Web 工作台主区域改为 xterm 真实终端，不再用聊天卡片拼装 CLI 回复；浏览器通过已认证的设备 WebSocket attach 到桌面同一个 PTY，原样接收 ANSI 输出并转发键盘输入与尺寸变化，终端实时帧不写入 Web SQLite。
+- 项目侧栏成为终端启动的唯一项目/Worktree 上下文；启动结果返回真实 PTY ID 后自动挂接，切换项目、设备、返回主机或退出登录时主动 detach，避免沿用旧项目终端。
+- PTY 输出按 16ms 合并后转发，重放快照带终端重置序列；终端命令队列有界，输入长度、尺寸、设备归属和移动端设备 scope 均在服务端校验。
+- 内嵌 Web 服务先占用监听端口，再打开数据库和更新设备状态；桌面端仅在监听及初始化完成后报告 running，端口冲突会同步返回明确失败，不再出现“显示已运行但页面无法访问”。
+- 修复 Web 会话在 CLI 尚未完成 initialize 就退出时，把临时 operation ID 当成真实 Session 持久化，导致后续提示反复报 `history_context_not_found` 的问题；只有收到 `session_started` 的会话才可列出和恢复，升级前遗留的失败假会话会自动隐藏，浏览器缓存中的无效 Session 也会在历史刷新时清理。
+- Web 恢复会话改为按 Session ID、来源和项目目录精确查询桌面历史，未命中时会先强制刷新历史索引再校验，不再依赖界面当前加载的前 20 条记录；项目侧栏继续作为唯一项目上下文，旧会话不会把消息发送到其他项目。
+- 修复项目 `cli_args` 保存为 `codex resume <session>` 时，Web 结构化运行时把终端恢复子命令错误放到 `app-server` 前、导致 `cli_exited:initialize` 的问题；Web 会话现在只使用已校验的 `sessionId` 执行 `thread/start` / `thread/resume`，并以有界、非敏感错误码保留 CLI 退出诊断。
+- 修复内嵌 Web 服务重启时仅等待两秒却不回收旧线程，长连接可继续持有旧 SQLite pool 并与新服务争锁的问题；停止/重启会等待托管线程退出，服务端有界关闭活跃连接，会话事件在写前使用 `BEGIN IMMEDIATE` 避免延迟事务升级产生 `SQLITE_BUSY_SNAPSHOT`。
+- 修复 Web 对话在桌面进程未设置 `CODEX_HOME` 时无法读取项目级 Provider profile 的问题，读取路径与 Provider Home 管理保持一致。
+- 项目侧栏改为对话上下文的唯一选择入口，移除顶部重复项目下拉；侧栏项目/Worktree 快捷启动会同步当前上下文，避免后续消息发送到先前项目。
+- 显式声明主程序与三个后台二进制，确保安装包包含 Web daemon，而非仅编译但遗漏封装。
+- Web 对话改由 Rust 管理结构化 CLI 进程，支持 Codex app-server 和 Claude JSON 输出，不再依赖 `SessionStart` Hook 才发送首条消息；保留 Provider 配置、会话归属检查与审批边界。
+- 助手正文、流式增量、轮次状态贯通设备与浏览器，消息持久化和回放同事务；设备 ACK 后才移除待发送帧，刷新/断线恢复不会重复执行请求或重复渲染消息。
+- 新增会话详情和用户按需选择的桌面历史正文同步；不自动上传全部本地历史。
+- 新增手机二维码、单次短期授权票据、指定电脑范围的浏览器 Cookie、授权列表和撤销；二维码要求可达 HTTPS 地址，内嵌服务仍默认仅本机访问。
+- 手机界面补齐后台恢复、软键盘安全区、消息发送防重和双语反馈；旧 Web daemon 协议升级会检查未完成操作，避免同版本安装包继续使用不兼容旧进程。
+
+### Web 管理 P0 基线
+
+- 在当前主干恢复 Web 管理基础链路：Axum 服务、浏览器登录、Cookie 会话、设备配对、设备在线/离线状态、心跳与断线重连。
+- 桌面端接入 Web Device Bridge 与独立 web daemon，发布分组、项目和 Worktree 工作区树；浏览器工作台支持 `conversation.start`、`conversation.prompt` 与已有会话恢复。
+- 操作状态统一为 submitted、waiting_device、accepted、running、succeeded、failed、rejected、timed_out、canceled，并保留服务端幂等键和桌面端原生确认。
+- 配对/重连后立即刷新工作区；完成回执采用有界重试，设备离线或队列异常不会无限占用桥接线程。P0 暂不包含文件传输、独立 Git/历史/分析页、SSH 对话和 Web Provider 管理。
+- Web 工作区与历史会话改为使用项目/Worktree 不透明 ID；本机绝对路径只在桌面端解析，服务端对旧快照路径做脱敏并新增历史上下文索引。
+
+### Web 管理 P1
+
+- 管理工作台补齐项目/Worktree 上下文下的文件浏览、文件搜索、文本/图片预览和统一 Diff 查看；结果按大小限制传输，避免大文件阻塞设备 WebSocket。
+- Git 管理新增按相对路径查看文件 Diff，并提供空白处理和上下文行数选项；现有状态、分支、暂存、提交及网络操作继续沿用确认和幂等边界。
+- Web 服务监听地址和端口支持命令行 `--bind` / `--port`、`CLI_MANAGER_WEB_BIND` / `CLI_MANAGER_WEB_PORT` 与 `data/web-server.toml`，开发脚本参数和 Vite 代理会同步使用实际端口；非回环监听仍强制 Secure Cookie。
+- 桌面设置新增本机 Web 服务管理：默认手动模式，可在设置页保存监听地址、端口和管理员凭据，按需启动、停止或重启；可选开启随应用自动启动，服务退出时由桌面端回收。
 
 ### 修复桌面宠物状态气泡裁剪
 
@@ -188,8 +324,11 @@
 
 ### Tauri 开发构建与缓存优化
 
-- Windows `npm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
-- 开发 profile 保留主程序基本源码定位并关闭依赖的完整调试符号，降低 `.pdb`、对象文件和增量缓存占用；新增 `npm run tauri:clean:dev` 与 `npm run tauri:clean`，用于手动清理当前仓库的开发或全部 Cargo 产物。
+- Windows 
+pm run tauri dev` 预构建主程序与 Codex proxy 时统一 Cargo 的 feature、target、profile、target-dir 和 `TAURI_CONFIG` fingerprint 输入，减少共享 Rust library 的重复构建；源码未变化时继续由 Cargo fingerprint 复用已有产物。
+- 开发 profile 保留主程序基本源码定位并关闭依赖的完整调试符号，降低 `.pdb`、对象文件和增量缓存占用；新增 
+pm run tauri:clean:dev` 与 
+pm run tauri:clean`，用于手动清理当前仓库的开发或全部 Cargo 产物。
 - Tauri 开发 wrapper 增加 Rust 预构建阶段和耗时日志，Codex proxy 仍在 Windows 启动 Tauri 前准备，release、跨平台和自定义 target/profile/target-dir 行为保持不变。
 - Vite 冷启动或依赖重新优化较慢时，开发服务探测会保留更长等待窗口，避免 Tauri 将尚未完成响应的 CLI-Manager 服务误判为端口冲突。
 
@@ -277,7 +416,8 @@
 - SSH Agent 升级到 `0.1.12` / protocol `1.13`，新增 `filePut` 直传能力；旧 Agent 会明确提示升级，不会回退为终端附件协议或把本机路径发送到远端。
 - SSH 项目文件浏览器新增 SFTP 入口并复用 Host 附件面板；远程文件支持下载到用户选择的本地路径和确认后删除，目录仅允许删除空目录，Agent 升级到 `0.1.13` / protocol `1.14`，新增 `fileGet` 分块下载与 `fileDelete` 能力。
 - 远程目录新增文件夹选择器入口；可通过远程目录列表进入子目录、返回上级并选择当前目录作为上传目标，保留手动输入远程路径方式。
-- 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 `no such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
+- 启动前补齐旧数据库缺失的 `ssh_hosts.attachment_root` 列并同步修复 migration 登记漂移，避免编辑 SSH Host 时出现 
+o such column: attachment_root`；编辑器错误提示固定在滚动区域外，始终可见。
 - 修复 SSH Agent 发布测试中 `ATTACHMENT_NAMESPACE` 未导入导致 `0.1.11` CI 构建失败的问题。
 - 修复 SSH Agent 原地升级后 SFTP 删除仍沿用旧 bridge 能力缓存的问题；检测到能力缺失时会精确失效对应 bridge、重新握手并最多重试一次，旧 Agent 仍保留明确的升级提示。
 
@@ -334,7 +474,8 @@
 
 ### 修复文件浏览器残留拖拽预览导致前端类型检查失败
 
-- 文件浏览器侧边栏在拖拽预览逻辑迁入共享 Hook 后残留了一段引用已删除局部状态（`dragPreview` / `Portal`）的 JSX，使 `tsc` 报 11 个错误、`npm run build` 无法通过；该死代码已删除，拖拽预览仍由 `useTerminalFilePointerDrag` 统一渲染。
+- 文件浏览器侧边栏在拖拽预览逻辑迁入共享 Hook 后残留了一段引用已删除局部状态（`dragPreview` / `Portal`）的 JSX，使 `tsc` 报 11 个错误、
+pm run build` 无法通过；该死代码已删除，拖拽预览仍由 `useTerminalFilePointerDrag` 统一渲染。
 
 ### 供应商面板不可入队过滤与固定头部
 
@@ -349,15 +490,18 @@
 
 ### 非 Git 目录的 Git 变更面板空态
 
-- 打开的目录不是 Git 仓库时，Git 变更面板不再把 libgit2 原始错误（`不是 Git 仓库或无法访问: could not find repository at '...'; class=Repository (6); code=NotFound (-3)`）当成提示语铺满面板，改为显示图标 + 「当前目录不是 Git 仓库」+ 初始化提示的友好空态；WSL 项目也不再显示裸错误码 `not_git_repository`。
-- 后端 `git_get_changes` 的 native/libgit2 链路现在遵守既有稳定错误码合约：libgit2 `NotFound` 映射为 `not_git_repository`，所有权误判、权限不足、仓库损坏等真实故障保留原始错误并继续按原样提示，不会被伪装成友好空态。SSH Agent 的 Git 错误映射同步识别该场景（需要更新远端 Agent 后生效）。
+- 打开的目录不是 Git 仓库时，Git 变更面板不再把 libgit2 原始错误（`不是 Git 仓库或无法访问: could not find repository at '...'; class=Repository (6); code=NotFound (-3)`）当成提示语铺满面板，改为显示图标 + 「当前目录不是 Git 仓库」+ 初始化提示的友好空态；WSL 项目也不再显示裸错误码 
+ot_git_repository`。
+- 后端 `git_get_changes` 的 native/libgit2 链路现在遵守既有稳定错误码合约：libgit2 `NotFound` 映射为 
+ot_git_repository`，所有权误判、权限不足、仓库损坏等真实故障保留原始错误并继续按原样提示，不会被伪装成友好空态。SSH Agent 的 Git 错误映射同步识别该场景（需要更新远端 Agent 后生效）。
 - 顺带修好文件浏览器的非 Git 负缓存：Windows 本地非 Git 项目此前因为拿不到稳定错误码而每次刷新都重复查询 Git 状态，现在与 WSL 链路一致只探测一次。
 - Git 推送、拉取、Fetch、切换分支等操作在非 Git 目录失败时，toast 也改为「当前目录不是 Git 仓库」而不是原始错误串。
 
 ### 内置 Live Server
 
 - 本地项目与 Worktree 的 `.html` / `.htm` 文件右键菜单新增“使用 Live Server 打开”，覆盖普通文件树、文件搜索和代码搜索结果；使用系统默认浏览器打开，项目根右键菜单可显式停止当前服务。SSH、WSL 与非 HTML 文件不显示可执行入口。
-- Live Server 由应用内 Rust 后端直接提供，不调用 `npx`、Python、VS Code 或全局命令。同一项目根复用动态端口，不同项目独立运行；项目文件变化通过 250 ms 防抖 watcher 推进版本，浏览器内注入的客户端在正常本地文件系统条件下于一秒内自动刷新。
+- Live Server 由应用内 Rust 后端直接提供，不调用 
+px`、Python、VS Code 或全局命令。同一项目根复用动态端口，不同项目独立运行；项目文件变化通过 250 ms 防抖 watcher 推进版本，浏览器内注入的客户端在正常本地文件系统条件下于一秒内自动刷新。
 - 服务仅绑定 `127.0.0.1`，校验精确 Host、请求方法、相对路径、规范化根目录与 canonical containment；拒绝路径穿越、反斜杠、非 HTML 入口、缺失目标及 symlink/reparse 越界，不生成目录列表。应用退出时统一关闭监听器与 watcher。
 
 ### 历史会话智能命名自定义 Prompt
@@ -367,7 +511,8 @@
 - Prompt 保存完成后会显示本地化成功提示，写入期间按钮显示加载状态并阻止重复提交；写入失败不会误报成功。
 - 标题候选消息仍由程序独立提取并作为 Provider 的 user/input 发送，不新增 IPC Prompt 字段、数据库迁移或 Provider 协议分支；该设置继续排除在设置同步之外，日志不记录 Prompt 或候选正文。
 - 生成智能标题的 Tauri command 改为异步响应路径，Provider 请求等待不再由同步 `block_on` 占用 IPC handler，数秒的模型响应期间应用界面仍可交互；点击后会立即将对应会话标为生成中，详情按钮显示加载图标并禁止重复触发，列表同步显示进度。
-- 正式版与 `npm run tauri dev` 按设计共享本机 SQLite 时，智能命名的预留/落库事务会先获取写锁并最多等待 15 秒，避免读后写竞争被误报为 Provider、模型或网络故障；耗尽等待后返回稳定的“本地历史数据库正忙”类别和本地化提示。
+- 正式版与 
+pm run tauri dev` 按设计共享本机 SQLite 时，智能命名的预留/落库事务会先获取写锁并最多等待 15 秒，避免读后写竞争被误报为 Provider、模型或网络故障；耗尽等待后返回稳定的“本地历史数据库正忙”类别和本地化提示。
 
 ### Grok TUI 鼠标交互
 
@@ -377,7 +522,8 @@
 
 - 项目行的终端数徽章现在按 CLI 工具着色：Claude Code 橙色、Codex 绿色、Gemini CLI 紫色，其余工具保持默认蓝色。徽章取 `resolveCliToolIconKey` 归一化后的图标 key，`cli_tool` 存的是自由文本命令（可能带参数），此前无法匹配到已有配色，所有圆点都是同一个蓝色。
 - 分组行新增项目数徽章：统计含子分组递归、不计 Worktree，超过 99 显示 `99+`，折叠分组后仍能看出规模。统计口径与折叠侧边栏窄条徽章统一为 `countProjectsInNode`，避免两处各写一份递归；该徽章不带工具色圆点，与项目行的终端数徽章在视觉上区分。
-- 外观列增加缺列自愈：每次打开数据库前的 `db_repair_known_migration_drift` 会检查 `groups` / `projects` 的 `icon`、`color` 列与 migration 34 的登记状态是否一致 —— 无论 migration 34 是否已登记，缺列都会先补齐；版本未登记时按同一 checksum 补登记，避免 sqlx 重放 `ADD COLUMN` 撞 `duplicate column name`，修复项目列表外观标记时报 `no such column: color`。已登记旧版外观 migration 33 的数据库会先补齐远端的路由用量诊断字段，再校正 v33 登记并补记外观 migration 34，避免更新后因 checksum 冲突无法启动。
+- 外观列增加缺列自愈：每次打开数据库前的 `db_repair_known_migration_drift` 会检查 `groups` / `projects` 的 `icon`、`color` 列与 migration 34 的登记状态是否一致 —— 无论 migration 34 是否已登记，缺列都会先补齐；版本未登记时按同一 checksum 补登记，避免 sqlx 重放 `ADD COLUMN` 撞 `duplicate column name`，修复项目列表外观标记时报 
+o such column: color`。已登记旧版外观 migration 33 的数据库会先补齐远端的路由用量诊断字段，再校正 v33 登记并补记外观 migration 34，避免更新后因 checksum 冲突无法启动。
 - 分组与项目新增外观标记（migration 34，`groups` / `projects` 各增加 `icon`、`color` 两列，默认空串）：颜色只存 10 色调色板 token 不存任意 hex，图标可存单个 emoji（含 ZWJ 组合、旗帜、CJK 单字）或内置图标 key。**未设置时不做任何自动配色**，节点跟随统一的系统色，只有用户显式设置才改变。调色板亮/暗主题分别取值，10 色对 `#ffffff` / `#141414` 的非文本对比度均 ≥ 3:1（实测 3.30–11.04）。写入路径做归一化，非法颜色一律落成空串，不写脏值进库；新建分组时外观随同一条 INSERT 落库，修改外观只更新单行的 `icon`/`color` 列。
 - 外观标记有两个入口且共用同一面板：新建分组内联行的图标位（点开快选，不点直接回车仍是一步建组）、分组/项目右键菜单「外观标记」（菜单内内联展开）；项目新建/编辑/克隆弹框不再显示该项，编辑项目也不会覆盖原有标记。点击紧凑标记输入框会打开本地 Emoji 15 数据直接渲染的选择器，提供搜索、九个可切换分类和原生可见滚动条；同时增加离线可用的飞书、小红书、哔哩哔哩品牌标记。自定义输入仍可用且不再显示“1 个 emoji 或字符”占位提示。项目与分组行设置颜色后均显示左侧细色条，默认没有任何多余竖线；显式颜色也会作用于单色图标。折叠侧边栏窄条图标同样跟随。emoji 与 CLI 品牌图标自带颜色，运行态背景（`data-status`）语义不被覆盖。Worktree 行保持既有的绿色身份，不继承项目颜色。
 - 侧边栏右键菜单按实际尺寸在视口四边翻转并钳制；展开外观面板时保留原菜单位置，只有确实放不下才收敛并内部滚动，避免点击外观编辑后菜单跳到窗口顶部。Emoji 选择器优先向右弹出并按视口边缘自动翻转/位移；不再在 Radix 弹层内命令式挂载异步 Emoji Mart Web Component，避免其连接生命周期被右键菜单重渲染中断而出现空白。分类按钮由 React 状态直接驱动，滚动容器使用应用样式的原生滚动条，避免内容被裁切、无法切换分类或无法下拉。
@@ -452,7 +598,8 @@
 - SSH 主机「CLI 集成」打开时自动检查 `cli-manager-ssh-agent` 的签名发布版本（优先安装包内置，不建立 SSH 连接）。若已记录或最近检测到的远端版本更旧，展示可用新版本，并可通过「更新」进入现有预览确认后升级。
 - 解析本机 Codex 启动器时跳过 cc-connect 托管 wrapper 目录，避免 PATH 里的 wrapper 把自己当成真实 `codex`。
 - 修正 SSH Agent 新版本检测相关 Rust 测试导入的格式，恢复后端格式检查通过。
-- 将仅供 Unix 回归测试使用的 Codex 启动器解析辅助函数限定为 Unix 编译，Windows `npm run tauri dev` 不再输出未使用函数告警。
+- 将仅供 Unix 回归测试使用的 Codex 启动器解析辅助函数限定为 Unix 编译，Windows 
+pm run tauri dev` 不再输出未使用函数告警。
 
 ### 项目配置
 
@@ -487,7 +634,8 @@
 
 - 修复故障转移候选处于 circuit-open 或 Key cooldown 时被误计为真实 provider 失败、错误消耗重试预算并快速打开全部 circuit 的问题；候选跳过现在不累计熔断失败，队列后方仍可尝试的供应商会继续接收请求，所有候选不可用时仍保留 fail-fast `503 routing_provider_circuit_open`。
 - 修复同一供应商多密钥或整流重试的真实上游请求未逐次消耗 attempt 预算的问题；现在每次 HTTP send 都使用唯一 attempt index，失败发送逐条落库，且不会超过配置的最大请求次数。
-- 路由失败/候选跳过且没有 Token 的记录改为 `not_applicable`，不再污染成功响应缺少 usage 的数据质量提示；成功响应确实缺少 usage 时仍显示 `missing`，请求日志同步提供中英文状态文案。
+- 路由失败/候选跳过且没有 Token 的记录改为 
+ot_applicable`，不再污染成功响应缺少 usage 的数据质量提示；成功响应确实缺少 usage 时仍显示 `missing`，请求日志同步提供中英文状态文案。
 - 自动故障转移关闭时不再显示上一次运行留下的熔断/降级状态；每次开启或关闭自动故障转移都会重置当前 CLI 类型的 daemon 熔断状态，避免旧状态跨开关周期残留。
 
 ### 路由历史用量异常详情
@@ -799,6 +947,24 @@
 ## [V1.3.3] - 2026-08-03
 
 ### 新增
+- **Web 主机删除**：设备卡片悬浮时显示删除图标，确认后解除当前账户与该桌面主机的配对。
+- **Web 首页设备管理**：桌面主机首页新增名称/主机名/平台搜索和在线状态筛选；主机信息使用每行多张的自适应卡片网格展示，设备区域固定为 720px 高度并在卡片超出时内部滚动。卡片聚焦主机、系统、桌面端版本与最后心跳，不展示 CPU、内存、架构和分辨率，并保留配对、实时状态与进入工作台的现有行为。
+- **Web 软件实例身份**：安装版与 Dev 版分别持久化独立软件 ID，并共享同一机器 ID；两者可同时连接 Web 服务、独立配对和上传项目快照，不再因共用设备 ID 相互覆盖。
+- **Web 项目树右键菜单与快捷启动**：项目、分组和 Worktree 支持对齐桌面端的右键菜单；在线设备可通过悬浮 Play 按钮快速启动项目、Worktree 或分组，并通过桌面 operation 执行外部终端、分屏、目录/文件、历史、编辑、重命名、Provider、批量 Shell 和 Worktree 操作。危险操作继续经过服务端确认标记和桌面原生确认，Web 不传递路径、环境变量或 Provider 敏感配置。
+
+### 设计
+- **Web 视觉规范**：Web 端主视觉统一定位为 macOS 磨砂玻璃简白风，明确磨砂材质仅用于导航、工具栏、抽屉、弹窗和浮动控件，主要内容保持高可读的近不透明表面。
+
+### 调整
+- **Web 项目树字号**：项目名称字号调整为 13px，并降低字重、收紧项目行内间距，侧边栏项目列表更紧凑。
+- **Web 项目树层级信息**：收紧二级目录缩进，移除项目行右侧状态小圆点及项目名称下方的 Codex/Claude 来源文字。
+
+### 修复
+- **Tauri 开发启动恢复**：Windows 下检测到本地开发版 `cli-manager.exe` 被旧进程占用时，自动结束匹配的开发进程并重试启动一次；不影响安装目录中的生产版程序。
+- **远程连接概览**：远程连接入口卡片改为跟随设置内容区宽度伸缩，并在未打开详情抽屉时主动加载 Web 设备配置与运行状态。
+- **Web 主机壁纸显示**：修复桌面端上传的系统壁纸已到达 Web 端但被主机卡片背景层遮挡的问题。
+- **Web 项目树同步与拖拽**：Web 左侧项目树复用桌面端的分组、项目、Worktree 结构、CLI/Worktree 图标和选中样式，不再上报或展示历史会话列表；在线桌面支持同层排序和跨分组拖拽，结果回写桌面端并以桌面快照为准。
+### 新增
 
 - **终端内 Markdown 预览**：Claude/Codex 回合结束后，终端右上角可打开同一终端内的分屏预览；预览复用历史会话原文解析，支持本地、WSL、Worktree 与 SSH，并跟随当前终端主题渲染。
 - **SSH 终端任意文件粘贴**：SSH Agent `0.1.7` / protocol `1.10` 新增 `fileAttachAny` 能力；Ctrl+V、右键粘贴和原生拖拽可上传任意类型的非空普通文件，单文件固定上限 20 MiB，并在私有远端缓存中保留安全原文件名。目录、符号链接和路径穿越继续拒绝；Agent `0.1.6` 仍可上传原有 5 MiB 图片，粘贴其他文件时明确提示升级。
@@ -916,7 +1082,30 @@
 - **终端相对路径跳转**：终端“文件”工具栏开启时，Ctrl+单击项目或 Worktree 内的相对文件/目录路径可打开右侧文件面板；目录自动展开并选中，文件支持 `:行[:列]` 与 `(行,列)` 定位、高亮和选中。绝对路径仍保持打开系统资源管理器的原有行为。
 - **桌面宠物菜单配置**：桌宠设置新增快捷操作菜单显示开关与悬停自动展开开关；关闭快捷菜单后仅展示任务卡片，关闭悬停展开后改用右键打开。普通任务和托管会话最多直接展示三张卡片，更多内容使用与桌宠主题一致的纵向滚动条。
 
+### 新增
+- 新增 `cli-manager-web-daemon` 独立 Web 设备桥接进程；Tauri 通过 loopback NDJSON 与其通信，WebSocket、配对 Token、历史上报和 operation 队列脱离桌面主进程运行。
+- 设置“远程连接”改为纵向排列的“本机 cc-connect”和“Web 设备连接”两个独立入口，入口显示未配置、已配置或运行中状态；点击后分别在右侧抽屉中展示对应配置。
+- 新增独立 `apps/web` React/Vite 工程，与 Tauri 桌面入口隔离；首批实现响应式工作台、浅色/深色/跟随系统主题、中英文切换、浏览器草稿和明确标识的演示数据，并提供根级 Web 开发、类型检查和构建脚本。
+- Web P0-S2 新增独立 Rust 模块化单体服务与共享协议包：支持 Argon2 本地单用户登录、HttpOnly 严格同站会话、短期单次设备配对、设备/浏览器双 WebSocket、事件游标补传、服务端历史快照、幂等对话操作和桌面最终回执状态机；离线设备禁止新建操作，服务重启后设备状态统一回落为离线。
+- Web 工作台接入真实认证、设备、历史和操作 API，支持会话过期、设备配对 Drawer、按用户隔离的 WebSocket 游标、断线重连、结构化 Prompt/Operation 时间线及按设备/项目/会话保存草稿；新增 `web:server:check`、`web:server:test`、`web:server:run` 根级脚本。
+- Web 登录后新增桌面主机首页，集中展示全部已配对设备的在线状态、平台、版本和最后心跳时间；支持在线优先排序、实时状态更新、空状态直接配对，点击主机后进入现有工程工作台，并可随时返回主机列表。
+- Tauri 桌面端新增 Rust 托管的 `/ws/device` 设备适配器：支持稳定设备身份、系统凭据存储、配对、心跳、自动重连、历史快照和有界 operation 队列；远程地址强制 `wss://`。Web 新建/继续对话显式携带项目上下文，桌面校验历史会话、项目/Worktree、CLI 来源、Hook、会话 ID 与原生/WSL 路径边界后启动 Claude/Codex，并以 `SessionStart`、`Stop`、`StopFailure` Hook 驱动 Prompt 提交和最终回执；SSH 继续排除。
+- Web 管理能力新增 SSH、文件、Git、Worktree 与 Hook 五类统一入口，复用 `/api/operations` 和桌面现有 command/store；写操作、Git Fetch 与 SSH 新主机密钥需 Web 目标确认和桌面原生确认，路径由桌面历史与本地项目解析，结果会移除凭据、本机绝对路径和 OpenSSH 原始诊断。operation 通过服务端 ACK 保留到可靠回执，队列溢出和桌面执行中断会安全恢复或失败，不重复执行危险操作。
+
+### 设计
+- 新增 CLI-Manager Web UI/UX 首版设计文档，明确结构化对话工作台、项目/文件/Git、历史 Replay、分析、设备与设置的信息架构、视觉规范、响应式规则、状态设计和验收标准。
+- 新增 Web 桌面主工作台、桌面分析看板和移动端对话三张 SVG 设计稿；本阶段仅交付设计资源，不修改产品代码或运行行为。
+- 使用 `gpt-image-2` 补充桌面主工作台、桌面分析看板和移动端对话三张高保真 PNG 原型图，并在设计文档中关联 SVG 与高保真版本。
+- 完成 CLI-Manager Web 全功能 UI 设计基线：新增 13 份专题文档，覆盖桌面数据上报、登录配对、结构化对话、项目/Worktree、文件/Git、历史/Replay、分析、设备、供应商/Hook、备份、设置、安全、响应式和状态验收。
+- 使用 `gpt-image-2` 新增 29 张完整高保真原型，覆盖全局框架、桌面/平板/移动端、登录授权、对话关键状态及所有主要管理页面；不修改产品代码和运行行为。
+- Web 后端架构确定为 Rust 模块化单体 + SQLite3：API、WebSocket 网关、业务、缓存和任务在同一进程分模块实现；SQLite3 使用 WAL、外键、busy timeout 和统一短事务写入，首版不依赖 Redis。
+- 调研 LiveAgent Gateway WebUI 与 Orca Mobile：移动端采用响应式 Web/PWA，吸收对话优先、覆盖式侧栏、按需工具 Dock、缓存快照、深链接、Bottom Sheet、安全区和版本阻断等设计，不引入独立原生 App。
+- 双主题设计补充两张已确认的浅色主页面原型（桌面和移动端），并固化其布局、颜色、卡片和输入区规范；其余浅色页面的 `gpt-image-2` 生成提示词已归档。
+- 使用 `gpt-image-2` 完成深色 29 张与浅色 29 张 Web 高保真原型，并新增四张联系表总览，覆盖设计文档中的全部页面和关键状态。
+
 ### 修复
+- 内置终端文件地址识别兼容 `/D:/path/to/file` 格式，点击时会按 Windows 绝对路径 `D:/path/to/file` 打开。
+- **cc-switch 通用配置与本地托底保护**：Hook 与状态栏会先写入本地 CLI 配置，再自动尝试写入 cc-switch 通用配置；通用配置是切换供应商时合并到所有启用“应用通用配置”的供应商中的共享片段。未配置或未检测到 cc-switch 时，本地配置文件写入仍作为托底生效。Claude 状态栏保存/切换配置后同步 `common_config_claude.statusLine`，Codex 原生状态栏同步 `common_config_codex` 的 `[tui].status_line`，避免 cc-switch 切换供应商后状态栏配置丢失；Hook 同步继续仅写入 CLI-Manager 拥有的共享 Hook 配置。
 - **终端命令提示 Tab 补全**：当 CLI-Manager 的命令提示 ghost 内容已显示时，Tab 会优先接受该提示并写入终端；只有没有应用内提示时才继续交给 shell 原生路径补全，避免误触发第一个目录补全。
 - **Grok 实时统计会话隔离**：终端实时统计仅展示 Hook 绑定的当前 Grok 会话，不再在会话 ID 尚未绑定时回退到项目最近会话；精确会话在 catalog 尚未收录时直接读取对应 Grok 会话目录，后台索引刷新不再阻塞轮询。绑定和刷新期间保留稳定卡片骨架，避免右侧面板闪屏；“今日项目用量”继续按项目及其 Worktree 汇总。
 - **Grok 历史恢复与 Hook 通知**：历史会话恢复现在能正确匹配 Grok 项目配置；Grok Hook 事件也会通过本地桥接校验并送达 CLI-Manager。审批通知改由 Grok 原生 `PreToolUse` 的危险写操作事件映射为 `PermissionRequest`，`bypassPermissions` 模式不会误报；解决原 `Notification` matcher 已显示触发但实际审批不送达的问题。
@@ -928,7 +1117,8 @@
 - **远程 Codex 托管启动链路**：Windows 改用随应用打包的 GUI 子系统原生代理启动 Codex app-server，避免连接、对话和停止托管时弹出命令窗口；原生 shim 仅拦截首个子命令为 `app-server` 的调用，其他 Codex 命令继续透传参数、Provider 覆盖和退出码。macOS/Linux wrapper 会在内容写入或复用后统一校正为 `0755`，并在 PATH 注入前解析 wrapper 目录之外的真实 Codex 绝对路径，避免自递归启动。恢复会话时严格校验目标 Session，并压缩超过 cc-connect 扫描上限的恢复响应；API Key 仅通过子进程环境变量传递，不进入命令行参数或日志。
 - **macOS Universal 辅助程序打包**：Universal 构建会同时合并 `cli-manager-daemon` 与 `cli-manager-codex-proxy` 的 Apple Silicon、Intel 产物，避免新增代理程序后 Universal 应用缺少对应架构二进制。
 - **跨平台 Tauri 构建配置**：`macos-private-api` 仅在 macOS 目标启用，Windows/Linux 的直接 Cargo 检查与 Codex proxy 端到端构建不再因 macOS 专属 feature 和平台配置不一致而中断。
-- **Windows Tauri 开发启动**：`npm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并同步 Tauri/Cargo runner 区域指定的 Rust target、release/profile 与 target-dir；第二个 `--` 后的应用参数不会影响 proxy 构建，避免开发版运行时缺少或读取错误目录的代理程序。
+- **Windows Tauri 开发启动**：
+pm run tauri dev` 会先构建随远程 Codex 托管使用的原生 app-server proxy，并同步 Tauri/Cargo runner 区域指定的 Rust target、release/profile 与 target-dir；第二个 `--` 后的应用参数不会影响 proxy 构建，避免开发版运行时缺少或读取错误目录的代理程序。
 - **SSH 显式地址直连**：未配置跳板机的手工地址连接在私钥、密码、凭据引用和交互认证模式下不再读取无关的用户 `~/.ssh/config`，避免该文件 ACL/语法异常在认证前阻断连接；Agent 与 SSH Config 模式继续读取默认配置，以保留 `IdentityAgent` 和 `Host *` 等设置。Config 别名、跳板路由与用户明确选择的自定义配置文件继续按原逻辑生效。
 - **后台探测进程树回收**：外部命令探测在 Windows 使用 Job Object、macOS/Linux 使用独立进程组；超时、等待失败或启动器提前退出时都会回收所属后代进程，避免真实 Codex 等后代继续运行或持有输出管道导致后台残留和等待卡死。
 - **Worktree 创建失败诊断与防重入**：阻止同一项目同一任务名的自动、手动和分屏 Worktree 创建并发撞路径；Git 检出失败会保留最终错误信息，前端改为双语可读提示，不再产生未处理 Promise。
@@ -944,7 +1134,8 @@
 - 修复打开 SSH 项目历史用量统计时默认强制刷新历史索引并反复全量聚合，导致统计面板长时间读取、远程会话历史加载被拖慢的问题；远程统计现在默认读取已落库 catalog 与聚合缓存，只有手动刷新才强制同步，且按 `sourceInstanceId` 在 SQLite 层过滤。
 - 修复应用刚启动后直接打开 SSH 项目会话历史时，远程历史命令早于 PtyHost daemon 就绪并返回 `daemon_unavailable` 的问题；远程历史命令现在会等待 daemon 初始化，空结果会再执行一次强制远端刷新，历史面板刷新 SSH 项目时也不再弹出本地“没有找到可同步的 Codex/Claude 项目”提示。
 - 修复升级或重装 SSH Agent 后立即打开远程会话历史时，catalog 将可轮换的 Agent `installationId` 误判为远程来源变化并返回 `history_remote_identity_changed` 的问题；machine/user/source/config-root 不变时会原子更新安装元数据，真正的远端来源变化仍拒绝覆盖旧缓存。
-- 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON `null`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
+- 修复 SSH 远程会话列表加载成功后，普通详情请求把缺失的 transcript 引用发送为 JSON 
+ull`，导致已发布 Agent `0.1.3` 拒绝请求并返回 `history_request_invalid` 的问题；Desktop 现统一发送非 null 字符串，无需升级远端 Agent 即可打开详情。
 - 降低第三方 HTTP/2 网络库在 debug 模式下的连接复位日志噪声，避免 GitHub 更新检查或连接池关闭时反复输出 `Connection::poll; IO error error=ConnectionReset`，应用自身调试日志仍保持可见。
 
 ### SSH
@@ -1053,7 +1244,8 @@
 - **WSL Hook 与 cc-switch 数据库环境兼容**：Claude/Codex Hook 配置目录与 cc-switch 数据库位置不再强制同环境；Windows 版可为 WSL CLI 配置同步 Windows 数据库，也可通过对应 WSL 发行版内的 SQLite 安全读取和事务更新 WSL 数据库，避免 UNC 直写造成锁与 WAL 风险。
 - **历史会话缺失项目恢复修复**：恢复会话未找到匹配项目时不再直接报错，改为展示全部项目和“使用新窗口”；使用新窗口会先进入历史会话工作目录，再执行 Claude/Codex 恢复命令。
 - **终端缩放滚动位置修复**：横向尺寸变化触发 xterm 历史行 reflow 时，使用临时 marker 跟踪用户正在查看的首行，并在 xterm 完成异步视口同步后恢复位置，避免侧栏、分屏或窗口缩放把滚动条推到顶部；位于实时底部和 alternate buffer 的终端保持原有行为。
-- **Tauri 开发 WebView2 启动修复**：Windows 下 `npm run tauri dev` 为子进程注入独立的 WebView2 用户数据目录，避免已安装生产版仍运行旧 WebView2 时，dev 因运行时环境冲突而创建窗口失败，同时继续共享项目、设置和 SQLite 数据。
+- **Tauri 开发 WebView2 启动修复**：Windows 下 
+pm run tauri dev` 为子进程注入独立的 WebView2 用户数据目录，避免已安装生产版仍运行旧 WebView2 时，dev 因运行时环境冲突而创建窗口失败，同时继续共享项目、设置和 SQLite 数据。
 - **VS Code 终端替换正确性加固**：补齐 Attach replay/attached/live 写入屏障，未提交输出由 `TerminalProcessManager` 持有并可在 Pane 卸载重挂后继续写入；初始与断线重连 Replay 均按历史尺寸串行写入，完成当前容器 fit 后才释放 live 输出，历史 resize 不再误发给 live PTY。关闭失败会以 tombstone 阻止重连复活，并取消最后会话关闭后的待执行重连，避免残留空闲 WebSocket/心跳。WebSocket 增加鉴权、请求和心跳超时；daemon 改为独立 writer queue、原子 create、递增 resize sequence 与磁盘 spool，慢客户端不再持全局锁阻塞其他会话，后台会话也不会被 UI active list 对账误杀。
 - **WSL Codex 子 Agent 分屏输出修复**：Codex rollout discovery 透传 WSL 发行版与父 transcript 路径，优先沿父会话定位真实 sessions 根，否则在 Linux `$HOME/.codex/sessions` 内通过 `wsl.exe` 查找子会话；兼容 Linux、`\\wsl.localhost`、`\\wsl$` 与 Windows 配置目录转换，修复不同 WSL 用户及并行子任务分屏长期停留在 PENDING 的问题。
 - **Claude 状态栏 Powerline 符号修复**：WebView 直接加载应用内置符号字体，不再依赖 Windows 用户字体缓存，修复实时预览、Powerline 选项和应用内终端中的分隔符与端帽显示为方框的问题。
@@ -1114,7 +1306,8 @@
 - **终端 OSC 路径模块缺失修复**：补齐终端工作目录解析模块，恢复 Vite 开发启动，并按运行平台处理 OSC 7 的 Windows 盘符、UNC 与 macOS/Linux 本地路径，避免实时统计使用错误项目路径。
 - **终端切换渐进重绘修复**：保留隐藏终端恢复时的积压输出续写和整视口刷新，在 xterm 完成整屏渲染前临时隐藏绘制层并通过超时兜底恢复显示，避免切换终端时出现从左上到右下的可见重绘，同时不重新引入偶发白屏。
 - **WSL Codex 历史会话兼容修复**：历史查看与恢复回读按 rollout 的 `cwd` 校准真实项目，避免把日期年份误当项目而报 `session_file_not_indexed`；历史缓存会按当前配置根过滤旧的 Windows Codex 条目，避免切到 WSL 后误报 `session_file_outside_history_scope`；转换到 WSL Codex 时写入 Linux rollout 路径并停止从 Windows 跨 UNC 写入 Codex WAL 状态库，避免 `codex_state_register_failed: database is locked`。
-- **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，并统一解析 dev/local 自定义配置路径，修复 `npm run tauri dev` 在 `cargo metadata` 阶段把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 而启动失败。
+- **Tauri 开发启动修复**：移除仓库根目录误放的 Rust 与 Tauri 配置副本，恢复 CLI 对 `src-tauri` 项目的正确识别，并统一解析 dev/local 自定义配置路径，修复 
+pm run tauri dev` 在 `cargo metadata` 阶段把仓库根目录当作缺少 `src/lib.rs` 的 Rust crate 而启动失败。
 - **Codex 供应商通用配置解析修复**：切换 Codex 供应商时按 TOML 合并 `common_config_codex` 与供应商 `config`，不再把 Codex 通用配置误当 JSON 解析，修复 AnyRouter 等供应商提示“配置解析失败、无法应用”。
 - **Codex 供应商重复配置修复**：合并通用配置与供应商配置时按 TOML 键语义识别单双引号等价表头，避免 Hook 状态表被重复写入 profile 并触发 `duplicate key`。
 - **Codex 供应商切换 CODEX_HOME 修复**：切换 Codex 供应商时不再把 `CODEX_HOME` 重定向到 `~/.cli-manager/providers/codex` 隔离空目录，改为将生成的 profile 写入用户真实 Codex home（自定义目录或 `~/.codex`），与用户的 `config.toml`、`auth.json` 同处，修复切换后丢失账号认证与基础配置的问题；`codex --profile <name>` 仍按 `$CODEX_HOME/<name>.config.toml` 加载，WSL/Bash 下注入的 `CODEX_HOME` 会转换为 `/mnt/<drive>/...`；切换时自动清理遗留在旧隔离目录的 `cli-manager-*` profile。
@@ -1388,7 +1581,8 @@
 ### 终端、分屏与主题
 
 - **终端输入提示**：内置终端新增类似 fish autosuggestions 的内联 ghost 提示，基于本地命令历史和命令模板推测当前输入后缀；有候选时 `Tab` / `Ctrl+Space` 只补全后缀、不自动执行，无候选时 `Tab` 继续交给 shell/CLI，并预留 `gpt-5.3-codex-spark` AI provider 接口但当前不发起模型请求。
-- **孤儿 PTY 进程清理**：前端会低频上报当前仍存在的终端会话 ID，后端按 `PtyManager` 持有的 sessionId 对账；对缺失会话先标记并等待宽限期，只清理确认失联的 PTY 根进程树，避免按 `node.exe`、`bash.exe` 等进程名误杀外部任务。
+- **孤儿 PTY 进程清理**：前端会低频上报当前仍存在的终端会话 ID，后端按 `PtyManager` 持有的 sessionId 对账；对缺失会话先标记并等待宽限期，只清理确认失联的 PTY 根进程树，避免按 
+ode.exe`、`bash.exe` 等进程名误杀外部任务。
 - **分屏终端底部空白修复**：终端分屏尺寸变化后会在 xterm fit 完成时刷新当前视口，避免下方区域残留空白且不继续输出内容。
 - **中文字符宽度修复**：内置终端接入 xterm Unicode 11 宽字符表，改善中文、Emoji 等宽字符在 Claude / Codex TUI 中的对齐和显示问题。
 - **终端分屏项目选择样式修复**：右键分屏选择终端时，项目列表默认态改为透明背景，仅在悬浮或聚焦时高亮，避免整列项目呈现灰色块。
@@ -1423,7 +1617,8 @@
 - **WSL 文件浏览修复**：文件浏览器打开 `\\wsl.localhost\...` 或 `\\wsl$\...` 项目时，目录列表改由 WSL 内部枚举，避免 Windows 原生 `canonicalize` 导致 `path_canonicalize_failed`。
 - **文件树刷新展开状态修复**：手动点击文件浏览器刷新时会保留并刷新当前已展开目录，不再出现目录内容折叠但箭头仍显示展开、下次需要点击两次才能展开的问题。
 - **文件浏览器自动刷新精确化**：文件 watcher 事件现在会携带变更路径，前端按受影响目录刷新，并串行合并连续刷新，降低 Codex 批量改文件后的重复 IO 和刷新乱序风险。
-- **文件浏览器自动刷新性能优化**：文件 watcher 事件会在前端合并后再刷新，并在后端忽略 `node_modules`、`target`、`dist`、`.gitnexus` 等高噪音目录，减少频繁保存或构建时的无效刷新。
+- **文件浏览器自动刷新性能优化**：文件 watcher 事件会在前端合并后再刷新，并在后端忽略 
+ode_modules`、`target`、`dist`、`.gitnexus` 等高噪音目录，减少频繁保存或构建时的无效刷新。
 - **文件浏览器自动刷新**：项目文件浏览器改为监听项目目录变化；在终端或外部工具修改并保存文件后，文件树、Git 状态点和未脏的已打开文件预览会自动刷新，无需再手动点击刷新。watcher 不可用时会降级为低频轮询，未保存文件不会被自动覆盖。
 - **文件浏览器 Git 状态标记**：文件树和文件搜索结果会用不同颜色标记已修改、新增、删除、重命名、冲突和未跟踪文件；打开有变更的文本文件时，编辑器左侧与概览标尺会显示新增、修改、删除位置，便于直接定位改动。
 - **文件浏览器内嵌 Diff**：有 Git 变更的文件可通过右键菜单在文件编辑器 Tab 中打开 Diff，并支持文件、代码块和选中行回滚；内嵌 Diff 会跟随当前终端主题背景。
@@ -1434,7 +1629,8 @@
 
 - **Git 面板子仓库扫描启动修复**：补注册后端 `git_list_repositories` 命令，避免启动后前端枚举项目 Git 仓库时调用失败，并消除对应 Rust 未使用警告。
 - **Git 变更右键打开源文件**：Git 变更文件列表右键菜单新增“打开源文件”，可直接在文件编辑器 Pane 中打开对应源文件；删除状态文件会禁用该入口。文件编辑器页激活时，右侧 Git 面板也会关联到该文件所属项目。
-- **Git 面板多子仓库监控**：项目根目录下存在多个 git 仓库（主仓库 + 嵌套子仓库，或纯文件夹 + 多个仓库）时，Git 面板顶部新增仓库切换下拉，可切换到任意子仓库查看变更、暂存、提交、推拉；扫描限深并排除 `node_modules` 等大目录，单仓库项目 UI 保持不变；子仓库内文件改动同样触发面板自动刷新。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
+- **Git 面板多子仓库监控**：项目根目录下存在多个 git 仓库（主仓库 + 嵌套子仓库，或纯文件夹 + 多个仓库）时，Git 面板顶部新增仓库切换下拉，可切换到任意子仓库查看变更、暂存、提交、推拉；扫描限深并排除 
+ode_modules` 等大目录，单仓库项目 UI 保持不变；子仓库内文件改动同样触发面板自动刷新。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
 - **嵌套 git 子仓库扫描兼容**：主仓库下存在嵌套 git 子仓库时，变更列表不再把子仓库目录当作未跟踪文件展示，点击未跟踪条目也不会再出现"读取文件失败：文件名、目录名或卷标语法不正确 (os error 123)"等原始系统错误；目录条目改为返回友好提示。[#85](https://github.com/dark-hxx/CLI-Manager/issues/85)
 - **Git Diff 弹窗 Esc 关闭**：文件 Diff 弹窗支持按 Esc 键关闭，与其它弹窗交互习惯一致。
 
@@ -1652,12 +1848,14 @@
 
 ### 开发体验
 
-- **开发版单实例兼容正式版**：`npm run tauri dev` 自动使用 dev Tauri 配置，并通过版本化单实例锁与已安装正式版共存；dev 仍共享正式版数据目录，避免项目和设置配置丢失。
+- **开发版单实例兼容正式版**：
+pm run tauri dev` 自动使用 dev Tauri 配置，并通过版本化单实例锁与已安装正式版共存；dev 仍共享正式版数据目录，避免项目和设置配置丢失。
 
 ### macOS 兼容性
 
 - **macOS Dock 图标点击恢复窗口**：注册 `RunEvent::Reopen` 事件，当用户在 macOS 上点击 Dock 图标且应用无可见窗口时，自动唤回主窗口。
-- **macOS 设置弹窗顶部偏移修复**：通过 `navigator.platform` 检测 macOS 环境，设置弹窗 `top-0` 而非 `top-[26px]`，消除设置页面顶部多余间隙。
+- **macOS 设置弹窗顶部偏移修复**：通过 
+avigator.platform` 检测 macOS 环境，设置弹窗 `top-0` 而非 `top-[26px]`，消除设置页面顶部多余间隙。
 
 ### 界面优化
 
@@ -1733,7 +1931,8 @@
 
 ### 项目文件浏览器
 
-- **文件搜索性能优化**：文件树搜索支持按文件名和项目相对路径匹配，跳过 `.git`、`.trellis`、`node_modules`、`dist`、`build`、`target` 等重目录，并限制最大结果数，减少大项目搜索卡顿。
+- **文件搜索性能优化**：文件树搜索支持按文件名和项目相对路径匹配，跳过 `.git`、`.trellis`、
+ode_modules`、`dist`、`build`、`target` 等重目录，并限制最大结果数，减少大项目搜索卡顿。
 - **全项目代码片段搜索**：文件浏览器搜索区新增「文件 / 代码」模式切换；代码模式由 Rust 后端在项目根目录内扫描 UTF-8 文本文件，返回文件路径、行号、命中行和上下文片段。
 - **搜索请求防抖与过期保护**：前端搜索增加 220ms 防抖和请求序号校验，快速输入或慢请求返回时不会用旧结果覆盖新查询。
 - **命中行跳转高亮**：点击代码片段搜索结果会打开对应文件，自动切到源码视图，滚动到命中行并高亮当前行与匹配片段。
@@ -1783,7 +1982,8 @@
 
 - **文件 Git 状态着色**：项目文件浏览器按现有 Git 变更数据展示文件状态，修改、新增/未跟踪和未保存编辑状态使用不同文字颜色区分。
 - **创建入口收敛**：移除文件浏览器顶部显式新建按钮，保留目录右键和空白区域右键的新建文件/文件夹操作，减少侧栏顶部噪声。
-- **目录自动折叠**：文件树默认折叠 `.git`、`.trellis`、`node_modules`、`target`、`dist` 等本地工具/产物目录，并支持按项目忽略或恢复特定目录。
+- **目录自动折叠**：文件树默认折叠 `.git`、`.trellis`、
+ode_modules`、`target`、`dist` 等本地工具/产物目录，并支持按项目忽略或恢复特定目录。
 - **文件树交互增强**：支持 `F2` 原地重命名、`Ctrl/Cmd+C/X/V` 复制/剪切/粘贴文件，目录链显示统一改为 `/` 分隔。
 - **AI 路径复制**：文件、目录、搜索结果和项目根节点支持复制 AI 路径或目录树；新增 `Alt+P` 快捷键复制当前文件/目录 AI 路径。
 - **终端文件拖拽**：从文件浏览器拖拽文件/目录到内置终端时，按当前项目 CLI 自动生成 Claude/Codex 友好的路径文本；从系统文件管理器拖入终端时自动粘贴 shell 引号包裹的本地路径。
@@ -1878,7 +2078,8 @@
 
 ### 修复
 
-- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 `nomatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
+- **WSL 实时统计读取不到会话**：WSL 环境下扫描 Claude 会话文件时，`find /path -name '*.jsonl'` 的 glob 模式被 zsh 的 
+omatch` 选项拦截——zsh 将未加引号的 `*.jsonl` 当作 glob 展开，若无匹配文件直接报错退出，导致 `find` 无法执行、始终返回 0 个文件。已转义 glob 通配符（`\*`）避免 shell 展开。
 
 ### 字体设置
 
@@ -1991,7 +2192,9 @@
 
 #### fs-watcher 替代定时轮询
 
-- **实时文件监听**：新增 `git_watcher` 桥接（基于 `notify` + `notify-debouncer-mini`），监听当前项目目录，去抖 400ms 后向前端发 `git-changed` 事件；面板由事件驱动刷新，去掉原 4s 固定轮询与最长 4s 延迟。
+- **实时文件监听**：新增 `git_watcher` 桥接（基于 
+otify` + 
+otify-debouncer-mini`），监听当前项目目录，去抖 400ms 后向前端发 `git-changed` 事件；面板由事件驱动刷新，去掉原 4s 固定轮询与最长 4s 延迟。
 - **精准监听范围**：监听工作区文件变化与 `.git/index`、`.git/HEAD`（覆盖编辑 / 暂存 / 提交 / 切分支），过滤 `.git/objects`、`.git/logs`、`*.lock` 等噪声。
 - **降级兜底**：watcher 初始化失败（网络盘 / WSL 等 notify 不可用）时自动降级为 15s 慢轮询；保留失焦/隐藏不刷新、重新聚焦立即刷新一次。
 - **生命周期与多窗口隔离**：单 watcher 绑定当前活动项目，切项目/关闭面板即释放；`git-changed` 事件携带 `projectPath`，各窗口按自身当前项目过滤，天然隔离。
@@ -2115,7 +2318,8 @@
 - **数据层**：新增 SQLite migration v11 建 `model_prices` 表（`model` 主键 + 四类单价 + `source`/`source_model_id`/`raw_json`/时间戳）；前端 `modelPricingStore` 负责 CRUD、种子初始化与候选应用，DB 为唯一权威源。
 - **前后端桥接**：前端启动/变更时通过 `model_prices_set_cache` 把价格推送到后端内存缓存（`OnceLock<RwLock<HashMap>>`），后端费用计算读缓存，避免后端猜测 DB 落盘路径。
 - **远程同步命令**：新增 `model_prices_sync`（`reqwest` 拉取 + per-token×1e6 换算 + 分级匹配 + 候选评分），新增 `model_pricing` 命令模块。
-- **复用归一化**：「识别本地模型」复用 `historyStore` 的 `normalizeStats` 兜底 snake/camel 与缺失字段，修复直接读原始返回导致的 `undefined.map` 报错。
+- **复用归一化**：「识别本地模型」复用 `historyStore` 的 
+ormalizeStats` 兜底 snake/camel 与缺失字段，修复直接读原始返回导致的 `undefined.map` 报错。
 
 ### 终端侧边面板（实时统计 / Git 变更）
 
@@ -2296,7 +2500,8 @@
   - 新增 `get_os_platform` 命令返回当前平台（`windows` / `macos` / `linux` / `unknown`）。
   - `PtyManager::resolve_shell` 与外部终端 `shell_exe` 增加 `zsh` / `fish` / `sh` 支持；`bash` 与默认分支用 `cfg!(target_os)` 区分平台（Windows 用 `bash.exe` / `powershell.exe`，Unix 回退用户登录 Shell `$SHELL`，再回退 macOS=zsh / 其它=bash）。
 - 前端（TS/React）：
-  - `ShellKey` 扩展 Unix Shell；`normalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
+  - `ShellKey` 扩展 Unix Shell；
+ormalizeShellKey` 支持识别 `zsh` / `fish` / `sh` 及其路径与 `.exe` 变体。
   - 新增 `getOsPlatform`、`getDefaultShellForPlatform`、`defaultShellForOs` 辅助与 `getShellOptions(os)` 平台选项映射。
   - `ConfigModal`、`ThemeSettingsPage`、`settingsStore` 接入平台检测。
 
@@ -2632,7 +2837,8 @@
 
 ### 精简模式与命令面板体验
 
-- `npm run dev` 改为通过 `scripts/dev-server.mjs` 启动 Vite：端口 1420 已有 CLI-Manager 开发服务时自动复用，若被其他进程占用则明确报错，减少 Tauri 开发启动冲突。
+- 
+pm run dev` 改为通过 `scripts/dev-server.mjs` 启动 Vite：端口 1420 已有 CLI-Manager 开发服务时自动复用，若被其他进程占用则明确报错，减少 Tauri 开发启动冲突。
 - 命令面板接入共享弹层、输入框与卡片样式，并优化分组标题与选中态，使 Ctrl+P 入口与精简模式视觉保持一致。
 - 项目树 CLI 工具徽标改为轻量点状色标，降低 Claude / Codex / Gemini 标识在侧栏中的视觉噪音。
 
@@ -2679,7 +2885,9 @@
 
 - 新增 Codex CLI hook 桥接，复用本地回环通知服务接收 `PermissionRequest` / `Stop` 事件，并按来源区分 `claude` / `codex` 通知来源。
 - 终端标签通知逻辑扩展为兼容 Claude 与 Codex，切换到目标标签后自动清理对应通知。
-- 新增 Codex hook 安装/卸载逻辑，写入 `~/.codex/hooks.json` 与 `~/.codex/config.toml`，并生成 `notify-cli-manager-codex-attention.ps1` / `notify-cli-manager-codex-finished.ps1`。
+- 新增 Codex hook 安装/卸载逻辑，写入 `~/.codex/hooks.json` 与 `~/.codex/config.toml`，并生成 
+otify-cli-manager-codex-attention.ps1` / 
+otify-cli-manager-codex-finished.ps1`。
 
 ### Hook 设置调整
 
@@ -2709,7 +2917,9 @@
 
 ### Hook 设置
 
-- 设置页新增「Hook 设置」入口，可选择 Claude 配置目录，一键安装或删除 `notify-cli-manager-approval.ps1` 与 `notify-cli-manager-finished.ps1`。
+- 设置页新增「Hook 设置」入口，可选择 Claude 配置目录，一键安装或删除 
+otify-cli-manager-approval.ps1` 与 
+otify-cli-manager-finished.ps1`。
 - 安装逻辑会合并写入 Claude `settings.json` 的 `Notification`、`Stop`、`StopFailure` hook，不删除用户自定义 hook；删除时只清理 CLI-Manager 自己的脚本与命令。
 - Hook 设置页展示 Claude 配置目录、hooks 目录、settings.json 路径与安装状态，并统一 Notification 脚本和 Stop / StopFailure 脚本检测框尺寸。
 
@@ -3089,7 +3299,8 @@
 - **[Medium]** `Sidebar.tsx` — "外部 PowerShell" 标签改为 "外部终端"，匹配多 Shell 支持
 
 ### 其他变更
-- 替换应用图标为 folder+shell 风格图标（512x512 PNG → `npx tauri icon` 生成全尺寸）
+- 替换应用图标为 folder+shell 风格图标（512x512 PNG → 
+px tauri icon` 生成全尺寸）
 
 ### 设置系统
 
@@ -3148,3 +3359,13 @@
 - **[High]** `manager.rs` — `try_wait()` 的 `Err(_)` 分支映射为 `"error"` 而非 `"exited"`
 - **[Medium]** `TerminalTabs.tsx` / `Sidebar.tsx` — 状态指示点添加 `role="status"` 和 `aria-label` 无障碍属性
 - **[Medium]** `Sidebar.tsx` — `getProjectStatus` 改用 `useCallback` 稳定引用，状态回退使用 `?? "running"`
+## [TEMP]
+
+- 修复 Release 安装包中 Web 管理页面静态资源目录被展平导致的白屏问题。
+- 修复 Web 设备连接设置在状态刷新时覆盖用户正在编辑的服务地址。
+## TEMP
+
+- Web 端终端关闭语义修复：关闭按钮现在会结束桌面端对应 PTY 会话并同步状态；页面切换、刷新和断线仍使用 detach。
+
+## TEMP
+- Fix desktop terminal first-frame PTY subscription timing; add Web terminal scroll-to-bottom control and custom device removal confirmation.

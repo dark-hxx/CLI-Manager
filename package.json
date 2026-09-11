@@ -1,9 +1,12 @@
 {
   "name": "cli-manager",
   "private": true,
-  "version": "1.3.9",
+  "version": "1.3.10",
   "license": "AGPL-3.0-or-later",
   "type": "module",
+  "workspaces": [
+    "apps/web"
+  ],
   "scripts": {
     "check:architecture": "node ./scripts/architecture.mjs",
     "report:architecture": "node ./scripts/architecture.mjs --report",
@@ -14,6 +17,12 @@
     "tauri:clean:dev": "cargo clean --manifest-path src-tauri/Cargo.toml --profile dev",
     "tauri:clean": "cargo clean --manifest-path src-tauri/Cargo.toml",
     "preview": "vite preview",
+    "web:dev": "npm run dev --workspace @cli-manager/web",
+    "web:build": "npm run build --workspace @cli-manager/web",
+    "web:typecheck": "npm run typecheck --workspace @cli-manager/web",
+    "web:server:check": "cargo check --manifest-path apps/server/Cargo.toml",
+    "web:server:test": "cargo test --manifest-path apps/server/Cargo.toml",
+    "web:server:run": "cargo run --manifest-path apps/server/Cargo.toml",
     "tauri": "node ./scripts/tauri-cli.mjs",
     "tauri:build:local": "node ./scripts/tauri-cli.mjs build --config src-tauri/tauri.local.conf.json"
   },
@@ -62,6 +71,7 @@
     "lucide-react": "^0.577.0",
     "monaco-editor": "^0.55.1",
     "opencc-js": "^1.4.1",
+    "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
     "react-diff-view": "^3.3.3",
     "react-dom": "^19.1.0",

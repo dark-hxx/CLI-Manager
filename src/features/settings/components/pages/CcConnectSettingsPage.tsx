@@ -8,6 +8,7 @@ import {
   Card,
   Center,
   Checkbox,
+  Drawer,
   Group,
   Loader,
   Modal,
@@ -20,14 +21,17 @@ import {
   Switch,
   Text,
   TextInput,
+  UnstyledButton,
 } from "@mantine/core";
 import {
   AlertTriangle,
+  ChevronRight,
   BellRing,
   Copy,
   Download,
   ExternalLink,
   FolderSearch,
+  MonitorSmartphone,
   Play,
   QrCode,
   RefreshCw,
@@ -41,6 +45,9 @@ import { toast } from "sonner";
 import { getLanguageLocale, useI18n, type AppLanguage, type TranslationKey } from "../../../../shared/i18n/index";
 import { useSettingsStore } from "../../../../shared/preferences/settingsStore";
 import { ConfirmDialog } from "../../../../shared/ui/ConfirmDialog";
+import { webDeviceApi, type WebDeviceStatus } from "../../../../shared/lib/webDevice";
+import { WebDeviceSettingsSection } from "../WebDeviceSettingsSection";
+import { WebServerSettingsSection } from "../WebServerSettingsSection";
 
 type AgentKind = "claude" | "codex";
 type PlatformKind = "telegram" | "feishu" | "weixin" | "wecom";
@@ -341,6 +348,8 @@ export function CcConnectSettingsPage() {
   const [executableInspection, setExecutableInspection] = useState<CcConnectExecutableStatus | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [yoloConfirmOpen, setYoloConfirmOpen] = useState(false);
+  const [activeConnection, setActiveConnection] = useState<"cc-connect" | "web-device" | null>(null);
+  const [webDeviceStatus, setWebDeviceStatus] = useState<WebDeviceStatus | null>(null);
   const [weixinAuthorizationOpen, setWeixinAuthorizationOpen] = useState(false);
   const [weixinAuthorization, setWeixinAuthorization] = useState<CcConnectWeixinAuthorizationStatus | null>(null);
   const [updateModalOpen, setUpdateModalOpen] = useState(false);
@@ -384,14 +393,18 @@ export function CcConnectSettingsPage() {
     statusInFlightRef.current = true;
     const requestId = ++statusRequestRef.current;
     try {
-      const [next, nextNotificationStatus] = await Promise.all([
+      const [next, nextNotificationStatus, nextWebDeviceStatus] = await Promise.all([
         invoke<CcConnectStatus>("cc_connect_get_status", { refreshDetection: force }),
         invoke<CcConnectHandoffNotificationStatus>(
           "cc_connect_handoff_notification_status"
         ).catch(() => null),
+        webDeviceApi.getStatus().catch(() => null),
       ]);
       if (requestId !== statusRequestRef.current) return;
       setStatus(next);
+      if (nextWebDeviceStatus) {
+        setWebDeviceStatus(nextWebDeviceStatus);
+      }
       if (nextNotificationStatus) {
         setHandoffNotificationStatus(nextNotificationStatus);
       }
@@ -873,6 +886,16 @@ export function CcConnectSettingsPage() {
     : status?.running
       ? t("settings.ccConnect.running")
       : t("settings.ccConnect.stopped");
+  const ccConnectionStatus = status?.running
+    ? { label: t("settings.remoteConnections.status.running"), color: "green" }
+    : status?.profile && status.configExists
+      ? { label: t("settings.remoteConnections.status.configured"), color: "blue" }
+      : { label: t("settings.remoteConnections.status.unconfigured"), color: "gray" };
+  const webConnectionStatus = webDeviceStatus?.running
+    ? { label: t("settings.remoteConnections.status.running"), color: "green" }
+    : webDeviceStatus?.configured
+      ? { label: t("settings.remoteConnections.status.configured"), color: "blue" }
+      : { label: t("settings.remoteConnections.status.unconfigured"), color: "gray" };
   const platformOptions = PLATFORM_KINDS.map((platform) => ({
     value: platform,
     label: t(PLATFORM_LABEL_KEYS[platform]),
@@ -987,9 +1010,77 @@ export function CcConnectSettingsPage() {
   };
 
   return (
-    <Stack gap="md" w="100%">
-      <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
-        <Group justify="space-between" align="flex-start" wrap="wrap" gap="sm">
+    <>
+      <Stack gap="md" w="100%">
+        <UnstyledButton
+          className="ui-focus-ring block h-full w-full rounded-lg text-left"
+          onClick={() => setActiveConnection("cc-connect")}
+          aria-label={t("settings.remoteConnections.ccConnect.open")}
+        >
+          <Card className="h-full border border-border bg-surface-container-low transition-colors hover:border-primary/45 hover:bg-surface-container-high" p="lg" radius="lg">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Group align="flex-start" wrap="nowrap">
+                <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><Wifi size={22} /></div>
+                <div>
+                  <Text fw={700}>{t("settings.ccConnect.overview.title")}</Text>
+                  <Text mt={5} size="xs" c="var(--text-muted)">{t("settings.remoteConnections.ccConnect.description")}</Text>
+                </div>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Badge color={ccConnectionStatus.color} variant="light">{ccConnectionStatus.label}</Badge>
+                <ChevronRight className="shrink-0 text-text-muted" size={18} />
+              </Group>
+            </Group>
+          </Card>
+        </UnstyledButton>
+        <UnstyledButton
+          className="ui-focus-ring block h-full w-full rounded-lg text-left"
+          onClick={() => setActiveConnection("web-device")}
+          aria-label={t("settings.remoteConnections.webDevice.open")}
+        >
+          <Card className="h-full border border-border bg-surface-container-low transition-colors hover:border-primary/45 hover:bg-surface-container-high" p="lg" radius="lg">
+            <Group justify="space-between" align="flex-start" wrap="nowrap">
+              <Group align="flex-start" wrap="nowrap">
+                <div className="rounded-xl bg-primary/10 p-2.5 text-primary"><MonitorSmartphone size={22} /></div>
+                <div>
+                  <Text fw={700}>{t("settings.webDevice.title")}</Text>
+                  <Text mt={5} size="xs" c="var(--text-muted)">{t("settings.remoteConnections.webDevice.description")}</Text>
+                </div>
+              </Group>
+              <Group gap="xs" wrap="nowrap">
+                <Badge color={webConnectionStatus.color} variant="light">{webConnectionStatus.label}</Badge>
+                <ChevronRight className="shrink-0 text-text-muted" size={18} />
+              </Group>
+            </Group>
+          </Card>
+        </UnstyledButton>
+      </Stack>
+
+      <Drawer
+        opened={activeConnection === "web-device"}
+        onClose={() => setActiveConnection(null)}
+        title={t("settings.webDevice.title")}
+        position="right"
+        size="xl"
+        keepMounted
+      >
+        <Stack gap="md">
+          <WebServerSettingsSection />
+          <WebDeviceSettingsSection onStatusChange={setWebDeviceStatus} />
+        </Stack>
+      </Drawer>
+
+      <Drawer
+        opened={activeConnection === "cc-connect"}
+        onClose={() => setActiveConnection(null)}
+        title={t("settings.ccConnect.overview.title")}
+        position="right"
+        size="xl"
+        keepMounted
+      >
+        <Stack gap="md">
+        <Card className="border border-border bg-surface-container-low" p="md" radius="lg">
+        <Group justify="space-between" align="flex-start">
           <div>
             <Group gap="xs" wrap="wrap">
               <Wifi size={18} />
@@ -1399,6 +1490,8 @@ export function CcConnectSettingsPage() {
             : logs.map((line) => `[${formatTimestamp(line.timestampMs, language)}] [${line.source}] ${line.message}`).join("\n")}
         </pre>
       </Card>}
+        </Stack>
+      </Drawer>
       <Modal
         opened={updateModalOpen}
         onClose={() => {
@@ -1618,7 +1711,7 @@ export function CcConnectSettingsPage() {
         confirmText={t("settings.ccConnect.yoloConfirmAction")}
         cancelText={t("common.cancel")}
         danger
-        zIndex={80}
+        zIndex={300}
         onClose={() => setYoloConfirmOpen(false)}
         onConfirm={() => {
           setYoloConfirmOpen(false);
@@ -1632,13 +1725,13 @@ export function CcConnectSettingsPage() {
         confirmText={t("common.delete")}
         cancelText={t("common.cancel")}
         danger
-        zIndex={80}
+        zIndex={300}
         onClose={() => setClearConfirmOpen(false)}
         onConfirm={() => {
           setClearConfirmOpen(false);
           void clearCredentials();
         }}
       />
-    </Stack>
+    </>
   );
 }

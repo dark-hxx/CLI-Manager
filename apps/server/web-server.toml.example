@@ -1,0 +1,7 @@
+# Optional standalone Web server configuration.
+# This file is read from the data directory as web-server.toml.
+# CLI flags take precedence over environment variables, which take precedence
+# over this file. Keep the default loopback bind unless remote access is needed.
+bind = "127.0.0.1:8787"
+# Alternatively, keep the bind host above and override only the port:
+# port = 8787

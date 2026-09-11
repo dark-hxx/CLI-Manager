@@ -27,6 +27,7 @@ Read the domain contract that owns the code being changed; do not load every gui
 | [Background Task Continuation Contracts](./background-task-continuation-contracts.md) | 运行任务退出守卫、daemon 后台继续、托盘最小化与通知边界 | Active |
 | [Terminal Output Scheduling Contracts](../backend/terminal-output-scheduling-contracts.md) | Daemon live-frame budget and frontend cross-terminal xterm scheduling contract | Active |
 | [Statusline Editor Contracts](./statusline-editor-contracts.md) | Claude/Codex 独立编辑状态、共享终端主题预览与响应式布局 | Active |
+| [Web UI Visual Guidelines](./web-ui-visual-guidelines.md) | macOS-inspired frosted-glass, clean white visual language and surface rules | Active |
 | [Git Diff Viewer Contracts](./git-diff-viewer-contracts.md) | Shared snapshot/live data sources, target identity, and viewer responsibility boundaries | Active |
 | [Git Changes Performance Contracts](./git-changes-performance-contracts.md) | 大规模变更树虚拟化、Worker/分批构造、目录完整操作与刷新合并 | Active |
 | [Markdown File Navigation Contracts](./markdown-file-navigation-contracts.md) | Scoped preview anchors, source gestures, project-bound file resolution, and stale navigation protection | Active |

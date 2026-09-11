@@ -41,6 +41,7 @@ import { syncHistoryRequestLogs, useHistoryStore } from "../features/history/ind
 import { useExternalSessionSyncStore } from "../features/history/api/externalSessionSyncStore";
 import { useKeyboardShortcuts } from "../features/workspace/api/useKeyboardShortcuts";
 import { useDesktopPetCoordinator } from "../features/desktop-pet/api/useDesktopPetCoordinator";
+import { useWebDeviceBridge } from "../features/terminal/hooks/useWebDeviceBridge";
 import { useRemoteHandoffCoordinator } from "../features/remote/api/useRemoteHandoffCoordinator";
 import { useUpdateStore } from "../features/settings/api/updateStore";
 import { useReplayStore } from "../features/terminal/api/replayStore";
@@ -914,6 +915,8 @@ function App() {
     onOpenSettings: () => handleOpenSettings("desktop-pet"),
     onActivateSession: handleActivateHookNotificationTarget,
   });
+
+  useWebDeviceBridge(settingsLoaded && startupReady);
 
   useKeyboardShortcuts({
     onToggleSidebar: handleToggleSidebarShortcut,

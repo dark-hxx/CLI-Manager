@@ -48,11 +48,12 @@ mod conpty_sideload;
 #[path = "infrastructure/diagnostics/crash_reporter.rs"]
 mod crash_reporter;
 #[path = "infrastructure/storage/credential_store.rs"]
-mod credential_store;
+pub(crate) mod credential_store;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
 // 因此 app_paths 与 daemon 需 pub。
 #[path = "infrastructure/daemon/mod.rs"]
 pub mod daemon;
+pub mod device_identity;
 #[path = "infrastructure/files/file_watcher.rs"]
 mod file_watcher;
 #[path = "features/git/watcher.rs"]
@@ -101,6 +102,8 @@ mod third_party_notification;
 pub mod usage;
 #[path = "features/stats/usage_schema.rs"]
 pub(crate) mod usage_schema;
+pub mod web_daemon;
+mod web_device_outbox;
 #[path = "infrastructure/webdav/mod.rs"]
 mod webdav;
 #[path = "infrastructure/process/wsl.rs"]
@@ -468,6 +471,17 @@ pub fn run() {
                     if let Err(err) = commands::cc_connect::auto_start(&handle) {
                         log::warn!("cc-connect auto-start skipped: {err}");
                     }
+                    if let Err(err) = commands::web_device::auto_start(&handle) {
+                        log::warn!("web device auto-start skipped: {err}");
+                    }
+                    if let Err(err) = commands::web_server::auto_start(
+                        &handle,
+                        handle
+                            .state::<commands::web_server::WebServerManager>()
+                            .inner(),
+                    ) {
+                        log::warn!("managed Web server auto-start skipped: {err}");
+                    }
                 });
             }
             if let Ok(dir) = app_paths::history_cache_dir() {
@@ -537,6 +551,8 @@ pub fn run() {
         .manage(live_server::LiveServerManager::new())
         .manage(commands::subagent_transcript::SubagentTranscriptBridge::new())
         .manage(commands::cc_connect::CcConnectManager::new())
+        .manage(commands::web_device::WebDeviceManager::new())
+        .manage(commands::web_server::WebServerManager::default())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             SqlBuilder::default()
@@ -731,6 +747,31 @@ pub fn run() {
             commands::sync::sync_save_password,
             commands::sync::sync_load_password,
             commands::sync::sync_delete_password,
+            commands::web_device::web_device_get_status,
+            commands::web_device::web_device_save_profile,
+            commands::web_device::web_device_start,
+            commands::web_device::web_device_stop,
+            commands::web_device::web_device_restart,
+            commands::web_device::web_device_create_pairing,
+            commands::web_device::web_device_clear_pairing,
+            commands::web_device::web_device_take_operations,
+            commands::web_device::web_device_take_terminal_commands,
+            commands::web_device::web_device_terminal_output,
+            commands::web_device::web_device_terminal_status,
+            commands::web_device::web_device_publish_history,
+            commands::web_device::web_device_validate_context,
+            commands::web_device::web_device_operation_accepted,
+            commands::web_device::web_device_operation_running,
+            commands::web_device::web_device_operation_completed,
+            commands::web_device::web_device_mobile_ticket,
+            commands::web_conversation::web_conversation_start,
+            commands::web_conversation::web_conversation_is_running,
+            commands::web_conversation::web_conversation_history,
+            commands::web_server::web_server_get_status,
+            commands::web_server::web_server_save_config,
+            commands::web_server::web_server_start,
+            commands::web_server::web_server_stop,
+            commands::web_server::web_server_restart,
             commands::system_resources::system_resources_get_snapshot,
             commands::version::get_app_version,
             commands::version::get_os_platform,
@@ -937,6 +978,11 @@ pub fn run() {
                 app.state::<live_server::LiveServerManager>().shutdown();
                 app.state::<commands::cc_connect::CcConnectManager>()
                     .shutdown();
+                commands::web_device::shutdown(app);
+                commands::web_server::shutdown(
+                    app.state::<commands::web_server::WebServerManager>()
+                        .inner(),
+                );
                 crash_reporter::mark_graceful_exit();
             }
 

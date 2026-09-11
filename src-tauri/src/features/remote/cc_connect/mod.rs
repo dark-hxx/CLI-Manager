@@ -66,6 +66,7 @@ use launcher::resolve_codex_launcher_from_path;
 use launcher::{
     ensure_local_agent_available, managed_agent_command, managed_project_environment, user_home_dir,
 };
+pub(crate) use launcher::resolve_local_agent_program;
 mod codex_launch;
 use codex_launch::{
     apply_remote_codex_launch_environment, prepare_remote_codex_launch,

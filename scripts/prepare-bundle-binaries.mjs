@@ -7,7 +7,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), ".."
 const targetRoot = path.join(repoRoot, "src-tauri", "target");
 const profile = process.env.TAURI_ENV_DEBUG === "true" ? "debug" : "release";
 const universalDir = path.join(targetRoot, "universal-apple-darwin", profile);
-const helperBinaryNames = ["cli-manager-daemon", "cli-manager-codex-proxy"];
+const helperBinaryNames = ["cli-manager-daemon", "cli-manager-web-daemon", "cli-manager-codex-proxy"];
 
 if (process.env.TAURI_ENV_PLATFORM !== "darwin" || process.env.TAURI_ENV_ARCH !== "universal") {
   process.exit(0);

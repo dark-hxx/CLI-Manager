@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { createTerminalQuerySession, forgetTerminalQuerySession } from "../../../shared/lib/terminalQueryPolicy";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
   ptyHostSocket,
@@ -144,6 +145,7 @@ export class TerminalProcessManager {
           request.terminalColors,
         );
         if (traits) this.processTraits.set(sessionId, traits);
+        createTerminalQuerySession(sessionId);
       } catch (error) {
         throw error;
       }
@@ -188,6 +190,7 @@ export class TerminalProcessManager {
     return ptyHostSocket.close(sessionId).finally(() => {
       this.clearOutputState(sessionId);
       this.processTraits.delete(sessionId);
+      forgetTerminalQuerySession(sessionId);
     });
   }
 
@@ -195,6 +198,7 @@ export class TerminalProcessManager {
     return ptyHostSocket.closeAll().finally(() => {
       [...this.outputStates.keys()].forEach((sessionId) => this.clearOutputState(sessionId));
       this.processTraits.clear();
+      forgetTerminalQuerySession();
     });
   }
 
@@ -234,6 +238,11 @@ export class TerminalProcessManager {
         .sort((left, right) => right.queuedBytes - left.queuedBytes || right.queuedFrames - left.queuedFrames)
         .slice(0, DIAGNOSTIC_SESSION_LIMIT),
     };
+  }
+
+  hasActiveOutputConsumer(sessionId: string): boolean {
+    return this.outputStates.get(sessionId)?.consumer !== null
+      && this.outputStates.get(sessionId)?.consumer !== undefined;
   }
 
   async subscribeOutput(sessionId: string, listener: (delivery: TerminalOutputDelivery) => void): Promise<UnlistenFn> {

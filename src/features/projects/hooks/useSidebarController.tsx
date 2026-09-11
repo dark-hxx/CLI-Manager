@@ -27,9 +27,10 @@ import { useI18n } from "../../../shared/i18n/index";
 import { getOsPlatform } from "../../../shared/platform/shell";
 import { resolveProjectPath } from "../api/groupPath";
 import { SIDEBAR_EXPAND_REQUEST_EVENT, SIDEBAR_TOGGLE_REQUEST_EVENT, notifySidebarStateChange } from "../api/sidebarCommands";
-import { type SidebarProps, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_COLLAPSE_THRESHOLD, SIDEBAR_MAX_WIDTH, SIDEBAR_AUTO_COLLAPSE_BREAKPOINT, IN_TAURI, preserveSidebarScrollAfterContextMenu, isLikelyMacOs, clampExpandedSidebarWidth, normalizePersistedSidebarWidth, resolveHistorySourceFilter, buildProjectSplitOptions, filterTreeForOpenTerminals, collectGroupTerminalTargets, type SidebarConfirmAction } from "../lib/sidebarModel";
+import { type SidebarProps, SIDEBAR_COLLAPSED_WIDTH, SIDEBAR_COLLAPSE_THRESHOLD, SIDEBAR_MAX_WIDTH, SIDEBAR_AUTO_COLLAPSE_BREAKPOINT, IN_TAURI, preserveSidebarScrollAfterContextMenu, isLikelyMacOs, clampExpandedSidebarWidth, normalizePersistedSidebarWidth, resolveHistorySourceFilter, buildProjectSplitOptions, filterTreeForOpenTerminals, collectGroupTerminalTargets, getSyncedSessionKeysForProject, type SidebarConfirmAction } from "../lib/sidebarModel";
 import { createSidebarDeleteConfirmation } from "../lib/sidebarDeleteConfirmation";
 import { usePinnedProjects } from "./usePinnedProjects";
+import { registerWebDeviceActionHandler, type WebDeviceActionRequest } from "../../../shared/lib/webDeviceActionBus";
 
 export function useSidebarController({
   onOpenSettings,
@@ -1667,13 +1668,13 @@ export function useSidebarController({
   );
 
   const handleStopGroup = useCallback(
-    async (groupId: string) => {
+    async (groupId: string, remotelyConfirmed = false) => {
       if (stoppingGroupIdsRef.current.has(groupId)) return;
       const projectIds = collectProjectIdsForGroup(groups, projects, groupId);
       const targets = collectGroupTerminalTargets(useTerminalStore.getState().sessions, projectIds);
       if (targets.terminalSessionIds.length === 0) return;
 
-      if (confirmBeforeClosingTerminalTab) {
+      if (confirmBeforeClosingTerminalTab && !remotelyConfirmed) {
         const confirmed = await confirm({
           title: t("sidebar.confirm.stopGroupTitle", { count: targets.terminalSessionIds.length }),
           message: t("sidebar.confirm.stopGroupMessage"),
@@ -1714,6 +1715,191 @@ export function useSidebarController({
     },
     [closeSession, confirm, confirmBeforeClosingTerminalTab, groups, projects, t]
   );
+
+  const deleteProjectDirect = useCallback(async (project: Project, remotelyConfirmed = false) => {
+    const confirmed = remotelyConfirmed || await confirm({
+      title: t("sidebar.confirm.deleteTerminalTitle"),
+      message: t("sidebar.confirm.deleteTerminalMessage", { name: project.name }),
+      confirmText: t("sidebar.menu.delete"),
+      danger: true,
+    });
+    if (!confirmed) return { canceled: true };
+    const syncedKeys = getSyncedSessionKeysForProject(
+      project,
+      useExternalSessionSyncStore.getState().syncedSessions
+    );
+    const sessionIds = useTerminalStore.getState().sessions
+      .filter((session) => session.projectId === project.id || session.fileEditor?.projectId === project.id)
+      .map((session) => session.id);
+    for (const sessionId of sessionIds) await closeSession(sessionId);
+    await deleteProject(project.id);
+    if (syncedKeys.length > 0) await removeSyncedSessions(syncedKeys);
+    if (selectedId === project.id) setSelectedId(null);
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      next.delete(project.id);
+      return next;
+    });
+    toast.success(t("sidebar.toast.terminalDeleteSuccess"));
+    return { deleted: true, projectId: project.id };
+  }, [closeSession, confirm, deleteProject, removeSyncedSessions, selectedId, t]);
+
+  const deleteGroupDirect = useCallback(async (groupId: string, groupName: string, remotelyConfirmed = false) => {
+    const confirmed = remotelyConfirmed || await confirm({
+      title: t("sidebar.confirm.deleteGroupTitle"),
+      message: t("sidebar.confirm.deleteGroupMessage", { name: groupName }),
+      confirmText: t("sidebar.menu.delete"),
+      danger: true,
+    });
+    if (!confirmed) return { canceled: true };
+    const projectIds = collectProjectIdsForGroup(groups, projects, groupId);
+    const groupProjects = projects.filter((project) => projectIds.has(project.id));
+    const syncedKeys = groupProjects.flatMap((project) =>
+      getSyncedSessionKeysForProject(project, useExternalSessionSyncStore.getState().syncedSessions)
+    );
+    const sessionIds = useTerminalStore.getState().sessions
+      .filter((session) => (
+        (session.projectId && projectIds.has(session.projectId))
+        || (session.fileEditor?.projectId && projectIds.has(session.fileEditor.projectId))
+      ))
+      .map((session) => session.id);
+    for (const sessionId of sessionIds) await closeSession(sessionId);
+    for (const project of groupProjects) await deleteProject(project.id);
+    if (syncedKeys.length > 0) await removeSyncedSessions(syncedKeys);
+    await deleteGroup(groupId);
+    if (selectedId && projectIds.has(selectedId)) setSelectedId(null);
+    setSelectedProjectIds((prev) => {
+      const next = new Set(prev);
+      projectIds.forEach((id) => next.delete(id));
+      return next;
+    });
+    toast.success(t("sidebar.toast.groupDeleteSuccess"));
+    return { deleted: true, groupId };
+  }, [closeSession, confirm, deleteGroup, deleteProject, groups, projects, removeSyncedSessions, selectedId, t]);
+
+  const handleWebDeviceAction = useCallback(async (request: WebDeviceActionRequest) => {
+    if (request.targetType === "selection") {
+      throw { code: "unsupported_operation_action", message: "selection actions are not supported by the desktop bridge" };
+    }
+    const targetId = request.targetId?.trim() ?? "";
+    if (!targetId) throw { code: "invalid_operation_payload", message: "targetId is required" };
+    const project = request.targetType === "project"
+      ? projects.find((item) => item.id === targetId) ?? null
+      : request.targetType === "worktree"
+        ? projects.find((item) => item.id === worktrees.find((worktree) => worktree.id === targetId)?.project_id) ?? null
+        : null;
+    const worktree = request.targetType === "worktree"
+      ? worktrees.find((item) => item.id === targetId) ?? null
+      : null;
+    const group = request.targetType === "group"
+      ? groups.find((item) => item.id === targetId) ?? null
+      : null;
+    if (request.targetType === "project" && !project) throw { code: "project_not_found", message: "project was not found" };
+    if (request.targetType === "worktree" && (!worktree || !project)) throw { code: "worktree_not_found", message: "Worktree was not found" };
+    if (request.targetType === "group" && !group) throw { code: "group_not_found", message: "group was not found" };
+
+    switch (request.action) {
+      case "project.openDirectory":
+        return handleOpenProjectDirectory(project!);
+      case "project.openFiles":
+        return handleOpenProjectFiles(project!);
+      case "project.history":
+        handleOpenProjectHistory(project!);
+        return { opened: true };
+      case "project.clone":
+        handleCloneProject(project!);
+        return { opened: true };
+      case "project.edit":
+        setEditingProject(project!);
+        return { opened: true };
+      case "project.rename":
+        ensureSidebarExpanded();
+        setRenamingProjectId(project!.id);
+        return { opened: true };
+      case "project.provider":
+        setProviderSwitchTarget({ kind: "project", project: project! });
+        return { opened: true };
+      case "project.delete":
+        return deleteProjectDirect(project!, request.confirmed === true);
+      case "group.newChild":
+        ensureSidebarExpanded();
+        setNewGroupParentId(group!.id);
+        return { opened: true };
+      case "group.addProject":
+        ensureSidebarExpanded();
+        handleAddProjectToGroup(group!.id);
+        return { opened: true };
+      case "group.batchShell":
+        setBatchShellPreselected(collectProjectIdsForGroup(groups, projects, group!.id));
+        return { opened: true };
+      case "group.stop":
+        return handleStopGroup(group!.id, request.confirmed === true);
+      case "group.focus":
+        handleSelectGroupScope(group!.id);
+        return { focused: true };
+      case "group.rename":
+        ensureSidebarExpanded();
+        handleRenameGroup(group!.id, group!.name);
+        return { opened: true };
+      case "group.delete":
+        return deleteGroupDirect(group!.id, group!.name, request.confirmed === true);
+      case "worktree.openDirectory":
+        return handleOpenWorktreeDirectory(worktree!);
+      case "worktree.openFiles":
+        return handleOpenWorktreeFiles(project!, worktree!);
+      case "worktree.history":
+        handleOpenWorktreeHistory(project!, worktree!);
+        return { opened: true };
+      case "worktree.provider":
+        setProviderSwitchTarget({ kind: "worktree", project: project!, worktree: worktree! });
+        return { opened: true };
+      case "worktree.installDeps":
+        handleInstallWorktreeDeps(project!, worktree!);
+        return { opened: true };
+      case "worktree.finish":
+        if (rejectMissingWorktree(worktree!)) return { opened: false };
+        setFinishTarget({ project: project!, worktree: worktree! });
+        return { opened: true };
+      case "worktree.discard": {
+        const confirmed = request.confirmed === true || await confirm({
+          title: t("worktree.discard.title", { name: worktree!.name }),
+          message: t("worktree.discard.message", { branch: worktree!.branch }),
+          confirmText: t("worktree.discard.confirm"),
+          danger: true,
+        });
+        if (!confirmed) return { canceled: true };
+        await removeWorktree(worktree!, true);
+        return { deleted: true, worktreeId: worktree!.id };
+      }
+      default:
+        throw { code: "unsupported_operation_action", message: `unsupported desktop action: ${request.action}` };
+    }
+  }, [
+    confirm,
+    deleteGroupDirect,
+    deleteProjectDirect,
+    ensureSidebarExpanded,
+    groups,
+    handleAddProjectToGroup,
+    handleCloneProject,
+    handleInstallWorktreeDeps,
+    handleOpenProjectDirectory,
+    handleOpenProjectFiles,
+    handleOpenProjectHistory,
+    handleOpenWorktreeDirectory,
+    handleOpenWorktreeFiles,
+    handleOpenWorktreeHistory,
+    handleRenameGroup,
+    handleSelectGroupScope,
+    handleStopGroup,
+    projects,
+    rejectMissingWorktree,
+    removeWorktree,
+    t,
+    worktrees,
+  ]);
+
+  useEffect(() => registerWebDeviceActionHandler(handleWebDeviceAction), [handleWebDeviceAction]);
 
   const selectedProjects = useMemo(
     () => projects.filter((p) => selectedProjectIds.has(p.id)),

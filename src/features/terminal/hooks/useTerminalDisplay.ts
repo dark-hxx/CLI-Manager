@@ -1,4 +1,6 @@
 import { useRef, type RefObject } from "react";
+import { createTerminalColorQueryFilter } from "../../../shared/lib/terminalColorQueryFilter";
+import { canAnswerTerminalQueryFrame, claimTerminalQueryFrame, setTerminalQueryReplay } from "../../../shared/lib/terminalQueryPolicy";
 import type { IMarker, ITheme, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -152,6 +154,7 @@ interface PendingTerminalWrite {
   byteLength: number;
   commit: ((charCount: number) => void) | null;
   replay: boolean;
+  sequence: number;
   replayBatchEnd: boolean;
   cols: number;
   rows: number;
@@ -362,6 +365,7 @@ export function useTerminalDisplay({
 
   const attachPtyOutput = (options: { waitForReplay?: boolean } = {}) => {
     const textDecoder = new TextDecoder("utf-8");
+    const colorQueries = createTerminalColorQueryFilter();
     let cancelled = false;
     let waitingForReplay = options.waitForReplay === true;
     const bufferedLivePayloads: TerminalOutputDelivery[] = [];
@@ -390,6 +394,7 @@ export function useTerminalDisplay({
       const first = ptyPendingChunksRef.current.shift();
       if (!first) return;
       const pending = [first];
+      const answerQueries = canAnswerTerminalQueryFrame(sessionId, first.sequence, first.replay);
       if (!first.replay && !first.reset) {
         let pendingBytes = first.byteLength;
         // Keep each live write bounded at complete PTY frame boundaries so a
@@ -398,6 +403,7 @@ export function useTerminalDisplay({
           ptyPendingChunksRef.current[0]
           && !ptyPendingChunksRef.current[0].replay
           && !ptyPendingChunksRef.current[0].reset
+          && canAnswerTerminalQueryFrame(sessionId, ptyPendingChunksRef.current[0].sequence, false) === answerQueries
         ) {
           const next = ptyPendingChunksRef.current[0];
           if (
@@ -426,6 +432,7 @@ export function useTerminalDisplay({
       };
       if (first.reset) {
         outputDiagnosticsRef?.current?.reset();
+        colorQueries.reset();
         terminal.reset();
         commitPending();
         schedulePendingWrite();
@@ -437,8 +444,11 @@ export function useTerminalDisplay({
         return;
       }
       ptyWriteInProgressRef.current = true;
-      const transformed = transformOutputRef.current(combined);
+      setTerminalQueryReplay(terminal, !answerQueries);
+      const transformed = colorQueries.feed(transformOutputRef.current(combined), !answerQueries);
       terminal.write(transformed, () => {
+        setTerminalQueryReplay(terminal, false);
+        pending.forEach((chunk) => claimTerminalQueryFrame(sessionId, chunk.sequence, chunk.replay));
         ptyWriteInProgressRef.current = false;
         if (cancelled || terminalRef.current !== terminal) return;
         outputDiagnosticsRef?.current?.onWriteCommitted(terminal, transformed);
@@ -468,6 +478,7 @@ export function useTerminalDisplay({
         byteLength: payload.data.byteLength,
         commit: delivery.commit,
         replay: payload.kind === "replay",
+        sequence: payload.sequence,
         replayBatchEnd: payload.replayBatchEnd === true,
         cols: payload.cols,
         rows: payload.rows,
@@ -510,8 +521,11 @@ export function useTerminalDisplay({
             continue;
           }
           await new Promise<void>((resolve) => {
-            const transformed = transformOutputRef.current(text);
+            setTerminalQueryReplay(terminal, !canAnswerTerminalQueryFrame(sessionId, entry.sequence, true));
+            const transformed = colorQueries.feed(transformOutputRef.current(text), !canAnswerTerminalQueryFrame(sessionId, entry.sequence, true));
             terminal.write(transformed, () => {
+              setTerminalQueryReplay(terminal, false);
+              claimTerminalQueryFrame(sessionId, entry.sequence, true);
               if (terminalRef.current === terminal) {
                 outputDiagnosticsRef?.current?.onWriteCommitted(terminal, transformed);
                 handleTerminalWriteCommitted(terminal);
@@ -547,6 +561,7 @@ export function useTerminalDisplay({
     if (!container) return () => {};
     const resizeDisposable = terminal.onResize(({ cols, rows }) => {
       if (!forwardPtyResizeRef.current) return;
+      if (!isVisibleRef.current || document.visibilityState === "hidden") return;
       if (cols < MIN_TERMINAL_COLS || rows < MIN_TERMINAL_ROWS) return;
       const pixelWidth = terminal.dimensions?.css.canvas.width;
       const pixelHeight = terminal.dimensions?.css.canvas.height;

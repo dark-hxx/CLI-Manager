@@ -4,6 +4,7 @@ import {
 } from "react";
 import { Terminal, type IBufferRange, type ILink, type IViewportRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { canAnswerTerminalQuery, installTerminalQueryPolicy } from "../../../shared/lib/terminalQueryPolicy";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
@@ -29,6 +30,7 @@ import { useTerminalContextMenu } from "./useTerminalContextMenu";
 import { useTerminalOsc } from "./useTerminalOsc";
 import { useTerminalDisplay } from "./useTerminalDisplay";
 import { useTerminalInput, type TerminalSuggestionGhostState } from "./useTerminalInput";
+import { registerDesktopViewport } from "../../../shared/lib/terminalSizeOwnership";
 import { resolveClaudeImeCompositionAnchor } from "../lib/terminalImeAnchor";
 import { copyTextToClipboard, readTextFromClipboard } from "../../../shared/platform/systemClipboard";
 import { formatOsc52Reply } from "../lib/terminalOscParse";
@@ -691,6 +693,34 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     }
   }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, terminalTextColor, terminalTuiUserColor, terminalTuiAssistantColor, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen, tuiColorSync]);
 
+  useLayoutEffect(() => {
+    let restoreFrame: number | null = null;
+    const visible = () => isVisible && document.visibilityState !== "hidden";
+    const restore = () => {
+      if (!visible()) return;
+      scheduleFit(true);
+      if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+      restoreFrame = requestAnimationFrame(() => {
+        restoreFrame = null;
+        const terminal = terminalRef.current;
+        if (terminal && visible()) {
+          // Web may have resized the PTY while this xterm kept its dimensions.
+          void terminalProcessManager.resize(sessionId, terminal.cols, terminal.rows).catch((error) => {
+            logWarn("Failed to reclaim desktop terminal size", error);
+          });
+        }
+      });
+    };
+    const unregister = registerDesktopViewport(sessionId, { visible, restore });
+    document.addEventListener("visibilitychange", restore);
+    restore();
+    return () => {
+      unregister();
+      document.removeEventListener("visibilitychange", restore);
+      if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+    };
+  }, [sessionId, isVisible]);
+
   // Hidden terminals stay attached and continue parsing output. Visibility only
   // controls renderer resources and when pending layout work is flushed.
   useEffect(() => {
@@ -908,6 +938,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
       };
       if (windowsPty.backend === "conpty") {
         baseDisposables.push(terminal.parser.registerCsiHandler({ final: "c" }, (params) => {
+          if (!canAnswerTerminalQuery(terminal)) return true;
           if (params.length === 0 || (params.length === 1 && params[0] === 0)) {
             terminalProcessManager
               .write(sessionId, "\x1b[?61;4c")
@@ -919,6 +950,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
       }
     };
     applyProcessTraits(terminalProcessManager.getProcessTraits(sessionId));
+    baseDisposables.push(installTerminalQueryPolicy(terminal, () => canAnswerTerminalQuery(terminal)));
     // Keep Claude Code / other TUIs from overriding the app-wide thin cursor via DECSCUSR.
     baseDisposables.push(terminal.parser.registerCsiHandler({ intermediates: " ", final: "q" }, () => true));
 
@@ -1516,14 +1548,18 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     };
     // Restore the local display before subscribing so the PTY stream cannot race the snapshot.
     let attachOutputTimer: number | null = null;
-    void initialDisplayReady.then(() => {
-      if (terminalRef.current !== terminal) return;
-      attachOutputTimer = window.setTimeout(() => {
-        attachOutputTimer = null;
+    if (initialTerminalOutput) {
+      void initialDisplayReady.then(() => {
         if (terminalRef.current !== terminal) return;
-        attachOutput();
-      }, 0);
-    });
+        attachOutputTimer = window.setTimeout(() => {
+          attachOutputTimer = null;
+          if (terminalRef.current !== terminal) return;
+          attachOutput();
+        }, 0);
+      });
+    } else {
+      attachOutput();
+    }
     const detachViewport = attachViewport(terminal);
     displayDisposables.push({ dispose: detachViewport });
     displayDisposables.push(terminal.onRender((range) => {

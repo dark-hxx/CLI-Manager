@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::env;
+use std::ffi::OsString;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -615,7 +616,7 @@ fn optional_unicode_env(key: &str) -> Result<Option<String>, String> {
 }
 
 // 校验 profile 名称和文件元数据，从 CODEX_HOME 读取 TOML 并展开为数量受限的配置项。
-fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
+pub(crate) fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, String> {
     if profile_name.is_empty()
         || profile_name.len() > 128
         || !profile_name
@@ -624,10 +625,11 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
     {
         return Err("Codex Provider profile name is invalid".to_string());
     }
-    let codex_home = env::var_os("CODEX_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
+    let codex_home = resolve_codex_profile_home(
+        env::var_os("CODEX_HOME"),
+        crate::provider::home::default_config_root("codex"),
+    )
+    .ok_or_else(|| "Codex home is unavailable for the Provider profile".to_string())?;
     let path = codex_home.join(format!("{profile_name}.config.toml"));
     let file = std::fs::File::open(&path)
         .map_err(|err| format!("open Codex Provider profile failed: {err}"))?;
@@ -652,6 +654,16 @@ fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<String>, Strin
         return Err("Codex Provider profile contains too many runtime options".to_string());
     }
     Ok(overrides)
+}
+
+fn resolve_codex_profile_home(
+    environment_home: Option<OsString>,
+    managed_home: Option<PathBuf>,
+) -> Option<PathBuf> {
+    environment_home
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or(managed_home)
 }
 
 // 递归展开 TOML 表为点路径配置项；非表值保留其 TOML 文本表示。
@@ -736,7 +748,7 @@ fn estimated_windows_argument_units(args: &[String]) -> usize {
 
 #[cfg(target_os = "windows")]
 // 移除 Windows 扩展路径前缀，将扩展 UNC 转为普通 UNC 供脚本启动器使用。
-fn windows_shell_path(path: &Path) -> PathBuf {
+pub(crate) fn windows_shell_path(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
     if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
         PathBuf::from(format!(r"\\{rest}"))

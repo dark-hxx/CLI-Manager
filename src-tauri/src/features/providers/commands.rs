@@ -392,6 +392,7 @@ pub fn provider_scope_gc_snapshots(mut active_snapshot_ids: Vec<String>) -> Resu
     {
         active_snapshot_ids.push(snapshot_id);
     }
+    active_snapshot_ids.extend(crate::commands::web_conversation::active_provider_snapshot_ids());
     active_snapshot_ids.sort();
     active_snapshot_ids.dedup();
     block_on(scope::garbage_collect_snapshots(active_snapshot_ids))
