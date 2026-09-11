@@ -6,6 +6,13 @@
 
 ## Screen structure
 
+### Model editing and effective preview (2026-09-11)
+
+- `NativeProviderModelMapping.rowId` is form-only identity, assigned when loading or adding a row and preserved by edits/deletions. Never key a row by `source`, `target`, or its array position. `settingsConfigWithAdvanced` serializes only `{source, target}`.
+- Codex `effectiveSettingsConfig.config` projects the explicit non-empty envelope `model` after common-config merge, using the same `project_codex_model` rule as global materialization. Source/provider documents remain stored source; the effective view and field-origin value read the projected result. Empty explicit models retain the TOML model; invalid drafts keep their existing repair behavior.
+- `NativeProviderGlobalSection` does not render preview/live/desired fingerprints. Keep their IPC fields and preview-to-apply validation intact; retain target paths and change status.
+- Regression checks: `node --test scripts/nativeProviderEditing.test.mjs scripts/nativeProviderConfigView.test.mjs`; Rust `provider::repository::documents::tests` compares a conflicting `abc/sdf` model between preview and materialization with common inheritance on/off. Desktop focus and language switching remain manual checks.
+
 The Provider Settings page is a master/detail workspace:
 
 1. CLI type tabs: Claude Code, Codex, Grok Build.

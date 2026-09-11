@@ -1658,3 +1658,24 @@ V1.4.0：虚拟化变更树、Worker 建树及刷新合并；64887 文件浏览�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 118: Codex 供应商模型编辑与生效预览修复
+
+**Date**: 2026-09-11
+**Task**: Codex 供应商模型编辑与生效预览修复
+**Branch**: `master`
+
+### Summary
+
+修复映射输入失焦、Codex 模型预览不一致，并隐藏全局应用指纹。V1.4.0 文档与回归契约已更新。13 项前端测试、17 项 Rust 测试、tsc、cargo check 和严格架构检查通过；用户确认验证通过并授权提交。任务已归档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b63acd59` | (see git log) |
+
+### Status
+
+[OK] **Completed**

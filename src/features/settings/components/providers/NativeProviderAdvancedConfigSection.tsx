@@ -100,7 +100,7 @@ export function NativeProviderAdvancedConfigSection({
           color="cliPrimary"
           leftSection={<Plus size={14} />}
           disabled={disabled}
-          onClick={() => update({ modelMappings: [...value.modelMappings, { source: "", target: "" }] })}
+          onClick={() => update({ modelMappings: [...value.modelMappings, { rowId: crypto.randomUUID(), source: "", target: "" }] })}
         >
           {t("providerCatalog.compatibleAdvanced.addMapping")}
         </Button>
@@ -119,7 +119,7 @@ export function NativeProviderAdvancedConfigSection({
         return <Text size="xs" c="red">{t(reason.key, reason.params)}</Text>;
       })()}
       {value.modelMappings.map((mapping, index) => (
-        <Group key={`${index}-${mapping.source}`} align="flex-end" wrap="nowrap">
+        <Group key={mapping.rowId} align="flex-end" wrap="nowrap">
           <TextInput
             className="min-w-0 flex-1"
             label={index === 0 ? t("providerCatalog.compatibleAdvanced.modelSource") : undefined}

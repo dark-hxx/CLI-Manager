@@ -211,16 +211,28 @@ pub(crate) fn materialize_codex_config(
         })
         .unwrap_or_else(|| CODEX_DEFAULT_PROVIDER_NAME.to_string());
     let base_url = effective.get("base_url").and_then(Value::as_str);
-    let model = effective.get("model").and_then(Value::as_str);
-    if let Some(model) = model.filter(|value| !value.trim().is_empty()) {
-        target["model"] = toml_edit::value(model);
-    }
+    project_codex_model(effective, &mut target);
     if base_url.is_some() {
         target["model_provider"] = toml_edit::value(provider_name.as_str());
         ensure_codex_provider_mapping(&mut target, &provider_name, base_url)?;
     }
     sanitize_codex_model_providers(&mut target);
     Ok((target.to_string().into_bytes(), owned))
+}
+
+// 显式非空模型优先于 TOML，预览和写入共享；保留行注释/格式，空值保留文档模型。
+pub(crate) fn project_codex_model(effective: &Value, target: &mut DocumentMut) {
+    if let Some(model) = effective
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+    {
+        let mut value = TomlValue::from(model);
+        if let Some(previous) = target.get("model").and_then(Item::as_value) {
+            *value.decor_mut() = previous.decor().clone();
+        }
+        target["model"] = Item::Value(value);
+    }
 }
 
 // 确保普通模型供应商表存在，缺失名称时补 CLI-Manager，并写入可选端点；结构不符返回错误。

@@ -66,12 +66,15 @@ test("editing a provider with an empty document generates CLI-specific config", 
 test("advanced provider options round-trip in the existing JSON envelope", () => {
   const advanced = advancedConfig.defaultNativeProviderAdvancedConfig();
   advanced.wireApi = "chat_completions";
-  advanced.modelMappings = [{ source: "gpt-4", target: "proxy-gpt-4" }];
+  advanced.modelMappings = [{ rowId: "ui-only", source: "gpt-4", target: "proxy-gpt-4" }];
   advanced.userAgent = "CLI-Manager test";
   const settings = JSON.parse(advancedConfig.settingsConfigWithAdvanced("{\"config\":\"model = \\\"gpt-4\\\"\\n\"}", advanced));
   assert.equal(settings.advanced.wireApi, "chat_completions");
   assert.deepEqual(settings.advanced.modelMappings, [{ source: "gpt-4", target: "proxy-gpt-4" }]);
   assert.equal(advancedConfig.nativeProviderAdvancedConfigFromSettings(JSON.stringify(settings)).userAgent, "CLI-Manager test");
+  const restored = advancedConfig.nativeProviderAdvancedConfigFromSettings(JSON.stringify(settings));
+  assert.ok(restored.modelMappings[0].rowId);
+  assert.notEqual(restored.modelMappings[0].rowId, "ui-only");
 });
 
 test("advanced provider options reject invalid override documents and mappings", () => {

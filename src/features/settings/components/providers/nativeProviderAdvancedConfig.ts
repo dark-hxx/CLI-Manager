@@ -3,6 +3,8 @@ import type { NativeProviderAppType } from "../../api/nativeProviderTypes";
 export type NativeProviderWireApi = "responses" | "chat_completions" | "anthropic_messages";
 
 export interface NativeProviderModelMapping {
+  /** 仅供表单行保持身份，序列化时移除。 */
+  rowId: string;
   source: string;
   target: string;
 }
@@ -84,7 +86,7 @@ export function nativeProviderAdvancedConfigFromSettings(
         && typeof (item as NativeProviderModelMapping).source === "string"
         && typeof (item as NativeProviderModelMapping).target === "string"
       ))
-      .map((item) => ({ source: item.source, target: item.target }))
+      .map((item) => ({ rowId: crypto.randomUUID(), source: item.source, target: item.target }))
     : [];
   return {
     ...defaultNativeProviderAdvancedConfig(),
@@ -112,7 +114,11 @@ export function settingsConfigWithAdvanced(
   } catch {
     settings = {};
   }
-  settings.advanced = advanced;
+  // 行身份不属于供应商协议；保存时只提交映射的源与目标。
+  settings.advanced = {
+    ...advanced,
+    modelMappings: advanced.modelMappings.map(({ source, target }) => ({ source, target })),
+  };
   return JSON.stringify(settings);
 }
 

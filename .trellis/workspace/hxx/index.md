@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-2.md`
-- **Total Sessions**: 117
-- **Last Active**: 2026-09-10
+- **Total Sessions**: 118
+- **Last Active**: 2026-09-11
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1660 | Active |
+| `journal-2.md` | ~1681 | Active |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +30,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 118 | 2026-09-11 | Codex 供应商模型编辑与生效预览修复 | `b63acd59` | `master` |
 | 117 | 2026-09-10 | 修复 Pi CLI 全屏 TUI 底部输入框 | `09341b65` | `master` |
 | 116 | 2026-09-10 | 修复大型仓库 Git 面板卡顿 #257 | `ae116d6b` | `master` |
 | 115 | 2026-09-09 | 完成项目置顶快捷入口 | `0b2ccabe` | `master` |
