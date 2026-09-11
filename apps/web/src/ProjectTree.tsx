@@ -49,6 +49,7 @@ type Props = {
   selectedProjectContext?: ProjectContext;
   dragEnabled: boolean;
   managementEnabled: boolean;
+  defaultCollapsed?: boolean;
   onSelectProjectContext: (key: string) => void;
   onSubmit: (kind: string, payload: JsonObject) => Promise<Operation>;
   onReload: () => void;
@@ -260,7 +261,12 @@ export function ProjectTree(props: Props) {
   const [lastOperationId, setLastOperationId] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const lastOperation = props.operations.find((operation) => operation.id === lastOperationId);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    if (!props.defaultCollapsed || !props.workspace) return new Set();
+    const ids = new Set(props.workspace.groups.map((group) => group.id));
+    for (const worktree of props.workspace.worktrees) ids.add(worktree.projectId);
+    return ids;
+  });
   const [preview, setPreview] = useState<WorkspaceSnapshot | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [selectedProjectIds, setSelectedProjectIds] = useState<Set<string>>(() => new Set());

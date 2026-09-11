@@ -43,6 +43,25 @@
 - Packaging requires a newly built desktop executable, because the desktop bridge
   is embedded frontend code. Reusing the installed main executable is not valid.
 
+## Safari live verification follow-up
+
+- Root cause: Safari may discard or retain a blank xterm canvas bitmap while a
+  terminal frame is hidden with visibility:hidden. The terminal buffer and session
+  remain valid, so grid-cache invalidation alone cannot restore pixels. On activation,
+  redraw rows 0..rows-1 after the visible layout frame. No replay or PTY resize is sent.
+- The authenticated production backend stayed on 100.95.251.17:9090. A separate
+  Vite frontend on 100.95.251.17:5173 proxied API/WebSocket traffic while rewriting
+  only the development request Origin to the configured production Origin. The user
+  verified repeated switching between two real terminal tabs on iPhone Safari.
+- Mobile ProjectTree now initializes all groups and projects containing Worktrees as
+  collapsed when mounted in the drawer. Desktop Web retains expanded defaults; users
+  can still expand, select, and launch project/Worktree entries.
+- User confirmed both real-device behaviors. Automated checks: Web typecheck;
+  renderer full-canvas refresh assertion; phone drawer default-collapse plus manual
+  expansion/selection/launch; existing phone/subagent geometry regression suite.
+- The temporary Node/Vite listener was identified by port, executable path, and PID,
+  stopped after acceptance, and port 5173 was verified released before packaging.
+
 User authorized implementation and rebundling under the existing Web task.
 Branch feat/web-management-capabilities-v2 is ahead 35 / behind 56 relative to
 the locally recorded origin/master. No synchronization or remote push.

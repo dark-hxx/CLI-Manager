@@ -23,10 +23,15 @@ import { installTerminalQueryPolicy, setTerminalQueryReplay, canAnswerTerminalQu
 import '/apps/web/src/styles.css';
 const result = window.terminalSmoke = { status: 'running', errors: [], rounds: [], payloadBytes: 0, componentRenders: 0 };
 const originalWrite = Terminal.prototype.write;
+const originalRefresh = Terminal.prototype.refresh;
 Terminal.prototype.write = function(...args) {
   result.writeCount = (result.writeCount || 0) + 1;
   if (result.captureDimensions) result.captureDimensions.push({ cols: this.cols, rows: this.rows });
   return originalWrite.apply(this, args);
+};
+Terminal.prototype.refresh = function(start, end) {
+  if (result.captureRefreshes) result.captureRefreshes.push({ start, end, rows: this.rows });
+  return originalRefresh.call(this, start, end);
 };
 window.addEventListener('error', e => result.errors.push(String(e.error || e.message)));
 window.addEventListener('unhandledrejection', e => result.errors.push(String(e.reason)));
@@ -181,8 +186,10 @@ async function run() {
     hookSocket.onopen?.(); hookSocket.receive({ type: 'ready', latestSequence: 0 });
     document.querySelector('.host-card').click();
     await waitFor(() => document.querySelectorAll('.terminal-tab').length === 2, 'App did not display both terminal tabs');
+    result.captureRefreshes = [];
     document.querySelectorAll('.terminal-tab > button:first-child')[1].click();
     await pause(50);
+    check(result.captureRefreshes.some(entry => entry.start === 0 && entry.end === entry.rows - 1), 'Activated terminal did not repaint its complete xterm canvas');
     const selectedTab = document.querySelector('.terminal-tab.active')?.textContent;
     const closesBeforeBack = sentCommands.filter(entry => entry.command?.type === 'close').length;
     document.querySelector('.mobile-header [aria-label="Back to hosts"], .mobile-header [aria-label="返回主机列表"]').click();

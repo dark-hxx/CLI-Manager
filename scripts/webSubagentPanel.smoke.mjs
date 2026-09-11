@@ -174,8 +174,10 @@ async function verifyMobileProjects() {
   check(drawer()?.getBoundingClientRect().width > 100, 'Phone opens visible project tree');
   check(drawer().closest('.drawer').getBoundingClientRect().right <= innerWidth + 1, 'Project drawer fits phone width');
   check(drawer().querySelector('.new-chat-button').disabled, 'No selected project disables launch');
+  check(!drawer().querySelector('.web-tree-worktree-main'), 'Phone project branches were not collapsed by default');
   drawer().querySelector('.web-tree-label').click(); await pause(30);
   check(selected?.key === 'project', 'Project selection reaches existing callback');
+  drawer().querySelector('.web-tree-chevron').click(); await pause(30);
   drawer().querySelector('.web-tree-worktree-main').click(); await pause(30);
   check(selected?.key === 'worktree', 'Worktree selection reaches existing callback');
   drawer().querySelector('.new-chat-button').click(); await pause(30);

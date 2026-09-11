@@ -556,7 +556,15 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, th
     if (!active) { terminalRef.current?.blur(); return; }
     wakeRef.current?.();
     layoutRef.current?.();
+    // Safari can keep the canvas bitmap blank while this tab is hidden even
+    // though xterm has already parsed the output into its buffer. Repaint only
+    // after React has made the tab visible and the queued layout frame ran.
+    const repaintFrame = requestAnimationFrame(() => {
+      const terminal = terminalRef.current;
+      if (activeRef.current && terminal && terminal.rows > 0) terminal.refresh(0, terminal.rows - 1);
+    });
     if (status === "running" && !window.matchMedia("(pointer: coarse), (max-width: 767px)").matches) terminalRef.current?.focus();
+    return () => cancelAnimationFrame(repaintFrame);
   }, [active, status, controlMode]);
 
   return <div className="web-terminal-shell" ref={shellRef}>
