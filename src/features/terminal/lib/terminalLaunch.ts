@@ -5,7 +5,7 @@ import { createAgentTerminalMetadata, resolveAgentTerminalMetadata } from "../..
 import { logError, logWarn } from "../../../shared/platform/logger";
 import {
   appendResumeCliArgs, isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand,
-  resolveProjectStartupCommand, withClaudeMcpConfigPath, withClaudeSettingsPath,
+  resolveProjectStartupCommand as resolveProjectCommand, withClaudeMcpConfigPath, withClaudeSettingsPath,
   withCodexConfigOverrides, withCodexProfile,
   withCodexLightTuiTheme, withGrokModelOverride,
 } from "../../projects/api/projectStartupCommand";
@@ -38,6 +38,15 @@ import {
   prepareProjectExtensionLaunch,
   releaseProjectExtensionSnapshot as releaseProjectExtensionSnapshotApi,
 } from "../../extensions/api/projectPolicy";
+
+import { isDeepSeekTuiTool, isDeepSeekTuiCommand, isDeepSeekTuiLauncherCommand, buildDeepSeekTuiResumeCommand, prepareDeepSeekTuiCommand, withDeepSeekTuiPatch, withDeepSeekTuiPreload, stripDeepSeekTuiManagerPatch, getDeepSeekTuiCommandSourceRoot } from "../../../shared/lib/deepseekTui";
+import { deepSeekLaunchError } from "../../projects/api/deepseekSource";
+
+/** Localize project launch validation at the existing public-command boundary. */
+function resolveProjectStartupCommand(...args: Parameters<typeof resolveProjectCommand>) {
+  try { return resolveProjectCommand(...args); }
+  catch (error) { throw deepSeekLaunchError(error); }
+}
 
 export function supportsShellRuntimeInjection(shell?: string | null): boolean {
   const normalized = normalizeShellKey(shell);
@@ -109,8 +118,10 @@ export const KIMI_COMMAND_PATTERN = /(?:^|\s)kimi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/
 export function detectCliResumeKind(
   startupCmd: string | undefined,
   project: Project | undefined
-): "claude" | "codex" | "grok" | "kimi" | null {
+): "claude" | "codex" | "grok" | "kimi" | "deepseek-tui" | null {
   const cmd = startupCmd?.trim() ?? "";
+  // TUI owns its profile/session protocol; never route it through a provider CLI fallback.
+  if (isDeepSeekTuiCommand(cmd) || (project && isDeepSeekTuiTool(project.cli_tool))) return "deepseek-tui";
   const projectKind = project ? getProviderSwitchAppType(project) : null;
   const cliTool = project?.cli_tool?.trim().toLowerCase() ?? "";
   // codex 优先：codex 项目可能带自定义 startupCmd，仍应当 codex resume。
@@ -130,11 +141,16 @@ export function detectCliResumeKind(
 }
 
 export function buildCliResumeStartupCommand(
-  kind: "claude" | "codex" | "grok" | "kimi",
+  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui",
   cliSessionId: string | undefined,
   project: Project | undefined,
-  options: { includeProviderOverrides?: boolean } = {},
+  options: { includeProviderOverrides?: boolean; startupCmd?: string; shell?: string | null } = {},
 ): string {
+  if (kind === "deepseek-tui") {
+    const command = isDeepSeekTuiCommand(options.startupCmd) ? options.startupCmd!
+      : (project ? resolveProjectStartupCommand(project) : undefined) ?? "dsh-tui";
+    return buildDeepSeekTuiResumeCommand(command, cliSessionId, options.shell ?? project?.shell);
+  }
   const id = cliSessionId?.trim();
   const hasValidId = !!id && !/\s/.test(id) && !/[\r\n]/.test(id);
   if (kind === "codex") {
@@ -154,6 +170,24 @@ export function buildCliResumeStartupCommand(
   }
   const base = hasValidId ? `claude --resume ${id}` : "claude --continue";
   return appendResumeCliArgs(base, "claude", project ?? null, options);
+}
+
+/** An empty environment value is still an explicit TUI resume target; fresh launches must unset it. */
+export function clearDeepSeekTuiResumeBeforeStartup(command: string, shell: string | null | undefined): string {
+  const key = normalizeShellKey(shell);
+  if (key === "powershell" || key === "pwsh") return `$env:DSH_TUI_RESUME_SESSION=$null; ${command}`;
+  if (key === "cmd") return `set "DSH_TUI_RESUME_SESSION=" & ${command}`;
+  if (key === "fish") return `set -e DSH_TUI_RESUME_SESSION; ${command}`;
+  if (["bash", "zsh", "sh", "gitbash", "wsl"].includes(key ?? "")) return `unset DSH_TUI_RESUME_SESSION; ${command}`;
+  throw deepSeekLaunchError(new Error("deepseek_shell_unsupported"));
+}
+
+/** Explicit launch targets seed the Tab even before a bridge is available (SSH/WSL). */
+export function getDeepSeekTuiLaunchSessionId(launch: ResolvedPtyLaunch): string | undefined {
+  if (!isDeepSeekTuiCommand(launch.persistedStartupCmd ?? launch.startupCmd)) return undefined;
+  const id = launch.invokeArgs.envVars?.DSH_TUI_RESUME_SESSION
+    ?? launch.invokeArgs.sshLaunch?.environmentOverrides.DSH_TUI_RESUME_SESSION;
+  return id || undefined;
 }
 
 export function buildDirectCodexLaunchCommand(command: string): string {
@@ -418,12 +452,30 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     const hosts = useSshHostStore.getState().hosts;
     const host = hosts.find((candidate) => candidate.id === sshHostId);
     if (!host) throw new Error("ssh_host_not_found");
-    const resolvedStartupCmd = options.startupCmd === undefined && project?.environment_type === "ssh"
+    let resolvedStartupCmd = options.startupCmd === undefined && project?.environment_type === "ssh"
       ? resolveProjectStartupCommand(project, { includeProviderOverrides: false })
       : options.startupCmd?.trim() || undefined;
-    const resolvedEnvironmentOverrides = options.envVars === undefined && project?.environment_type === "ssh"
+    if (project && isDeepSeekTuiTool(project.cli_tool) && resolvedStartupCmd && !isDeepSeekTuiCommand(resolvedStartupCmd)) {
+      throw deepSeekLaunchError(new Error("deepseek_tui_profile_required"));
+    }
+    if (getDeepSeekTuiCommandSourceRoot(resolvedStartupCmd)) {
+      throw deepSeekLaunchError(new Error("deepseek_source_native_only"));
+    }
+    const resolvedEnvironmentOverrides = { ...(options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
-      : options.envVars ?? {};
+      : options.envVars ?? {}) };
+    let persistedStartupCmd: string | undefined;
+    if (isDeepSeekTuiCommand(resolvedStartupCmd)) {
+      const nativeTuiLauncher = isDeepSeekTuiLauncherCommand(resolvedStartupCmd);
+      const preparedTui = prepareDeepSeekTuiCommand(resolvedStartupCmd!);
+      persistedStartupCmd = preparedTui.command;
+      resolvedStartupCmd = nativeTuiLauncher || preparedTui.resumeSessionId ? preparedTui.command
+        : clearDeepSeekTuiResumeBeforeStartup(preparedTui.command, "bash");
+      if (!nativeTuiLauncher || preparedTui.resumeSessionId) {
+        resolvedEnvironmentOverrides.DSH_TUI_RESUME_SESSION = preparedTui.resumeSessionId ?? "";
+      }
+      resolvedEnvironmentOverrides.NODE_ENV ??= "production";
+    }
     const toolSource = project?.environment_type === "ssh"
       ? resolveSshToolSource(project.cli_tool)
       : null;
@@ -469,6 +521,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     return {
       shell: null,
       startupCmd: resolvedStartupCmd,
+      persistedStartupCmd,
       startupHandledByLaunch: true,
       environmentType: "ssh",
       sshHostId: host.id,
@@ -512,9 +565,49 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   const usesProjectDefaultStartup = options.startupCmd == null
     || (projectStartupCmd !== undefined
       && options.startupCmd?.trim() === projectStartupCmd.trim());
-  const resolvedStartupCmd = usesProjectDefaultStartup && project
-    ? resolveProjectStartupCommand(project, { includeProviderOverrides: false })
+  let resolvedStartupCmd = usesProjectDefaultStartup && project
+    ? resolveProjectStartupCommand({ ...project, shell: isDeepSeekTuiTool(project.cli_tool)
+      ? resolvedShell ?? defaultShellForOs(os) : project.shell }, { includeProviderOverrides: false })
     : options.startupCmd?.trim() || undefined;
+  if (project && isDeepSeekTuiTool(project.cli_tool) && resolvedStartupCmd && !isDeepSeekTuiCommand(resolvedStartupCmd)) {
+    throw deepSeekLaunchError(new Error("deepseek_tui_profile_required"));
+  }
+  const deepseekSource = getDeepSeekTuiCommandSourceRoot(resolvedStartupCmd);
+  if (deepseekSource) {
+    if (normalizeShellKey(resolvedShell) === "wsl") throw deepSeekLaunchError(new Error("deepseek_source_native_only"));
+  }
+  let preparedTui: ReturnType<typeof prepareDeepSeekTuiCommand> | null = null;
+  const nativeTuiLauncher = isDeepSeekTuiLauncherCommand(resolvedStartupCmd);
+  let deepseekPreload: { preloadUrl: string; cmdPreloadPath: string } | null = null;
+  let persistedStartupCmd: string | undefined;
+  if (isDeepSeekTuiCommand(resolvedStartupCmd)) {
+    try {
+      preparedTui = prepareDeepSeekTuiCommand(resolvedStartupCmd!);
+      resolvedStartupCmd = preparedTui.command;
+      persistedStartupCmd = preparedTui.command;
+      if (normalizeShellKey(resolvedShell) !== "wsl") {
+        if (nativeTuiLauncher) {
+          const info = await invoke<{ managerPatchPath?: string }>("deepseek_tui_preflight", {
+            sourceRoot: null,
+            envVars: options.envVars ?? null,
+          });
+          // Old manager overlays must not survive a saved command migration.
+          resolvedStartupCmd = info.managerPatchPath
+            ? stripDeepSeekTuiManagerPatch(resolvedStartupCmd, info.managerPatchPath)
+            : resolvedStartupCmd;
+          persistedStartupCmd = resolvedStartupCmd;
+        } else {
+          const prepared = await invoke<{ patchPath: string; preloadUrl: string; cmdPreloadPath: string }>("deepseek_tui_prepare_launch", {
+            sourceRoot: deepseekSource || null,
+            envVars: options.envVars ?? null,
+          });
+          persistedStartupCmd = stripDeepSeekTuiManagerPatch(resolvedStartupCmd, prepared.patchPath);
+          resolvedStartupCmd = withDeepSeekTuiPatch(persistedStartupCmd, prepared.patchPath, resolvedShell ?? defaultShellForOs(os));
+          deepseekPreload = prepared;
+        }
+      }
+    } catch (error) { throw deepSeekLaunchError(error); }
+  }
   const providerSnapshot = await prepareProviderLaunchSnapshot(
     project ?? null,
     resolvedStartupCmd,
@@ -700,10 +793,18 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     releaseProjectExtensionSnapshot(extensionSnapshotId);
     extensionSnapshotId = null;
   }
+
+  if (deepseekPreload && startupCmd) {
+    startupCmd = withDeepSeekTuiPreload(startupCmd, deepseekPreload.preloadUrl, deepseekPreload.cmdPreloadPath, resolvedShell ?? defaultShellForOs(os));
+  }
+  if (preparedTui && !nativeTuiLauncher && !preparedTui.resumeSessionId && startupCmd) {
+    startupCmd = clearDeepSeekTuiResumeBeforeStartup(startupCmd, resolvedShell ?? defaultShellForOs(os));
+  }
   return {
     shell: resolvedShell,
     environmentType: os === "windows" && normalizeShellKey(resolvedShell) === "wsl" ? "wsl" : "local",
     startupCmd,
+    persistedStartupCmd,
     startupHandledByLaunch: false,
     providerSnapshot,
     extensionSnapshotId,
@@ -717,7 +818,15 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     extensionWarnings,
     invokeArgs: {
       cwd: options.cwd ?? null,
-      envVars: buildPtyEnvVars(options.envVars ?? null, resolvedShell),
+      envVars: {
+        ...buildPtyEnvVars(options.envVars ?? null, resolvedShell),
+        ...(preparedTui ? {
+          ...(!nativeTuiLauncher || preparedTui.resumeSessionId ? {
+            DSH_TUI_RESUME_SESSION: preparedTui.resumeSessionId ?? "",
+          } : {}),
+          NODE_ENV: options.envVars?.NODE_ENV ?? "production",
+        } : {}),
+      },
       shell: resolvedShell,
       hookEnvEnabled: await shouldEnableHookEnv(),
       claudeProvider: providerConfigs.claudeProvider,

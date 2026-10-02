@@ -42,6 +42,10 @@ import { useSshDirectoryBrowser } from "../../remote/api/useSshDirectoryBrowser"
 import { resolveGroupBoundPath } from "../api/groupPath";
 import { pathExists } from "../../../shared/lib/pathValidation";
 
+import { getDeepSeekSourceRoot } from "../../../shared/lib/deepseekHarness";
+import { isDeepSeekTuiTool, buildDeepSeekTuiCommand } from "../../../shared/lib/deepseekTui";
+import { deepSeekLaunchError, validateDeepSeekSource } from "../api/deepseekSource";
+
 interface Props {
   project?: Project;
   cloneFrom?: Project;
@@ -476,6 +480,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       const environmentType: ProjectEnvironmentType = projectType === "ssh"
         ? "ssh"
         : isWslUncPath(path.trim()) ? "wsl" : "local";
+      const deepseekSource = isDeepSeekTuiTool(trimmedCliTool) ? getDeepSeekSourceRoot(envVarsText) : "";
+      if (isDeepSeekTuiTool(trimmedCliTool) && !trimmedStartupCmd) {
+        try { buildDeepSeekTuiCommand(trimmedCliTool, trimmedCliArgs, deepseekSource, shell, environmentType); }
+        catch (error) { throw deepSeekLaunchError(error); }
+      }
+      if (isDeepSeekTuiTool(trimmedCliTool) && !trimmedStartupCmd && environmentType === "local" && normalizeShellKey(shell) !== "wsl") {
+        await validateDeepSeekSource(deepseekSource, envVarsText);
+      }
+      if (deepseekSource && (environmentType !== "local" || normalizeShellKey(shell) === "wsl")) {
+        throw new Error(t("configModal.deepseek.guestHelp"));
+      }
       if (isEdit && project) {
         await updateProject(project.id, {
           name: name.trim(),
@@ -776,14 +791,14 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                     value={cliArgs}
                     onChange={setCliArgs}
                     suggestions={cliArgsHistorySuggestions}
-                    placeholder="--permission-mode bypassPermissions"
+                    placeholder={isDeepSeekTuiTool(cliTool) ? t("configModal.deepseek.argsPlaceholder") : "--permission-mode bypassPermissions"}
                   />
                 ) : (
                   <Field
                     label={t("configModal.cliArgs")}
                     value={cliArgs}
                     onChange={setCliArgs}
-                    placeholder="--permission-mode bypassPermissions"
+                    placeholder={isDeepSeekTuiTool(cliTool) ? t("configModal.deepseek.argsPlaceholder") : "--permission-mode bypassPermissions"}
                   />
                 )
               )}
@@ -1169,6 +1184,7 @@ function CliToolCombobox({
   const normalizedValue = value.trim().toLowerCase();
   const selectedDescriptor = CLI_TOOL_DESCRIPTORS.find(
     (tool) => tool.command === normalizedValue || tool.id === normalizedValue
+      || (tool.id === "deepseek-harness" && isDeepSeekTuiTool(normalizedValue))
   );
   const resolveOptionIndex = useCallback((nextValue: string) => {
     const normalized = nextValue.trim().toLowerCase();

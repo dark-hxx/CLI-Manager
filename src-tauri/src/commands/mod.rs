@@ -60,6 +60,8 @@ pub mod provider;
 pub mod routing;
 #[path = "../features/terminal/shell_commands.rs"]
 pub mod shell;
+#[path = "../features/deepseek/commands.rs"]
+pub mod deepseek;
 #[path = "../features/remote/ssh/mod.rs"]
 pub mod ssh;
 #[path = "../features/remote/config.rs"]

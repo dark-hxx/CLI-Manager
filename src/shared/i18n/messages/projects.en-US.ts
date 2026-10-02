@@ -1,6 +1,25 @@
 import type { zh } from "./projects.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+  "configModal.deepseek.argsInvalid": "Invalid TUI launch arguments. Check required values and balanced quotes.",
+  "configModal.deepseek.webArgsUnsupported": "TUI does not use the WebUI --port or --no-open options. Clear these arguments.",
+  "configModal.deepseek.resumeRequired": "Specify a session ID with --resume. Global latest-session recovery with --continue, -c or a bare --resume is unsupported.",
+  "configModal.deepseek.nodeMissing": "Node.js was not found. Install Node.js 22.x (22.19+) or 24+ and retry.",
+  "configModal.deepseek.hostMissing": "The official dsh was not found. Install @deepseek-ai/dsh in the target environment.",
+  "configModal.deepseek.launcherMissing": "The dsh-tui launcher was not found. Install @deepseek-harness-tui/dsh-tui in the target environment.",
+  "configModal.deepseek.homeInvalid": "DSH_HOME must be an accessible absolute directory. Check the project environment variables.",
+  "configModal.deepseek.profileMissing": "The dsh-tui profile is not ready. Run dsh plugin --profile dsh-tui add @deepseek-harness-tui/dsh-tui first.",
+  "configModal.deepseek.profileUnbuilt": "The dsh-tui profile has missing plugin dependencies or build artifacts. Reinstall the plugin in that profile.",
+  "configModal.deepseek.bridgeUnsupported": "This dsh-tui profile has an incompatible session interface. Version 0.12.x is currently supported. Install a compatible version and retry.",
+  "configModal.deepseek.patchFailed": "Could not create the DSH TUI session bridge configuration. Check that the application cache directory is writable.",
+  "configModal.deepseek.argsPlaceholder": "--resume <session ID> or -- <initial prompt>",
+  "configModal.deepseek.shellUnsupported": "Source launch quoting is unavailable for this Shell. Select a supported Shell such as PowerShell, CMD or Bash.",
+  "configModal.deepseek.profileRequired": "Select the dsh-tui launcher. Custom dsh host commands must use --profile dsh-tui.",
+  "configModal.deepseek.envInvalid": "Correct the environment variables to a JSON object first.",
+  "configModal.deepseek.sourceInvalid": "CLI_MANAGER_DSH_SOURCE_ROOT in the environment variables is invalid. Remove it to use the installed CLI.",
+  "configModal.deepseek.sourceUnbuilt": "The official source CLI is not built. Run pnpm run build in that repository first; TUI does not require a WebUI build.",
+  "configModal.deepseek.guestHelp": "For WSL / SSH, install the official dsh and dsh-tui, prepare the TUI profile in the target environment, and remove CLI_MANAGER_DSH_SOURCE_ROOT from the environment variables. Configure models and API keys there too.",
+
   "sidebar.projects": "Projects",
   "sidebar.expand": "Expand sidebar",
   "sidebar.collapse": "Collapse sidebar",

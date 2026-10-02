@@ -14,6 +14,7 @@ import OpenCodeMono from "@lobehub/icons/es/OpenCode/components/Mono";
 import OpenAI from "@lobehub/icons/es/OpenAI/components/Mono";
 import QwenColor from "@lobehub/icons/es/Qwen/components/Color";
 import { Bot, Heart, Pi } from "lucide-react";
+import DeepSeekColor from "@lobehub/icons/es/DeepSeek/components/Color";
 import type { CliToolIconKey } from "../lib/cliTools";
 
 type IconComponent = ComponentType<{
@@ -39,6 +40,7 @@ const CLI_TOOL_ICONS: Record<CliToolIconKey, IconComponent> = {
   aider: Bot,
   crush: Heart,
   pi: Pi,
+  "deepseek-harness": DeepSeekColor,
 };
 
 export function CliToolIcon({

@@ -1,3 +1,4 @@
+import { isDeepSeekTuiTool } from "./deepseekTui";
 import type { VendorKey } from "../ui/VendorIcon";
 import type { HistorySourceId } from "./historySources";
 
@@ -18,7 +19,8 @@ export type CliToolIconKey =
   | "amp"
   | "aider"
   | "crush"
-  | "pi";
+  | "pi"
+  | "deepseek-harness";
 
 export interface CliToolDescriptor {
   id: string;
@@ -33,6 +35,14 @@ export interface CliToolDescriptor {
 export type ImagePasteMode = "native" | "at" | "aider" | "unsupported";
 
 export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
+  {
+    id: "deepseek-harness",
+    command: "dsh-tui",
+    label: "DeepSeek Harness TUI",
+    icon: "deepseek-harness",
+    vendor: "deepseek",
+    imagePasteMode: "unsupported",
+  },
   {
     id: "claude",
     command: "claude",
@@ -199,6 +209,7 @@ export function resolveCliToolIconKey(cliTool: string | null | undefined): CliTo
   const normalized = cliTool?.trim().toLowerCase();
   if (!normalized) return null;
   if (normalized === "code") return "codex";
+  if (isDeepSeekTuiTool(normalized)) return "deepseek-harness";
 
   const descriptor = CLI_TOOL_DESCRIPTORS.find(
     (tool) => tool.id === normalized || tool.command === normalized || commandMatches(normalized, tool.command)
