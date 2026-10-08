@@ -1864,11 +1864,12 @@ onPointerDown={(event) => drag.handlePointerDown(event, { path: node.path, kind:
 - Create one controller per terminal attachment; its selection state must start empty and dispose() must remove its DOM listeners.
 - Input owns the current-input buffer and cursor index. Callers must use the controller API rather than passing or mutating those refs.
 - Codex owns Shift+Left/Right (including the queued-question entry). The xterm key handler must clear synthetic input selection and return true before application selection handling, preserving modifiers even with empty input. Reuse session/runtime Codex detection; ordinary shell selection remains unchanged.
+- The window capture handler in useKeyboardShortcuts must yield terminal-targeted Shift+Left/Right before every global action, including user-recorded Tab or other bindings. Do not preventDefault, stop propagation, or read the active-session snapshot for this route; xterm owns Codex input versus shell selection. Only Shift without Ctrl/Alt/Meta is reserved. Outside terminals, existing bindings keep their scope; terminal Tab switching remains available through Alt/Ctrl. Keep the settings explanation in both languages aligned with this priority.
 - Use the existing terminalTextEditing and terminalCellWidth helpers for cursor indices and display cells. Do not approximate CJK/wide-character offsets with string length.
 - The shared TUI composer markers belong in src/features/terminal/lib/terminalTui.ts; selection and rendering import the same patterns instead of defining local copies.
 - forwardTerminalInput() consumes a replacement selection before writing to the PTY, then clears only the state required by the original input path.
 
-**Tests**: Run npx tsc --noEmit; manually verify Ctrl/Cmd+A, Shift+Left/Right, collapse with Left/Right, Backspace/Delete, typing to replace a selection, Ctrl/Cmd+C selection copy versus Ctrl+C interrupt, and switching sessions after a selection.
+**Tests**: Run node --test scripts/codexQueuedQuestionShortcut.test.mjs and npx tsc --noEmit. Exercise the actual global capture listener followed by the xterm handler with Shift Tab bindings, single/multiple sessions, Codex/shell, empty/draft input, non-terminal editors, and Alt/Ctrl/compound modifiers; preserve Ctrl+W close requests. Manually verify Ctrl/Cmd+A, Shift+Left/Right, collapse with Left/Right, Backspace/Delete, typing to replace a selection, Ctrl/Cmd+C selection copy versus Ctrl+C interrupt, and switching sessions after a selection.
 
 ### Convention: Pi terminal compatibility stays outside XTermTerminal
 

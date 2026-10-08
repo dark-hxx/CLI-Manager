@@ -63,9 +63,19 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
       const viewMode = viewModeRef.current;
       const target = e.target as HTMLElement | null;
       const tag = target?.tagName;
+      const isXtermTarget = !!target?.closest(".xterm");
+
+      // 终端内 Shift+左右方向键属于 CLI 或输入选区，必须在捕获阶段让行，避免先切 Tab 或移动焦点。
+      if (
+        isXtermTarget && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey &&
+        (e.key === "ArrowLeft" || e.key === "ArrowRight")
+      ) {
+        return;
+      }
+
       const isFileEditorTarget = !!target?.closest(".ui-file-editor-pane");
 
-      // Command palette toggle works regardless of focus context
+      // 除终端保留组合键外，命令面板切换不受焦点影响。
       if (isShortcutMatch(combo, shortcuts.commandPalette)) {
         e.preventDefault();
         useCommandPaletteStore.getState().toggle();
@@ -98,7 +108,6 @@ export function useKeyboardShortcuts(options: KeyboardShortcutOptions = {}) {
         return;
       }
 
-      const isXtermTarget = !!target?.closest(".xterm");
       const isEditingTarget =
         tag === "INPUT" ||
         tag === "TEXTAREA" ||
