@@ -1,3 +1,5 @@
+import { setDeepSeekTuiIdentityHandler } from "../api/deepseekTuiRuntime";
+import { isDeepSeekTuiCommand, isValidDeepSeekTuiSessionId } from "../../../shared/lib/deepseekTui";
 import { invoke } from "@tauri-apps/api/core";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { toast } from "sonner";
@@ -42,7 +44,7 @@ import {
 } from "../lib/terminalStoreLayout";
 import { normalizeRemotePathForCompare } from "../lib/subagentTranscriptModel";
 import {
-  detectCliResumeKind, buildCliResumeStartupCommand, formatStartupInputForPty,
+  detectCliResumeKind, buildCliResumeStartupCommand, getDeepSeekTuiLaunchSessionId, formatStartupInputForPty,
   getProjectAgentTerminalMetadata, getRestoredAgentTerminalMetadata, garbageCollectProviderSnapshots,
   garbageCollectProjectExtensionSnapshots, releaseProjectExtensionSnapshot, releaseProviderSnapshot,
   resolvePtyLaunch, createDetachedPtyProcess,
@@ -87,6 +89,20 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
     clearPendingSubagentPanesForParent,
     scheduleSaveActiveId,
   } = createTerminalRuntime(set, get, api);
+  setDeepSeekTuiIdentityHandler((ptySessionId, cliSessionId) => {
+    const current = get().sessions.find((session) => session.id === ptySessionId);
+    if (!current || !isDeepSeekTuiCommand(current.startupCmd)) return;
+    if (current.cliSessionId !== cliSessionId) {
+      set({ sessions: get().sessions.map((session) => session.id === ptySessionId
+        ? { ...session, cliSessionId } : session) });
+    }
+    const persisted = useSessionStore.getState().sessions.find((session) => session.id === ptySessionId);
+    if (persisted?.cliSessionId !== cliSessionId) {
+      void queueSshSessionPersistence(get().sessions).catch((error) => {
+        logWarn("Failed to persist DSH TUI session identity", { sessionId: ptySessionId, error });
+      });
+    }
+  });
   return {
     sessions: [],
     activeSessionId: null,
@@ -522,7 +538,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         cwd,
         shell: resolvedShell,
         envVars,
-        startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : startupCmd,
+        startupCmd: launch.persistedStartupCmd ?? (launch.startupHandledByLaunch ? launchStartupCmd : startupCmd),
         ...getProjectAgentTerminalMetadata(projectId),
         environmentType: launch.environmentType,
         sshHostId: launch.sshHostId,
@@ -532,7 +548,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         extensionSnapshotId: launch.extensionSnapshotId ?? undefined,
         extensionPolicyRevision: launch.extensionPolicyRevision,
         extensionLaunchStatus: launch.extensionStatus,
-        cliSessionId: cliSessionId?.trim() || undefined,
+        cliSessionId: cliSessionId?.trim() || getDeepSeekTuiLaunchSessionId(launch),
         remoteHistoryConsumerId: remoteHistoryConsumerId?.trim() || undefined,
         remoteHistorySourceInstanceId: remoteHistorySourceInstanceId?.trim() || undefined,
       };
@@ -982,7 +998,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         cwd: options?.cwd,
         shell: resolvedShell,
         envVars: options?.envVars,
-        startupCmd: launch.startupHandledByLaunch ? launchStartupCmd : options?.startupCmd,
+        startupCmd: launch.persistedStartupCmd ?? (launch.startupHandledByLaunch ? launchStartupCmd : options?.startupCmd),
         ...getProjectAgentTerminalMetadata(options?.projectId),
         environmentType: launch.environmentType,
         sshHostId: launch.sshHostId,
@@ -992,6 +1008,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         extensionSnapshotId: launch.extensionSnapshotId ?? undefined,
         extensionPolicyRevision: launch.extensionPolicyRevision,
         extensionLaunchStatus: launch.extensionStatus,
+        cliSessionId: getDeepSeekTuiLaunchSessionId(launch),
       };
 
       let unlisten: UnlistenFn;
@@ -1543,16 +1560,21 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
           // 重建 PTY
           const restoreProject = ps.projectId ? projectMap.get(ps.projectId) : undefined;
           const cliKind = detectCliResumeKind(ps.startupCmd, restoreProject);
-          const restoredStartupCmd = cliKind
-            ? buildCliResumeStartupCommand(
-              cliKind,
-              ps.cliSessionId,
-              restoreProject,
-              ps.providerSnapshot ? { includeProviderOverrides: false } : {},
-            )
-            : normalizeDirectCodexStartupCommand(ps.startupCmd);
+          let restoredStartupCmd: string | undefined;
           let launch: ResolvedPtyLaunch;
           try {
+            restoredStartupCmd = cliKind
+              ? buildCliResumeStartupCommand(
+                cliKind,
+                ps.cliSessionId,
+                restoreProject,
+                {
+                  ...(ps.providerSnapshot ? { includeProviderOverrides: false } : {}),
+                  startupCmd: ps.startupCmd,
+                  shell: ps.shell,
+                },
+              )
+              : normalizeDirectCodexStartupCommand(ps.startupCmd);
             launch = await resolvePtyLaunch({
               projectId: ps.projectId,
               worktreeId: ps.worktreeId,
@@ -1584,14 +1606,14 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
           newIdMap[ps.id] = newSessionId;
 
           const shellKey = normalizeShellKey(resolvedShell) ?? null;
-          // 恢复按会话类型分流：CLI 会话（codex/claude）走原生 resume，普通 shell 会话静态贴回 scrollback。
+          // 支持的 CLI 走原生 resume；缺少明确 DSH 身份时新建；普通 shell 贴回 scrollback。
           let launchStartupCmd: string | undefined;
           let initialTerminalOutput: string | undefined;
           let deferStartupUntilInitialOutput = false;
 
-          if (cliKind) {
-            // CLI 会话：不贴 initialTerminalOutput（TUI 绝对定位重绘会盖掉它，见
-            // research/tui-startup-clear-sequences.md），改用 resume 让 CLI 自己重画上次对话并可继续。
+          if (cliKind || isDeepSeekTuiCommand(restoredStartupCmd)) {
+            // CLI resume / DSH 新建均不贴旧 scrollback，避免旧 TUI 状态覆盖新输出。
+            // TUI 重绘说明见 research/tui-startup-clear-sequences.md。
             launchStartupCmd = launch.startupCmd;
           } else {
             // 普通 shell 会话：静态贴回历史滚动内容（shell 不清屏，历史可见），startupCmd 保持首轮行为。
@@ -1614,7 +1636,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
             cwd: ps.cwd,
             shell: resolvedShell,
             envVars: ps.envVars,
-            startupCmd: launch.startupHandledByLaunch ? restoredStartupCmd : launchStartupCmd,
+            startupCmd: launch.persistedStartupCmd ?? (launch.startupHandledByLaunch ? restoredStartupCmd : launchStartupCmd),
             ...getRestoredAgentTerminalMetadata(ps, ps.projectId),
             environmentType: launch.environmentType ?? ps.environmentType,
             sshHostId: launch.sshHostId ?? ps.sshHostId,
@@ -1627,7 +1649,8 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
             extensionPolicyRevision: launch.extensionPolicyRevision,
             extensionLaunchStatus: launch.extensionStatus,
             // 保留 cliSessionId：hook 上报会用它绑定实时统计；下次落盘也需要它继续 resume。
-            cliSessionId: ps.cliSessionId,
+            cliSessionId: cliKind === "deepseek-tui" && !isValidDeepSeekTuiSessionId(ps.cliSessionId ?? "")
+              ? undefined : ps.cliSessionId,
             remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
             remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
             initialTerminalOutput,

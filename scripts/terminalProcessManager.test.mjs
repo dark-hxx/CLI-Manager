@@ -16,9 +16,15 @@ process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 for (const name of ["terminalQueryPolicy"]) {
   await build({ entryPoints: [fileURLToPath(new URL(`../src/shared/lib/${name}.ts`, import.meta.url))], bundle: true, platform: "node", format: "esm", outfile: join(tempDir, `${name}.mjs`) });
 }
+await build({ entryPoints: [fileURLToPath(new URL("../src/features/terminal/api/deepseekTuiRuntime.ts", import.meta.url))], bundle: true, platform: "node", format: "esm", outfile: join(tempDir, "deepseekTuiRuntime.mjs") });
 
 
-writeFileSync(join(tempDir, "tauriCore.mjs"), "export async function invoke() { throw new Error('unused invoke'); }\n");
+writeFileSync(join(tempDir, "tauriCore.mjs"), `
+export async function invoke(command, request) {
+  if (command !== "pty_prepare_create") throw new Error("unused invoke");
+  return { sessionId: request.sessionId, cwd: request.cwd, envVars: request.envVars, shell: request.shell };
+}
+`);
 writeFileSync(join(tempDir, "resourceDiagnosticsLog.mjs"), `
 export const entries = [];
 export function writeResourceDiagnostic(level, source, event, payload) {
@@ -49,7 +55,7 @@ export const ptyHostSocket = {
   async write() {},
   async resize() {},
   async setTerminalColors(sessionId, colors) { terminalColorUpdates.push({ sessionId, colors }); },
-  async attach() { return { attached: false, alive: false, replay: [] }; },
+  async attach() { return { attached: true, alive: true, replay: [] }; },
   async create() {},
 };
 export function emitOutput(sessionId, frame) {
@@ -66,6 +72,7 @@ const transpiled = ts.transpileModule(source, {
   fileName: "TerminalProcessManager.ts",
 }).outputText
   .replace('from "../../../shared/lib/terminalQueryPolicy"', 'from "./terminalQueryPolicy.mjs"')
+  .replace('from "./deepseekTuiRuntime"', 'from "./deepseekTuiRuntime.mjs"')
   .replace('from "@tauri-apps/api/core"', 'from "./tauriCore.mjs"')
   .replace('from "../../../shared/platform/resourceDiagnosticsLog"', 'from "./resourceDiagnosticsLog.mjs"')
   .replace('from "../capabilities/TerminalCapabilityStore"', 'from "./capabilities.mjs"')
@@ -76,6 +83,7 @@ writeFileSync(managerPath, transpiled, "utf8");
 const { TerminalProcessManager } = await import(pathToFileURL(managerPath).href);
 const socketStub = await import(pathToFileURL(join(tempDir, "ptyHostSocket.mjs")).href);
 const resourceLogStub = await import(pathToFileURL(join(tempDir, "resourceDiagnosticsLog.mjs")).href);
+const tuiRuntime = await import(pathToFileURL(join(tempDir, "deepseekTuiRuntime.mjs")).href);
 
 // 构造具有指定序号和 UTF-8 内容的 PTY 输出帧。
 function frame(sequence, text) {
@@ -256,4 +264,43 @@ test("terminal color updates stay behind the process manager boundary", async ()
     sessionId: "session-colors",
     colors: { foreground: "#FFFFFF", background: "#101010" },
   }]);
+});
+
+const PTY_ID = "10000000-0000-4000-8000-000000000001";
+const CLI_ID = "20000000-0000-4000-8000-000000000002";
+const marker = (pty = PTY_ID, cli = CLI_ID) => `\x1b]777;cli-manager-dsh-tui;${pty};${cli}\x07`;
+
+test("TUI identity is scoped and deduplicated before display commit without acquiring ACK ownership", async () => {
+  const manager = new TerminalProcessManager();
+  const seen = [];
+  tuiRuntime.setDeepSeekTuiIdentityHandler((pty, cli) => seen.push([pty, cli]));
+  const delivered = [];
+  await manager.subscribeOutput(PTY_ID, (delivery) => delivered.push(delivery));
+  const acknowledgmentsBefore = socketStub.acknowledgments.length;
+  socketStub.emitOutput(PTY_ID, { ...frame(1, marker()), sessionId: PTY_ID });
+  socketStub.emitOutput(PTY_ID, { ...frame(1, marker()), sessionId: PTY_ID });
+  socketStub.emitOutput(PTY_ID, { ...frame(2, marker("30000000-0000-4000-8000-000000000003")), sessionId: PTY_ID });
+  assert.deepEqual(seen, [[PTY_ID, CLI_ID]]);
+  assert.equal(socketStub.acknowledgments.length, acknowledgmentsBefore);
+  delivered.forEach((delivery) => delivery.commit(delivery.frame.data.length));
+  assert.equal(socketStub.acknowledgments.length, acknowledgmentsBefore + 2);
+  await manager.close(PTY_ID);
+  tuiRuntime.setDeepSeekTuiIdentityHandler(null);
+});
+
+test("TUI identity reader handles reset and inactive attached replay without old partial bytes", async () => {
+  const manager = new TerminalProcessManager();
+  const seen = [];
+  tuiRuntime.setDeepSeekTuiIdentityHandler((pty, cli) => seen.push([pty, cli]));
+  await manager.attach(PTY_ID);
+  const unlisten = await manager.subscribeOutput(PTY_ID, () => {});
+  socketStub.emitOutput(PTY_ID, { ...frame(1, marker().slice(0, 30)), sessionId: PTY_ID });
+  socketStub.emitOutput(PTY_ID, { ...frame(0, ""), sessionId: PTY_ID, kind: "reset" });
+  socketStub.emitOutput(PTY_ID, { ...frame(1, marker().slice(30)), sessionId: PTY_ID });
+  assert.deepEqual(seen, []);
+  socketStub.emitOutput(PTY_ID, { ...frame(2, marker()), sessionId: PTY_ID, replay: true });
+  assert.deepEqual(seen, [[PTY_ID, CLI_ID]]);
+  unlisten();
+  await manager.closeAll();
+  tuiRuntime.setDeepSeekTuiIdentityHandler(null);
 });

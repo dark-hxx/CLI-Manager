@@ -1862,7 +1862,81 @@ V1.4.1：保留用户字体优先，增加外部程序选择，修复 WSL 参数
 - 完整原生 WebView2 环境矩阵与 64,887 文件性能复测仍未完成，历史证据保留；未推送远程。
 
 
-## Session 127: Codex Shift 方向键修复与项目菜单图标
+## Session 127: V1.4.2 ZCode CLI 类别与选项排序
+
+**Date**: 2026-10-08
+**Task**: V1.4.2 ZCode CLI 类别与选项排序
+**Branch**: `pr-273-local`
+
+### Summary
+
+为 PR #273 增加 ZCode CLI 类别和智谱图标，项目工具列表继续由统一描述表派生；完成 CLI 优先顺序、隐藏预设及 V1.4.2 文档记录。
+
+### Main Changes
+
+- 默认命令 zcode；新增工具自动追加到项目候选末尾。
+- 工具优先顺序 claude、codex、pi、grok、dsh-tui；隐藏 goose、amp、aider、crush 预设并保留已有项目识别。
+- 任务已归档，交付目标为 jackie-cqz/CLI-Manager 的 fix/deepseek-harness-webui 分支（PR #273）。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d7805d7d495b50fda577a3b1a2fe9d2775208186` | (see git log) |
+
+### Testing
+
+- [OK] 现有 DeepSeek TUI 与 Agent terminal 回归：16 passed，0 failed。
+- [OK] TypeScript、严格架构检查及 git diff --check 通过；GitNexus 提交前检查 LOW。
+- [OK] 一次性生产模块核对：ZCode 描述、图标、元数据、命令参数拼接和实际项目候选顺序通过。
+- [NOT RUN] 本机未安装 ZCode，真实 TUI、界面语言切换及 WSL/SSH 端到端未测试。
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- 安装官方 ZCode 后验证项目新建／编辑、终端启动和交互。
+
+
+## Session 128: PR 276 Skills 扫描修复与性能验证
+
+**Date**: 2026-10-08
+**Task**: PR 276 Skills 扫描修复与性能验证
+**Branch**: `pr-276-review-fixes`
+
+### Summary
+
+修复两个 P2：失效路径保留兄弟结果，目录枚举在预算前检查；合入当前 master 并解决 CHANGELOG 冲突，记录 V1.4.2。
+
+### Main Changes
+
+- WSL 惰性 scandir、普通文件类型缓存、目录链接类型复查；本机同步处理失效路径和精确预算边界。
+- 新增目录迭代次数、句柄释放、路径查询与删除/替换竞态回归；更新功能清单及扩展契约。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0eed48b0` | (see git log) |
+| `f78bb83d` | (see git log) |
+
+### Testing
+
+- [OK] Rust inventory 11 passed; Node suites 34 passed, 1 POSIX skip; cargo check, tsc, strict architecture, rustfmt and diff checks passed.
+- [OK] Windows embedded Python: 20,000 files, five-run median 2.116 s -> 0.0192 s; enumerated entries 20,000 -> 9,999; stat API calls 30,001 -> 2.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Real WSL transport and POSIX symlink acceptance remain unverified on this host; delivery targets existing PR 276.
+
+
+## Session 129: Codex Shift 方向键修复与项目菜单图标
 
 **Date**: 2026-10-08
 **Task**: Codex Shift 方向键修复与项目菜单图标
@@ -1889,6 +1963,12 @@ V1.4.1：保留用户字体优先，增加外部程序选择，修复 WSL 参数
 - [OK] 快捷键定向测试 65/65、隔离真实 xterm 浏览器用例 20/20，通过用户实际修复验收。
 - [OK] 图标修正的 TypeScript、严格架构及暂存差异检查通过；未为静态图标添加重复实现的测试。
 - [OK] 提交前完成 GitNexus 影响与变更检查；符号映射缺失时依据文件差异及实际处理器测试核查范围。
+- [OK] 合并 origin/master 的 22 个提交后，快捷键 65 项及终端进程、恢复参数、DSH、Skills 的 8 个 Node 测试文件通过；TypeScript、严格架构（1284 个源文件、0 违规）及 3 个发布准备检查文件通过，6 处桌面版本均为 1.4.2。
+- [OK] 合并检查覆盖远程终端进程和 CLI 注册变更，GitNexus 返回 CRITICAL；索引存在异常符号标识，另按两侧文件差异核对，产品实现保留各侧已提交内容，仅重建日志会话并修正文档空白。
+
+### Release Follow-up
+
+- 用户已授权合并、提交及推送 master；随后明确暂不推送 V1.4.2 标签。标签仅在本地保留，正式发布等待后续指令。
 
 ### Status
 

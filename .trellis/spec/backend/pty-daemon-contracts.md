@@ -116,7 +116,7 @@ WebView -> Tauri routing command -> validate + persist provider DB
 - 活跃会话的完整 Replay 不得在 2 MiB 后静默裁剪：内存保留最近 2 MiB 安全帧，更早的整帧写入 daemon 专属磁盘 spool；关闭会话时删除对应 spool，daemon 新实例启动时清理同环境旧 spool。磁盘写入失败时保留内存数据并告警，不得丢帧。
 - 隐藏终端仍订阅并解析输出；不得建立 inactive raw buffer 或切回时批量重放。可释放 WebGL，但不得释放 xterm、PTY 订阅或 scrollback。
 - Windows 使用直接 ConPTY API；兼容开关开启时通过受控绝对路径加载打包的 `conpty.dll`，否则使用 kernel32 API，禁止按裸 DLL 名搜索。ConPTY 子进程创建标志不得包含 `CREATE_NEW_PROCESS_GROUP`，并保留 `PSEUDOCONSOLE_RESIZE_QUIRK | PSEUDOCONSOLE_WIN32_INPUT_MODE`。Unix 使用 `openpty`、`setsid`、`TIOCSCTTY`、stdio dup 与进程组 kill；PTY fd 必须设置 `FD_CLOEXEC`，子进程 exec 前必须恢复默认信号处理并清空继承的信号掩码。生产依赖不得重新加入 `portable-pty`。
-- Windows 每次创建新 PTY 前必须通过当前用户 token 的 `CreateEnvironmentBlock` 刷新系统/用户环境。普通变量按 daemon 进程环境 → 最新用户环境 → 显式 launch env 合并；`PATH` 特殊处理为“最新用户路径在前，再补 daemon `PATH` 独有项”，路径项按 Windows 大小写不敏感去重。项目/provider/hook 显式传入的 `PATH` 仍整值覆盖最终结果。刷新失败只能回退 daemon 环境并记录 warning，不能阻止终端创建。
+- Windows 每次创建新 PTY 前必须通过当前用户 token 的 `CreateEnvironmentBlock` 刷新系统/用户环境。普通变量按 daemon 进程环境 → 最新用户环境 → 显式 launch env 合并；`PATH` 特殊处理为“保留 daemon 的已有路径顺序，再追加最新用户环境中的新目录”，路径项按 Windows 大小写不敏感去重，保持首个原始文本与既有空项语义。不把新目录插入已激活环境的路径段；Conda 的重激活会删除首尾前缀之间整段，夹入其中的 npm/其他 CLI 目录可能被误删。项目/provider/hook 显式传入的 `PATH` 仍整值覆盖最终结果。刷新失败只能回退 daemon 环境并记录 warning，不能阻止终端创建。
 - WebSocket auth 与控制请求必须有有界超时；心跳 5 秒一次，15 秒无 Pong 判定失联。重连后重新 attach，并按 xterm 已提交 sequence 过滤 replay，而不是按网络已接收 sequence 过滤。
 - `create` 请求的响应若因断线丢失，前端必须以同一 session id 重连并 attach 探测：会话存在则恢复 replay 并视为创建成功，不存在才向调用方返回原始创建错误。create 的 session 检查、容量检查和预留插入必须原子。
 - `close`/`close_all` 在发送请求前建立本地 tombstone 并释放输出所有权；即使请求超时或断线，也不得在重连时重新 attach 已由 UI 关闭的会话。daemon 关闭路径必须同步移除 attach、ACK、sequence 与 attach-barrier 状态。
@@ -149,11 +149,13 @@ WebView -> Tauri routing command -> validate + persist provider DB
 - Bad: 收到 binary output 后立刻 ACK，而不是等 `terminal.write(..., callback)` → xterm 尚未解析时 daemon 继续灌入，内存失控。
 - Bad: WebSocket 重连后无 sequence 过滤地重放完整 ring → 用户看到重复输出。
 - Bad: 最新用户 `PATH` 整值覆盖 daemon `PATH` → 应用启动时注入的临时工具目录丢失。
+- Bad: 把刷新路径放在前面再补 daemon 独有项 → 已激活 Conda 前缀目录被拆散，PowerShell profile 重激活删除夹在前缀首尾之间的 npm/其他 CLI 路径。
+- Tradeoff: 新目录可以立即发现，但已有目录仍按用户已激活的环境顺序解析；不因刷新隐式改变同名工具的优先级。需要完整接管时使用显式项目 PATH。
 - Bad: 在退出清理 `finally` 中无条件 app_exit → daemon 拒绝 shutdown 时仍强退，残留后台进程且丢失诊断机会。
 
 ### 6. Tests Required
 
-- Rust: binary header、协议未知字段/type、Attach barrier 顺序、Replay entry 间控制响应抢占、尺寸化 Replay/resize 独立 sequence、spool 不丢帧、writer queue、后台 reconcile、direct ConPTY spawn/write/read/resize；断言 ConPTY 子进程不使用 `CREATE_NEW_PROCESS_GROUP` 且保留 resize/Win32 input flags；环境合并测试覆盖键大小写、fresh `PATH` 优先、daemon 独有路径补回、显式 `PATH` 整值覆盖。
+- Rust: binary header、协议未知字段/type、Attach barrier 顺序、Replay entry 间控制响应抢占、尺寸化 Replay/resize 独立 sequence、spool 不丢帧、writer queue、后台 reconcile、direct ConPTY spawn/write/read/resize；断言 ConPTY 子进程不使用 `CREATE_NEW_PROCESS_GROUP` 且保留 resize/Win32 input flags；环境合并测试覆盖键大小写、daemon `PATH` 顺序保留、fresh 新目录追加、Conda 首尾前缀整段重激活不丢 npm、大小写/空项去重、显式 `PATH` 整值覆盖。
 - Frontend: `npx tsc --noEmit`；Node 回归验证 auth/request timeout、close tombstone、未提交帧重挂接管、ACK 顺序、隐藏 Tab 持续更新；退出编排测试覆盖 close_all + shutdown、后台不清理、daemon 查询失败只关前台、shutdown 失败禁止退出、close_all 失败但 shutdown 成功。
 - Backend: `cargo check && cargo test`。Unix 必须在真实 macOS/Linux CI 或具备 GTK/sysroot 的构建机执行；Windows 交叉编译缺少 GTK sysroot 不算代码失败，也不算通过。
 - 手动矩阵：PowerShell/pwsh/CMD/Git Bash/WSL、Bash/Zsh/Fish；普通 Tab/分屏/Pane 全屏/应用全屏/Workspan；最小化/托盘/退出后 daemon 续跑；hook 装/未装。
@@ -292,3 +294,10 @@ command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_W
 // 保持 ConPTY Ctrl+C 控制事件的进程组兼容性。
 command.creation_flags(CREATE_NO_WINDOW);
 ```
+
+
+## Opt-in actual-user Conda PATH regression
+
+`src-tauri/tests/windows_conda_path_smoke.rs` runs the production `PtyManager` in real Windows ConPTY with the actual user's existing Windows PowerShell/Conda profile. It requires an already activated Conda parent and installed `dsh`/`dsh-tui`, preserves USERPROFILE/HOME and supplies no PATH override. The probe uses command discovery only, returns booleans for npm/dsh/dsh-TUI/base visibility, and never prints the environment or performs model requests. RAII closes only the test's own PTY.
+
+Run explicitly as the actual user (a sandbox SID tests another HKCU/profile): `cargo +1.96.1 test --manifest-path src-tauri/Cargo.toml --test windows_conda_path_smoke -- --ignored --nocapture`. The historical fresh-first merge scatters the activated Conda prefix and loses npm after profile reactivation; the parent-first order must pass. Pure span/case/override tests remain independent of Conda installation.

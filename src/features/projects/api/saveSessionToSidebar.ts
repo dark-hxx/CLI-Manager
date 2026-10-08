@@ -1,4 +1,5 @@
 import type { CreateProjectInput, Project, TerminalSession } from "../../../shared/types/index";
+import { buildDeepSeekTuiResumeCommand, isValidDeepSeekTuiSessionId } from "../../../shared/lib/deepseekTui";
 import { detectCliResumeKind } from "../../terminal/state";
 import { isValidGrokSessionId, isValidKimiSessionId, stripKimiResumeCliArgs, stripResumeCliArgs } from "../../history/api/resumeCliArgs";
 
@@ -24,7 +25,9 @@ const WSL_WRAPPER_PATTERN = /(?:^|\s)wsl(?:\.exe)?\s/i;
  * Build the resume-form startup command that replaces a startup_cmd-driven
  * source's launch when saving to sidebar. Mirrors buildCliResumeStartupCommand
  * in terminalStore.ts (~970) but always has a valid session id (callers gate
- * on normalizeSessionId first) and preserves any leading `wsl `/`wsl.exe `
+ * on normalizeSessionId first). DSH TUI preserves its structured host/profile
+ * command and replaces only its explicit session selector. Other CLIs preserve
+ * any leading `wsl `/`wsl.exe `
  * wrapper so WSL-wrapped sources still enter WSL after save. All other free-
  * text extras from the source startup_cmd (custom flags, one-shot prompts,
  * `--settings ...`) are intentionally dropped: startup_cmd is unstructured
@@ -33,10 +36,11 @@ const WSL_WRAPPER_PATTERN = /(?:^|\s)wsl(?:\.exe)?\s/i;
  * on every resume.
  */
 function buildResumeStartupCmd(
-  kind: "claude" | "codex" | "grok" | "kimi",
+  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui",
   id: string,
   sourceStartupCmd: string,
 ): string {
+  if (kind === "deepseek-tui") return buildDeepSeekTuiResumeCommand(sourceStartupCmd, id);
   const resumeCore =
     kind === "codex"
       ? `codex resume --no-alt-screen ${id}`
@@ -56,18 +60,24 @@ function buildResumeStartupCmd(
  * - `codex`  → `<sourceCliArgs trimmed> resume --no-alt-screen <id>`
  * - `grok`   → `<sourceCliArgs trimmed> --resume <id>`
  * - `kimi`   → `<sourceCliArgs trimmed> --session <id>`
+ * - `deepseek-tui` → explicit `--resume <id>` before the host/app separator
  *
  * Pre-existing resume fragments in `sourceCliArgs` are stripped first so
  * re-saving a saved session does not double-append. Invalid session ids
  * (empty, whitespace-containing, CR/LF-containing) return null.
  */
 export function buildResumeCliArgs(
-  kind: "claude" | "codex" | "grok" | "kimi",
+  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui",
   sourceCliArgs: string,
   sessionId: string,
 ): string | null {
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
+  if (kind === "deepseek-tui") {
+    if (!isValidDeepSeekTuiSessionId(id)) return null;
+    const launcher = "dsh-tui";
+    return buildDeepSeekTuiResumeCommand(`${launcher} ${sourceCliArgs}`, id).slice(launcher.length).trim();
+  }
   if (kind === "kimi" && !isValidKimiSessionId(id)) return null;
   if (kind === "grok" && !isValidGrokSessionId(id)) return null;
   const base = kind === "kimi" ? stripKimiResumeCliArgs(sourceCliArgs) : stripResumeCliArgs(sourceCliArgs);
@@ -82,7 +92,7 @@ export function buildResumeCliArgs(
 
 /**
  * True iff `session` carries a valid cliSessionId AND we can resolve a
- * CLI resume kind (`claude` | `codex` | `grok` | `kimi`) from the session's startup
+ * CLI resume kind (`claude` | `codex` | `grok` | `kimi` | `deepseek-tui`) from the session's startup
  * command / owning project. When false, the "save to sidebar" affordance must
  * be disabled — createProject would either fail validation or produce a
  * useless entry.
@@ -98,7 +108,8 @@ export function canSaveSessionToSidebar(
   );
   return kind !== null
     && (kind !== "kimi" || isValidKimiSessionId(session.cliSessionId?.trim() ?? ""))
-    && (kind !== "grok" || isValidGrokSessionId(session.cliSessionId?.trim() ?? ""));
+    && (kind !== "grok" || isValidGrokSessionId(session.cliSessionId?.trim() ?? ""))
+    && (kind !== "deepseek-tui" || isValidDeepSeekTuiSessionId(session.cliSessionId?.trim() ?? ""));
 }
 
 /**
@@ -182,7 +193,9 @@ export function buildSavedSessionProjectInput(args: {
   const path = session.cwd?.trim() || project?.path || "";
   if (!path) return { ok: false, reason: "no_path" };
 
-  const sourceStartupCmd = project?.startup_cmd ?? "";
+  const sourceStartupCmd = kind === "deepseek-tui" && (!project || project.startup_cmd?.trim())
+    ? session.startupCmd ?? project?.startup_cmd ?? ""
+    : project?.startup_cmd ?? "";
   const savedStartupCmd = sourceStartupCmd.trim()
     ? buildResumeStartupCmd(kind, normalizedId, sourceStartupCmd)
     : "";
@@ -192,10 +205,10 @@ export function buildSavedSessionProjectInput(args: {
     path,
     group_id: project?.group_id ?? null,
     group_name: project?.group_name ?? "",
-    cli_tool: (project?.cli_tool && project.cli_tool.length > 0) ? project.cli_tool : kind,
+    cli_tool: (project?.cli_tool && project.cli_tool.length > 0) ? project.cli_tool : kind === "deepseek-tui" ? "dsh" : kind,
     cli_args: resumeCliArgs,
     startup_cmd: savedStartupCmd,
-    env_vars: project?.env_vars ?? "{}",
+    env_vars: project?.env_vars ?? (kind === "deepseek-tui" ? JSON.stringify(session.envVars ?? {}) : "{}"),
     shell: project?.shell ?? session.shell ?? "",
     provider_overrides: project?.provider_overrides ?? "{}",
   };

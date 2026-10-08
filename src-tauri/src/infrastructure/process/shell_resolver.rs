@@ -4,6 +4,10 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
+#[cfg(windows)]
+#[path = "git_bash_paths.rs"]
+mod git_bash_paths;
+
 #[cfg(target_os = "windows")]
 use crate::process_job::ChildJob;
 
@@ -452,11 +456,14 @@ mod process_timeout_tests {
     }
 }
 
-// 依次尝试固定安装位置、PATH 中的 Git 目录和注册表，返回首个候选；不执行 Bash 验证可用性。
+// 保留默认位置与传统 PATH 优先级，再识别 Git/Scoop 安装布局，最后查询注册表；不启动探测进程。
 pub fn resolve_git_bash_exe() -> Option<PathBuf> {
-    fixed_path_candidate()
-        .or_else(path_git_candidate)
-        .or_else(registry_git_candidate)
+    let candidate = fixed_path_candidate().or_else(path_git_candidate);
+    #[cfg(windows)]
+    let candidate = candidate
+        .or_else(git_bash_paths::path_candidate)
+        .or_else(git_bash_paths::scoop_candidate);
+    candidate.or_else(registry_git_candidate)
 }
 
 // 按预设顺序选择存在的常见安装路径，仅检查 exists，不验证文件类型或版本。

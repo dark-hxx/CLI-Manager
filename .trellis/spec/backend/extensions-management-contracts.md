@@ -26,6 +26,9 @@ Global MCP/Skills read, edit, native apply and inventory changes across React, T
 - Native write uses private same-directory stage/backup, stale-file check, atomic replacement and readback. WSL operations run inside the selected distro. Backups are retained for recovery; running CLI sessions are not restarted.
 - `editing::preserve_secrets` restores unchanged masked leaves from the full record under the repository transaction. Explicit new values and removed fields remain edits.
 - Inventory uses diagnostic user roots, bounds traversal, reports partial scans, classifies external/plugin/builtin/managed, and does not recurse through directory links. Discovery is not session activation evidence. External sources must be imported before managed lifecycle operations.
+- Inventory traversal includes the root in a 10,000-path budget and keeps depth 8 / 500-entry limits. Classify ordinary files before the depth cutoff; directory depth truncation preserves bounded siblings. Check hard limits before opening a directory and before every iterator advance, conservatively marking the scan incomplete at the exact limit without peeking at another item. Native `ReadDir` and WSL context-managed `scandir` stay lazy; never collect/sort a whole directory before checking the budget. WSL reuses `DirEntry` type information for ordinary files; only final aggregated inventory is presentation-sorted.
+- Paths removed or changed from directory to file after enumeration are stale candidates (`NotFound`/`NotADirectory`, `FileNotFoundError`/`NotADirectoryError`): skip them and preserve other entries. Permission and other I/O failures remain errors. The WSL private `{ entries, limited }` envelope and public `extensions_skills_inventory() -> { entries, warnings }` stay unchanged; retain the 15-second / 1-MiB subprocess bounds and close directory iterators on every exit.
+- Before descending into a cached WSL directory candidate, refresh its `lstat` type so a replacement symlink is inspected as a link instead of recursively traversed. Keep ordinary-file classification on the cached `DirEntry` path; do not restore per-file lexists/isdir/islink probes.
 - Global loading keeps successful request results even when another request fails. Skills import defaults to `skillDirectory`.
 - Skills main list must not mount/unmount a top-level partial-scan warning on every refresh. Keep per-CLI completeness and protected target inspection; detailed inventory warnings remain in the opt-in inventory panel. Removing a notice must not manufacture complete scan state.
 - Import suggestions reuse saved per-CLI Hook roots and provider Home without changing either. Suggestions are unverified read-only source paths until import preview succeeds; custom/manual selections must not be overwritten by asynchronous Home resolution. Import source is not the native apply target.
@@ -69,6 +72,8 @@ Global MCP/Skills read, edit, native apply and inventory changes across React, T
 | File differs during final write check | Preserve live file and backup; discard own stage |
 | Empty projected TOML MCP set | Missing `mcp_servers` is valid; never index it blindly |
 | Unreadable/incomplete inventory root | Preserve collected entries and add warning |
+| Enumerated path disappears or an ancestor becomes a file | Skip the stale candidate and continue bounded siblings; do not fail the WSL subprocess |
+| Inventory reaches an exact path/entry limit | Keep allowed results, report incomplete, and do not open/advance another directory iterator |
 | Native differences with no explicit user action | No unsaved-change dialog |
 | Leave without applying, then navigate/reopen with no further edit | No repeated prompt for the discarded Home/batch; no native write |
 | New edit after discarding, or navigation for another Home | Compare against that Home's own applied/discarded versions |
@@ -101,6 +106,7 @@ Global MCP/Skills read, edit, native apply and inventory changes across React, T
 - Real temporary file publication verifies backup contents, final bytes and conflict protection.
 - Masked edit preserves old token; explicit replacement/removal changes it.
 - Inventory covers native, nested plugin/builtin and linked/missing sources.
+- `extensionsInventory.test.mjs` executes the real WSL script with observable filesystem iterators: 10,000 ordinary files permit 9,999 advances after the root, no full `listdir`, no repeated path-type probes, and balanced iterator closes. Cover exhausted child-directory opening, 500-entry early exit, deletion/replacement between enumeration and processing, and genuine permission errors. Native inventory tests cover stale candidates, retained siblings and the final allowed Skill at an exact budget. Record wide-directory benchmark environment separately from real WSL transport acceptance.
 - Common JSON sample, hidden-metadata/secret-mask round trip, malformed/multi-server rejection, fixed footer and removed UI controls.
 - Native preview serialization test covers all three CLIs, formatted JSON/TOML, unmanaged entries, root/managed/unmanaged credentials and unchanged full apply bytes. `scripts/extensionsManagementUi.test.mjs` executes real preview/cancel closures with deferred IPC to cover stale responses, invalidated generations and cancellation success/failure without premature unlock; it is not desktop acceptance.
 - No-mutation navigation, native disable flags, per-CLI scan completeness, external presence/protection, handle-only ordering and actual temporary auto deployment.
@@ -115,3 +121,5 @@ Wrong: `setEnabled()` succeeds → show “CLI applied”.
 Correct: save desired state → preview native target → confirm with fingerprint → private backup/replacement/readback → show “configuration written; new session required”.
 
 Wrong: serialize `Plan.desired` into the preview response. Correct: serialize only `adapters::redact_projected_content(cli, desired_text)` as `content`; never reuse that redacted text for apply.
+
+Wrong: `sorted(os.listdir(path))` followed by a path-limit check, or an uncaught missing-child error that discards all WSL results. Correct: budget-checked iterator advancement, cached entry classification and skipping stale candidates while preserving genuine access errors.

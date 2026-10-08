@@ -8,6 +8,8 @@ import {
 } from "../transport/PtyHostSocket";
 import { writeResourceDiagnostic } from "../../../shared/platform/resourceDiagnosticsLog";
 
+import { observeDeepSeekTuiOutput, forgetDeepSeekTuiSession } from "./deepseekTuiRuntime";
+
 const OUTPUT_BACKLOG_WARN_BYTES = 4 * 1024 * 1024;
 const OUTPUT_BACKLOG_WARN_FRAMES = 1024;
 const OUTPUT_BACKLOG_RECOVERY_BYTES = OUTPUT_BACKLOG_WARN_BYTES / 2;
@@ -147,6 +149,7 @@ export class TerminalProcessManager {
         if (traits) this.processTraits.set(sessionId, traits);
         createTerminalQuerySession(sessionId);
       } catch (error) {
+        forgetDeepSeekTuiSession(sessionId);
         throw error;
       }
       return sessionId;
@@ -191,6 +194,7 @@ export class TerminalProcessManager {
       this.clearOutputState(sessionId);
       this.processTraits.delete(sessionId);
       forgetTerminalQuerySession(sessionId);
+      forgetDeepSeekTuiSession(sessionId);
     });
   }
 
@@ -199,6 +203,7 @@ export class TerminalProcessManager {
       [...this.outputStates.keys()].forEach((sessionId) => this.clearOutputState(sessionId));
       this.processTraits.clear();
       forgetTerminalQuerySession();
+      forgetDeepSeekTuiSession();
     });
   }
 
@@ -298,6 +303,7 @@ export class TerminalProcessManager {
   private enqueueOutputFrame(sessionId: string, frame: TerminalBinaryFrame): void {
     const state = this.getOutputState(sessionId);
     if (frame.kind === "reset") {
+      observeDeepSeekTuiOutput(sessionId, frame.data, true);
       state.frames = [];
       state.sequences.clear();
       state.deliveredCount = 0;
@@ -317,6 +323,7 @@ export class TerminalProcessManager {
       return;
     }
     if (frame.sequence <= state.latestCommittedSequence || state.sequences.has(frame.sequence)) return;
+    observeDeepSeekTuiOutput(sessionId, frame.data);
     state.sequences.add(frame.sequence);
     state.frames.push({ frame, committed: false, charCount: 0 });
     state.queuedBytes += frame.data.byteLength;

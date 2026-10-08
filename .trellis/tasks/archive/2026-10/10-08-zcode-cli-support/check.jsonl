@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/ai-architecture-contracts.md", "reason": "核对统一工具描述入口、显式图标映射及严格架构检查要求。"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "复核类别接入的场景边界及未执行的真实运行验收。"}

@@ -323,6 +323,8 @@ export interface SshLaunchPayload extends SshConnectionSpecPayload {
 export interface ResolvedPtyLaunch {
   shell: string | null;
   startupCmd?: string;
+  /** Stable TUI configuration, before app-owned bridge cache paths are added for execution. */
+  persistedStartupCmd?: string;
   startupHandledByLaunch: boolean;
   environmentType?: "local" | "wsl" | "ssh";
   sshHostId?: string;

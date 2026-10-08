@@ -1,0 +1,33 @@
+{
+  "id": "deepseek-harness-zcode-adaptation",
+  "name": "deepseek-harness-zcode-adaptation",
+  "title": "DeepSeek Harness 官方 WebUI 适配",
+  "description": "完成官方 Web profile、安装版及本地源码启动、就绪地址和生命周期集成；ZCode另留issue #272。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "deepseek",
+  "package": null,
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-10-01",
+  "completedAt": "2026-10-01",
+  "branch": "fix/deepseek-harness-webui",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": "e62b6227a0d4867cf4abaf88e9b01204221ae533",
+  "pr_url": "https://github.com/dark-hxx/CLI-Manager/pull/273",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/shared/lib/deepseekHarness.ts",
+    "src/features/projects/api/deepseekSource.ts",
+    "src/features/terminal/api/deepseekWebRuntime.ts",
+    "src-tauri/src/features/deepseek/commands.rs"
+  ],
+  "notes": "用户授权实现、提交个人fork并创建upstream draft PR；CLI-Manager CHANGELOG使用TEMP。",
+  "meta": {
+    "requested-date": "2026-10-01"
+  }
+}

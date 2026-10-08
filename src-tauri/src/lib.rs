@@ -1,5 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(all(test, target_os = "windows"))]
+extern crate self as cli_manager_lib;
+
 mod app;
 pub(crate) use app::migrations::{
     migrations, MIGRATION_ADD_CLI_ARGS_DESCRIPTION, MIGRATION_ADD_CLI_ARGS_SQL,
@@ -715,6 +718,8 @@ pub fn run() {
             commands::fs::file_move,
             commands::shell::open_windows_terminal,
             commands::shell::open_folder_in_explorer,
+            commands::deepseek::deepseek_tui_preflight,
+            commands::deepseek::deepseek_tui_prepare_launch,
             commands::history::history_list_sessions,
             commands::history::history_get_session,
             commands::history::history_convert_session,
