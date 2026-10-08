@@ -1860,3 +1860,36 @@ V1.4.1：保留用户字体优先，增加外部程序选择，修复 WSL 参数
 ### Next Steps
 
 - 完整原生 WebView2 环境矩阵与 64,887 文件性能复测仍未完成，历史证据保留；未推送远程。
+
+
+## Session 127: Codex Shift 方向键修复与项目菜单图标
+
+**Date**: 2026-10-08
+**Task**: Codex Shift 方向键修复与项目菜单图标
+**Branch**: `master`
+
+### Summary
+
+用户确认快捷键修复测试成功后，按授权提交修复；同轮独立修正项目与 Worktree 的 MCP 与 Skills 菜单图标，并同步 V1.4.2 记录。
+
+### Main Changes
+
+- 全局快捷键让行终端内 Shift 左右方向键，补齐实际全局捕获与 xterm 的回归及输入契约。
+- MCP 与 Skills 菜单复用设置页的 Puzzle 拼图图标，与修改菜单的 Settings 齿轮区分。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b7eb8008` | (see git log) |
+| `1f7b5020` | (see git log) |
+
+### Testing
+
+- [OK] 快捷键定向测试 65/65、隔离真实 xterm 浏览器用例 20/20，通过用户实际修复验收。
+- [OK] 图标修正的 TypeScript、严格架构及暂存差异检查通过；未为静态图标添加重复实现的测试。
+- [OK] 提交前完成 GitNexus 影响与变更检查；符号映射缺失时依据文件差异及实际处理器测试核查范围。
+
+### Status
+
+[OK] **Completed**
