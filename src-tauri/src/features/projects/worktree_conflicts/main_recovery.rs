@@ -186,12 +186,3 @@ pub fn recheck(repo: &Repository, expected_token: Option<&str>, confirmed: bool)
     fs::remove_file(path)?;
     probe(repo)
 }
-
-/// 读取恢复诊断供重开窗口使用；调用方不能依赖弹窗内存判断是否安全。
-pub fn inspect(repo: &Repository) -> Result<Option<Record>> {
-    let path = file_io::safe_path(repo.path(), NAME)?;
-    if !path.exists() { return Ok(None); }
-    let record: Record = file_io::read_json(&path)?;
-    if record.schema_version != 1 { return Err(Error::new("recovery_required", "unsupported recovery schema")); }
-    Ok(Some(record))
-}
