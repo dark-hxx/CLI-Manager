@@ -575,12 +575,23 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     if (
       !projectCodexOverridesApplied
       && projectCodexOverrides.length > 0
-      && providerSnapshot.configOverrides.length > 0
     ) {
       try {
+        // Keep the full provider profile even if the combined project profile
+        // was unavailable; routing-only legacy overrides lose provider options.
+        // WSL does not read profiles written into the Windows Codex Home.
+        const providerProfile = extensionEnvironment?.environmentKind === "local"
+          ? providerSnapshot.codexProfileName
+          : undefined;
+        const baseCommand = providerProfile
+          ? withCodexProfile(resolvedStartupCmd, providerProfile)
+          : resolvedStartupCmd;
+        const providerOverrides = providerProfile && baseCommand !== resolvedStartupCmd
+          ? []
+          : providerSnapshot.configOverrides;
         const mergedCommand = withCodexConfigOverrides(
-          resolvedStartupCmd,
-          [...providerSnapshot.configOverrides, ...projectCodexOverrides],
+          baseCommand,
+          [...providerOverrides, ...projectCodexOverrides],
         );
         if (mergedCommand) {
           providerStartupCmd = mergedCommand;

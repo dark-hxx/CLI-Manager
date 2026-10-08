@@ -177,7 +177,7 @@ pub(super) fn copy_toml_owned(
     keys.iter().map(|key| (*key).to_string()).collect()
 }
 
-// 复制所属 TOML 字段、清除旧顶层连接字段并投影显式模型与端点，最后清理模型供应商凭据，返回字节而非写入文件。
+// 保留完整来源配置；连接字段替换、其余表递归合并，未声明的 Home 设置继承。
 pub(crate) fn materialize_codex_config(
     before: Option<&[u8]>,
     effective: &Value,
@@ -194,7 +194,27 @@ pub(crate) fn materialize_codex_config(
             .map_err(|_| "provider_config_invalid".to_string())?
     };
     let mut target = toml_document(before)?;
-    let owned = copy_toml_owned(&source, &mut target, &CODEX_OWNED_CONFIG_KEYS);
+    let mut owned = copy_toml_owned(&source, &mut target, &CODEX_OWNED_CONFIG_KEYS);
+    for (key, item) in source.iter() {
+        if CODEX_OWNED_CONFIG_KEYS.contains(&key)
+            || is_toml_secret_key(key)
+            || matches!(
+                key,
+                "auth" | "base_url" | "wire_api" | "requires_openai_auth" | "env_key"
+            )
+        {
+            continue;
+        }
+        let mut item = item.clone();
+        // Only sanitize provider input, never remove credentials owned by the live Home.
+        remove_toml_secret_fields(&mut item);
+        if let Some(existing) = target.get_mut(key) {
+            crate::provider::repository::merge_toml_items(existing, item);
+        } else {
+            target[key] = item;
+        }
+        owned.push(key.to_string());
+    }
     for key in ["base_url", "wire_api", "requires_openai_auth", "env_key"] {
         target.remove(key);
     }

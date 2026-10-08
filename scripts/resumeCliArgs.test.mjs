@@ -86,6 +86,7 @@ const {
   appendResumeCliArgs,
   withCodexConfigOverrides,
   withCodexProfile,
+  isDirectCodexStartupCommand,
   withGrokModelOverride,
 } = await import(pathToFileURL(projectStartupPath).href);
 const { buildResumeCliArgs } = await import(pathToFileURL(saveSessionPath).href);
@@ -416,4 +417,74 @@ test("Grok history source advertises local list delete resume and realtime stats
 
 test("Pi history source advertises local resume support", () => {
   assert.equal(HISTORY_SOURCE_DESCRIPTOR_BY_ID.get("pi")?.capabilities.resume, "supported");
+});
+
+// Execute the actual launch orchestrator with I/O mocked; keep real command builders.
+const launchSource = ts.createSourceFile("terminalLaunch.ts", readFileSync(
+  new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8",
+), ts.ScriptTarget.Latest, true);
+const launchFunction = launchSource.statements.find((node) =>
+  ts.isFunctionDeclaration(node) && node.name?.text === "resolvePtyLaunch");
+assert.ok(launchFunction);
+const launchCode = ts.transpileModule(launchFunction.getText(launchSource).replace(/^export /, ""), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
+async function resolveProviderTestLaunch({ profile = "cli-manager-provider", combined, startup = "codex", shell = "cmd" } = {}) {
+  const project = { id: "project", environment_type: "local", cli_tool: "codex" };
+  const provider = { appType: "codex", codexProfileName: profile,
+    configOverrides: ["model_provider='legacy-provider'"], snapshotId: "provider-snapshot" };
+  const extensions = { codexProfileName: combined, codexConfigOverrides: ["skills.bundled.enabled=false"],
+    snapshotId: "extension-snapshot", mcpStatus: "applied", skillStatus: "applied", warnings: [] };
+  const mocks = {
+    useProjectStore: { getState: () => ({ projects: [project] }) },
+    resolveShellForPty: () => shell,
+    resolveProjectStartupCommand: () => startup,
+    prepareProviderLaunchSnapshot: async () => provider,
+    buildNativeProviderLaunchConfigs: () => ({}),
+    resolveExtensionEnvironment: () => ({ environmentKind: shell === "wsl" ? "wsl" : "local" }),
+    extensionCliForProject: () => "codex",
+    prepareProjectExtensionLaunch: async () => extensions,
+    releaseProjectExtensionSnapshot: () => {}, releaseProviderSnapshot: () => {},
+    withCodexConfigOverrides, withCodexProfile, isDirectCodexStartupCommand,
+    prepareStartupCommandForPty: (value) => value, normalizeShellKey: (value) => value,
+    extensionLaunchStatus: () => "applied", buildPtyEnvVars: () => null,
+    shouldEnableHookEnv: async () => false, getCurrentTerminalColors: () => ({}), logWarn: () => {},
+  };
+  const resolve = new Function(...Object.keys(mocks), `${launchCode}; return resolvePtyLaunch;`)(...Object.values(mocks));
+  return resolve({ projectId: "project", cwd: "F:\\test" }, "windows");
+}
+
+test("combined Codex profile is the actual project launch entry", async () => {
+  const result = await resolveProviderTestLaunch({ combined: "cli-manager-project-snapshot" });
+  assert.equal(result.startupCmd, "codex --profile cli-manager-project-snapshot");
+  assert.equal(result.extensionSnapshotId, "extension-snapshot");
+});
+
+test("missing combined profile retains complete provider profile plus extension overrides", async () => {
+  for (const shell of ["cmd", "powershell", "pwsh"]) {
+    const result = await resolveProviderTestLaunch({ shell });
+    assert.equal(result.startupCmd,
+      'codex -c "skills.bundled.enabled=false" --profile cli-manager-provider');
+    assert.equal(result.extensionStatus, "applied");
+    assert.equal(result.extensionSnapshotId, "extension-snapshot");
+  }
+});
+
+test("legacy snapshots still use routing overrides without fabricating a profile", async () => {
+  const result = await resolveProviderTestLaunch({ profile: null });
+  assert.equal(result.startupCmd,
+    'codex -c "model_provider=\'legacy-provider\'" -c "skills.bundled.enabled=false"');
+});
+
+test("explicit startup profiles retain previous provider routing enforcement", async () => {
+  const result = await resolveProviderTestLaunch({ startup: "codex --profile personal" });
+  assert.equal(result.startupCmd,
+    'codex -c "model_provider=\'legacy-provider\'" -c "skills.bundled.enabled=false" --profile personal');
+});
+
+test("WSL extension fallback does not refer to a profile written into the Windows Home", async () => {
+  const result = await resolveProviderTestLaunch({ shell: "wsl" });
+  assert.equal(result.startupCmd,
+    'codex -c "model_provider=\'legacy-provider\'" -c "skills.bundled.enabled=false"');
 });

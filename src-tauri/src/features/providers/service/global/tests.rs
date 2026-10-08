@@ -315,6 +315,136 @@ fn codex_writer_projects_typed_endpoint_and_model() {
 }
 
 #[test]
+// 全部供应商选项必须进入实际配置，保留未知字段但不把认证信息写入 TOML。
+fn codex_writer_preserves_complete_provider_configuration() {
+    let config = r#"
+model = "old"
+model_provider = "custom"
+model_reasoning_effort = "max"
+service_tier = "fast"
+model_instructions_file = 'C:\prompts\do_special.md'
+model_context_window = 272000
+model_auto_compact_token_limit = 240000
+personality = "pragmatic"
+future_setting = ["one", "two"]
+api_key = "root-secret"
+[auth]
+OPENAI_API_KEY = "auth-secret"
+[features]
+api_key_model_discovery = true
+enable_request_compression = true
+fast_mode = true
+[model_providers.custom]
+base_url = "https://old.example/v1"
+model_catalog_url = "https://models.example/v1/models"
+request_max_retries = 7
+stream_idle_timeout_ms = 90000
+api_key = "provider-secret"
+[model_providers.custom.http_headers]
+x-region = "test"
+Authorization = "header-secret"
+[profiles.alt]
+service_tier = "fast"
+[profiles.alt.model_providers.custom]
+api_key = "nested-secret"
+[custom]
+client_secret = "custom-secret"
+ordinary_option = true
+"#;
+    let effective = json!({
+        "config": config, "model": "selected", "base_url": "https://selected.example/v1",
+    });
+    let (bytes, owned) = materialize_codex_config(None, &effective).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let actual: toml::Value = toml::from_str(&text).unwrap();
+    let source: toml::Value = toml::from_str(config).unwrap();
+    for key in [
+        "model_reasoning_effort",
+        "service_tier",
+        "model_instructions_file",
+        "model_context_window",
+        "model_auto_compact_token_limit",
+        "personality",
+        "future_setting",
+        "features",
+    ] {
+        assert_eq!(actual[key], source[key], "lost config: {key}");
+        assert!(owned.contains(&key.to_string()));
+    }
+    assert_eq!(actual["model"].as_str(), Some("selected"));
+    let provider = &actual["model_providers"]["custom"];
+    assert_eq!(
+        provider["base_url"].as_str(),
+        Some("https://selected.example/v1")
+    );
+    for key in [
+        "model_catalog_url",
+        "request_max_retries",
+        "stream_idle_timeout_ms",
+    ] {
+        assert_eq!(provider[key], source["model_providers"]["custom"][key]);
+    }
+    assert_eq!(provider["http_headers"]["x-region"].as_str(), Some("test"));
+    assert!(!text.contains("secret"));
+    assert!(actual.get("auth").is_none());
+    assert_eq!(actual["profiles"]["alt"]["service_tier"].as_str(), Some("fast"));
+    assert_eq!(actual["custom"]["ordinary_option"].as_bool(), Some(true));
+}
+
+#[test]
+// 来源覆盖同名值；未声明的 Home 字段和同表其他选项保留，数组不累加。
+fn codex_writer_merges_provider_options_without_erasing_home() {
+    let before = br#"
+# user config
+model_reasoning_effort = "medium"
+service_tier = "default"
+approval_policy = "on-request"
+[features]
+fast_mode = false
+hooks = true
+[mcp_servers.local]
+command = "local-tool"
+[skills]
+config = [{ path = "old", enabled = true }]
+[projects.'F:\test']
+trust_level = "trusted"
+"#;
+    let effective = json!({"config": r#"
+model_reasoning_effort = "max"
+service_tier = "fast"
+[features]
+fast_mode = true
+[mcp_servers.remote]
+url = "https://mcp.example"
+[skills]
+config = [{ path = "new", enabled = false }]
+"#});
+    let (bytes, _) = materialize_codex_config(Some(before), &effective).unwrap();
+    let text = String::from_utf8(bytes).unwrap();
+    let actual: toml::Value = toml::from_str(&text).unwrap();
+    assert!(text.contains("# user config"));
+    assert_eq!(actual["model_reasoning_effort"].as_str(), Some("max"));
+    assert_eq!(actual["service_tier"].as_str(), Some("fast"));
+    assert_eq!(actual["approval_policy"].as_str(), Some("on-request"));
+    assert_eq!(actual["features"]["fast_mode"].as_bool(), Some(true));
+    assert_eq!(actual["features"]["hooks"].as_bool(), Some(true));
+    assert_eq!(
+        actual["mcp_servers"]["local"]["command"].as_str(),
+        Some("local-tool")
+    );
+    assert_eq!(
+        actual["mcp_servers"]["remote"]["url"].as_str(),
+        Some("https://mcp.example")
+    );
+    assert_eq!(
+        actual["projects"][r"F:\test"]["trust_level"].as_str(),
+        Some("trusted")
+    );
+    assert_eq!(actual["skills"]["config"].as_array().unwrap().len(), 1);
+    assert_eq!(actual["skills"]["config"][0]["path"].as_str(), Some("new"));
+}
+
+#[test]
 // 验证生成配置清除旧顶层连接字段，保留新端点对应的模型供应商表。
 fn codex_writer_removes_legacy_root_endpoint_fields() {
     let before = br#"base_url = "https://old.example"

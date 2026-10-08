@@ -14,7 +14,7 @@ pub(crate) use catalog::{
     reorder_providers, set_provider_enabled, update_provider,
 };
 pub(crate) use common::{get_common_config, set_common_config, validate_common_config};
-pub(crate) use documents::{merge_common_into_settings, update_provider_document};
+pub(crate) use documents::{merge_common_into_settings, merge_toml_items, update_provider_document};
 pub(crate) use dto::{
     CommonConfigDocument, CommonConfigSetInput, ProviderCard, ProviderCreateInput, ProviderDetail,
     ProviderDocumentUpdateInput, ProviderKeyCreateInput, ProviderKeySummary,

@@ -87,6 +87,8 @@ struct SnapshotManifest {
     grok_model: Option<String>,
     #[serde(default)]
     codex_config_overrides: Vec<String>,
+    #[serde(default)]
+    codex_profile_text: Option<String>,
 }
 
 #[derive(Clone)]
@@ -671,22 +673,15 @@ fn codex_config_overrides(provider_id: &str, effective: &Value) -> Result<Vec<St
 }
 
 // 在默认 Codex 配置根写入使用专用密钥环境变量的供应商 profile 文件，并返回 profile 名称。
-fn write_codex_profile(provider_id: &str, effective: &Value) -> Result<String, String> {
+fn write_codex_profile(provider_id: &str, profile_text: &str) -> Result<String, String> {
     let config_dir = home::default_config_root("codex")
         .ok_or_else(|| "provider_snapshot_write_failed".to_string())?;
-    let settings = serde_json::to_string(effective)
-        .map_err(|_| "provider_snapshot_write_failed".to_string())?;
-    let runtime = crate::provider::runtime::parse_runtime_config(provider_id, &settings)
-        .map_err(|_| "provider_snapshot_write_failed".to_string())?;
-    let profile = runtime
-        .profile
-        .with_env_key(CODEX_PROVIDER_ENV_KEY)
-        .map_err(|_| "provider_snapshot_write_failed".to_string())?;
+    let profile_name = crate::provider::runtime::codex_profile_name(provider_id);
     write_snapshot_file(
-        &config_dir.join(format!("{}.config.toml", profile.profile_name)),
-        profile.profile_text.as_bytes(),
+        &config_dir.join(format!("{profile_name}.config.toml")),
+        profile_text.as_bytes(),
     )?;
-    Ok(profile.profile_name)
+    Ok(profile_name)
 }
 
 // 按应用生成 Claude 设置、Codex 覆盖项或 Grok 运行元数据，再写入密钥文件与清单；不生成替代 Home。
@@ -701,6 +696,7 @@ fn write_snapshot_bundle(
     let mut grok_base_url = None;
     let mut grok_model = None;
     let mut config_overrides = Vec::new();
+    let mut codex_profile_text = None;
 
     match provider.app_type.as_str() {
         "claude" => {
@@ -711,6 +707,16 @@ fn write_snapshot_bundle(
         }
         "codex" => {
             config_overrides = codex_config_overrides(&provider.id, effective)?;
+            let runtime = crate::provider::runtime::parse_runtime_config(
+                &provider.id,
+                &effective.to_string(),
+            )?;
+            codex_profile_text = Some(
+                runtime
+                    .profile
+                    .with_env_key(CODEX_PROVIDER_ENV_KEY)?
+                    .profile_text,
+            );
         }
         "grokbuild" => {
             let settings = serde_json::to_string(effective)
@@ -739,6 +745,7 @@ fn write_snapshot_bundle(
             grok_base_url,
             grok_model: grok_model.clone(),
             codex_config_overrides: config_overrides.clone(),
+            codex_profile_text,
         },
     )?;
     Ok((
@@ -776,20 +783,35 @@ pub(crate) async fn resolve(input: ScopeResolveInput) -> Result<ResolvedProvider
     })
 }
 
-// 读取当前 Codex 供应商快照中已校验的非秘密配置覆盖，供项目扩展 profile 合并使用。
+// 读取当前 Codex 供应商快照中已清理的完整配置，供项目扩展 profile 合并使用。
 // 不重新查询数据库，确保项目 profile 与同一次启动注入的供应商快照保持一致。
-pub(crate) fn codex_config_overrides_for_snapshot(
+pub(crate) fn codex_profile_config_for_snapshot(
     snapshot_id: &str,
     provider_id: &str,
-) -> Result<Vec<String>, String> {
+) -> Result<String, String> {
     let (_, manifest) = read_manifest("codex", snapshot_id.trim())?;
+    codex_profile_config_from_manifest(manifest, snapshot_id, provider_id)
+}
+
+// 老快照继续读取原覆盖项；新快照必须使用同一次启动的配置，不能重读已变化的供应商。
+fn codex_profile_config_from_manifest(
+    manifest: SnapshotManifest,
+    snapshot_id: &str,
+    provider_id: &str,
+) -> Result<String, String> {
     if manifest.app_type != "codex"
         || manifest.provider_id != provider_id.trim()
         || manifest.snapshot_id != snapshot_id.trim()
     {
         return Err("provider_snapshot_mismatch".to_string());
     }
-    Ok(manifest.codex_config_overrides)
+    let config = manifest
+        .codex_profile_text
+        .unwrap_or_else(|| manifest.codex_config_overrides.join("\n"));
+    config
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|_| "provider_snapshot_invalid".to_string())?;
+    Ok(config)
 }
 
 // 无显式或项目覆盖时直接返回 None；否则生成快照，Codex 另写默认配置根中的 profile，失败时尽力清理快照目录。
@@ -817,7 +839,9 @@ pub(crate) async fn prepare(
     let (claude_settings_path, generated_home, grok_model, config_overrides) =
         write_snapshot_bundle_or_cleanup(&root, &provider, &effective, &snapshot_id)?;
     let codex_profile_name = if provider.app_type == "codex" {
-        match write_codex_profile(&provider.id, &effective) {
+        let written = codex_profile_config_for_snapshot(&snapshot_id, &provider.id)
+            .and_then(|config| write_codex_profile(&provider.id, &config));
+        match written {
             Ok(name) => Some(name),
             Err(error) => {
                 let _ = fs::remove_dir_all(&root);
@@ -1137,6 +1161,7 @@ mod tests {
         let effective = json!({
             "base_url": "https://api.example.com/v1",
             "model": "gpt-test",
+            "config": "model_reasoning_effort = 'max'\nservice_tier = 'fast'\n[features]\nfast_mode = true\n",
             "auth": {"OPENAI_API_KEY": "test-secret"}
         });
 
@@ -1158,6 +1183,56 @@ mod tests {
         let manifest: SnapshotManifest =
             serde_json::from_slice(&fs::read(root.join("manifest.json")).unwrap()).unwrap();
         assert_eq!(manifest.codex_config_overrides, overrides);
+        let config =
+            codex_profile_config_from_manifest(manifest, "snapshot-1", "provider-1").unwrap();
+        let doc: toml::Value = toml::from_str(&config).unwrap();
+        assert_eq!(doc["model_reasoning_effort"].as_str(), Some("max"));
+        assert_eq!(doc["service_tier"].as_str(), Some("fast"));
+        assert_eq!(doc["features"]["fast_mode"].as_bool(), Some(true));
+        let selected = doc["model_provider"].as_str().unwrap();
+        assert_eq!(
+            doc["model_providers"][selected]["env_key"].as_str(),
+            Some(CODEX_PROVIDER_ENV_KEY)
+        );
+        assert!(!config.contains("test-secret"));
+    }
+
+    #[test]
+    // 旧快照保留兼容行为；身份错误或新快照 TOML 损坏不能静默降级到路由配置。
+    fn codex_snapshot_config_validates_identity_and_legacy_compatibility() {
+        let legacy = json!({
+            "appType": "codex", "providerId": "provider", "activeKeyId": "key",
+            "snapshotId": "snapshot", "codexConfigOverrides": ["model='legacy'"],
+        });
+        let load =
+            |value: serde_json::Value| serde_json::from_value::<SnapshotManifest>(value).unwrap();
+        assert_eq!(
+            codex_profile_config_from_manifest(load(legacy.clone()), "snapshot", "provider")
+                .unwrap(),
+            "model='legacy'"
+        );
+        assert_eq!(
+            codex_profile_config_from_manifest(load(legacy.clone()), "snapshot", "other")
+                .unwrap_err(),
+            "provider_snapshot_mismatch"
+        );
+        assert_eq!(
+            codex_profile_config_from_manifest(load(legacy.clone()), "other", "provider")
+                .unwrap_err(),
+            "provider_snapshot_mismatch"
+        );
+        let mut invalid = legacy.clone();
+        invalid["codexProfileText"] = json!("bad = [");
+        assert_eq!(
+            codex_profile_config_from_manifest(load(invalid), "snapshot", "provider").unwrap_err(),
+            "provider_snapshot_invalid"
+        );
+        let mut complete = legacy;
+        complete["codexProfileText"] = json!("model='current'\nservice_tier='fast'\n");
+        let config =
+            codex_profile_config_from_manifest(load(complete), "snapshot", "provider").unwrap();
+        assert!(config.contains("service_tier='fast'"));
+        assert!(!config.contains("legacy"));
     }
 
     #[test]

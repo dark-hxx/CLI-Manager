@@ -167,9 +167,9 @@ pub(crate) fn merge_json_documents(common: &str, provider: &str) -> Result<Strin
     serde_json::to_string_pretty(&common).map_err(|_| error("provider_config_merge_failed", ""))
 }
 
-// 递归合并普通 TOML 表，其他结构由供应商项整体替换，不逐项合并数组或内联表。
-fn merge_toml_items(common: &mut Item, provider: Item) {
-    if let (Some(common_table), Some(provider_table)) = (common.as_table_mut(), provider.as_table())
+// 普通/内联 TOML 表递归合并，标量和数组由后者整体替换，避免覆盖同表的无关设置。
+pub(crate) fn merge_toml_items(common: &mut Item, provider: Item) {
+    if let (Some(common_table), Some(provider_table)) = (common.as_table_like_mut(), provider.as_table_like())
     {
         let entries = provider_table
             .iter()
@@ -744,8 +744,10 @@ mod tests {
             assert_eq!(preview_doc["model"].as_str(), Some("abc/sdf"));
             assert_eq!(preview_doc["model"].as_str(), written_doc["model"].as_str());
             assert_eq!(preview_doc["custom_setting"].as_integer(), Some(42));
+            assert_eq!(written_doc["custom_setting"].as_integer(), Some(42));
             if common.is_some() {
                 assert_eq!(preview_doc["common_setting"].as_bool(), Some(true));
+                assert_eq!(written_doc["common_setting"].as_bool(), Some(true));
             }
             // 公共合并可能已调整文档前导注释；投影只负责保留传入结果中的格式。
             assert_eq!(
