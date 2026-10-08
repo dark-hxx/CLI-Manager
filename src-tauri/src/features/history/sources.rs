@@ -119,7 +119,7 @@ const SUPPORTED_CLAUDE_CODEX: CapabilitySpec = CapabilitySpec {
     resume: "supported",
     app_open: "planned",
     edit: "planned",
-    delete: "planned",
+    delete: "supported",
     convert_from: "supported",
     convert_to: "supported",
     realtime_stats: "supported",
@@ -207,7 +207,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Gemini CLI",
         aliases: &[],
         location: CONFIG_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".gemini",
     },
     SourceSpec {
@@ -215,7 +218,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "GitHub Copilot CLI",
         aliases: &["copilot-cli"],
         location: SESSION_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".copilot/session-state",
     },
     SourceSpec {
@@ -223,7 +229,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Antigravity",
         aliases: &[],
         location: CONFIG_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".gemini/antigravity-cli",
     },
     SourceSpec {
@@ -262,6 +271,7 @@ const SOURCES: &[SourceSpec] = &[
         capabilities: CapabilitySpec {
             realtime_stats: "supported",
             resume: "supported",
+            delete: "supported",
             ..NATIVE_READONLY_FILE
         },
         default_leaf: ".pi",
@@ -271,7 +281,11 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "OpenCode",
         aliases: &[],
         location: SESSION_DB,
-        capabilities: CapabilitySpec { resume: "supported", ..NATIVE_READONLY_DB },
+        capabilities: CapabilitySpec {
+            resume: "supported",
+            delete: "supported",
+            ..NATIVE_READONLY_DB
+        },
         default_leaf: ".local/share/opencode/opencode.db",
     },
     SourceSpec {
@@ -279,7 +293,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Kiro",
         aliases: &["kiro-cli"],
         location: SESSION_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".kiro",
     },
     SourceSpec {
@@ -287,7 +304,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Cursor",
         aliases: &[],
         location: SESSION_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".cursor/projects",
     },
     SourceSpec {
@@ -295,7 +315,10 @@ const SOURCES: &[SourceSpec] = &[
         default_label: "Cline",
         aliases: &[],
         location: SESSION_ROOT,
-        capabilities: NATIVE_READONLY_FILE,
+        capabilities: CapabilitySpec {
+            delete: "supported",
+            ..NATIVE_READONLY_FILE
+        },
         default_leaf: ".cline",
     },
 ];
@@ -570,6 +593,34 @@ fn environment_for_path(path: &Path) -> HistorySourceEnvironment {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 十二种现有来源显式开放会话删除，通用读取模板不自动获得其他写入权限。
+    #[test]
+    fn descriptors_support_deletion_without_enabling_other_mutations() {
+        let descriptors = history_sources_list_descriptors();
+        assert_eq!(descriptors.len(), 12);
+        for descriptor in descriptors {
+            assert_eq!(
+                descriptor.capabilities.delete, "supported",
+                "{}",
+                descriptor.id
+            );
+            assert_eq!(descriptor.capabilities.edit, "planned", "{}", descriptor.id);
+            let conversion = if matches!(descriptor.id, "claude" | "codex") {
+                "supported"
+            } else {
+                "planned"
+            };
+            assert_eq!(
+                descriptor.capabilities.convert_to, conversion,
+                "{}",
+                descriptor.id
+            );
+        }
+        assert_eq!(FILE_READER.delete, "planned");
+        assert_eq!(NATIVE_READONLY_FILE.delete, "planned");
+        assert_eq!(NATIVE_READONLY_DB.delete, "planned");
+    }
 
     #[test]
     // 验证来源注册表数量与 Kiro 位置类型保持约定。

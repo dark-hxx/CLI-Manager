@@ -12,6 +12,7 @@ import { useWorktreeStore } from "../../projects/api/worktreeStore";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
 import { Portal } from "../../../shared/ui/Portal";
 import { buildHistorySessionChildMap, formatTime } from "../api/historyViewUtils";
+import { getHistoryDeletionBlockReason, historyDeletionErrorKey, type HistoryDeletionPlan } from "../lib/historyDeletion";
 
 interface SessionGroup {
   label: string;
@@ -76,6 +77,7 @@ interface HistoryListPaneProps {
   globalSearchRef: RefObject<HTMLInputElement | null>;
   selectionMode: boolean;
   selectedCount: number;
+  deletionPlan: HistoryDeletionPlan;
   allVisibleSelected: boolean;
   selectedSessionKeys: Set<string>;
   smartTitleInFlightSessionKeys: ReadonlySet<string>;
@@ -355,6 +357,7 @@ export function HistoryListPane({
   globalSearchRef,
   selectionMode,
   selectedCount,
+  deletionPlan,
   allVisibleSelected,
   selectedSessionKeys,
   smartTitleInFlightSessionKeys,
@@ -386,6 +389,7 @@ export function HistoryListPane({
   onStartResize,
 }: HistoryListPaneProps) {
   const { t, language } = useI18n();
+  const bulkDeletionErrorKey = deletionPlan.blockedReason && historyDeletionErrorKey(deletionPlan.blockedReason);
   const [contextMenu, setContextMenu] = useState<SessionContextMenu | null>(null);
   const [collapsedFilterGroups, setCollapsedFilterGroups] = useState<Set<string>>(new Set());
   const [collapsedSessionParents, setCollapsedSessionParents] = useState<Set<string>>(new Set());
@@ -987,10 +991,11 @@ export function HistoryListPane({
               <button
                 type="button"
                 onClick={onDeleteSelected}
-                disabled={selectedCount === 0}
+                disabled={deletionPlan.sessionKeys.length === 0 || deletionPlan.blockedReason !== null}
+                title={bulkDeletionErrorKey ? t(bulkDeletionErrorKey) : undefined}
                 className="ui-btn ui-btn-destructive min-w-0 flex-1 px-1.5 py-0.5 text-[10px]"
               >
-                {t("history.bulk.deleteSelected", { count: selectedCount })}
+                {t("history.bulk.deleteSelected", { count: deletionPlan.blockedReason ? selectedCount : deletionPlan.sessionKeys.length })}
               </button>
             </div>
           </div>
@@ -1032,6 +1037,8 @@ export function HistoryListPane({
                 ? formatSessionListTitle(row.item.displayTitle, t("history.imagePlaceholder"))
                 : "";
             const sessionWorktree = row.type === "session" ? getSessionWorktree(row.item) : null;
+            const deletionBlockReason = row.type === "session" ? getHistoryDeletionBlockReason(row.item) : null;
+            const deletionErrorKey = deletionBlockReason && historyDeletionErrorKey(deletionBlockReason);
             const smartTitlePending = row.type === "session" && (
               row.item.generatedTitle?.state === "pending"
               || smartTitleInFlightSessionKeys.has(row.item.sessionKey)
@@ -1267,9 +1274,10 @@ export function HistoryListPane({
                             onDeleteSession(row.item);
                           }}
                           onKeyDown={(event) => event.stopPropagation()}
-                          className="ui-history-row-delete relative z-10"
+                          disabled={deletionBlockReason !== null}
+                          className="ui-history-row-delete relative z-10 disabled:cursor-not-allowed disabled:opacity-40"
                           aria-label={t("history.deleteSessionNamed", { title: sessionDisplayTitle })}
-                          title={t("history.deleteSession")}
+                          title={deletionErrorKey ? t(deletionErrorKey) : t("history.deleteSession")}
                         >
                           <X size={13} strokeWidth={1.9} />
                         </button>

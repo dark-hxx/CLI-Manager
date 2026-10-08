@@ -1,5 +1,66 @@
 # History Session Contracts
 
+## Scenario: Source-aware session deletion (V1.4.2)
+
+### 1. Scope / Trigger
+
+- Trigger: changing list deletion controls, bulk selection/confirmation, source capabilities, or Store cleanup after source deletion.
+- Goal: displayed eligibility, backend scope, and removed application rows must describe the same operation.
+
+### 2. Signatures
+
+- Shared policy: `src/features/history/lib/historyDeletion.ts`.
+- `getHistoryDeletionBlockReason(session)` returns a stable rejection code or `null`; `assertHistorySessionDeletable` also rejects missing rows.
+- `planHistoryDeletion(selected)` returns `{ sessionKeys, blockedReason }`.
+- `executeHistoryDeletion(keys, getSessions, deleteSession)` returns `{ deletedCount, error }` after whole-batch preflight and sequential execution.
+- `historyDeletedSessionKeys(target, sessions)` identifies the application rows actually removed by the source operation.
+
+### 3. Contracts
+
+- Each of the twelve existing sources explicitly declares supported deletion in `historySources.ts`, matching the backend `history_sources_list_descriptors` registry in `features/history/sources.rs`. Shared reader templates must not automatically grant future readers write permission. Do not change editing/conversion capabilities with deletion support.
+- List controls, single/bulk request handlers, confirmation execution, and Store use the same policy. SSH or `read_only` rejects before snapshot handling; a local favorite snapshot only deletes saved application data and never invokes source deletion.
+- Preserve independent-subagent restrictions. A batch may merge a selected child only when a selected eligible parent's actual backend deletion covers its file. Any other ineligible selected row blocks the entire batch; never silently omit it and report complete success.
+- Recheck every queued key against current Store state before starting a batch. During execution Store checks again; missing rows are errors, not successful no-ops. Real I/O failures stop the queue and report only completed calls.
+- Pi/Gemini/Copilot/Antigravity/Kiro/Cursor/Cline, Kimi/Grok, OpenCode, and snapshots remove only their selected application row. Only the existing Claude/Codex tree path clears actual adjacent `subagents/agent-*.jsonl` rows, with matching source/project. Parent metadata alone does not prove a file was deleted.
+- File comparisons normalize Windows prefixes and WSL host/distro aliases, preserving Linux path case. Other roots/projects, remote rows, and independent snapshot rows must survive cleanup.
+- Invoke `history_delete_session` before deleting `session_meta`, generated titles, and favorite snapshots; source failure leaves these and list/detail/search state unchanged. Keep existing star/edit-audit retention.
+- Confirmation copy distinguishes original records from saved snapshots. Disabled reasons and known mutation errors resolve through the history zh-CN/en-US dictionaries; other I/O diagnostics remain available.
+
+### 4. Validation & Error Matrix
+
+| Input/state | Required result |
+|---|---|
+| Supported local ordinary session | Confirm and invoke source deletion |
+| Future/unsupported reader | Disabled control and Store rejection |
+| SSH/read-only, including a read-only snapshot | No source or metadata deletion |
+| Local saved snapshot | Application cleanup without source IPC |
+| Selected covered Claude/Codex parent and child | One parent operation; clean actual covered rows |
+| Child with only metadata parent or a file-only parent | Reject separate deletion; do not claim it was removed with the parent |
+| A queued row vanishes/becomes read-only before confirmation | Preflight fails before any operation |
+| Second operation fails after one success | Stop; report `1/total` and retain failed/unattempted rows |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Pi deletion removes the selected row and its metadata; a related transcript still on disk remains visible.
+- Base: existing Claude/Codex file-tree deletions clean their actual adjacent child rows.
+- Bad: remove every row with `parent_session_id` after a file-only deletion; refresh then makes the undeleted rows reappear.
+
+### 6. Tests Required
+
+- `scripts/historyDeletion.test.mjs` executes shared policy and the real Store action with mocked IPC/database boundaries: all source capabilities, snapshots/read-only, batch preflight/partial failure, file-scope cleanup, WSL comparison, bilingual errors, success cleanup and failure preservation.
+- Run relevant history regression scripts, `npx tsc --noEmit`, and standalone `npm run check:architecture -- --strict`.
+- Human desktop validation: delete test sessions for all seven sources and refresh, check mixed-source batches and subagents, switch zh-CN/en-US, retain 24-hour time. AI must not start CLI-Manager/Tauri for UI verification.
+
+### 7. Wrong vs Correct
+
+```ts
+// Wrong: a source failure halfway through an unchecked selection is avoidable.
+for (const key of selectedKeys) await deleteSession(key);
+
+// Correct: use the confirmed plan and recheck the entire queue before mutations.
+await executeHistoryDeletion(plan.sessionKeys, () => useHistoryStore.getState().sessions, deleteSession);
+```
+
 ## Scenario: Conversation View and Structured Message Parts
 
 ### 1. Scope / Trigger

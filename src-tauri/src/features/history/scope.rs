@@ -8,6 +8,66 @@ use super::{
 use log::{debug, warn};
 use std::path::{Path, PathBuf};
 
+// 删除使用读取器已有根集合；Cline 的多根支持不扩展编辑/转换的写入边界。
+pub(super) fn validate_session_file_ref_for_deletion(
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    roots: &HistoryRoots,
+) -> Result<SessionFileRef, String> {
+    let source = source.trim().to_lowercase();
+    if source != "cline" {
+        return validate_session_file_ref(file_path, &source, project_key, roots);
+    }
+    let bases = super::resolve_cline_history_roots();
+    resolve_session_file_ref_for_deletion(
+        file_path,
+        &source,
+        project_key,
+        &bases,
+        collect_session_files(Some(&source), roots),
+    )
+}
+
+// 必须落在某个独立合法根并命中相同来源/项目的普通文件，不能信任根的共同父目录。
+pub(super) fn resolve_session_file_ref_for_deletion(
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    history_bases: &[PathBuf],
+    candidates: Vec<SessionFileRef>,
+) -> Result<SessionFileRef, String> {
+    if project_key.trim().is_empty() {
+        return Err("invalid_project_key".to_string());
+    }
+    let requested = PathBuf::from(file_path);
+    if !is_supported_session_file(&requested) || !requested.is_file() {
+        return Err("invalid_session_file".to_string());
+    }
+    let requested = requested
+        .canonicalize()
+        .map_err(|_| format!("Session file not found: {file_path}"))?;
+    let bases = history_bases
+        .iter()
+        .filter_map(|base| base.canonicalize().ok())
+        .filter(|base| base.is_dir())
+        .collect::<Vec<_>>();
+    if bases.is_empty() {
+        return Err("history_source_not_found".to_string());
+    }
+    let base = bases
+        .iter()
+        .find(|base| path_within_history_scope(&requested, base))
+        .ok_or_else(|| "session_file_outside_history_scope".to_string())?;
+    resolve_session_file_ref(
+        file_path,
+        &source.trim().to_lowercase(),
+        project_key.trim(),
+        base,
+        candidates,
+    )
+}
+
 // 规范化来源和历史根目录，再用目录清单验证请求路径与项目身份。
 pub(crate) fn validate_session_file_ref(
     file_path: &str,

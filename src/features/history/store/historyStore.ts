@@ -6,7 +6,7 @@ import { createPerfMarker, logWarn } from "../../../shared/platform/logger";
 import { resolveHistoryProjectPath } from "../api/historyProjectPaths";
 import { buildSshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs } from "../api/historyPathArgs";
-import { inferSubagentParentSessionId } from "../lib/historySubagents";
+import { assertHistorySessionDeletable, historyDeletedSessionKeys } from "../lib/historyDeletion";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
 import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../lib/historyTitle";
 import { useProjectStore } from "../../projects/api/projectStore";
@@ -1077,13 +1077,9 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
 
   deleteSession: async (sessionKey) => {
     const target = get().sessions.find((item) => item.sessionKey === sessionKey);
-    if (!target) return;
-    if (target.session_ref?.transportKind === "ssh" || target.read_only) {
-      throw new Error("history_remote_read_only");
-    }
+    assertHistorySessionDeletable(target);
 
-    // 后端删除会话时会连带删除其 subagents/ 子转录，本地状态需同步移除对应子行。
-    const removedSessionKeys = new Set([sessionKey]);
+    // 原始来源删除成功后才清理应用元数据；收藏快照不调用文件删除命令。
     if (!target.favoriteSnapshot) {
       await invoke("history_delete_session", {
         filePath: target.file_path,
@@ -1091,16 +1087,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         source: target.source,
         projectKey: target.project_key,
       });
-      for (const item of get().sessions) {
-        if (
-          item.source === target.source &&
-          item.project_key === target.project_key &&
-          inferSubagentParentSessionId(item) === target.session_id
-        ) {
-          removedSessionKeys.add(item.sessionKey);
-        }
-      }
     }
+    const removedSessionKeys = historyDeletedSessionKeys(target, get().sessions);
 
     const db = await getDb();
     for (const key of removedSessionKeys) {

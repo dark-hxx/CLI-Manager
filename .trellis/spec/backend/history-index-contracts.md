@@ -471,6 +471,82 @@ let deleted = delete_session_tree_with_backup_root(&file_ref, &backups_dir)?;
 let plan = build_file_restore_plan(&file_ref.path, &backups_dir, Some(&file_ref.source));
 ```
 
+## Scenario: File-only history deletion for native readers (V1.4.2)
+
+### 1. Scope / Trigger
+
+- Trigger: extending source deletion, changing `history_delete_session`, deletion path validation, backup allocation, or matching frontend cleanup.
+- Root cause: the seven readers were listed as sessions but rejected by the deletion dispatcher; UI eligibility and source capability metadata did not enforce the backend boundary.
+
+### 2. Signatures
+
+- IPC remains `history_delete_session(file_path, claude_config_dir, codex_config_dir, grok_session_root, kimi_config_dir, source, project_key) -> Result<(), String>`.
+- `scope::validate_session_file_ref_for_deletion(...) -> Result<SessionFileRef, String>` reuses ordinary source validation except for Cline's existing multiple roots.
+- `deletion::delete_session_file_with_backup_root(file_ref, backups_dir) -> Result<usize, String>` accepts exactly one validated ordinary transcript.
+- `deletion::delete_session_files_with_backup_root(file_ref, paths, backups_dir)` owns backup/delete/rollback for an explicit path list; existing tree deletion still discovers and orders its own targets.
+
+### 3. Contracts
+
+| Source | New deletion unit |
+|---|---|
+| Pi | Selected `.pi/agent/sessions/**/*.jsonl` |
+| Gemini | Selected `.gemini/tmp/**/session-*.json` |
+| Copilot | Selected `session-state/**/events.jsonl` |
+| Antigravity | Selected `brain/<id>/.system_generated/logs/transcript.jsonl` |
+| Kiro | Selected workspace session JSON, never `sessions.json` |
+| Cursor | Selected `agent-transcripts/<dir>/<id>.jsonl` |
+| Cline | Selected `api_conversation_history.json` from an already supported root |
+
+- The seven sources never call `collect_subtask_session_file_refs` to choose deletion targets. Keep their parent directories, adjacent `subagents`, companion files, third-party shared indexes, and databases.
+- Keep deletion capability metadata aligned in both `features/history/sources.rs` (`history_sources_list_descriptors`) and `src/shared/lib/historySources.ts`: the twelve existing sources explicitly support deletion, while generic reader templates retain planned deletion. Other capability fields do not change with this feature.
+- Claude/Codex keep their existing adjacent-subagent file-tree deletion; Kimi keeps its session directory/index tombstone handling, Grok its session-directory handling, and OpenCode its target-session SQLite transaction.
+- Cline canonicalizes each root from `resolve_cline_history_roots()` separately. A requested file must lie within one actual root and match a current source/project/path candidate; their common parent is not a trusted scope. Other mutation validators and source discovery locations do not expand.
+- Every file snapshot reserves an exclusive mutation directory with a UUID suffix before writing its `files/` artifact and `manifest.json`. Identical timestamp/operation/file-stem prefixes cannot share a manifest. Manifest schema, old backup discovery, and retention rules remain unchanged.
+- Check source manual-recovery locks before deletion. Back up all explicit targets before removing any; on an I/O failure copy previously removed targets back from their exact snapshots. A restore failure retains the existing manual-recovery error/lock behavior.
+- Invalidate derived history caches only after successful source deletion. Never replace a rejected deletion with hiding catalog rows.
+- Existing restore-plan UI still requires the original file to exist and retains its process guard. Deletion rollback copies its selected snapshots directly; this change does not add a missing-file restoration API.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Unknown source | `unsupported_history_mutation_source`; no removal |
+| Empty project | `invalid_project_key` |
+| Wrong source/project or unindexed transcript | `session_file_not_indexed` |
+| Cline request escapes all canonical roots, including through a link | `session_file_outside_history_scope` |
+| Directory or database substituted for a file-only transcript | Reject before file deletion |
+| Direct `subagents/agent-*.jsonl` deletion | `history_subagent_mutation_not_allowed` |
+| Source manual-recovery lock | `history_source_manual_recovery_required` |
+| Backup creation fails | Leave all original targets intact |
+| Removal fails after prior removals | Restore prior targets, return `failedRolledBack: ...`; restore failure returns `manualRecoveryRequired: ...` |
+| Two same-named files share a backup prefix | Keep two independent discoverable manifests and original-path mappings |
+
+### 5. Good / Base / Bad Cases
+
+- Good: deleting one Copilot `events.jsonl` preserves both a sibling session and adjacent metadata/subagents.
+- Base: existing Claude/Codex deletion still deletes exactly the target set collected by its tree helper; old backup manifests still load.
+- Bad: send the seven new sources through the generic tree collector or delete an entire task/cache directory based on the selected transcript.
+- Bad: use hashed artifact names in a shared mutation directory; the single manifest can still overwrite an earlier file's mapping.
+
+### 6. Tests Required
+
+- `tests/deletion.rs`: all seven native layouts, two sessions per source, rescan after deletion, preserved companions/shared data, backup bytes, Cline multiple roots, wrong identity, unindexed/non-file substitutes, link escape, backup failure, and Windows locked-file rollback.
+- `backup.rs` tests: identical fixed prefixes yield independent manifests/restoration; legacy and current snapshots coexist; all seven sources honor recovery locks.
+- `sources.rs` tests: public descriptors expose deletion for all twelve sources while preserving editing/conversion status and the conservative generic templates.
+- Run `cargo test --manifest-path src-tauri/Cargo.toml --lib history` and `cargo check`; frontend cleanup assertions live in `scripts/historyDeletion.test.mjs`.
+
+### 7. Wrong vs Correct
+
+```rust
+// Wrong: discovers unrelated adjacent subagents for a file-only reader.
+delete_session_tree(&file_ref)?;
+
+// Correct: dispatcher chooses the explicit single-transcript boundary.
+if is_single_file_delete_source(&source) {
+    delete_session_file(&file_ref)?;
+}
+```
+
 ## Scenario: OpenCode SQLite history deletion
 
 ### 1. Scope / Trigger

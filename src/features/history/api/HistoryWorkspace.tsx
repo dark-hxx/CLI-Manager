@@ -12,7 +12,9 @@ import { useWorktreeStore } from "../../projects/api/worktreeStore";
 import { useExternalSessionSyncStore } from "./externalSessionSyncStore";
 import { useI18n } from "../../../shared/i18n/index";
 import { getHistoryPathArgs } from "./historyPathArgs";
-import { inferSubagentParentSessionId } from "../lib/historySubagents";
+import {
+  executeHistoryDeletion, getHistoryDeletionBlockReason, historyDeletionErrorKey, planHistoryDeletion,
+} from "../lib/historyDeletion";
 import {
   findLocalHistoryCwdProjects,
   matchesHistoryProjectSource,
@@ -547,6 +549,10 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   );
 
   const hasMoreVisibleSessions = visibleSessionCount < filteredSessions.length;
+  const selectedDeletionPlan = useMemo(
+    () => planHistoryDeletion(filteredSessions.filter((item) => selectedSessionKeys.has(item.sessionKey))),
+    [filteredSessions, selectedSessionKeys]
+  );
   const hasMoreSessions = hasMoreVisibleSessions || backendHasMoreSessions;
   const loadMoreSessionMode = hasMoreVisibleSessions ? "local" : "backend";
 
@@ -1104,39 +1110,31 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     [openSession]
   );
 
+  // 确认后基于最新 Store 预检，避免对已失效或变为只读的选项执行部分删除。
   const confirmDeleteSession = useCallback(() => {
     if (!deleteIntent) return;
     const intent = deleteIntent;
     void (async () => {
-      let deletedCount = 0;
-      try {
-        if (intent.type === "single") {
-          await deleteSession(intent.session.sessionKey);
-          toast.success(t("history.toast.deleteSuccess"));
-          return;
+      const keys = intent.type === "single" ? [intent.session.sessionKey] : intent.sessionKeys;
+      const { deletedCount, error } = await executeHistoryDeletion(
+        keys, () => useHistoryStore.getState().sessions, deleteSession,
+      );
+      if (error !== null) {
+        const errorKey = historyDeletionErrorKey(error);
+        const description = errorKey ? t(errorKey) : String(error);
+        if (intent.type === "bulk" && deletedCount > 0) {
+          toast.error(t("history.toast.bulkDeletePartialFailed", { deleted: deletedCount, total: keys.length }), { description });
+        } else {
+          toast.error(t(intent.type === "single" ? "history.toast.deleteFailed" : "history.toast.bulkDeleteFailed"), { description });
         }
-
-        for (const sessionKey of intent.sessionKeys) {
-          await deleteSession(sessionKey);
-          deletedCount += 1;
-        }
-
+      } else if (intent.type === "single") {
+        toast.success(t("history.toast.deleteSuccess"));
+      } else {
         setSelectionMode(false);
         setSelectedSessionKeys(new Set());
         toast.success(t("history.toast.bulkDeleteSuccess", { count: deletedCount }));
-      } catch (err) {
-        if (intent.type === "bulk" && deletedCount > 0) {
-          toast.error(t("history.toast.bulkDeletePartialFailed", { deleted: deletedCount, total: intent.sessionKeys.length }), {
-            description: String(err),
-          });
-          return;
-        }
-        toast.error(intent.type === "single" ? t("history.toast.deleteFailed") : t("history.toast.bulkDeleteFailed"), {
-          description: String(err),
-        });
-      } finally {
-        setDeleteIntent(null);
       }
+      setDeleteIntent(null);
     })();
   }, [deleteIntent, deleteSession, t]);
 
@@ -1172,24 +1170,34 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     setSelectedSessionKeys(new Set());
   }, []);
 
-  const handleRequestBulkDelete = useCallback(() => {
-    if (selectedSessionKeys.size === 0) return;
-    const selectedItems = filteredSessions.filter((item) => selectedSessionKeys.has(item.sessionKey));
-    if (selectedItems.length === 0) return;
-    // subagent 子会话由后端随父会话连带删除，禁止单独删除，不进入批量删除队列。
-    const sessionKeys = selectedItems.filter((item) => inferSubagentParentSessionId(item) === null).map((item) => item.sessionKey);
-    if (sessionKeys.length === 0) {
-      toast.info(t("history.toast.bulkDeleteSubagentOnly"));
+  // 单条和批量入口均使用与 Store 相同的资格规则及可见提示。
+  const handleRequestDelete = useCallback((session: HistorySessionView) => {
+    const reason = getHistoryDeletionBlockReason(session);
+    const errorKey = reason && historyDeletionErrorKey(reason);
+    if (errorKey) {
+      toast.info(t(errorKey));
       return;
     }
-    setDeleteIntent({ type: "bulk", sessionKeys });
-  }, [filteredSessions, selectedSessionKeys, t]);
+    setDeleteIntent({ type: "single", session });
+  }, [t]);
+
+  const handleRequestBulkDelete = useCallback(() => {
+    const errorKey = selectedDeletionPlan.blockedReason && historyDeletionErrorKey(selectedDeletionPlan.blockedReason);
+    if (errorKey) {
+      toast.info(t(errorKey));
+      return;
+    }
+    if (selectedDeletionPlan.sessionKeys.length === 0) return;
+    setDeleteIntent({ type: "bulk", sessionKeys: selectedDeletionPlan.sessionKeys });
+  }, [selectedDeletionPlan, t]);
 
   const deleteDialogTitle = deleteIntent?.type === "bulk" ? t("history.bulk.confirmDeleteTitle", { count: deleteIntent.sessionKeys.length }) : t("history.deleteSession");
   const deleteDialogMessage = deleteIntent
     ? deleteIntent.type === "bulk"
       ? t("history.bulk.confirmDeleteMessage", { count: deleteIntent.sessionKeys.length })
-      : t("history.confirmDeleteMessage", { title: deleteIntent.session.displayTitle })
+      : t(deleteIntent.session.favoriteSnapshot ? "history.confirmDeleteSnapshotMessage" : "history.confirmDeleteMessage", {
+          title: deleteIntent.session.displayTitle,
+        })
     : "";
 
   const resumeSessionInTerminal = useCallback(
@@ -1379,6 +1387,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
           globalSearchRef={globalSearchRef}
           selectionMode={selectionMode}
           selectedCount={selectedSessionKeys.size}
+          deletionPlan={selectedDeletionPlan}
           allVisibleSelected={allVisibleSelected}
           selectedSessionKeys={selectedSessionKeys}
           smartTitleInFlightSessionKeys={smartTitleInFlightSessionKeys}
@@ -1412,7 +1421,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
           }}
           onGenerateSmartTitle={handleGenerateSmartTitle}
           onClearSmartTitle={handleClearSmartTitle}
-          onDeleteSession={(session) => setDeleteIntent({ type: "single", session })}
+          onDeleteSession={handleRequestDelete}
           onDeleteSelected={handleRequestBulkDelete}
           onOpenHit={(hit) => {
             void openByHit(hit);

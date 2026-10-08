@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use sysinfo::System;
+use uuid::Uuid;
 
 pub const HISTORY_BACKUP_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub const HISTORY_BACKUP_MAX_BYTES: u64 = 1024 * 1024 * 1024;
@@ -133,7 +134,12 @@ pub fn lock_source_mutations(source: &str) -> Result<PathBuf, String> {
 // 检查来源恢复锁，不存在时允许继续变更。
 pub fn ensure_source_mutation_unlocked(source: &str) -> Result<(), String> {
     let root = default_backup_root()?;
-    let lock = mutation_lock_path(&root, source);
+    ensure_source_mutation_unlocked_at_root(&root, source)
+}
+
+// 使用同一锁路径规则检查指定备份根，便于隔离验证恢复锁。
+fn ensure_source_mutation_unlocked_at_root(root: &Path, source: &str) -> Result<(), String> {
+    let lock = mutation_lock_path(root, source);
     if lock.exists() {
         return Err("history_source_manual_recovery_required".to_string());
     }
@@ -197,6 +203,22 @@ fn mutation_backup_dir(
     id: &str,
 ) -> PathBuf {
     backups_dir.join(source).join(source_instance_id).join(id)
+}
+
+// 排他创建独立变更目录，避免同毫秒、同文件名的快照覆盖彼此清单。
+fn reserve_mutation_backup_dir(
+    backups_dir: &Path,
+    source: &str,
+    id_prefix: &str,
+) -> Result<PathBuf, String> {
+    let id = format!("{id_prefix}-{}", Uuid::new_v4());
+    let directory = mutation_backup_dir(backups_dir, source, "default", &id);
+    let parent = directory
+        .parent()
+        .ok_or_else(|| "history_backup_invalid_manifest_path".to_string())?;
+    fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    fs::create_dir(&directory).map_err(|err| err.to_string())?;
+    Ok(directory)
 }
 
 // 使用原路径摘要及扩展名生成快照文件名。
@@ -494,7 +516,7 @@ fn create_file_backup_snapshot_with_limit(
     }
     cleanup_backup_root(backups_dir)?;
     let id = format!("{}-{mutation_kind}-{source_session_id}", now_millis());
-    let mutation_dir = mutation_backup_dir(backups_dir, source, "default", &id);
+    let mutation_dir = reserve_mutation_backup_dir(backups_dir, source, &id)?;
     let files_dir = mutation_dir.join("files");
     fs::create_dir_all(&files_dir).map_err(|err| err.to_string())?;
     let backup = files_dir.join(safe_backup_file_name(session_path));
@@ -861,6 +883,86 @@ mod tests {
         assert!(manifest.exists());
         let status = backup_status_for_file(&session, &backups);
         assert!(status.has_backup);
+    }
+
+    // 相同时间/操作/文件名的目录前缀必须保留两份可独立发现和恢复的清单。
+    #[test]
+    fn history_backup_same_prefix_preserves_independent_manifests() {
+        let temp = tempfile::tempdir().unwrap();
+        let backups = temp.path().join("backups");
+        let mut manifests = Vec::new();
+        let mut sessions = Vec::new();
+        for (directory, content) in [("first", "first original"), ("second", "second original")] {
+            let session = temp.path().join(directory).join("events.jsonl");
+            write_text(&session, content);
+            let mutation =
+                reserve_mutation_backup_dir(&backups, "copilot", "1000-sessionDelete-events")
+                    .unwrap();
+            let backup = mutation.join("files").join(safe_backup_file_name(&session));
+            fs::create_dir(backup.parent().unwrap()).unwrap();
+            fs::copy(&session, &backup).unwrap();
+            manifests.push(
+                write_file_manifest(&backup, &session, "copilot", "events", "sessionDelete")
+                    .unwrap(),
+            );
+            write_text(&session, "changed");
+            sessions.push((session, content));
+        }
+        assert_ne!(manifests[0], manifests[1]);
+        assert_eq!(list_file_restore_candidates(&backups).len(), 2);
+        for (session, content) in sessions {
+            assert!(backup_status_for_file(&session, &backups).has_backup);
+            restore_file_backup(&session, &backups, None).unwrap();
+            assert_eq!(fs::read_to_string(session).unwrap(), content);
+        }
+    }
+
+    // 新快照目录与旧版平铺备份可以共存，旧备份仍可发现和恢复。
+    #[test]
+    fn history_backup_keeps_legacy_snapshot_compatible() {
+        let temp = tempfile::tempdir().unwrap();
+        let backups = temp.path().join("backups");
+        let legacy = temp.path().join("legacy/events.jsonl");
+        let current = temp.path().join("current/events.jsonl");
+        write_text(&legacy, "legacy original");
+        write_text(&current, "current original");
+        let backup = backup_file_path(&legacy, &backups);
+        write_text(&backup, "legacy original");
+        write_file_manifest(&backup, &legacy, "copilot", "events", "sessionDelete").unwrap();
+        create_file_backup_snapshot(&current, &backups, "copilot", "events", "sessionDelete")
+            .unwrap();
+        assert_eq!(list_file_restore_candidates(&backups).len(), 2);
+        for session in [&legacy, &current] {
+            write_text(session, "changed");
+            restore_file_backup(session, &backups, None).unwrap();
+        }
+        assert_eq!(fs::read_to_string(legacy).unwrap(), "legacy original");
+        assert_eq!(fs::read_to_string(current).unwrap(), "current original");
+    }
+
+    // 每种新增来源都服从独立恢复锁，不影响其他来源，测试不接触默认备份根。
+    #[test]
+    fn history_backup_recovery_locks_cover_new_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        for source in [
+            "pi",
+            "gemini",
+            "copilot",
+            "antigravity",
+            "kiro",
+            "cursor",
+            "cline",
+        ] {
+            assert!(ensure_source_mutation_unlocked_at_root(temp.path(), source).is_ok());
+            let lock = mutation_lock_path(temp.path(), source);
+            write_text(&lock, "manualRecoveryRequired");
+            assert_eq!(
+                ensure_source_mutation_unlocked_at_root(temp.path(), source).unwrap_err(),
+                "history_source_manual_recovery_required"
+            );
+            assert!(ensure_source_mutation_unlocked_at_root(temp.path(), "claude").is_ok());
+            fs::remove_file(lock).unwrap();
+        }
     }
 
     #[test]
