@@ -14,14 +14,12 @@ Fix complete Codex configuration propagation and verify 1.4.1 NSIS.
 
 ## Acceptance Criteria
 
-- [ ] reasoning、service_tier、instructions、features、嵌套传输参数、新增未知配置保留。
-- [ ] 配置预览与实际生成在上述字段上一致，明确模型/端点投影仍优先。
-- [ ] 组合 profile 不出现重复键，保留非覆盖字段；旧快照兼容。
-- [ ] 定向 Rust/前端测试、类型与严格架构检查通过。
-- [ ] 提交代码，生成可核对的 1.4.1 NSIS 包及验证记录。
+- [x] reasoning、service_tier、instructions、features、嵌套传输参数、新增非凭据配置保留。
+- [x] 配置预览与实际生成在上述字段上一致，明确模型/端点投影仍优先。
+- [x] 组合 profile 不出现重复键，保留非覆盖字段；旧快照兼容。
+- [x] 定向 Rust/前端测试、类型与严格架构检查通过。
+- [x] 提交代码，生成可核对的 1.4.1 NSIS 包及验证记录。
 
 ## Notes
 
-- Keep `prd.md` focused on requirements, constraints, and acceptance criteria.
-- Lightweight tasks can remain PRD-only.
-- For complex tasks, add `design.md` for technical design and `implement.md` for execution planning before `task.py start`.
+- 特殊启动兼容范围及安装版人工验收见 verification.md；不把自动测试通过等同于用户环境已验证。

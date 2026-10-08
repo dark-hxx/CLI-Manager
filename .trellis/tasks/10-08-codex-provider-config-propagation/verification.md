@@ -29,4 +29,8 @@
 ## 发布
 
 - 修复代码提交后，复用 local 缓存运行 `npm run tauri:build:local -- --bundles nsis --ci`。
-- 包路径及摘要待构建完成填写；不推送远程。不修改生产优化/签名配置。
+- 修复提交 `7e3d5dce`；上述构建命令退出码 0，桌面/Web 生产构建与 Rust release 编译通过，生成 1 个 NSIS 包，没有构建 MSI。未推送远程，未修改生产优化/签名配置。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.1_x64-setup.exe`，29,963,606 字节；时间 `2026-10-08 19:50:38 +08:00`。
+- SHA256：`B007B33E9F1DE45443539068D5F4A421693BA46BA32650D52958BE10C9ACCAC2`。
+- 主程序及 Codex proxy、PTY daemon、Web daemon 均为本次编译产物；旧 NSIS 包保留为同目录 `CLI-Manager_1.4.1_x64-setup.before-config-fix.exe`，需要时可回滚程序版本（不撤销用户新应用的配置）。
+- 构建警告仅为现有大前端 chunk、macOS bundle identifier 建议及 Windows linker 信息，无失败；未启动安装程序或用户应用。
