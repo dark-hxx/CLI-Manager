@@ -790,7 +790,7 @@ CLI-Manager is dual-licensed:
 - **Open source**: [AGPL-3.0-or-later](LICENSE). Companies and individuals may use, study, modify, distribute, and provide network access to CLI-Manager under the AGPL terms.
 - **Commercial**: Proprietary integration, closed-source modifications, internal productization where AGPL obligations are not acceptable, commercial redistribution, or hosted/managed offerings under proprietary terms require a separate commercial license. See [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md).
 
-Copyright (c) 2026 Chenyme. See [NOTICE](NOTICE).
+Copyright © 2026 dark-hxx. See [NOTICE](NOTICE).
 
 Ordinary use of the unmodified application does not require a commercial license. Open-source use that complies with AGPL-3.0-or-later does not require a commercial license.
 
