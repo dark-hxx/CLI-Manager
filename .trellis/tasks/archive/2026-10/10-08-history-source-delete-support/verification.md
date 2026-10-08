@@ -78,6 +78,7 @@ node --test $historyRegressionFiles scripts/cliArgsHistory.test.mjs scripts/kimi
 
 ## 交付状态
 
+- 工作提交：`14e9de2e`（未使用恢复入口清理）、`70ea97ea`（历史来源删除支持）；归档与会话日志作为后续记录提交。
 - `CHANGELOG.md` 的 V1.4.2 条目、`docs/功能清单.md` 的历史/来源/安全及 Worktree 条目、前后端历史契约已同步。
 - 告警处理开始时 `master` 相对已配置的 `origin/master` 为 0/0；用户已授权本次提交和推送 `origin/master`，未授权版本发布。
 - 本次提交仅包含任务相关改动；规则文件、二维码、README/许可说明等其他并行改动独立保留。提交后按 Trellis 流程归档当前任务并记录会话。
