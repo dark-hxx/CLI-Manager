@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 130
-- **Last Active**: 2026-10-08
+- **Total Sessions**: 131
+- **Last Active**: 2026-10-09
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~40 | Active |
+| `journal-3.md` | ~61 | Active |
 | `journal-2.md` | ~1975 | Archived |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 131 | 2026-10-09 | 修复 Codex Hook 串终端与实时统计 | `d1c0689e` | `master` |
 | 130 | 2026-10-08 | V1.4.2 历史删除补齐与编译告警清理 | `14e9de2e`, `70ea97ea` | `master` |
 | 129 | 2026-10-08 | Codex Shift 方向键修复与项目菜单图标 | `b7eb8008`, `1f7b5020` | `master` |
 | 128 | 2026-10-08 | PR 276 Skills 扫描修复与性能验证 | `0eed48b0`, `f78bb83d` | `pr-276-review-fixes` |

@@ -38,3 +38,24 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 131: 修复 Codex Hook 串终端与实时统计
+
+**Date**: 2026-10-09
+**Task**: 修复 Codex Hook 串终端与实时统计
+**Branch**: `master`
+
+### Summary
+
+使用 --no-daemon 隔离 Codex 多终端 Hook；桥接启用时注入当前实例回调地址；按精确 Codex rollout 读取冷索引下的实时消息、Token 和模型统计。78 个前端定向测试、266 个 Rust 历史测试、22 个统计/预览测试、cargo check、tsc 与严格架构检查通过。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d1c0689e` | (see git log) |
+
+### Status
+
+[OK] **Completed**
