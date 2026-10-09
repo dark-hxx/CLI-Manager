@@ -28,6 +28,18 @@ SSH required capability:
 
 `AgentCapabilityCommandRequest` flattens the shared request and adds optional `wslDistroName`, `sshConsumerId`, and structured `sshLaunch`. The shared request fields are `terminalSessionId`, `cliSessionId`, `agent`, `environment`, `cwd`, optional `configRoot`, `launchArgs`, optional `baselineConfigFingerprint`, and bounded `runtimeEvidence`.
 
+Frontend WSL target resolver:
+
+~~~ts
+declare function resolveWslCapabilityLocation(input: {
+  hookDistroName?: string | null;
+  sessionCwd?: string | null;
+  projectPath?: string | null;
+  configRoot?: string | null;
+  boundSessionFilePath?: string | null;
+}): { distroName: string | null; cwd: string | null };
+~~~
+
 ### 3. Contracts
 
 - A request is valid only for an explicit non-empty terminal ID and the exact Hook-bound `cliSessionId`. The frontend must not substitute the latest project history session.
@@ -40,7 +52,9 @@ SSH required capability:
 - TOML configuration input is a complete document, not an individual TOML value. With `toml 0.9`, parse it through `toml::from_str::<toml::Value>()` (or `str::parse::<toml::Table>()` and wrap the table); `str::parse::<toml::Value>()` uses `ValueDeserializer` and falsely rejects ordinary top-level assignments and leading comments.
 - Local inspection uses canonical local directories. WSL inspection uses fixed `wsl.exe --exec` reads and never opens the WSL UNC path directly. SSH inspection uses only the negotiated SSH Agent RPC and never falls back to local paths.
 - The WSL request must carry a guest-side identity: `wslDistroName` is taken from the Hook-reported `WSL_DISTRO_NAME` (persisted on the terminal session, `resolveWslCapabilityLocation`), with WSL UNC path inference only as fallback, and `cwd` must be the guest Linux form. Windows drive paths are translated (`F:\x` → `/mnt/f/x`) and OSC 7 host-prefixed paths are reduced to the guest path (`//<hostname>/home/x` → `/home/x`); an unresolvable cwd is passed through unchanged so the backend returns `agent_capability_wsl_cwd_invalid` instead of silently scanning a wrong directory.
-- Frontend cache and request-generation keys include terminal, CLI session, Agent, environment identity, cwd, and config-root identity. Scope changes discard stale responses. Deep check marks active MCPs `checking` while the bounded probe is in flight.
+- WSL Hook identity must survive its actual producer boundary: Claude/Codex/Grok invoke the Windows `cli-manager.exe` through interop, so PTY launch declares `WSL_DISTRO_NAME/w` in `WSLENV` even though the host environment map has no distro value. Only that managed entry is normalized (one entry, no `/u`, `/p`, or `/l` flags); unrelated entries remain intact. Pi/OpenCode native HTTP producers read their own `process.env.WSL_DISTRO_NAME` and send a trimmed `wslDistroName` or null. Never substitute a host/default distro. Existing PTY/daemon processes must be replaced after upgrade; installed native extensions must be reinstalled/reloaded.
+- An older Hook/PTY may lack distro metadata while exact-session history already resolves to a WSL UNC file. After Hook identity and terminal/project/config-root UNC inference, `resolveWslCapabilityLocation` may use `boundSessionFilePath` solely to recover the distro. Its caller must first require a non-empty bound CLI ID, `boundSession.session_id === cliSessionId`, and `boundSession.source === agent`; use that same filtered detail for MCP evidence. Normal and extended `\\?\UNC\wsl.localhost\...` paths reuse `parseWslPath`. Never use the history file's directory as cwd, substitute project-latest history, or activate WSL routing for a local/SSH terminal.
+- Frontend cache and request-generation keys include terminal, CLI session, Agent, environment identity, cwd, and config-root identity. Scope changes discard stale responses. A distro recovered when exact history arrives changes the existing scope key and triggers the normal inspect path. Deep check marks active MCPs `checking` while the bounded probe is in flight.
 - The summary card reuses the shared CLI brand icon and terminal-panel theme tokens. MCP and Skills summaries are separate keyboard-focusable triggers that set the controlled detail tab before opening the modal. Detail rows keep metadata in a `min-width: 0` flexible column and the status badge non-shrinking so long descriptions or paths cannot push state information outside the viewport.
 - OpenCode local binding is a marker-owned global plugin. Install may create or replace only the marker-owned `cli-manager-hook.js`; an unowned same-name file is `conflict`. The plugin reports `SessionStart`, `UserPromptSubmit`, `Stop`, and `StopFailure`, and missing callback environment is a silent no-op.
 - SSH Agent protocol `1.11` advertises `agentCapabilitiesV1`. Missing capability produces an `upgradeRequired` snapshot; it does not downgrade to local inspection.
@@ -54,6 +68,10 @@ SSH required capability:
 | Empty/control-character terminal or CLI session ID | Stable `agent_capability_*_invalid`; no scan or process launch. |
 | Local cwd/config root is not an existing canonical directory | Stable `agent_capability_*_unavailable`. |
 | WSL distro is missing/mismatched or cwd is not a valid guest path | Stable `agent_capability_wsl_*` error; the frontend supplies the Hook-reported distro and a converted guest cwd, so this fires only when neither the Hook nor any path identifies the environment. |
+| Windows-path project starts a new WSL terminal | Guest distro returns through interop; absence of a host-side distro value must not suppress the WSLENV declaration. |
+| Old WSL Hook has no distro, Windows-path project, exact same-Agent history file is WSL UNC | Recover the file's distro for inspect/probe; convert the project/Worktree cwd to Linux and preserve existing identity precedence. |
+| History is absent, belongs to another session/Agent, or has no WSL UNC source | Do not manufacture identity; another session's history cannot supply either distro or MCP evidence. |
+| Pi/OpenCode native Hook runs in WSL or locally | Each lifecycle payload carries the current guest distro or null; no hardcoded/default identity. |
 | SSH launch/consumer context is absent | `agent_capability_ssh_context_required`. |
 | SSH Agent lacks `agentCapabilitiesV1` | Snapshot `bridgeStatus=upgradeRequired`; no local fallback. |
 | Config is unreadable, oversized, or malformed | Safe diagnostic code; no config content in the response. |
@@ -71,6 +89,8 @@ SSH required capability:
 
 - Good: the active Codex session has one exact-session successful `mcp:docs` event; the card shows that configured server active and healthy while another static server remains unknown.
 - Good: WSL and SSH scans execute in their own environments and return only relative source labels.
+- Good: Ubuntu and Debian tabs report their own identity even when both work in `/mnt/f/project`; unrelated WSLENV flags survive repeated launch-env normalization.
+- Good: an old Codex Hook binds a session whose exact rollout is in Ubuntu's extended UNC source; diagnostics uses Ubuntu and the active Worktree's Linux cwd without reinstalling shared Hook commands.
 - Good: user and project Codex `config.toml` documents containing top-level keys, comments, and `[mcp_servers.*]` tables parse without diagnostics.
 - Good: Codex JSON marks authenticated and unauthenticated records healthy/error by exact server name while an OAuth-unsupported stdio record remains active/unknown.
 - Good: Pi MCP Adapter discovers a user `mcp.json` server and a project `.pi/mcp.json` override; the active result is shown with `unknown` health without starting either server.
@@ -78,6 +98,7 @@ SSH required capability:
 - Base: a disabled server remains visible in details but is excluded from active and health totals.
 - Base: Pi has no readable MCP Adapter source or exact-session evidence; the card keeps the observability diagnostic instead of inventing an empty MCP list.
 - Bad: mark every parsed MCP entry healthy, inspect `~/.codex` on the desktop for an SSH terminal, or bind the card to the newest project session.
+- Bad: read the previous Tab's file path before checking its Agent and session ID, or replace an explicit Hook distro with a historical file's distro.
 - Bad: apply generic `enabled` parsing to Pi Adapter JSON and ignore its `disabled: true` flag.
 
 ### 6. Tests Required
@@ -88,11 +109,28 @@ SSH required capability:
 - Desktop Rust: boundary validation, OpenCode marker ownership/source admission, fixed probe timeout paths, and SSH upgrade mapping.
 - SSH Agent: request environment validation, `agentCapabilitiesV1` advertisement, protocol minor identity, and full Agent tests.
 - Frontend Node/TypeScript: five-Agent resolution, WSL distro resolution (Hook-reported distro preferred, guest cwd normalization for drive and OSC host-prefixed paths), MCP evidence extraction, exact OpenCode hook source binding, stable error redaction, additive settings migration, and `npx tsc --noEmit`.
+- Producer regressions: `cargo test wsl_env_forwarding --lib` asserts guest-only forwarding with no host distro key, managed flag normalization, idempotence, and preservation of unrelated variables. `node --test scripts/wslHookIdentity.test.mjs` executes Pi/OpenCode managed sources with isolated process/fetch and checks all lifecycle payloads for Ubuntu, Debian, absent and blank identity. Consumer-only fixtures are insufficient to prove WSL interop works.
+- Request regressions: `scripts/agentCapabilities.test.mjs` executes the actual React Hook request builder with mocked IPC/SSH boundaries. Assert inspect/probe distro and Linux cwd for missing Hook identity plus normal/extended UNC exact history; mismatched Agent/session and unbound terminals cannot borrow identity/evidence; explicit identity, Worktree, local and SSH routes retain their behavior. SSR does not run auto-load effects or prove real guest interop; retain the manual checks below.
 - Manual: switch zh-CN/en-US, verify keyboard modal/tabs/filters, local and WSL sessions (Windows-path project with `shell=wsl`, WSL UNC project, and worktree tabs), SSH upgrade state, rapid split/Tab changes, and 24-hour timestamps.
 
 ### 7. Wrong vs Correct
 
+Wrong: infer from `latestSession.file_path` without verifying which Agent/session produced it.
+
+Correct: filter the detail once before passing its file path or runtime evidence to diagnostics.
+
+~~~ts
+const exactBoundSession = cliSessionId && boundSession?.session_id === cliSessionId
+  && boundSession.source === agent ? boundSession : null;
+// Feed only this detail's file_path to the WSL target resolver; keep project/Worktree cwd.
+~~~
+
 #### Wrong
+
+```rust
+// The guest owns this value, so it is normally absent from the host map.
+if env_vars.contains_key("WSL_DISTRO_NAME") { /* declare forwarding */ }
+```
 
 ```ts
 const sessionId = latestProjectSession.session_id;
@@ -111,6 +149,12 @@ let enabled = value.get("enabled").and_then(JsonValue::as_bool).unwrap_or(true);
 ```
 
 #### Correct
+
+```rust
+// In the WSL launch-env merger: declare guest → Windows independently of host values.
+entries.retain(|entry| entry.split('/').next() != Some("WSL_DISTRO_NAME"));
+entries.push("WSL_DISTRO_NAME/w".to_string());
+```
 
 ```ts
 const sessionId = terminalSession.cliSessionId;

@@ -313,7 +313,7 @@ impl PtyManager {
     /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
     /// 既进 Linux shell，又能在 claude 经 interop 调 Windows 端 cli-manager.exe 时回传。
     /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
-    // 合并已有 WSLENV，将本批存在的回调、颜色和 DSH TUI 启动变量按名称去重后加入。
+    // 合并宿主变量转发；guest 发行版单向回传 Windows Hook，不从宿主猜测或注入其值。
     fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
         const FORWARD: [&str; 7] = [
             "CLI_MANAGER_TAB_ID",
@@ -356,6 +356,10 @@ impl PtyManager {
             }
         }
 
+        // WSL_DISTRO_NAME 由 Linux 设置，宿主变量表通常不存在此键，不能受 present 过滤。
+        // /w 仅允许 WSL → Win32；移除旧 /u、/p、/l 标志，避免身份丢失或被当作路径转换。
+        entries.retain(|entry| entry.split('/').next() != Some("WSL_DISTRO_NAME"));
+        entries.push("WSL_DISTRO_NAME/w".to_string());
         env_vars.insert("WSLENV".to_string(), entries.join(":"));
     }
 
@@ -1450,6 +1454,50 @@ mod tests {
     }
 
     #[test]
+    // 发行版由 guest 产生；即使宿主变量表里没有该值，也必须声明 interop 回传。
+    fn wsl_env_forwarding_returns_guest_distro_to_windows_hook() {
+        let mut vars = HashMap::from([
+            ("CLI_MANAGER_TAB_ID".to_string(), "tab-ubuntu".to_string()),
+            ("WSLENV".to_string(), "USER_PATH/p:KEEP/u".to_string()),
+        ]);
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(
+            vars.get("WSLENV").map(String::as_str),
+            Some("USER_PATH/p:KEEP/u:CLI_MANAGER_TAB_ID:WSL_DISTRO_NAME/w")
+        );
+        assert!(!vars.contains_key("WSL_DISTRO_NAME"));
+        let once = vars.clone();
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(vars, once);
+    }
+
+    #[test]
+    // 受管身份不能只向 Linux 发送，也不能按路径/列表转换；只规范自身，保留其他变量标志。
+    fn wsl_env_forwarding_normalizes_guest_distro_flags() {
+        for entry in [
+            "WSL_DISTRO_NAME",
+            "WSL_DISTRO_NAME/u",
+            "WSL_DISTRO_NAME/pw",
+            "WSL_DISTRO_NAME/l",
+            "WSL_DISTRO_NAME/w:WSL_DISTRO_NAME/u",
+        ] {
+            let mut vars = HashMap::from([
+                ("CLI_MANAGER_TAB_ID".to_string(), "tab-debian".to_string()),
+                (
+                    "WSLENV".to_string(),
+                    format!("KEEP/p:{entry}:CLI_MANAGER_TAB_ID"),
+                ),
+            ]);
+            PtyManager::apply_wsl_env_forwarding(&mut vars);
+            assert_eq!(
+                vars.get("WSLENV").map(String::as_str),
+                Some("KEEP/p:CLI_MANAGER_TAB_ID:WSL_DISTRO_NAME/w"),
+                "input: {entry}"
+            );
+        }
+    }
+
+    #[test]
     // 验证未提供任何待转发变量时 WSLENV 保持原样。
     fn wsl_env_forwarding_is_noop_without_callback_vars() {
         let mut vars = HashMap::new();
@@ -1466,7 +1514,10 @@ mod tests {
         vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
         vars.insert("WSLENV".to_string(), "CLI_MANAGER_TAB_ID".to_string());
         PtyManager::apply_wsl_env_forwarding(&mut vars);
-        assert_eq!(vars.get("WSLENV").unwrap(), "CLI_MANAGER_TAB_ID");
+        assert_eq!(
+            vars.get("WSLENV").unwrap(),
+            "CLI_MANAGER_TAB_ID:WSL_DISTRO_NAME/w"
+        );
     }
 
     #[test]
@@ -1552,7 +1603,7 @@ mod tests {
 
         assert_eq!(
             vars.get("WSLENV").map(String::as_str),
-            Some("FOO/u:COLORTERM/u")
+            Some("FOO/u:COLORTERM/u:WSL_DISTRO_NAME/w")
         );
     }
 
@@ -1560,22 +1611,31 @@ mod tests {
     // 转发 DSH TUI 的明确会话和 Linux profile 路径，保留用户标志且不转换路径。
     fn wsl_env_forwarding_preserves_dsh_tui_resume_home_and_user_flags() {
         let mut vars = HashMap::from([
-            ("DSH_TUI_RESUME_SESSION".to_string(), "session-uuid".to_string()),
+            (
+                "DSH_TUI_RESUME_SESSION".to_string(),
+                "session-uuid".to_string(),
+            ),
             ("DSH_HOME".to_string(), "/home/test/.dsh".to_string()),
             ("NODE_ENV".to_string(), "production".to_string()),
-            ("WSLENV".to_string(), "FOO/u:DSH_HOME/u:NODE_ENV/u".to_string()),
+            (
+                "WSLENV".to_string(),
+                "FOO/u:DSH_HOME/u:NODE_ENV/u".to_string(),
+            ),
         ]);
         PtyManager::apply_wsl_env_forwarding(&mut vars);
         assert_eq!(
             vars.get("WSLENV").map(String::as_str),
-            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION")
+            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION:WSL_DISTRO_NAME/w")
         );
-        assert_eq!(vars.get("DSH_HOME").map(String::as_str), Some("/home/test/.dsh"));
+        assert_eq!(
+            vars.get("DSH_HOME").map(String::as_str),
+            Some("/home/test/.dsh")
+        );
         assert_eq!(vars.get("NODE_ENV").map(String::as_str), Some("production"));
         PtyManager::apply_wsl_env_forwarding(&mut vars);
         assert_eq!(
             vars.get("WSLENV").map(String::as_str),
-            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION")
+            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION:WSL_DISTRO_NAME/w")
         );
     }
 

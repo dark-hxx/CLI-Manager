@@ -24,6 +24,10 @@ fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>);
   `COLORTERM/u`. Existing `WSLENV`, callback variables, and explicit terminal values are preserved.
 - Apply capability defaults before WSL forwarding. Do not alter shell selection, launch arguments,
   SSH identity, terminal colors, or process lifecycle.
+- WSL Hook guest identity is the exception to host-value presence filtering: always declare
+  `WSL_DISTRO_NAME/w` during normal WSL forwarding, without inserting a guessed host value.
+  Normalize only this managed entry to one guest-to-Windows entry; retain all other WSLENV flags.
+  See [Agent diagnostics](./agent-capability-diagnostics-contracts.md) for producer/consumer tests.
 
 ### 4. Validation & Error Matrix
 
