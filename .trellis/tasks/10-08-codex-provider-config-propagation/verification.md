@@ -52,3 +52,10 @@
 - 未写用户真实配置、未重启已有终端、未启动桌面/Web 服务。没有新增 UI 文案；预览仍是示例数据，未将示例显示当作实际终端视觉验收。真实 WSL/SSH 及安装后 TUI 需要人工验证。
 - 安装验收：保留设置页中的所选状态栏，关闭并重新创建一个 Codex 终端进程（仅重新连接存活 daemon 不算），确认使用当前 Home 顺序；另测切换供应商/项目扩展和空状态栏。若 Home 曾被旧版全局应用覆盖，先在状态栏页重新保存目标配置。无数据的 Git/PR/任务状态仍由 Codex 决定是否显示。
 - 本轮只修改配置所有权，不包含模型目录超时修复，不改变供应商数据库原始文档；没有迁移或自动回写真实 Home。回滚程序后旧版可能再次把供应商状态栏写入 profile，需重新保存状态栏并新建终端。
+
+### 1.4.2 NSIS 交付
+
+- 修复提交 `9115a5e5` 后执行 `npm run tauri:build:local -- --bundles nsis --ci`，退出码 0，仅生成一个 NSIS 包，无 MSI。桌面/Web 前端及 Rust release、主程序/PTY daemon/Web daemon/Codex proxy 构建均成功。
+- 安装包：`F:\gitRepository\CLI-Manager\src-tauri\target\local\release\bundle\nsis\CLI-Manager_1.4.2_x64-setup.exe`；30,178,504 字节；`2026-10-09 09:21:15 +08:00`。主程序 ProductVersion/FileVersion 均为 `1.4.2`。
+- SHA256：`FE5B4A5D061681A2E7F9ED7090E60167C0090A9482812EF51A420C1370333E17`。
+- 复用 local 构建缓存；仅现有 Vite 大 chunk、bundle identifier 建议与 Windows linker 提示，无构建失败。未自动安装、未重启用户进程、未推送远程，未将该包描述为已完成人工 TUI 验收。
