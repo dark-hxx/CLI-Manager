@@ -37,6 +37,22 @@ test("精确 tabId 始终优先", () => {
   assert.deepEqual(result, { tabId: "tab-b", reason: "exact" });
 });
 
+test("三个终端中的第三个 Codex Hook 不受首个终端完成状态或 legacy 主映射影响", () => {
+  for (const path of ["D:/work/project", "D:/work/another-project"]) {
+    const result = resolveCliHookTarget({
+      rawTabId: "third", primaryTabId: "first", source: "codex",
+      cwd: path, sessionId: "codex-third", receivedAt: 10_000,
+      candidates: [
+        candidate("first", { source: "codex", cliSessionId: "codex-first", outputActivityAt: 1_000 }),
+        candidate("second", { source: null }),
+        candidate("third", { source: "codex", paths: [path], cliSessionId: "codex-third", outputActivityAt: 9_900 }),
+      ],
+    });
+    // 运行状态更新与通知点击共用此返回值；不得折叠到首个终端。
+    assert.deepEqual(result, { tabId: "third", reason: "exact" });
+  }
+});
+
 test("OpenCode 启动命令映射到独立 Hook 来源", () => {
   assert.equal(inferHookBindingSource("opencode --model test"), "opencode");
   assert.equal(inferHookBindingSource("OpenCode.exe"), "opencode");

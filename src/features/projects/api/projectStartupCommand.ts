@@ -74,6 +74,20 @@ export function normalizeDirectCodexStartupCommand(command?: string): string | u
   return trimmed;
 }
 
+// 关闭自动启动仍会连接已存在的 daemon；本机 PTY 身份隔离必须显式使用 --no-daemon。
+// 只检查参数边界内的开关，不把 prompt 中的同名文本当成开关；显式远端连接由用户负责。
+export function withCodexNoDaemon(command?: string): string | undefined {
+  const normalized = normalizeDirectCodexStartupCommand(command);
+  if (!normalized || !DIRECT_CODEX_COMMAND_PATTERN.test(normalized)) return command;
+  const tokens = normalized.match(/(?:[^\s"'`\\]|\\.|`.|"(?:\\.|`.|[^"\\`])*"|'(?:''|[^'])*')+/g) ?? [];
+  for (const raw of tokens.slice(1)) {
+    const argument = raw.replace(/^(["'])(.*)\1$/s, "$2");
+    if (argument === "--") break;
+    if (argument === "--no-daemon" || argument === "--remote" || argument.startsWith("--remote=")) return normalized;
+  }
+  return normalized.replace(DIRECT_CODEX_COMMAND_PATTERN, "$1 --no-daemon");
+}
+
 export function withCodexLightTuiTheme(command?: string): string | undefined {
   const normalized = normalizeDirectCodexStartupCommand(command);
   if (!normalized || hasCodexThemeConfigArg(normalized)) return normalized;

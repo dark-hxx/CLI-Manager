@@ -79,6 +79,7 @@ pub(crate) use index_cache::{
 };
 mod session_detail;
 mod session_query;
+mod codex_lookup;
 pub(crate) use session_detail::build_session_detail;
 use session_detail::{
     build_session_detail_with_roots, build_v2_adapter_session, build_v2_adapter_session_from_parts,
@@ -281,6 +282,29 @@ pub async fn history_list_sessions(
         grok_session_root.clone(),
     )
     .with_kimi_config_dir(kimi_config_dir.clone());
+    // 新绑定的 Codex 会话无需等待全量 catalog 刷新；仅读取同一来源根中的精确 rollout。
+    if let Some(session_id) = codex_lookup::bound_codex_query(
+        source.as_deref(),
+        query.as_deref(),
+        limit,
+        offset,
+    ) {
+        let root = resolve_codex_history_root(&roots);
+        let project_path = project_path.clone();
+        return tokio::task::spawn_blocking(move || {
+            let mut session = codex_lookup::find_bound_codex_session(
+                &root, &session_id, project_path.as_deref(),
+            );
+            if let Some(summary) = &mut session {
+                if let Some(name) = codex_thread_name_index(&roots).names.get(&session_id) {
+                    summary.title = name.clone();
+                }
+            }
+            session.into_iter().collect()
+        })
+        .await
+        .map_err(|err| err.to_string());
+    }
     match session_query::list_sessions_with_query_refresh(
         catalog::is_dirty(),
         query.as_deref(),
