@@ -597,6 +597,24 @@ request_max_retries = 8
     }
 
     #[test]
+    // 经真实运行配置解析与密钥重绑定后仍不能携带供应商旧状态栏。
+    fn codex_runtime_profile_inherits_home_statusline() {
+        let settings = serde_json::json!({
+            "base_url": "https://example.test/v1",
+            "auth": {"OPENAI_API_KEY": "test-secret"},
+            "config": "model_reasoning_effort='max'\nservice_tier='fast'\n[tui]\nstatus_line=['total-input-tokens']\ntheme='theme'\n",
+        });
+        let runtime = parse_runtime_config("provider", &settings.to_string()).unwrap();
+        let profile = runtime.profile.with_env_key("CLI_MANAGER_PROVIDER_KEY").unwrap();
+        let actual: toml::Value = toml::from_str(&profile.profile_text).unwrap();
+        assert!(actual["tui"].get("status_line").is_none());
+        assert_eq!(actual["tui"]["theme"].as_str(), Some("theme"));
+        assert_eq!(actual["model_reasoning_effort"].as_str(), Some("max"));
+        assert_eq!(actual["service_tier"].as_str(), Some("fast"));
+        assert!(!profile.profile_text.contains("test-secret"));
+    }
+
+    #[test]
     // 验证环境对象优先提供端点和模型、复用配置中的变量名，并确认此样例生成配置不含密钥。
     fn parses_projected_codex_runtime_fields() {
         let settings = r#"{

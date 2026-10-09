@@ -177,7 +177,19 @@ pub(super) fn copy_toml_owned(
     keys.iter().map(|key| (*key).to_string()).collect()
 }
 
-// 保留完整来源配置；连接字段替换、其余表递归合并，未声明的 Home 设置继承。
+// 状态栏由各 Codex Home 的界面设置管理；仅移除供应商来源的根级字段。
+pub(crate) fn remove_provider_statusline(document: &mut DocumentMut) -> bool {
+    let Some(tui) = document.get_mut("tui").and_then(Item::as_table_like_mut) else {
+        return false;
+    };
+    let removed = tui.remove("status_line").is_some();
+    if removed && tui.is_empty() {
+        document.remove("tui");
+    }
+    removed
+}
+
+// 保留完整来源运行配置；状态栏不属于供应商，其他表递归合并并继承未声明的 Home 设置。
 pub(crate) fn materialize_codex_config(
     before: Option<&[u8]>,
     effective: &Value,
@@ -186,13 +198,14 @@ pub(crate) fn materialize_codex_config(
         .get("config")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let source = if source_raw.trim().is_empty() {
+    let mut source = if source_raw.trim().is_empty() {
         DocumentMut::new()
     } else {
         source_raw
             .parse::<DocumentMut>()
             .map_err(|_| "provider_config_invalid".to_string())?
     };
+    remove_provider_statusline(&mut source);
     let mut target = toml_document(before)?;
     let mut owned = copy_toml_owned(&source, &mut target, &CODEX_OWNED_CONFIG_KEYS);
     for (key, item) in source.iter() {

@@ -42,3 +42,13 @@
 - 配置/恢复前端测试 35/35、DeepSeek TUI/启动回归 37/37；`npx tsc --noEmit`、strict 架构检查（1289 文件、0 超限/违规）通过。
 - 合并后 Rust `provider::` 测试 185/185、`project_policy::tests` 测试 15/15 通过；仅有 Windows linker 信息警告。`git diff --cached --check` 通过，无残留冲突。
 - GitNexus MCP 未暴露，提交前影响复核降级为相对 `origin/master` 的 staged diff、冲突标记检查与定向测试；变更范围仍为原供应商配置传递修复及其文档/测试。模型目录超时仍仅完成诊断，不属于本次修复。
+
+## 1.4.2 状态栏所有权修复验证（2026-10-09）
+
+- `cargo test --manifest-path src-tauri/Cargo.toml --lib provider:: --quiet`：190/190；`project_policy::tests`：16/16；`codex_statusline::`：6/6。仅 Windows linker 信息警告，无测试失败。
+- `node --test scripts/resumeCliArgs.test.mjs scripts/nativeProviderConfigView.test.mjs scripts/nativeProviderEditing.test.mjs scripts/nativeProviderGlobalView.test.mjs`：35/35；`npx tsc --noEmit`、`npm run check:architecture -- --strict`（1289 文件、0 超限/违规）、`git diff --check` 通过。
+- 新增回归覆盖：供应商普通/内联/点路径表 × Home 已配置/空数组/缺失；只含状态栏的表不生成空覆盖；其他 TUI 和显式命名 profiles 保持；完整/legacy 快照清理；真实 runtime→密钥重绑定、runtime→项目扩展组合入口不重新带入旧值。上次完整配置/凭据隔离回归继续通过。
+- 实施后重新索引，`remove_provider_statusline` 确认被全局 materializer 和快照读取两个真实入口调用；memory detect_changes 列出 12 个预期文件但 impacted_symbols 为空，不能据此断言无影响，最终以源码/Git diff/测试复核为准。GitNexus 未暴露。
+- 未写用户真实配置、未重启已有终端、未启动桌面/Web 服务。没有新增 UI 文案；预览仍是示例数据，未将示例显示当作实际终端视觉验收。真实 WSL/SSH 及安装后 TUI 需要人工验证。
+- 安装验收：保留设置页中的所选状态栏，关闭并重新创建一个 Codex 终端进程（仅重新连接存活 daemon 不算），确认使用当前 Home 顺序；另测切换供应商/项目扩展和空状态栏。若 Home 曾被旧版全局应用覆盖，先在状态栏页重新保存目标配置。无数据的 Git/PR/任务状态仍由 Codex 决定是否显示。
+- 本轮只修改配置所有权，不包含模型目录超时修复，不改变供应商数据库原始文档；没有迁移或自动回写真实 Home。回滚程序后旧版可能再次把供应商状态栏写入 profile，需重新保存状态栏并新建终端。

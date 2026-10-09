@@ -340,6 +340,27 @@ skills = {bundled = {enabled = true, custom_setting = "retain"}, custom_setting 
 }
 
 #[test]
+// 供应商运行配置进入实际项目组合函数，MCP/Skills 不得重新引入旧状态栏。
+fn codex_project_profile_inherits_home_statusline_after_provider_composition() {
+    let settings = serde_json::json!({
+        "base_url": "https://example.test/v1",
+        "auth": {"OPENAI_API_KEY": "test-secret"},
+        "config": "service_tier='fast'\n[tui]\nstatus_line=['total-input-tokens']\nnotifications=false\n",
+    });
+    let runtime = crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
+    let content = codex_profile_content(
+        "12345678-1234-1234-1234-123456789abc",
+        &runtime.profile.profile_text,
+        &["skills.bundled.enabled=false".to_string()],
+    ).unwrap();
+    let actual: toml::Value = toml::from_slice(&content).unwrap();
+    assert!(actual["tui"].get("status_line").is_none());
+    assert_eq!(actual["tui"]["notifications"].as_bool(), Some(false));
+    assert_eq!(actual["skills"]["bundled"]["enabled"].as_bool(), Some(false));
+    assert_eq!(actual["service_tier"].as_str(), Some("fast"));
+}
+
+#[test]
 fn codex_project_profile_without_provider_uses_extension_config() {
     let content = codex_profile_content(
         "12345678-1234-1234-1234-123456789abc",

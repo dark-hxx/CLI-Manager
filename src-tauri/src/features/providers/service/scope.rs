@@ -808,10 +808,15 @@ fn codex_profile_config_from_manifest(
     let config = manifest
         .codex_profile_text
         .unwrap_or_else(|| manifest.codex_config_overrides.join("\n"));
-    config
+    let mut document = config
         .parse::<toml_edit::DocumentMut>()
         .map_err(|_| "provider_snapshot_invalid".to_string())?;
-    Ok(config)
+    // 已持久化的旧供应商快照也不能覆盖独立的 Home 状态栏设置。
+    if crate::provider::global::remove_provider_statusline(&mut document) {
+        Ok(document.to_string())
+    } else {
+        Ok(config)
+    }
 }
 
 // 无显式或项目覆盖时直接返回 None；否则生成快照，Codex 另写默认配置根中的 profile，失败时尽力清理快照目录。
@@ -1233,6 +1238,27 @@ mod tests {
             codex_profile_config_from_manifest(load(complete), "snapshot", "provider").unwrap();
         assert!(config.contains("service_tier='fast'"));
         assert!(!config.contains("legacy"));
+    }
+
+    #[test]
+    // 新旧快照进入项目组合时都应继承 Home 状态栏，其他配置及身份校验不变。
+    fn codex_snapshot_drops_stale_statusline_from_complete_and_legacy_config() {
+        for complete in [false, true] {
+            let mut value = json!({
+                "appType": "codex", "providerId": "provider", "activeKeyId": "key",
+                "snapshotId": "snapshot",
+                "codexConfigOverrides": ["model='selected'", "tui.status_line=['old']", "tui.theme='theme'"],
+            });
+            if complete {
+                value["codexProfileText"] = json!("model='selected'\n[tui]\nstatus_line=['old']\ntheme='theme'\n");
+            }
+            let manifest = serde_json::from_value::<SnapshotManifest>(value).unwrap();
+            let config = codex_profile_config_from_manifest(manifest, "snapshot", "provider").unwrap();
+            let actual: toml::Value = toml::from_str(&config).unwrap();
+            assert_eq!(actual["model"].as_str(), Some("selected"));
+            assert_eq!(actual["tui"]["theme"].as_str(), Some("theme"));
+            assert!(actual["tui"].get("status_line").is_none());
+        }
     }
 
     #[test]
