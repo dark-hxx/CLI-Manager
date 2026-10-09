@@ -772,7 +772,7 @@ CLI-Manager 采用双授权模式：
 - **开源授权**：[AGPL-3.0-or-later](LICENSE)。公司和个人均可在遵守 AGPL 条款的前提下使用、研究、修改、分发或通过网络提供本项目。
 - **商业授权**：如果需要闭源集成、闭源改造、用于不接受 AGPL 义务的内部产品化平台、商业分发，或以专有条款提供托管/服务化能力，需要单独取得商业授权。详见 [COMMERCIAL-LICENSE.md](COMMERCIAL-LICENSE.md)。
 
-Copyright (c) 2026 Chenyme。详见 [NOTICE](NOTICE)。
+Copyright © 2026 dark-hxx。详见 [NOTICE](NOTICE)。
 
 正常使用未经修改的官方应用不需要商业授权；遵守 AGPL-3.0-or-later 的开源使用也不需要商业授权。
 

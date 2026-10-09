@@ -9,6 +9,9 @@ import {
 import { replaceGrokModelArg, stripKimiResumeCliArgs, stripResumeCliArgs } from "../../history/api/resumeCliArgs";
 import { normalizeShellKey } from "../../../shared/platform/shell";
 
+import { buildDeepSeekTuiCommand, isDeepSeekTuiTool } from "../../../shared/lib/deepseekTui";
+import { getDeepSeekSourceRoot } from "../../../shared/lib/deepseekHarness";
+
 const CODEX_PROFILE_ARG = "--profile";
 const CLAUDE_SETTINGS_ARG = "--settings";
 const CLAUDE_MCP_CONFIG_ARG = "--mcp-config";
@@ -175,7 +178,8 @@ export function withClaudeMcpConfigPath(
 }
 
 export function resolveProjectStartupCommand(
-  project: Pick<Project, "cli_tool" | "cli_args" | "startup_cmd" | "provider_overrides" | "shell">,
+  project: Pick<Project, "cli_tool" | "cli_args" | "startup_cmd" | "provider_overrides" | "shell">
+    & Partial<Pick<Project, "env_vars" | "environment_type">>,
   options: { includeCodexProviderProfile?: boolean; includeProviderOverrides?: boolean } = {}
 ): string | undefined {
   const startupCmd = project.startup_cmd.trim();
@@ -187,7 +191,9 @@ export function resolveProjectStartupCommand(
   // 先拼用户维护的 CLI 附加参数，再做供应商覆盖追加：
   // hasProfileArg / hasClaudeSettingsArg 对整条 command 检测，用户手写过的参数天然去重。
   const cliArgs = project.cli_args.trim();
-  const command = cliArgs ? `${cliTool} ${cliArgs}` : cliTool;
+  const command = isDeepSeekTuiTool(cliTool)
+    ? buildDeepSeekTuiCommand(cliTool, cliArgs, getDeepSeekSourceRoot(project.env_vars), project.shell, project.environment_type)
+    : cliArgs ? `${cliTool} ${cliArgs}` : cliTool;
   return options.includeProviderOverrides === false
     ? command
     : appendProviderOverrideArgs(command, project, options);

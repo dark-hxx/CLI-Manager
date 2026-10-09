@@ -25,7 +25,7 @@ import {
   type HistorySourceDescriptor,
   type HistorySourceId,
 } from "../../../../shared/lib/historySources";
-import { getLanguageLocale, pickByLanguage, useI18n } from "../../../../shared/i18n/index";
+import { getLanguageLocale, pickByLanguage, useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import type { HistoryTitleProviderOption } from "../../../../shared/types/index";
 import { useHistorySourceSettingsStore } from "../../../history/api/historySourceSettingsStore";
 import { useHistoryStore } from "../../../history/index";
@@ -36,6 +36,9 @@ import {
 } from "../../../../shared/preferences/settingsStore";
 import { VendorIcon, inferVendor } from "../../../../shared/ui/VendorIcon";
 import { useAppConfirm } from "../../../../shared/ui/useAppConfirm";
+
+// 标题供应选项的分组顺序，与 Native Provider 设置页的 Tab 顺序一致。
+const TITLE_PROVIDER_APP_TYPES = ["claude", "codex", "grokbuild"] as const;
 
 function capabilityColor(state: HistoryCapabilityState): string {
   if (state === "supported") return "green";
@@ -463,13 +466,28 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
   const titleProviderValue = historySmartTitle.providerAppType && historySmartTitle.providerId
     ? `${historySmartTitle.providerAppType}:${historySmartTitle.providerId}`
     : null;
+  // 与供应商设置页一致：按 CLI 类型分组，选项文案为「供应商 · 模型 · 协议」。
+  const titleProtocolLabel = (protocol: HistoryTitleProviderOption["protocol"]) => {
+    if (protocol === "anthropic") return t("historySources.smartTitle.protocol.anthropic");
+    if (protocol === "chat") return t("historySources.smartTitle.protocol.chat");
+    if (protocol === "responses") return t("historySources.smartTitle.protocol.responses");
+    return t("historySources.smartTitle.protocol.unknown");
+  };
   const titleProviderOptions = titleProviders.map((provider) => ({
     value: `${provider.appType}:${provider.providerId}`,
-    label: provider.modelId
-      ? `${provider.providerName} · ${provider.modelId}`
-      : provider.providerName,
+    label: [
+      provider.providerName,
+      provider.modelId?.trim() || null,
+      titleProtocolLabel(provider.protocol),
+    ].filter(Boolean).join(" · "),
     disabled: !provider.ready && provider.reasonCode !== "provider_model_missing",
   }));
+  const titleProviderGroups = TITLE_PROVIDER_APP_TYPES
+    .map((appType) => ({
+      group: t(`providerCatalog.appType.${appType}` as TranslationKey),
+      items: titleProviderOptions.filter((option) => option.value.startsWith(`${appType}:`)),
+    }))
+    .filter((group) => group.items.length > 0);
   const selectedTitleProvider = titleProviders.find(
     (provider) => provider.appType === historySmartTitle.providerAppType
       && provider.providerId === historySmartTitle.providerId,
@@ -607,7 +625,7 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
           <Select
             label={t("historySources.smartTitle.provider")}
             placeholder={t("historySources.smartTitle.providerPlaceholder")}
-            data={titleProviderOptions}
+            data={titleProviderGroups}
             value={titleProviderValue}
             onChange={(value) => void handleTitleProviderChange(value)}
             disabled={titleProvidersLoading || titleProviderOptions.length === 0}

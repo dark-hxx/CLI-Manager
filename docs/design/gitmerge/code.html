@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+
+<html class="h-full" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Resolve Conflicts - 解决冲突 - JetBrains IDE 3-Way Merge Tool</title>
+<!-- Tailwind CSS v3 CDN with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            jb: {
+              bg: '#1e1f22',
+              surface: '#2b2d30',
+              panel: '#232529',
+              active: '#35373c',
+              border: '#393b40',
+              borderSubtle: '#2e3035',
+              text: '#bcbec4',
+              heading: '#dfe1e5',
+              muted: '#6f737a',
+              blue: '#3574f0',
+              blueHover: '#3068d9',
+              green: '#57965c',
+              greenBg: 'rgba(87, 150, 92, 0.16)',
+              red: '#e06c75',
+              redBg: 'rgba(224, 108, 117, 0.16)',
+              redInline: 'rgba(224, 108, 117, 0.35)',
+              greenInline: 'rgba(87, 150, 92, 0.35)',
+              yellow: '#e5c07b',
+              purple: '#c678dd',
+              cyan: '#56b6c2'
+            }
+          },
+          fontFamily: {
+            mono: ['"JetBrains Mono"', 'Fira Code', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif']
+          }
+        }
+      }
+    }
+  </script>
+<!-- Google Fonts for JetBrains Mono & Inter -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<!-- Custom JetBrains Specific Aesthetics -->
+<style data-purpose="ide-custom-scroll-and-diff">
+    /* JetBrains Custom Scrollbar */
+    ::-webkit-scrollbar {
+      width: 9px;
+      height: 9px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #1e1f22;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #393b40;
+      border-radius: 4px;
+      border: 2px solid #1e1f22;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #4e5157;
+    }
+
+    /* Gutter & Code Alignment */
+    .diff-line {
+      min-height: 22px;
+      line-height: 22px;
+    }
+    .gutter-num {
+      user-select: none;
+      -webkit-user-select: none;
+    }
+  </style>
+</head>
+<body class="h-full bg-jb-bg text-jb-text font-sans antialiased select-none flex flex-col overflow-hidden">
+<!-- BEGIN: WindowFrameHeader -->
+<!-- Topmost Window Title Bar with Modern JetBrains New UI Styling -->
+<header class="h-10 bg-jb-surface border-b border-jb-border flex items-center justify-between px-3.5 shrink-0" data-purpose="window-titlebar">
+<!-- Window Title & Git Branch Association -->
+<div class="flex items-center space-x-3 overflow-hidden">
+<!-- JetBrains Merge Tool Icon -->
+<div class="flex items-center text-[#9aa0a6]">
+<svg class="w-4 h-4 text-jb-blue" fill="currentColor" viewbox="0 0 16 16">
+<path d="M11 2a2 2 0 1 0-2 2v2.5a2.5 2.5 0 0 1-2.5 2.5H6.41a2 2 0 1 0 0 2h.09A4.5 4.5 0 0 0 11 6.5V4a2 2 0 0 0 0-2zM3 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm8-8a1 1 0 1 1 2 0 1 1 0 0 1-2 0z"></path>
+<circle cx="12" cy="11" fill="#e06c75" r="1.5"></circle>
+</svg>
+</div>
+<!-- Title & Branches Indicator -->
+<div class="flex items-center text-xs space-x-2">
+<span class="font-semibold text-jb-heading flex items-center space-x-1.5">
+<span>解决冲突 (Resolve Conflicts)</span>
+<span class="text-jb-muted font-normal">·</span>
+<span class="text-jb-yellow font-mono font-normal">task-0930-0514</span>
+</span>
+<span class="text-jb-muted">|</span>
+<div class="flex items-center space-x-1.5 font-mono text-[11px] bg-jb-panel px-2 py-0.5 rounded border border-jb-borderSubtle">
+<span class="text-jb-cyan">wt/task-0930-0514</span>
+<svg class="w-3 h-3 text-jb-muted" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M14 5l7 7m0 0l-7 7m7-7H3" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span class="text-jb-blue font-medium">test/sb-target-conflict</span>
+</div>
+</div>
+</div>
+<!-- Quick Status Badge & Window Controls -->
+<div class="flex items-center space-x-4">
+<div class="flex items-center space-x-2 text-xs">
+<span class="px-2 py-0.5 rounded-full text-[11px] font-medium bg-jb-red/20 text-jb-red border border-jb-red/30 flex items-center space-x-1">
+<span class="w-1.5 h-1.5 rounded-full bg-jb-red animate-pulse"></span>
+<span>解决冲突中 (0 / 1 已解决)</span>
+</span>
+<span class="text-jb-muted text-[11px]">草稿已保存</span>
+</div>
+<!-- System / App Actions -->
+<div class="flex items-center space-x-1 pl-2 border-l border-jb-border">
+<button class="p-1 hover:bg-jb-active rounded text-jb-muted hover:text-jb-heading" title="使用帮助 (Help)">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</button>
+<button class="p-1 hover:bg-jb-active rounded text-jb-muted hover:text-jb-heading" title="最小化">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M20 12H4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</button>
+<button class="p-1 hover:bg-jb-active rounded text-jb-muted hover:text-jb-heading" title="最大化">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewbox="0 0 24 24"><rect height="16" rx="1.5" width="16" x="4" y="4"></rect></svg>
+</button>
+<button class="p-1 hover:bg-red-600 rounded text-jb-muted hover:text-white" title="关闭窗口">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</button>
+</div>
+</div>
+</header>
+<!-- END: WindowFrameHeader -->
+<!-- BEGIN: ConflictControlBar -->
+<!-- JetBrains Dedicated 3-Way Diff Operation Toolbar -->
+<section class="h-10 bg-jb-panel border-b border-jb-border px-3 flex items-center justify-between text-xs shrink-0" data-purpose="merge-toolbar">
+<!-- Left Operations: Conflict chunk navigations & fast bulk resolution -->
+<div class="flex items-center space-x-2">
+<!-- Navigate Previous / Next Conflict -->
+<div class="flex items-center bg-jb-bg rounded border border-jb-border p-0.5">
+<button class="px-2 py-1 flex items-center space-x-1 hover:bg-jb-surface rounded text-jb-text hover:text-jb-heading disabled:opacity-40" title="上一处冲突 (Previous Difference - Alt+Up)">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M5 15l7-7 7 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span class="text-[11px]">上一处</span>
+</button>
+<div class="w-px h-3.5 bg-jb-border"></div>
+<button class="px-2 py-1 flex items-center space-x-1 hover:bg-jb-surface rounded text-jb-text hover:text-jb-heading" title="下一处冲突 (Next Difference - Alt+Down)">
+<span class="text-[11px]">下一处</span>
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</button>
+</div>
+<!-- Current Conflict Indicator -->
+<div class="px-2.5 py-1 text-[11px] font-mono text-jb-heading bg-jb-surface rounded border border-jb-borderSubtle">
+        冲突块: <strong class="text-jb-red">1</strong> / 1
+      </div>
+<div class="w-px h-4 bg-jb-border mx-1"></div>
+<!-- One-Click Smart Resolution Actions -->
+<div class="flex items-center space-x-1">
+<button class="px-2.5 py-1 hover:bg-jb-active text-jb-text hover:text-white rounded border border-jb-border bg-jb-surface flex items-center space-x-1.5 transition" title="提取左侧全部变更 (Accept Left / Ours)">
+<svg class="w-3 h-3 text-jb-blue" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M13 5l7 7-7 7M5 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>整取目标分支 (Yours)</span>
+</button>
+<button class="px-2.5 py-1 hover:bg-jb-active text-jb-text hover:text-white rounded border border-jb-border bg-jb-surface flex items-center space-x-1.5 transition" title="提取右侧全部变更 (Accept Right / Theirs)">
+<svg class="w-3 h-3 text-jb-green" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M11 19l-7-7 7-7m8 14l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>整取 Worktree (Theirs)</span>
+</button>
+<button class="px-2.5 py-1 hover:bg-jb-active text-jb-text hover:text-white rounded border border-jb-border bg-jb-surface flex items-center space-x-1.5 transition" title="自动合并无冲突内容 (Apply Non-Conflicting Changes)">
+<svg class="w-3.5 h-3.5 text-jb-purple" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>智能合入无冲突项</span>
+</button>
+<button class="px-2.5 py-1 hover:bg-jb-active text-jb-text hover:text-white rounded border border-jb-border bg-jb-surface flex items-center space-x-1.5 transition" title="两者都保留 (目标在前)">
+<span>两者都保留</span>
+</button>
+</div>
+</div>
+<!-- Right Controls: Diff settings, whitespace, word-diff toggles -->
+<div class="flex items-center space-x-2">
+<!-- Highlight Mode Toggle -->
+<button class="p-1.5 bg-jb-surface hover:bg-jb-active rounded border border-jb-border text-jb-heading flex items-center space-x-1 text-[11px]" title="单词级高亮差异 (Highlight Words)">
+<span class="w-2 h-2 rounded-full bg-jb-green inline-block"></span>
+<span>字符高亮</span>
+</button>
+<!-- Ignore Whitespace -->
+<button class="p-1.5 bg-jb-surface hover:bg-jb-active rounded border border-jb-border text-jb-muted hover:text-jb-text text-[11px]" title="忽略空白字符差异">
+        忽略空白字符
+      </button>
+<!-- Diff Settings Gear -->
+<button class="p-1.5 hover:bg-jb-active text-jb-muted hover:text-jb-heading rounded" title="Diff 设置">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24">
+<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round"></path>
+<path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</button>
+</div>
+</section>
+<!-- END: ConflictControlBar -->
+<!-- BEGIN: MainContentArea -->
+<main class="flex-1 flex overflow-hidden">
+<!-- BEGIN: LeftFileSidebar -->
+<!-- Conflicted Files Drawer / Tree Browser -->
+<aside class="w-64 bg-jb-panel border-r border-jb-border flex flex-col shrink-0" data-purpose="conflict-files-tree">
+<!-- Search & Filter header in file tree -->
+<div class="p-2 border-b border-jb-border flex items-center space-x-1.5">
+<div class="relative flex-1">
+<input class="w-full bg-jb-bg text-jb-heading placeholder-jb-muted text-xs pl-7 pr-2 py-1 rounded border border-jb-border focus:border-jb-blue focus:ring-1 focus:ring-jb-blue outline-none" placeholder="过滤冲突文件..." type="text"/>
+<svg class="w-3.5 h-3.5 text-jb-muted absolute left-2 top-2" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</div>
+<button class="p-1 hover:bg-jb-surface rounded text-jb-muted hover:text-jb-heading" title="折叠全部 (Collapse All)">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M4 8h16M4 16h16" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</button>
+</div>
+<!-- Tree / List of Conflicted Files -->
+<div class="flex-1 overflow-y-auto py-1">
+<!-- Section label -->
+<div class="px-3 py-1 text-[11px] font-semibold text-jb-muted tracking-wider uppercase flex items-center justify-between">
+<span>待解决文件 (1)</span>
+<span class="text-jb-red">未完成</span>
+</div>
+<!-- File Entry: Conflicted Active File -->
+<div class="px-2 py-1.5 bg-jb-active/60 border-l-2 border-jb-red flex items-center justify-between group cursor-pointer">
+<div class="flex items-center space-x-2 truncate">
+<!-- Red conflict bullet dot -->
+<span class="w-2 h-2 rounded-full bg-jb-red shrink-0" title="存在冲突"></span>
+<svg class="w-4 h-4 text-jb-yellow shrink-0" fill="currentColor" viewbox="0 0 24 24">
+<path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"></path>
+</svg>
+<span class="text-xs font-mono text-jb-heading truncate font-medium">test/a.json</span>
+</div>
+<span class="text-[10px] px-1.5 py-0.2 bg-jb-red/20 text-jb-red rounded border border-jb-red/30 shrink-0 font-mono">1 冲突</span>
+</div>
+<!-- Resolved / Clean files in context -->
+<div class="mt-2 px-3 py-1 text-[11px] font-semibold text-jb-muted tracking-wider uppercase">
+<span>已自动合入 (2)</span>
+</div>
+<div class="px-2 py-1.5 hover:bg-jb-surface flex items-center justify-between group cursor-pointer opacity-75">
+<div class="flex items-center space-x-2 truncate">
+<span class="w-2 h-2 rounded-full bg-jb-green shrink-0" title="已成功合并"></span>
+<svg class="w-4 h-4 text-jb-blue shrink-0" fill="currentColor" viewbox="0 0 24 24">
+<path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"></path>
+</svg>
+<span class="text-xs font-mono text-jb-text truncate">src/modules/config.ts</span>
+</div>
+<svg class="w-3.5 h-3.5 text-jb-green" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</div>
+<div class="px-2 py-1.5 hover:bg-jb-surface flex items-center justify-between group cursor-pointer opacity-75">
+<div class="flex items-center space-x-2 truncate">
+<span class="w-2 h-2 rounded-full bg-jb-green shrink-0" title="已成功合并"></span>
+<svg class="w-4 h-4 text-jb-cyan shrink-0" fill="currentColor" viewbox="0 0 24 24">
+<path d="M14 2H6c-1.1 0-1.99.9-1.99 2L4 20c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"></path>
+</svg>
+<span class="text-xs font-mono text-jb-text truncate">package.json</span>
+</div>
+<svg class="w-3.5 h-3.5 text-jb-green" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+</div>
+</div>
+<!-- Quick status indicator at bottom of sidebar -->
+<div class="p-2 border-t border-jb-border bg-jb-bg/40 text-[11px] text-jb-muted flex items-center justify-between">
+<span>当前工作区已同步</span>
+<span class="text-jb-green font-mono">Clean</span>
+</div>
+</aside>
+<!-- END: LeftFileSidebar -->
+<!-- BEGIN: ThreeWayMergeView -->
+<!-- The Core 3-Column Diff Layout (Left / Center Result / Right) -->
+<div class="flex-1 flex flex-col bg-jb-bg overflow-hidden" data-purpose="three-way-editor-container">
+<!-- Top Pane Headers (3 Columns) -->
+<div class="h-8 bg-jb-surface border-b border-jb-border grid grid-cols-12 text-xs divide-x divide-jb-border font-sans select-none shrink-0">
+<!-- Left Pane Header: Ours / Target Branch -->
+<div class="col-span-4 px-3 flex items-center justify-between text-jb-heading bg-[#24262b]">
+<div class="flex items-center space-x-2 truncate">
+<span class="font-semibold text-jb-text">目标分支 (Yours / Base)</span>
+<span class="text-jb-muted text-[11px] truncate font-mono">test/sb-target-conflict</span>
+<span class="text-[10px] bg-jb-panel px-1.5 py-0.5 rounded text-jb-muted border border-jb-border">只读</span>
+</div>
+<!-- Arrow pointing chunk to center result -->
+<button class="text-jb-blue hover:text-white flex items-center text-[11px] space-x-0.5" title="采纳此侧当前修改到中间结果">
+<span>引入</span>
+<span class="font-bold text-sm">→</span>
+</button>
+</div>
+<!-- Center Pane Header: Merge Result (Editable focal pane) -->
+<div class="col-span-4 px-3 flex items-center justify-between bg-jb-bg text-jb-heading border-t-2 border-t-jb-blue">
+<div class="flex items-center space-x-2">
+<span class="font-bold text-white flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-jb-blue inline-block"></span>
+<span>合并结果 (Result)</span>
+</span>
+<span class="text-[10px] bg-jb-green/20 text-jb-green px-1.5 py-0.2 rounded border border-jb-green/30">直接编辑已启用</span>
+</div>
+<span class="text-jb-muted text-[11px] font-mono">a.json</span>
+</div>
+<!-- Right Pane Header: Theirs / Worktree Branch -->
+<div class="col-span-4 px-3 flex items-center justify-between text-jb-heading bg-[#24262b]">
+<!-- Arrow pointing chunk to center result from right -->
+<button class="text-jb-green hover:text-white flex items-center text-[11px] space-x-0.5" title="采纳右侧当前修改到中间结果">
+<span class="font-bold text-sm">←</span>
+<span>引入</span>
+</button>
+<div class="flex items-center space-x-2 truncate">
+<span class="text-[10px] bg-jb-panel px-1.5 py-0.5 rounded text-jb-muted border border-jb-border">只读</span>
+<span class="text-jb-muted text-[11px] truncate font-mono">wt/task-0930-0514</span>
+<span class="font-semibold text-jb-text">当前分支 (Theirs / Worktree)</span>
+</div>
+</div>
+</div>
+<!-- Editor Panes Content (Side by Side 3 Columns) -->
+<div class="flex-1 flex overflow-hidden font-mono text-[13px] relative">
+<!-- ======================= LEFT PANE: TARGET BRANCH ======================= -->
+<section class="flex-1 bg-[#1c1d20] border-r border-jb-border flex flex-col overflow-y-auto overflow-x-hidden" data-purpose="left-diff-pane">
+<div class="py-2 text-[#abb2bf]">
+<!-- Line 1 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">1</span>
+<span class="text-jb-text pl-2">{</span>
+</div>
+<!-- Line 2 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">2</span>
+<span class="pl-6 text-jb-cyan">"name"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asdasdas"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 3 - Conflicted Chunk Left (Target side) -->
+<div class="diff-line flex items-center px-1 bg-jb-redBg border-y border-jb-red/30 relative group">
+<span class="gutter-num w-10 text-right pr-3 text-jb-red font-semibold text-xs select-none">3</span>
+<span class="pl-6 text-jb-cyan">"payloadId"</span><span class="text-jb-text">:</span>
+<span class="ml-1 px-1 bg-jb-redInline rounded text-white font-semibold">54564565</span><span class="text-jb-text">,</span>
+<!-- Chunk Apply Arrow directly on gutter -->
+<button class="absolute right-2 top-0.5 px-1 bg-jb-blue hover:bg-jb-blueHover text-white rounded text-xs opacity-0 group-hover:opacity-100 transition shadow" title="接受左侧修改到合并结果 (Accept Left)">
+                »
+              </button>
+</div>
+<!-- Line 4 - Conflicted Chunk Left continuation -->
+<div class="diff-line flex items-center px-1 bg-jb-redBg border-b border-jb-red/30 relative group">
+<span class="gutter-num w-10 text-right pr-3 text-jb-red font-semibold text-xs select-none">4</span>
+<span class="pl-6 text-jb-cyan">"code"</span><span class="text-jb-text">:</span>
+<span class="ml-1 px-1 bg-jb-redInline rounded text-white font-semibold">4122</span><span class="text-jb-text">,</span>
+<button class="absolute right-2 top-0.5 px-1 bg-jb-blue hover:bg-jb-blueHover text-white rounded text-xs opacity-0 group-hover:opacity-100 transition shadow" title="接受左侧修改">
+                »
+              </button>
+</div>
+<!-- Line 5 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">5</span>
+<span class="pl-6 text-jb-cyan">"type"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asd"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 6 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">6</span>
+<span class="pl-6 text-jb-cyan">"active"</span><span class="text-jb-text">:</span> <span class="text-jb-yellow">true</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 7 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">7</span>
+<span class="pl-6 text-jb-cyan">"tag"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"dgg"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 8 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">8</span>
+<span class="pl-6 text-jb-cyan">"status"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"ggg"</span>
+</div>
+<!-- Line 9 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">9</span>
+<span class="text-jb-text pl-2">}</span>
+</div>
+</div>
+</section>
+<!-- ======================= CENTER PANE: MERGE RESULT (EDITABLE) ======================= -->
+<section class="flex-1 bg-jb-bg border-r border-jb-border flex flex-col overflow-y-auto overflow-x-hidden shadow-inner" data-purpose="center-result-pane">
+<div class="py-2 text-[#abb2bf]">
+<!-- Line 1 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">1</span>
+<span class="text-jb-text pl-2">{</span>
+</div>
+<!-- Line 2 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">2</span>
+<span class="pl-6 text-jb-cyan">"name"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asdasdas"</span><span class="text-jb-text">,</span>
+</div>
+<!-- UNRESOLVED CONFLICT ZONE IN CENTER -->
+<div class="my-1 border border-jb-red/60 rounded bg-jb-redBg/30 overflow-hidden shadow-sm" data-purpose="unresolved-conflict-chunk">
+<!-- Conflict Control Banner inside Editor -->
+<div class="bg-jb-panel px-3 py-1 flex items-center justify-between border-b border-jb-red/40 text-[11px] font-sans">
+<div class="flex items-center space-x-2 text-jb-red font-medium">
+<svg class="w-3.5 h-3.5 text-jb-red" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>此处存在冲突 (Conflict at lines 3 - 4)</span>
+</div>
+<div class="flex items-center space-x-1.5">
+<button class="px-2 py-0.5 bg-jb-blue text-white rounded hover:bg-jb-blueHover text-[11px] flex items-center space-x-1" title="仅采用左侧变更">
+<span>接受左侧</span>
+<span>(Yours)</span>
+</button>
+<button class="px-2 py-0.5 bg-jb-green text-white rounded hover:opacity-90 text-[11px] flex items-center space-x-1" title="仅采用右侧变更">
+<span>接受右侧</span>
+<span>(Theirs)</span>
+</button>
+<button class="px-2 py-0.5 bg-jb-surface hover:bg-jb-active text-jb-text rounded border border-jb-border" title="丢弃两处修改">
+                    忽略
+                  </button>
+</div>
+</div>
+<!-- Lines inside conflict block -->
+<div class="py-1">
+<div class="diff-line flex items-center px-1 bg-jb-red/10">
+<span class="gutter-num w-10 text-right pr-3 text-jb-red/60 text-xs select-none">3</span>
+<span class="pl-6 text-jb-muted italic">// &lt;&lt;&lt;&lt;&lt;&lt;&lt; 尚未决议的内容</span>
+</div>
+<div class="diff-line flex items-center px-1 bg-jb-red/10">
+<span class="gutter-num w-10 text-right pr-3 text-jb-red/60 text-xs select-none">4</span>
+<span class="pl-6 text-jb-cyan">"payloadId"</span><span class="text-jb-text">:</span> <span class="text-jb-yellow font-bold underline decoration-dashed">???</span>
+</div>
+</div>
+</div>
+<!-- Line 5 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">5</span>
+<span class="pl-6 text-jb-cyan">"type"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asd"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 6 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">6</span>
+<span class="pl-6 text-jb-cyan">"active"</span><span class="text-jb-text">:</span> <span class="text-jb-yellow">true</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 7 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">7</span>
+<span class="pl-6 text-jb-cyan">"tag"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"dgg"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 8 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">8</span>
+<span class="pl-6 text-jb-cyan">"status"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"ggg"</span>
+</div>
+<!-- Line 9 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">9</span>
+<span class="text-jb-text pl-2">}</span>
+</div>
+</div>
+</section>
+<!-- ======================= RIGHT PANE: THEIRS / WORKTREE ======================= -->
+<section class="flex-1 bg-[#1c1d20] flex flex-col overflow-y-auto overflow-x-hidden pr-3 relative" data-purpose="right-diff-pane">
+<div class="py-2 text-[#abb2bf]">
+<!-- Line 1 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">1</span>
+<span class="text-jb-text pl-2">{</span>
+</div>
+<!-- Line 2 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">2</span>
+<span class="pl-6 text-jb-cyan">"name"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asdasdas"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 3 - Worktree conflict difference: empty line/omitted -->
+<div class="diff-line flex items-center px-1 bg-jb-greenBg border-y border-jb-green/30 relative group">
+<span class="gutter-num w-10 text-right pr-3 text-jb-green font-semibold text-xs select-none">3</span>
+<button class="absolute left-12 top-0.5 px-1 bg-jb-green hover:opacity-90 text-white rounded text-xs opacity-0 group-hover:opacity-100 transition shadow" title="接受右侧修改到中间 (Accept Right)">
+                «
+              </button>
+<span class="pl-6 text-jb-muted italic text-xs select-none">// (字段在当前工作区已被移除或重构)</span>
+</div>
+<!-- Line 4 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">4</span>
+<span class="pl-6 text-jb-cyan">"type"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"asd"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 5 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">5</span>
+<span class="pl-6 text-jb-cyan">"active"</span><span class="text-jb-text">:</span> <span class="text-jb-yellow">true</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 6 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">6</span>
+<span class="pl-6 text-jb-cyan">"tag"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"dgg"</span><span class="text-jb-text">,</span>
+</div>
+<!-- Line 7 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">7</span>
+<span class="pl-6 text-jb-cyan">"status"</span><span class="text-jb-text">:</span> <span class="text-jb-green">"ggg"</span>
+</div>
+<!-- Line 8 -->
+<div class="diff-line flex items-center px-1">
+<span class="gutter-num w-10 text-right pr-3 text-jb-muted text-xs select-none">8</span>
+<span class="text-jb-text pl-2">}</span>
+</div>
+</div>
+<!-- JetBrains Minimap / Conflict Overview Strip -->
+<div class="absolute right-0 top-0 bottom-0 w-3 bg-[#1e1f22] border-l border-jb-border flex flex-col justify-between py-1 select-none" data-purpose="diff-minimap">
+<div class="w-full h-1 bg-transparent"></div>
+<!-- Red marker for line 3-4 conflict -->
+<div class="w-full h-4 bg-jb-red rounded-sm shadow" title="未解决冲突点 (Line 3)"></div>
+<div class="w-full flex-1"></div>
+</div>
+</section>
+</div>
+</div>
+<!-- END: ThreeWayMergeView -->
+</main>
+<!-- END: MainContentArea -->
+<!-- BEGIN: BottomStatusBarAndActions -->
+<!-- Modern JetBrains Style Footer Bar with Resolution Commit Button -->
+<footer class="h-11 bg-jb-surface border-t border-jb-border px-3 flex items-center justify-between text-xs shrink-0 select-none" data-purpose="modal-footer">
+<!-- Left Status / Code Metadata -->
+<div class="flex items-center space-x-3 text-jb-muted font-sans">
+<div class="flex items-center space-x-1.5 font-mono text-[11px] text-jb-text">
+<span>行 3, 列 14</span>
+</div>
+<span class="text-jb-border">|</span>
+<div class="flex items-center space-x-1">
+<span>编码:</span>
+<span class="text-jb-text font-mono">UTF-8</span>
+</div>
+<span class="text-jb-border">|</span>
+<div class="flex items-center space-x-1">
+<span>缩进:</span>
+<span class="text-jb-text font-mono">2 空格</span>
+</div>
+<span class="text-jb-border">|</span>
+<div class="flex items-center space-x-1.5 text-jb-yellow">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>剩余 1 处未确认冲突</span>
+</div>
+</div>
+<!-- Right Decision Buttons -->
+<div class="flex items-center space-x-2.5">
+<!-- Secondary: Abort Merge -->
+<button class="px-3 py-1.5 rounded bg-transparent hover:bg-jb-red/10 text-jb-red border border-jb-red/40 hover:border-jb-red transition flex items-center space-x-1 font-medium" title="终止并回滚合并">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>中止隔离合并 (Abort)</span>
+</button>
+<!-- Save & Continue Later -->
+<button class="px-3.5 py-1.5 rounded bg-jb-panel hover:bg-jb-active text-jb-text border border-jb-border transition flex items-center space-x-1 font-medium" title="保存草稿并暂时退出">
+<svg class="w-3.5 h-3.5 text-jb-muted" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24"><path d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+<span>保存并返回 (Save Draft)</span>
+</button>
+<!-- Primary Action: JetBrains Signature Blue Button -->
+<button class="px-4 py-1.5 rounded bg-jb-blue hover:bg-jb-blueHover text-white font-medium shadow-md transition flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed" title="应用已解决内容并完成合入">
+<svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewbox="0 0 24 24">
+<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+<span>应用并合并到 test/sb-target-conflict</span>
+</button>
+</div>
+</footer>
+<!-- END: BottomStatusBarAndActions -->
+</body></html>

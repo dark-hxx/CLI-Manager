@@ -1,4 +1,5 @@
 export const zh = {
+
   "termStats.screenshot": "复制完整统计长图",
   "termStats.screenshotBusy": "正在生成统计长图…",
   "termStats.screenshotCopied": "统计长图已复制到剪贴板",

@@ -1,0 +1,48 @@
+{
+  "id": "history-source-delete-support",
+  "name": "history-source-delete-support",
+  "title": "补齐历史来源的会话删除支持",
+  "description": "V1.4.2：补齐 Pi/Gemini/Copilot/Antigravity/Kiro/Cursor/Cline 的历史删除，并对齐能力声明、单条/批量入口及源文件保护；提交前清理 Worktree 恢复模块未使用的 inspect 入口。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "history",
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-10-08",
+  "completedAt": "2026-10-08",
+  "branch": "master",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": "70ea97ea",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src-tauri/src/features/history/mod.rs",
+    "src-tauri/src/features/history/deletion.rs",
+    "src-tauri/src/features/history/conversion.rs",
+    "src-tauri/src/features/history/scope.rs",
+    "src-tauri/src/features/history/backup.rs",
+    "src-tauri/src/features/history/sources.rs",
+    "src-tauri/src/features/history/tests/deletion.rs",
+    "src-tauri/src/features/projects/worktree_conflicts/main_recovery.rs",
+    "src/shared/lib/historySources.ts",
+    "src/features/history/lib/historyDeletion.ts",
+    "src/features/history/store/historyStore.ts",
+    "src/features/history/api/HistoryWorkspace.tsx",
+    "src/features/history/components/HistoryListPane.tsx",
+    "scripts/historyDeletion.test.mjs",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "用户确认功能验证成功并授权提交和推送 origin/master。V1.4.2 Rust 历史 262 项、前端 82 项、恢复 8 项及 tsc/严格架构检查通过；删除无调用的 inspect 后，cargo check --no-default-features 无告警。全仓 rustfmt 仅剩既有差异；GitNexus CRITICAL 的异常跨模块归因已按实际声明和引用复核，详见 verification.md。",
+  "meta": {
+    "workCommits": [
+      "14e9de2e",
+      "70ea97ea"
+    ]
+  }
+}

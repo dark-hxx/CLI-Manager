@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/frontend/ai-architecture-contracts.md", "reason": "遵守 features/shared 分层、统一描述表复用与文件长度约束。"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "按新增需求场景维度核对既有项目启动链路。"}

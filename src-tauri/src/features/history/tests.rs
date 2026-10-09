@@ -22,6 +22,7 @@ use tempfile::TempDir;
 mod fixtures;
 use fixtures::*;
 mod conversion;
+mod deletion;
 mod grok;
 mod kimi_source;
 mod opencode;

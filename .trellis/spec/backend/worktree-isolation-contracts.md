@@ -193,7 +193,8 @@ type TreeNode =
 - A successful merge is cleanup-safe only when no stash was created or `stashRestored=true`. A stash-restore conflict returns `stashRestoreConflictFiles` (which may be empty when Git only reports raw output), retains the stash and Worktree, and does not roll back the already completed merge.
 - The merge command receives both `branch` and `baseBranch`; if the checkout is clean but not on the base branch, it may checkout the base branch before merging.
 - If the worktree branch and base branch have no content diff, the merge command must return `skipped=true` / `skipReason="no_diff"` and avoid checkout/merge mutation. The frontend should present this as "merge not needed" and still allow cleanup.
-- Merge conflicts must be detected, conflict files returned, and `merge --abort` executed immediately. Do not leave the main checkout in a half-merged state.
+- Main-checkout merge conflicts must be detected, conflict files returned, and `merge --abort` attempted immediately. Report successful recovery only after abort succeeds and the recorded baseline is verified. Abort/restore failure must retain the recovery record and block further merge/cleanup; never erase an unknown state to satisfy a clean-checkout assertion.
+- App-owned conflict resolution in the isolated Worktree follows [Worktree Conflict Resolution Contracts](./worktree-conflict-resolution-contracts.md). Its deliberate merge state is separate from main-checkout recovery; closing the UI must not abort it.
 - Stable backend error codes such as `dirty_main_worktree` are for the frontend contract, not end-user copy. The finish-task dialog must map dirty-main and merge-conflict states to readable guidance that says what happened, whether Git mutated the main checkout, and what the user should do next.
 - Cleanup may delete a non-empty directory only when `git worktree list --porcelain` still records the same path and branch. If Git records the path/branch but `git worktree remove --force` reports a stale checkout such as `is not a working tree` or missing `.git`, the backend may remove that registered path, run `git worktree prune`, and then delete the `wt/` branch.
 - Branch deletion is allowed only for `wt/` branches and only after explicit UI confirmation or successful finish flow.
@@ -215,9 +216,9 @@ type TreeNode =
 | Force merge stash apply conflicts after merge | Return `merged=true`, `stashRestored=false`, and `stashRestoreConflictFiles` when available; keep the retained stash and Worktree, and block cleanup. |
 | Worktree branch has no content diff from base branch | Return skipped `no_diff`; no checkout/merge happens; cleanup remains available. |
 | Merge branch missing | Return `branch_not_found`; no cleanup happens automatically. |
-| Merge conflict | Return conflict error with `conflictFiles`, run `merge --abort`, keep worktree record. |
+| Main-checkout merge conflict | Run `merge --abort` and verify recovery before reporting restored state; retain `conflictFiles` and the Worktree record. Abort/restore failure blocks further merge/cleanup with a persistent recovery record. |
 | Frontend receives `dirty_main_worktree` | Show human-readable text: main worktree has uncommitted changes, no merge ran, the Worktree commit is still safe, and the user should clean/commit/stash the main checkout before retrying. |
-| Frontend receives merge conflict result | Show human-readable text: merge was aborted automatically, main checkout returned to pre-merge state, and list `conflictFiles` when present. |
+| Frontend receives merge conflict result | Say the main checkout was restored only when the backend proves it; otherwise show the recovery reason and recheck action while dangerous actions remain disabled. List `conflictFiles` when present. |
 | Remove path not listed in `git worktree list --porcelain` and path is non-empty | Return `worktree_not_registered`; do not delete filesystem path. |
 | Remove path not listed in `git worktree list --porcelain` and path is empty | Remove the empty stale directory and delete the requested `wt/` branch only when requested. |
 | Remove path listed with matching branch but Git reports missing `.git` / `is not a working tree` | Treat as registered stale worktree: remove the registered directory, run `worktree prune`, and delete the requested `wt/` branch only when requested. |
@@ -265,7 +266,7 @@ type TreeNode =
   - finish flow succeeds for clean merge and removes worktree/branch.
   - dirty main checkout blocks merge.
   - force merge requires explicit confirmation, restores the main worktree changes, retains the stash, and blocks cleanup when restoration conflicts.
-  - conflict merge aborts and leaves main checkout clean.
+  - main-checkout conflict merge restores its baseline after verified abort; abort/restore failures preserve evidence and block cleanup instead of claiming the checkout is clean.
 
 ### 7. Wrong vs Correct
 

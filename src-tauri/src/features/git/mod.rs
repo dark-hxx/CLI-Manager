@@ -994,6 +994,7 @@ pub async fn git_stage_file(project_path: String, file_path: String) -> Result<(
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         let rel = Path::new(&file_path);
         if path.join(&file_path).exists() {
@@ -1026,6 +1027,7 @@ pub async fn git_unstage_file(project_path: String, file_path: String) -> Result
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         match repo.head().and_then(|h| h.peel_to_commit()) {
             Ok(commit) => {
                 repo.reset_default(Some(commit.as_object()), [file_path.as_str()])
@@ -1059,6 +1061,7 @@ pub async fn git_stage_all(project_path: String) -> Result<(), String> {
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         index
             .add_all(["*"], git2::IndexAddOption::DEFAULT, None)
@@ -1086,6 +1089,7 @@ pub async fn git_unstage_all(project_path: String) -> Result<(), String> {
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         match repo.head().and_then(|h| h.peel_to_tree()) {
             Ok(tree) => {
@@ -1122,6 +1126,7 @@ pub async fn git_stage_paths(project_path: String, paths: Vec<String>) -> Result
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         for p in &paths {
             let rel = Path::new(p);
@@ -1158,6 +1163,7 @@ pub async fn git_unstage_paths(project_path: String, paths: Vec<String>) -> Resu
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         match repo.head().and_then(|h| h.peel_to_commit()) {
             Ok(commit) => {
                 repo.reset_default(Some(commit.as_object()), paths.iter().map(|s| s.as_str()))
@@ -1196,6 +1202,7 @@ pub async fn git_commit(project_path: String, message: String) -> Result<String,
             return Err("path_not_found".to_string());
         }
         let repo = open_git_repo(path).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
 
         let mut index = repo.index().map_err(|e| format!("index_failed: {e}"))?;
         let tree_oid = index
@@ -1261,6 +1268,9 @@ pub async fn git_commit_paths(
         validate_repo_relative_path(p)?;
     }
     tokio::task::spawn_blocking(move || {
+        let effective_path = effective_git_project_path(&project_path);
+        let repo = open_git_repo(Path::new(&effective_path)).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut args: Vec<&str> = vec!["commit", "-m", &msg, "--"];
         for p in &paths {
             args.push(p.as_str());

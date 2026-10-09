@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager"
-version = "1.4.1"
+version = "1.4.2"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",

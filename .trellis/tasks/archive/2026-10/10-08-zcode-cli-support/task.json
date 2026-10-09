@@ -1,0 +1,32 @@
+{
+  "id": "zcode-cli-support",
+  "name": "zcode-cli-support",
+  "title": "ZCode CLI 类别接入",
+  "description": "按用户最新范围仅增加官方 ZCode CLI 类别和图标，复用既有启动链路。",
+  "status": "completed",
+  "dev_type": "frontend",
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-10-08",
+  "completedAt": "2026-10-08",
+  "branch": "pr-273-local",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": "d7805d7d495b50fda577a3b1a2fe9d2775208186",
+  "pr_url": "https://github.com/dark-hxx/CLI-Manager/pull/273",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/features/projects/components/ConfigModal.tsx",
+    "src/shared/lib/cliTools.ts",
+    "src/shared/ui/CliToolIcon.tsx",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "按用户最终范围仅新增 CLI 类别和图标，16 项现有回归、类型、严格架构及生产模块定向核对通过。用户未安装 ZCode，真实运行待测。V1.4.2，用户已授权提交并推送至 PR #273。后续不要使用异步提问。",
+  "meta": {}
+}

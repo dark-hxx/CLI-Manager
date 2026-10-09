@@ -1,4 +1,6 @@
 use git2::Repository;
+#[path = "worktree_conflicts/mod.rs"]
+pub mod conflicts;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fs;
@@ -455,7 +457,7 @@ fn remove_registered_stale_worktree_dir(target_path: &Path) -> Result<String, St
     Ok("removed_stale_registered_worktree_dir".to_string())
 }
 
-// 清理已登记的失效工作树目录后执行 Git 注册信息清理。
+// 只清理目标登记，禁止全局 prune 删除其他工作树的恢复日志。
 fn cleanup_registered_stale_worktree_path(
     project_path: &Path,
     target_path: &Path,
@@ -463,7 +465,7 @@ fn cleanup_registered_stale_worktree_path(
     let mut output = remove_registered_stale_worktree_dir(target_path)?;
     append_output_line(
         &mut output,
-        &run_git_checked(project_path, ["worktree", "prune"])?,
+        &run_git_worktree_remove_with_retry(project_path, &path_to_git_arg(target_path))?,
     );
     Ok(output)
 }
@@ -647,7 +649,7 @@ fn cleanup_stale_unregistered_worktree(
         remove_worktree_path_with_retry(target_path, |path| fs::remove_dir(path))?;
         output.push_str("removed_stale_empty_worktree_dir");
     } else {
-        output.push_str(&run_git_checked(project_path, ["worktree", "prune"])?);
+        output.push_str("stale_unregistered_worktree_path_missing");
     }
 
     if delete_branch && branch_exists(project_path, branch)? {
@@ -813,6 +815,7 @@ fn merge_worktree_internal(
     allow_dirty: bool,
 ) -> Result<GitWorktreeMergeResult, String> {
     let repo = open_main_repo(project_path)?;
+    let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
     let current_branch = current_branch_name(&repo)?;
     let project_path = local_path_from_input(project_path)
         .canonicalize()
@@ -849,6 +852,9 @@ fn merge_worktree_internal(
         ));
     }
 
+    let mut journal = conflicts::main_recovery::Journal::begin(&repo)
+        .map_err(conflicts::main_recovery::message)?;
+    let result = (|| {
     let mut output = String::new();
     let mut stash_reference = None;
     let main_is_dirty = if allow_dirty {
@@ -859,6 +865,7 @@ fn merge_worktree_internal(
     };
 
     if allow_dirty && main_is_dirty {
+        journal.phase("stashing", None).map_err(conflicts::main_recovery::message)?;
         let stash_message = format!("{FORCE_MERGE_STASH_MESSAGE_PREFIX}: {worktree_branch}");
         let stash_output = run_git_raw(
             &project_path,
@@ -893,6 +900,7 @@ fn merge_worktree_internal(
             ));
         }
         stash_reference = Some(stash_oid);
+        journal.phase("stashed", stash_reference.as_deref()).map_err(conflicts::main_recovery::message)?;
 
         let status_after_stash = run_git_checked(&project_path, ["status", "--porcelain"])
             .map_err(|error| {
@@ -912,6 +920,7 @@ fn merge_worktree_internal(
     }
 
     if current_branch != base_branch {
+        journal.phase("checking_out_base", None).map_err(conflicts::main_recovery::message)?;
         match run_git_checked(&project_path, ["checkout", base_branch]) {
             Ok(checkout_output) => {
                 if allow_dirty {
@@ -919,6 +928,7 @@ fn merge_worktree_internal(
                 }
             }
             Err(checkout_error) if allow_dirty => {
+                conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
                 return Err(restore_force_merge_after_failure(
                     &project_path,
                     &mut output,
@@ -931,12 +941,14 @@ fn merge_worktree_internal(
         }
     }
 
+    journal.phase("merging", None).map_err(conflicts::main_recovery::message)?;
     let merge_output = match run_git_raw(
         &project_path,
         ["merge", "--no-ff", "--no-edit", worktree_branch],
     ) {
         Ok(output) => output,
         Err(error) if allow_dirty => {
+            conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
             return Err(restore_force_merge_after_failure(
                 &project_path,
                 &mut output,
@@ -951,7 +963,9 @@ fn merge_worktree_internal(
     append_output_line(&mut output, &merge_detail);
 
     if merge_output.success {
+        journal.phase("merged", None).map_err(conflicts::main_recovery::message)?;
         if let Some(stash_reference) = stash_reference.as_deref() {
+            journal.phase("restoring_stash", Some(stash_reference)).map_err(conflicts::main_recovery::message)?;
             let (stash_restored, restore_conflicts, restore_output) =
                 restore_force_merge_stash(&project_path, stash_reference).map_err(|error| {
                     format_force_merge_error(
@@ -989,8 +1003,14 @@ fn merge_worktree_internal(
 
     let files = conflict_files(&project_path);
     if !allow_dirty {
+        if repo.path().join("MERGE_HEAD").exists() {
+            journal.phase("aborting", None).map_err(conflicts::main_recovery::message)?;
+            let abort = run_git_raw(&project_path, ["merge", "--abort"])
+                .map_err(|e| format!("merge_abort_failed: {e}"))?;
+            if !abort.success { return Err(format!("merge_abort_failed: {}", abort.combined())); }
+        }
+        conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
         if !files.is_empty() {
-            let _ = run_git_raw(&project_path, ["merge", "--abort"]);
             return Ok(build_merge_result(
                 false,
                 format!("merge_conflict: {merge_detail}"),
@@ -1004,11 +1024,11 @@ fn merge_worktree_internal(
             ));
         }
 
-        let _ = run_git_raw(&project_path, ["merge", "--abort"]);
         let snippet: String = merge_detail.chars().take(300).collect();
         return Err(format!("merge_failed: {snippet}"));
     }
 
+    journal.phase("aborting", None).map_err(conflicts::main_recovery::message)?;
     let abort_output = run_git_raw(&project_path, ["merge", "--abort"]).map_err(|error| {
         format_force_merge_error(
             "force_merge_abort_failed",
@@ -1026,6 +1046,8 @@ fn merge_worktree_internal(
         ));
     }
 
+    conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
+    journal.phase("aborted", None).map_err(conflicts::main_recovery::message)?;
     let Some(stash_reference) = stash_reference.as_deref() else {
         if !files.is_empty() {
             return Ok(build_merge_result(
@@ -1047,6 +1069,7 @@ fn merge_worktree_internal(
         ));
     };
 
+    journal.phase("restoring_stash", Some(stash_reference)).map_err(conflicts::main_recovery::message)?;
     match restore_force_merge_stash(&project_path, stash_reference) {
         Ok((stash_restored, restore_conflicts, restore_output)) => {
             append_output_line(&mut output, &restore_output);
@@ -1091,6 +1114,17 @@ fn merge_worktree_internal(
             ));
         }
     }
+    })();
+    let merged = result.as_ref().is_ok_and(|value| value.merged);
+    let restored = result.as_ref().map_or(true, |value|
+        (!value.stash_created || value.stash_restored) && value.stash_restore_conflict_files.is_empty());
+    if let Err(recovery) = journal.finish(&repo, merged, restored) {
+        // 保留旧 restore_conflict 返回结构，但磁盘日志继续阻止危险写入。
+        if result.as_ref().is_ok_and(|value| !value.stash_restore_conflict_files.is_empty()) { return result; }
+        let detail = result.as_ref().err().cloned().unwrap_or_default();
+        return Err(format!("{}; {detail}", conflicts::main_recovery::message(recovery)));
+    }
+    result
 }
 
 #[tauri::command]
@@ -1228,7 +1262,8 @@ pub async fn git_worktree_remove(
     validate_worktree_branch(&branch)?;
     ensure_supported_local_path(&worktree_path)?;
     tokio::task::spawn_blocking(move || {
-        open_main_repo(&project_path)?;
+        let main_repo = open_main_repo(&project_path)?;
+        let _main_operation = crate::repo_operation::begin_ordinary_write(&main_repo)?;
         let project_path = local_path_from_input(&project_path)
             .canonicalize()
             .map_err(|e| format!("canonicalize_project_path_failed: {e}"))?;
@@ -1236,8 +1271,12 @@ pub async fn git_worktree_remove(
         if !target_path.is_absolute() {
             return Err("worktree_path_not_absolute".to_string());
         }
+        // 固定主仓库→工作树锁顺序；路径缺失也不能绕过私有 git-dir 恢复日志。
+        let _worktree_operation = conflicts::cleanup_guard::lock_registered(&main_repo, &target_path)?;
         match worktree_registration(&project_path, &target_path, &branch)? {
-            WorktreeRegistration::Matched => {}
+            WorktreeRegistration::Matched => {
+                if _worktree_operation.is_none() { return Err("worktree_identity_changed".into()); }
+            }
             WorktreeRegistration::Mismatched => {
                 return Err("worktree_branch_mismatch".to_string());
             }
@@ -1267,7 +1306,7 @@ pub async fn git_worktree_remove(
                 Err(err) => return Err(err),
             }
         } else {
-            output.push_str(&run_git_checked(&project_path, ["worktree", "prune"])?);
+            output.push_str(&run_git_worktree_remove_with_retry(&project_path, target_arg.as_str())?);
         }
 
         if delete_branch {

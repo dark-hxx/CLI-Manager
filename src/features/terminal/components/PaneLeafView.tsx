@@ -10,6 +10,7 @@ import { FileEditorPane, SubagentTranscriptView } from "./lazyTerminalPanels";
 import { type SplitPickerAnchor, type PaneDropPreview } from "../lib/terminalTabsModel";
 import { PaneTabBar } from "./PaneTabBar";
 import { PaneContentDropZones } from "./PaneContentDropZones";
+import { WorktreeConflictPane } from "../../projects/api/WorktreeConflictPane";
 
 export interface PaneLeafViewProps {
   pane: TerminalPaneLeaf;
@@ -199,7 +200,9 @@ export function PaneLeafView({
             className="absolute inset-0"
             style={{ display: session.id === effectivePaneActiveSessionId ? "block" : "none" }}
           >
-            {session.kind === "file-editor" ? (
+            {session.kind === "worktree-conflict" ? (
+              <WorktreeConflictPane sessionId={session.id} />
+            ) : session.kind === "file-editor" ? (
               <Suspense fallback={null}>
                 <FileEditorPane
                   session={session}

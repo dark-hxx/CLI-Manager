@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import type { GitFileChange, Project, WorktreeRecord } from "../../../shared/types/index";
@@ -8,12 +8,17 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } f
 import { Button } from "../../../shared/ui/button";
 import { Textarea } from "../../../shared/ui/textarea";
 import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
+import { useWorktreeRecovery } from "../hooks/useWorktreeRecovery";
+import { WorktreeRecoveryNotice } from "../components/WorktreeRecoveryNotice";
+import { useWorktreeConflictProbe } from "../hooks/useWorktreeConflictProbe";
+import { openWorktreeConflicts } from "./worktreeConflictStore";
 
 interface WorktreeFinishDialogProps {
   project: Project | null;
   worktree: WorktreeRecord | null;
   open: boolean;
   onClose: () => void;
+  resume?: { step: Step; message: string; focus?: HTMLElement | null; mergeAfterConflicts?: boolean };
 }
 
 type Step = "review" | "merge" | "cleanup" | "done";
@@ -159,7 +164,18 @@ function formatFinishError(err: unknown, t: Translate, projectPath?: string): Fi
   };
 }
 
-export function WorktreeFinishDialog({ project, worktree, open, onClose }: WorktreeFinishDialogProps) {
+/** An explicit submit handoff may attempt the target merge once, never on a mere return. */
+function ResumeConflictMerge({ ready, onMerge }: { ready: boolean; onMerge: () => Promise<void> }) {
+  const attempted = useRef(false);
+  useEffect(() => {
+    if (!ready || attempted.current) return;
+    attempted.current = true;
+    void onMerge();
+  }, [ready, onMerge]);
+  return null;
+}
+
+export function WorktreeFinishDialog({ project, worktree, open, onClose, resume }: WorktreeFinishDialogProps) {
   const { t } = useI18n();
   const mergeWorktree = useWorktreeStore((state) => state.mergeWorktree);
   const forceMergeWorktree = useWorktreeStore((state) => state.forceMergeWorktree);
@@ -172,32 +188,56 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
   const [output, setOutput] = useState("");
   const [error, setError] = useState<FinishErrorInfo | null>(null);
   const [forceConfirmOpen, setForceConfirmOpen] = useState(false);
+  const recovery = useWorktreeRecovery(open, project?.path, worktree?.path);
+  const conflict = useWorktreeConflictProbe(open && !recovery.blocked, project, worktree);
+  const handoff = useRef(false);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const reviewedKey = useRef<string | null>(null);
 
   useEffect(() => {
     if (!open || !worktree) return;
-    setStep("review");
-    setCommitMessage(worktree.name);
+    setStep(resume?.step ?? "review");
+    setCommitMessage(resume?.message ?? worktree.name);
+    handoff.current = false;
     setOutput("");
     setError(null);
     setForceConfirmOpen(false);
+    setChanges([]);
+    reviewedKey.current = null;
+    setLoadingChanges(false);
+  }, [open, worktree, resume?.step, resume?.message]);
+
+  useEffect(() => {
+    if (!open || !worktree || recovery.blocked || conflict.blocked || reviewedKey.current === recovery.key) return;
+    let active = true;
     setLoadingChanges(true);
     invoke<GitFileChange[]>("git_get_changes", { projectPath: worktree.path })
       .then((items) => {
+        if (!active) return;
+        reviewedKey.current = recovery.key;
         setChanges(items);
-        if (items.length === 0) setStep("merge");
+        if (items.length === 0 && (!resume || resume.step === "review")) setStep("merge");
       })
-      .catch((err) => setError(formatFinishError(err, t, worktree.path)))
-      .finally(() => setLoadingChanges(false));
-  }, [open, t, worktree]);
+      .catch((err) => { if (active) setError(formatFinishError(err, t, worktree.path)); })
+      .finally(() => { if (active) setLoadingChanges(false); });
+    return () => { active = false; };
+  }, [open, t, worktree, recovery.blocked, recovery.key, conflict.blocked, resume?.step]);
 
   const changeSummary = useMemo(() => formatChangeSummary(changes), [changes]);
-  const canCommit = changes.length > 0 && commitMessage.trim().length > 0 && !busy;
-  const mergeBlockedByRestore =
-    error?.code === "force_merge_restore_conflict" ||
-    error?.code === "force_merge_restore_failed" ||
-    error?.code === "force_merge_abort_failed";
+  const actionsBlocked = busy || loadingChanges || recovery.blocked || conflict.blocked;
+  const canCommit = changes.length > 0 && commitMessage.trim().length > 0 && !actionsBlocked;
+  const canResolveConflicts = !recovery.blocked && (conflict.probe?.kind === "managed" || conflict.probe?.kind === "recovery" || (error?.code === "merge_conflict" && conflict.probe?.kind === "none"));
 
   if (!project || !worktree) return null;
+
+  // 先关闭旧模态，再交给布局外宿主；不携带 Git 写操作或清空后的 finishTarget。
+  const handleResolve = () => {
+    if (busy || loadingChanges || recovery.blocked) return;
+    handoff.current = true;
+    const focus = resume?.focus ?? returnFocus.current;
+    onClose();
+    openWorktreeConflicts({ project, worktree, step, message: commitMessage, focus });
+  };
 
   const handleCommit = async () => {
     if (!canCommit) return;
@@ -218,12 +258,13 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
         setError(formatFinishError(err, t, worktree.path));
       }
     } finally {
+      await recovery.gate.refresh();
       setBusy(false);
     }
   };
 
   const handleMerge = async () => {
-    if (busy) return;
+    if (actionsBlocked) return;
     setBusy(true);
     setError(null);
     setOutput((current) => `${current}\n\ngit -C "${project.path}" merge --no-ff --no-edit ${worktree.branch}`);
@@ -243,13 +284,14 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
     } catch (err) {
       setError(formatFinishError(err, t, project.path));
     } finally {
+      await recovery.gate.refresh();
       setBusy(false);
     }
   };
 
   // 只有确认框的显式确定按钮会进入此处，stash/merge/恢复由 Rust 作为一个受锁保护的序列执行。
   const handleForceMerge = async () => {
-    if (busy) return;
+    if (actionsBlocked) return;
     setForceConfirmOpen(false);
     setBusy(true);
     setError(null);
@@ -270,11 +312,13 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
     } catch (err) {
       setError(formatFinishError(err, t, project.path));
     } finally {
+      await recovery.gate.refresh();
       setBusy(false);
     }
   };
 
   const handleCleanup = async () => {
+    if (actionsBlocked) return;
     setBusy(true);
     setError(null);
     setOutput((current) => `${current}\n\ngit worktree remove "${worktree.path}"\ngit branch -D ${worktree.branch}`);
@@ -286,20 +330,38 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
     } catch (err) {
       setError(formatFinishError(err, t, project.path));
     } finally {
+      await recovery.gate.refresh();
       setBusy(false);
     }
   };
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(next) => { if (!next && !forceConfirmOpen) onClose(); }}>
-      <DialogContent className="max-w-[520px]" showCloseButton={false}>
-        <DialogTitle>{t("worktree.finish.title", { name: worktree.name })}</DialogTitle>
-        <DialogDescription className="mt-2">
+      <Dialog open={open} onOpenChange={(next) => { if (!next && !busy && !forceConfirmOpen) onClose(); }}>
+      <DialogContent className="flex max-h-[calc(100dvh-40px)] max-w-[520px] flex-col overflow-hidden" showCloseButton={false}
+        onOpenAutoFocus={() => { returnFocus.current = resume?.focus ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null); }}
+        onCloseAutoFocus={(event) => {
+          if (handoff.current || resume) event.preventDefault();
+        }}>
+        <DialogTitle className="shrink-0">{t("worktree.finish.title", { name: worktree.name })}</DialogTitle>
+        <DialogDescription className="mt-2 shrink-0">
           {t("worktree.finish.description", { branch: worktree.branch })}
         </DialogDescription>
+        {resume?.mergeAfterConflicts && <ResumeConflictMerge
+          ready={open && step === "merge" && !actionsBlocked && !error && reviewedKey.current === recovery.key && changes.length === 0}
+          onMerge={handleMerge} />}
 
-        <div className="mt-4 space-y-3 text-sm">
+        <div className="mt-4 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain text-sm">
+          <WorktreeRecoveryNotice key={recovery.key} snapshot={recovery.snapshot} gate={recovery.gate} busy={busy} />
+          {!recovery.blocked && conflict.blocked && <div role="status" className="space-y-2 rounded-lg border border-border p-3">
+            <p>{t("worktree.conflict.finishBlocked")}</p>
+            {conflict.error && <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-xs">{conflict.error}</pre>}
+            <Button variant="outline" size="sm" onClick={conflict.refresh} disabled={!conflict.probe && !conflict.error}>{t("worktree.conflict.recheck")}</Button>
+          </div>}
+          {canResolveConflicts && <div className="space-y-3 rounded-lg border border-accent/40 bg-accent/10 p-4">
+            <p className="font-semibold">{t("worktree.conflict.entryHint", { branch: worktree.base_branch })}</p>
+            <Button variant="default" className="w-full" onClick={handleResolve} disabled={busy || loadingChanges}>{t("worktree.conflict.open")}</Button>
+          </div>}
           <div className="rounded-lg border border-border bg-bg-secondary/60 p-3">
             <div className="mb-1 text-xs font-semibold text-text-secondary">{t("worktree.finish.changes")}</div>
             {loadingChanges ? (
@@ -351,7 +413,7 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
                   className="mt-3"
                   variant="destructive"
                   onClick={() => setForceConfirmOpen(true)}
-                  disabled={busy}
+                  disabled={actionsBlocked}
                   aria-label={t("worktree.finish.forceMergeAria")}
                 >
                   {t("worktree.finish.forceMerge")}
@@ -361,11 +423,12 @@ export function WorktreeFinishDialog({ project, worktree, open, onClose }: Workt
           )}
         </div>
 
-        <DialogFooter>
+        {recovery.blocked && <p id="worktree-recovery-disabled" className="shrink-0 text-xs text-danger">{t("worktree.recovery.disabled")}</p>}
+        <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={onClose} disabled={busy}>{t("common.cancel")}</Button>
           {step === "review" && <Button onClick={handleCommit} disabled={!canCommit}>{busy ? t("common.processing") : t("worktree.finish.commitAll")}</Button>}
-          {step === "merge" && <Button onClick={handleMerge} disabled={busy || mergeBlockedByRestore}>{busy ? t("common.processing") : t("worktree.finish.merge")}</Button>}
-          {step === "cleanup" && <Button onClick={handleCleanup} disabled={busy}>{busy ? t("common.processing") : t("worktree.finish.cleanup")}</Button>}
+          {step === "merge" && <Button variant="default" onClick={canResolveConflicts ? handleResolve : handleMerge} disabled={canResolveConflicts ? busy || loadingChanges : actionsBlocked} aria-describedby={recovery.blocked ? "worktree-recovery-disabled" : undefined}>{busy ? t("common.processing") : t(canResolveConflicts ? "worktree.conflict.open" : "worktree.finish.merge")}</Button>}
+          {step === "cleanup" && <Button onClick={handleCleanup} disabled={actionsBlocked} aria-describedby={recovery.blocked ? "worktree-recovery-disabled" : undefined}>{busy ? t("common.processing") : t("worktree.finish.cleanup")}</Button>}
         </DialogFooter>
       </DialogContent>
       </Dialog>

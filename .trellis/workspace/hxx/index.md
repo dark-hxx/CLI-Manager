@@ -7,9 +7,9 @@
 ## Current Status
 
 <!-- @@@auto:current-status -->
-- **Active File**: `journal-2.md`
-- **Total Sessions**: 125
-- **Last Active**: 2026-09-20
+- **Active File**: `journal-3.md`
+- **Total Sessions**: 130
+- **Last Active**: 2026-10-08
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,8 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-2.md` | ~1829 | Active |
+| `journal-3.md` | ~40 | Active |
+| `journal-2.md` | ~1975 | Archived |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
 
@@ -30,6 +31,11 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 130 | 2026-10-08 | V1.4.2 历史删除补齐与编译告警清理 | `14e9de2e`, `70ea97ea` | `master` |
+| 129 | 2026-10-08 | Codex Shift 方向键修复与项目菜单图标 | `b7eb8008`, `1f7b5020` | `master` |
+| 128 | 2026-10-08 | PR 276 Skills 扫描修复与性能验证 | `0eed48b0`, `f78bb83d` | `pr-276-review-fixes` |
+| 127 | 2026-10-08 | V1.4.2 ZCode CLI 类别与选项排序 | `d7805d7d495b50fda577a3b1a2fe9d2775208186` | `pr-273-local` |
+| 126 | 2026-10-07 | Worktree 合并优化交付与清理 | `2f4175ab` | `master` |
 | 125 | 2026-09-20 | 终端字体回退与外部程序选择 | `77eb48be` | `master` |
 | 124 | 2026-09-14 | 终端 Markdown 预览加载与滚动导航 | `ca2151a8`, `0cc91a0a` | `master` |
 | 123 | 2026-09-14 | 完成 MCP 与 Skills 管理 UI 优化 | `9b933639` | `mcp-skill-manager` |

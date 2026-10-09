@@ -1,0 +1,29 @@
+{
+  "id": "skill-inventory-depth-cutoff",
+  "name": "skill-inventory-depth-cutoff",
+  "title": "Preserve shallow skill discovery after depth cutoffs",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": "skills",
+  "package": null,
+  "priority": "P2",
+  "creator": "kongzhuww",
+  "assignee": "kongzhuww",
+  "createdAt": "2026-10-05",
+  "completedAt": "2026-10-08",
+  "branch": "fix/275-skill-inventory-depth",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": "https://github.com/dark-hxx/CLI-Manager/pull/276",
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "2026-10-08: maintainer requested both P2 review fixes, bounded directory enumeration, conflict resolution and push to the existing PR. Continue this task inline; changelog version V1.4.2.",
+  "meta": {
+    "issue": "275",
+    "changelog_version": "V1.4.2"
+  }
+}

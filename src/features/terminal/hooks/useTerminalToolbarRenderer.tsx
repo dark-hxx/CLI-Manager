@@ -14,6 +14,7 @@ import {
 import type { Project } from "../../../shared/types/index";
 import { SortableToolbarButton, CpuCatIndicator } from "../components/TerminalToolbarControls";
 
+
 interface TerminalToolbarContext {
   t: ReturnType<typeof useI18n>["t"];
   fullscreen: boolean;

@@ -44,8 +44,9 @@ use opencode_detail::build_opencode_session_detail;
 mod scope;
 pub(crate) use scope::validate_session_file_ref;
 use scope::{
-    codex_runtime_path, history_source_base, path_within_history_scope, should_register_codex_state_db,
-    validate_session_file_ref_for_conversion,
+    codex_runtime_path, history_source_base, path_within_history_scope,
+    should_register_codex_state_db, validate_session_file_ref_for_conversion,
+    validate_session_file_ref_for_deletion,
 };
 mod remote_requests;
 use remote_requests::{
@@ -89,6 +90,8 @@ pub(crate) use conversion::now_rfc3339;
 use conversion::{
     build_codex_thread_registration, convert_history_session, delete_session_tree, register_codex_thread,
 };
+mod deletion;
+use deletion::{delete_session_file, is_single_file_delete_source};
 mod roots;
 use roots::{
     apply_codex_thread_name, codex_thread_name_index, list_subagent_transcript_files,
@@ -562,15 +565,20 @@ pub async fn history_delete_session(
     tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
             .with_kimi_config_dir(kimi_config_dir);
-        if !matches!(source.as_str(), "claude" | "codex" | "kimi" | "grok") {
+        if !matches!(source.as_str(), "claude" | "codex" | "kimi" | "grok")
+            && !is_single_file_delete_source(&source)
+        {
             return Err("unsupported_history_mutation_source".to_string());
         }
-        let file_ref = validate_session_file_ref(&file_path, &source, &project_key, &roots)?;
+        let file_ref =
+            validate_session_file_ref_for_deletion(&file_path, &source, &project_key, &roots)?;
         ensure_source_mutation_unlocked(&source)?;
         if source == "kimi" {
             kimi::delete_kimi_session_tree(&file_ref, &kimi::resolve_kimi_history_root(&roots))?;
         } else if source == "grok" {
             delete_grok_session_tree(&file_ref, &resolve_grok_history_root(&roots))?;
+        } else if is_single_file_delete_source(&source) {
+            delete_session_file(&file_ref)?;
         } else {
             delete_session_tree(&file_ref)?;
         }

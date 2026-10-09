@@ -47,6 +47,13 @@ writeFileSync(
 
 transpile(new URL("../src/features/history/api/resumeCliArgs.ts", import.meta.url), "resumeCliArgs.mjs");
 transpile(new URL("../src/features/providers/api/providerSwitching.ts", import.meta.url), "providerSwitching.mjs");
+transpile(new URL("../src/shared/lib/deepseekHarness.ts", import.meta.url), "deepseekHarness.mjs", {
+  "../platform/shell": "./shell.mjs",
+});
+transpile(new URL("../src/shared/lib/deepseekTui.ts", import.meta.url), "deepseekTui.mjs", {
+  "../platform/shell": "./shell.mjs",
+  "./deepseekHarness": "./deepseekHarness.mjs",
+});
 const projectStartupPath = transpile(
   new URL("../src/features/projects/api/projectStartupCommand.ts", import.meta.url),
   "projectStartupCommand.mjs",
@@ -54,12 +61,15 @@ const projectStartupPath = transpile(
     "../../providers/api/providerSwitching": "./providerSwitching.mjs",
     "../../history/api/resumeCliArgs": "./resumeCliArgs.mjs",
     "../../../shared/platform/shell": "./shell.mjs",
+    "../../../shared/lib/deepseekHarness": "./deepseekHarness.mjs",
+    "../../../shared/lib/deepseekTui": "./deepseekTui.mjs",
   },
 );
 const saveSessionPath = transpile(
   new URL("../src/features/projects/api/saveSessionToSidebar.ts", import.meta.url),
   "saveSessionToSidebar.mjs",
   {
+    "../../../shared/lib/deepseekTui": "./deepseekTui.mjs",
     "../../terminal/state": "./terminalStore.mjs",
     "../../history/api/resumeCliArgs": "./resumeCliArgs.mjs",
   },
@@ -420,6 +430,10 @@ test("Pi history source advertises local resume support", () => {
 });
 
 // Execute the actual launch orchestrator with I/O mocked; keep real command builders.
+const {
+  isDeepSeekTuiTool, isDeepSeekTuiCommand, isDeepSeekTuiLauncherCommand,
+  getDeepSeekTuiCommandSourceRoot,
+} = await import(pathToFileURL(join(tempDir, "deepseekTui.mjs")).href);
 const launchSource = ts.createSourceFile("terminalLaunch.ts", readFileSync(
   new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8",
 ), ts.ScriptTarget.Latest, true);
@@ -447,6 +461,8 @@ async function resolveProviderTestLaunch({ profile = "cli-manager-provider", com
     prepareProjectExtensionLaunch: async () => extensions,
     releaseProjectExtensionSnapshot: () => {}, releaseProviderSnapshot: () => {},
     withCodexConfigOverrides, withCodexProfile, isDirectCodexStartupCommand,
+    isDeepSeekTuiTool, isDeepSeekTuiCommand, isDeepSeekTuiLauncherCommand,
+    getDeepSeekTuiCommandSourceRoot,
     prepareStartupCommandForPty: (value) => value, normalizeShellKey: (value) => value,
     extensionLaunchStatus: () => "applied", buildPtyEnvVars: () => null,
     shouldEnableHookEnv: async () => false, getCurrentTerminalColors: () => ({}), logWarn: () => {},
@@ -487,4 +503,10 @@ test("WSL extension fallback does not refer to a profile written into the Window
   const result = await resolveProviderTestLaunch({ shell: "wsl" });
   assert.equal(result.startupCmd,
     'codex -c "model_provider=\'legacy-provider\'" -c "skills.bundled.enabled=false"');
+});
+
+test("saved DSH TUI args replace global selectors with one explicit tab identity before app args", () => {
+  assert.equal(buildResumeCliArgs("deepseek-tui", `--resume ${OLD_ID} -c --continue -- --model deepseek-chat`, NEW_ID), `--resume ${NEW_ID} -- --model deepseek-chat`);
+  assert.equal(buildResumeCliArgs("deepseek-tui", `--resume=${OLD_ID} --model deepseek-chat`, NEW_ID), `--model deepseek-chat --resume ${NEW_ID}`);
+  assert.equal(buildResumeCliArgs("deepseek-tui", "", "bad;calc"), null);
 });

@@ -111,7 +111,7 @@ const supportedClaudeCodexCapabilities: HistorySourceCapabilities = {
   resume: "supported",
   appOpen: "planned",
   edit: "planned",
-  delete: "planned",
+  delete: "supported",
   convertFrom: "supported",
   convertTo: "supported",
   realtimeStats: "supported",
@@ -196,7 +196,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.gemini",
     defaultLabel: "Gemini CLI",
     locations: [configRootSlot],
-    capabilities: { ...jsonReaderCapabilities, usage: "supported" },
+    capabilities: { ...jsonReaderCapabilities, usage: "supported", delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-1",
@@ -210,7 +210,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     defaultLabel: "GitHub Copilot CLI",
     aliases: ["copilot-cli"],
     locations: [sessionRootSlot],
-    capabilities: jsonReaderCapabilities,
+    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-1",
@@ -223,7 +223,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.antigravity",
     defaultLabel: "Antigravity",
     locations: [configRootSlot],
-    capabilities: jsonReaderCapabilities,
+    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-2",
@@ -278,6 +278,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     capabilities: {
       ...jsonReaderCapabilities,
       resume: "supported",
+      delete: "supported",
     },
     parserPlan: {
       stage: "native",
@@ -291,7 +292,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.opencode",
     defaultLabel: "OpenCode",
     locations: [sessionDbSlot],
-    capabilities: { ...readonlyDatabaseCapabilities, resume: "supported" },
+    capabilities: { ...readonlyDatabaseCapabilities, resume: "supported", delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-2",
@@ -305,7 +306,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     defaultLabel: "Kiro",
     aliases: ["kiro-cli"],
     locations: [sessionRootSlot],
-    capabilities: jsonReaderCapabilities,
+    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-1",
@@ -318,7 +319,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.cursor",
     defaultLabel: "Cursor",
     locations: [sessionRootSlot],
-    capabilities: jsonReaderCapabilities,
+    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-4",
@@ -331,7 +332,7 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     labelKey: "historySources.source.cline",
     defaultLabel: "Cline",
     locations: [sessionRootSlot],
-    capabilities: jsonReaderCapabilities,
+    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-3",

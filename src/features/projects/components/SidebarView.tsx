@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Puzzle } from "lucide-react";
 import type { useSidebarController } from "../hooks/useSidebarController";
 import { sanitizeWorktreeTaskName, validateWorktreeTaskName } from "../api/worktreeStore";
 import { ConfigModal } from "./ConfigModal";
@@ -494,7 +495,7 @@ export function SidebarView({
                     setContextMenu(null);
                   }}
                 >
-                  <Settings size={14} strokeWidth={1.5} />
+                  <Puzzle size={14} strokeWidth={1.5} />
                   {t("extensions.page.title")}
                 </button>
                 <button
@@ -650,7 +651,7 @@ export function SidebarView({
                     setContextMenu(null);
                   }}
                 >
-                  <Settings size={14} strokeWidth={1.5} />
+                  <Puzzle size={14} strokeWidth={1.5} />
                   {t("extensions.page.title")}
                 </button>
                 <button

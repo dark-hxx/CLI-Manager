@@ -27,6 +27,7 @@ import { ConfirmDialog } from "../shared/ui/ConfirmDialog";
 import { ExitProgressOverlay, type ExitPhase } from "./components/ExitProgressOverlay";
 import { AppFailureState } from "./components/AppFailureState";
 import { ExternalSessionSyncDialog } from "../features/history/api/ExternalSessionSyncDialog";
+import { WorktreeConflictHost } from "../features/projects/api/WorktreeConflictHost";
 import { CircleAlert, CircleCheck, Info, ShieldAlert, X } from "../shared/ui/icons";
 import {
   useSettingsStore,
@@ -1937,6 +1938,7 @@ function App() {
       </WorkspaceLayoutShell>
       <CommandPalette />
       <ExternalSessionSyncDialog />
+      <WorktreeConflictHost />
       <CloseConfirmDialog
         open={closeDialogOpen}
         onMinimize={handleCloseDialogMinimize}

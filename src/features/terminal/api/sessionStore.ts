@@ -26,7 +26,7 @@ interface SessionStore {
 }
 
 function isPersistableSession(session: TerminalSession): boolean {
-  return session.kind !== "subagent-transcript" && session.kind !== "file-editor" && session.kind !== "synced-history";
+  return session.kind === undefined || session.kind === "pty";
 }
 
 let store: Store | null = null;

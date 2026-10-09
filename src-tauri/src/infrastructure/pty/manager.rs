@@ -313,13 +313,16 @@ impl PtyManager {
     /// 让 hook 回调环境变量跨进 WSL：把它们追加进 WSLENV（无 flag = Win↔WSL 双向共享），
     /// 既进 Linux shell，又能在 claude 经 interop 调 Windows 端 cli-manager.exe 时回传。
     /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
-    // 合并已有 WSLENV，将本批存在的回调和颜色变量按名称去重后加入。
+    // 合并已有 WSLENV，将本批存在的回调、颜色和 DSH TUI 启动变量按名称去重后加入。
     fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
-        const FORWARD: [&str; 4] = [
+        const FORWARD: [&str; 7] = [
             "CLI_MANAGER_TAB_ID",
             "CLI_MANAGER_NOTIFY_PORT",
             "CLI_MANAGER_NOTIFY_TOKEN",
             "COLORTERM",
+            "DSH_TUI_RESUME_SESSION",
+            "DSH_HOME",
+            "NODE_ENV",
         ];
         let present: Vec<&str> = FORWARD
             .iter()
@@ -1550,6 +1553,29 @@ mod tests {
         assert_eq!(
             vars.get("WSLENV").map(String::as_str),
             Some("FOO/u:COLORTERM/u")
+        );
+    }
+
+    #[test]
+    // 转发 DSH TUI 的明确会话和 Linux profile 路径，保留用户标志且不转换路径。
+    fn wsl_env_forwarding_preserves_dsh_tui_resume_home_and_user_flags() {
+        let mut vars = HashMap::from([
+            ("DSH_TUI_RESUME_SESSION".to_string(), "session-uuid".to_string()),
+            ("DSH_HOME".to_string(), "/home/test/.dsh".to_string()),
+            ("NODE_ENV".to_string(), "production".to_string()),
+            ("WSLENV".to_string(), "FOO/u:DSH_HOME/u:NODE_ENV/u".to_string()),
+        ]);
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(
+            vars.get("WSLENV").map(String::as_str),
+            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION")
+        );
+        assert_eq!(vars.get("DSH_HOME").map(String::as_str), Some("/home/test/.dsh"));
+        assert_eq!(vars.get("NODE_ENV").map(String::as_str), Some("production"));
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        assert_eq!(
+            vars.get("WSLENV").map(String::as_str),
+            Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION")
         );
     }
 

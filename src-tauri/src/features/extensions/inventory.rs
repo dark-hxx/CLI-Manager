@@ -63,8 +63,13 @@ pub(crate) async fn inspect() -> Result<SkillInventory, String> {
                     cli,
                     root.source_kind,
                 )
-                .map(|entries| {
+                .and_then(|(entries, limited)| {
                     found = entries;
+                    if limited {
+                        Err("extensions_inventory_limit".into())
+                    } else {
+                        Ok(())
+                    }
                 })
             } else {
                 scan_local(
@@ -128,7 +133,36 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     }
 }
 
-// Bounded traversal inspects directory links without recursing through them, including dangling links.
+const MAX_INVENTORY_DEPTH: usize = 8;
+const MAX_INVENTORY_ENTRIES: usize = 500;
+const MAX_INVENTORY_PATHS: usize = 10_000;
+
+struct ScanBudget<'a> {
+    examined: usize,
+    depth_limited: bool,
+    visited: &'a mut BTreeSet<std::path::PathBuf>,
+}
+
+impl ScanBudget<'_> {
+    // 在打开目录和推进迭代器前检查硬预算，不为判断是否结束而额外枚举一项。
+    fn ensure_capacity(&self, output_len: usize) -> Result<(), String> {
+        if output_len >= MAX_INVENTORY_ENTRIES || self.examined >= MAX_INVENTORY_PATHS {
+            Err("extensions_inventory_limit".into())
+        } else {
+            Ok(())
+        }
+    }
+}
+
+// 枚举后的目录项可被删除或替换成文件；仅忽略这两种失效快照，保留权限等真实错误。
+fn missing_scan_path(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+    )
+}
+
+// Preserve partial warnings without letting a depth cutoff suppress bounded sibling discovery.
 fn scan_local(
     path: &Path,
     cli: ExtensionCli,
@@ -137,18 +171,43 @@ fn scan_local(
     visited: &mut BTreeSet<std::path::PathBuf>,
     output: &mut Vec<InventoryEntry>,
 ) -> Result<(), String> {
-    if depth > 8 || output.len() >= 500 {
-        return Err("extensions_inventory_limit".into());
+    let mut budget = ScanBudget {
+        examined: 0,
+        depth_limited: false,
+        visited,
+    };
+    scan_local_bounded(path, cli, kind, depth, &mut budget, output)?;
+    if budget.depth_limited {
+        Err("extensions_inventory_limit".into())
+    } else {
+        Ok(())
     }
+}
+
+// 深度只截断当前分支；硬预算先于目录枚举检查，失效条目不打断兄弟扫描，链接不递归。
+fn scan_local_bounded(
+    path: &Path,
+    cli: ExtensionCli,
+    kind: &str,
+    depth: usize,
+    budget: &mut ScanBudget<'_>,
+    output: &mut Vec<InventoryEntry>,
+) -> Result<(), String> {
+    budget.ensure_capacity(output.len())?;
+    budget.examined += 1;
     let metadata = match fs::symlink_metadata(path) {
         Ok(m) => m,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound && depth == 0 => return Ok(()),
+        Err(e) if missing_scan_path(&e) => return Ok(()),
         Err(_) => return Err("extensions_inventory_unreadable".into()),
     };
-    if !metadata.is_dir() && !is_link(&metadata) {
+    let link = is_link(&metadata);
+    if !metadata.is_dir() && !link {
         return Ok(());
     }
-    let link = is_link(&metadata);
+    if depth > MAX_INVENTORY_DEPTH {
+        budget.depth_limited = true;
+        return Ok(());
+    }
     let resolved = fs::canonicalize(path).ok();
     let manifest = path.join("SKILL.md").is_file();
     if manifest || link {
@@ -188,15 +247,33 @@ fn scan_local(
         return Ok(());
     }
     if let Some(resolved) = resolved {
-        if !visited.insert(resolved) {
+        if !budget.visited.insert(resolved) {
             return Ok(());
         }
     }
-    for entry in fs::read_dir(path).map_err(|_| "extensions_inventory_unreadable")? {
-        let entry = entry.map_err(|_| "extensions_inventory_unreadable")?;
-        scan_local(&entry.path(), cli, kind, depth + 1, visited, output)?;
+    budget.ensure_capacity(output.len())?;
+    let mut children = match fs::read_dir(path) {
+        Ok(children) => children,
+        Err(error) if missing_scan_path(&error) => return Ok(()),
+        Err(_) => return Err("extensions_inventory_unreadable".into()),
+    };
+    loop {
+        budget.ensure_capacity(output.len())?;
+        match children.next() {
+            Some(Ok(entry)) => {
+                scan_local_bounded(&entry.path(), cli, kind, depth + 1, budget, output)?;
+            }
+            Some(Err(error)) if missing_scan_path(&error) => budget.examined += 1,
+            Some(Err(_)) => return Err("extensions_inventory_unreadable".into()),
+            None => return Ok(()),
+        }
     }
-    Ok(())
+}
+
+#[derive(Deserialize)]
+struct WslInventory {
+    entries: Vec<InventoryEntry>,
+    limited: bool,
 }
 
 // All WSL traversal runs inside the selected distro, with bounded output and no installation scripts.
@@ -205,7 +282,7 @@ fn scan_wsl(
     distro: &str,
     cli: ExtensionCli,
     kind: &str,
-) -> Result<Vec<InventoryEntry>, String> {
+) -> Result<(Vec<InventoryEntry>, bool), String> {
     let linux = crate::wsl::parse_wsl_unc_path(path)
         .map(|(_, p)| p)
         .unwrap_or_else(|| path.replace('\\', "/"));
@@ -231,27 +308,52 @@ fn scan_wsl(
     if !output.status.success() {
         return Err("extensions_inventory_unreadable".into());
     }
-    let mut entries: Vec<InventoryEntry> =
+    let mut inventory: WslInventory =
         serde_json::from_slice(&output.stdout).map_err(|_| "extensions_inventory_invalid")?;
-    for entry in &mut entries {
+    for entry in &mut inventory.entries {
         entry.path = crate::wsl::linux_to_unc_wsl_path(&entry.path, distro);
         entry.import_path = entry
             .import_path
             .as_ref()
             .map(|p| crate::wsl::linux_to_unc_wsl_path(p, distro));
     }
-    Ok(entries)
+    Ok((inventory.entries, inventory.limited))
 }
 
+// 内嵌 exhausted/visit：预算先于目录枚举，普通文件复用 DirEntry，目录复查链接类型并跳过消失路径。
 const WSL_SCAN: &str = r#"
-import os, sys, json
+import os, sys, json, stat
 root, cli, kind = sys.argv[1:]
 result = []
-def visit(path, depth):
-    if depth > 8 or len(result) >= 500: raise RuntimeError('limit')
-    if not os.path.lexists(path): return
-    if not os.path.isdir(path) and not os.path.islink(path): return
-    linked = os.path.islink(path)
+MAX_INVENTORY_DEPTH = 8
+MAX_INVENTORY_ENTRIES = 500
+MAX_INVENTORY_PATHS = 10000
+examined = 0
+limited = False
+stopped = False
+
+def exhausted():
+    global limited, stopped
+    if len(result) >= MAX_INVENTORY_ENTRIES or examined >= MAX_INVENTORY_PATHS:
+        limited = stopped = True
+    return stopped
+
+def visit(path, depth, entry=None):
+    global examined, limited
+    if exhausted(): return
+    examined += 1
+    try:
+        if entry is None or entry.is_dir(follow_symlinks=False):
+            mode = os.lstat(path).st_mode
+            linked, directory = stat.S_ISLNK(mode), stat.S_ISDIR(mode)
+        else:
+            linked, directory = entry.is_symlink(), False
+    except (FileNotFoundError, NotADirectoryError):
+        return
+    if not directory and not linked: return
+    if depth > MAX_INVENTORY_DEPTH:
+        limited = True
+        return
     manifest = os.path.isfile(os.path.join(path, 'SKILL.md'))
     if manifest or linked:
         result.append(dict(cli=cli, name=os.path.basename(path), path=path,
@@ -260,37 +362,21 @@ def visit(path, depth):
             linkTarget=os.path.realpath(path) if linked else None,
             importPath=os.path.realpath(path) if manifest else None, managed=False))
         return
-    for name in sorted(os.listdir(path)): visit(os.path.join(path, name), depth + 1)
+    if exhausted(): return
+    try:
+        with os.scandir(path) as children:
+            while not exhausted():
+                try:
+                    child = next(children)
+                except StopIteration:
+                    return
+                visit(child.path, depth + 1, child)
+    except (FileNotFoundError, NotADirectoryError):
+        return
 visit(root, 0)
-print(json.dumps(result))
+print(json.dumps(dict(entries=result, limited=limited)))
 "#;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn discovers_native_plugin_and_builtin_without_reading_skill_bodies() {
-        let root = tempfile::tempdir().unwrap();
-        for name in ["one", ".system/builtin", "vendor/plugin/skills/two"] {
-            fs::create_dir_all(root.path().join(name)).unwrap();
-            fs::write(
-                root.path().join(name).join("SKILL.md"),
-                "---\nname: test\n---",
-            )
-            .unwrap();
-        }
-        let mut entries = Vec::new();
-        scan_local(
-            root.path(),
-            ExtensionCli::Claude,
-            "native",
-            0,
-            &mut BTreeSet::new(),
-            &mut entries,
-        )
-        .unwrap();
-        assert_eq!(entries.len(), 3);
-        assert!(entries.iter().any(|e| e.source_kind == "builtin"));
-        assert!(entries.iter().all(|e| e.import_path.is_some()));
-    }
-}
+#[path = "inventory_tests.rs"]
+mod tests;

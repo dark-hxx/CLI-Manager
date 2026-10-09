@@ -1,6 +1,7 @@
 import type { zh } from "./terminal.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+
   "termStats.screenshot": "Copy full statistics as image",
   "termStats.screenshotBusy": "Creating statistics image…",
   "termStats.screenshotCopied": "Statistics image copied to clipboard",

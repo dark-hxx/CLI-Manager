@@ -470,7 +470,7 @@ fn split_environment_entry(entry: &str) -> Option<(&str, &str)> {
     (!key.is_empty()).then_some((key, &entry[separator + 1..]))
 }
 
-// 按忽略 ASCII 大小写的键合并宿主→刷新→显式覆盖；PATH 刷新值优先补宿主独有项，显式值仍整项替换。
+// 按忽略 ASCII 大小写的键合并宿主→刷新→显式覆盖；PATH 保持宿主顺序并补刷新独有项，显式值仍整项替换。
 fn merge_environment(
     base: impl IntoIterator<Item = (String, String)>,
     refreshed: impl IntoIterator<Item = (String, String)>,
@@ -504,11 +504,13 @@ fn merge_environment(
     environment
 }
 
-// 新路径项在前，按裁剪空白并转小写的键去重，但输出保留首个原始文本；不规范化路径或过滤空项。
+// 保留宿主 PATH 的已激活环境顺序，再补最新用户路径；按裁剪空白并转小写的键去重。
+// 不重排 Conda 前缀目录，否则其重激活删除首尾前缀之间整段时会误删夹入的其他 CLI。
+// 输出保留首个原始文本，不规范化路径或过滤空项。
 fn merge_windows_path(refreshed: &str, base: &str) -> String {
     let mut entries = Vec::new();
     let mut seen = HashSet::new();
-    for entry in refreshed.split(';').chain(base.split(';')) {
+    for entry in base.split(';').chain(refreshed.split(';')) {
         let normalized = entry.trim().to_lowercase();
         if seen.insert(normalized) {
             entries.push(entry);
@@ -576,7 +578,7 @@ mod tests {
     }
 
     #[test]
-    // 验证刷新 PATH 保持优先顺序，并补回 daemon 独有目录而不重复大小写等价项。
+    // 验证 daemon PATH 的原有顺序保持，补充最新用户目录且不重复大小写等价项。
     fn refreshed_path_keeps_daemon_only_entries() {
         let environment = merge_environment(
             [("Path".to_string(), r"C:\daemon-temp;C:\Windows".to_string())],
@@ -588,8 +590,47 @@ mod tests {
             environment.get("PATH"),
             Some(&(
                 "PATH".to_string(),
-                r"c:\windows;C:\fresh-cli;C:\daemon-temp".to_string()
+                r"C:\daemon-temp;C:\Windows;C:\fresh-cli".to_string()
             ))
+        );
+    }
+
+    #[test]
+    // Conda 按首尾前缀目录删除整段再插入；刷新不得把 npm 夹入这段。
+    fn inherited_conda_path_survives_reactivation_after_user_refresh() {
+        let prefix = r"C:\Conda";
+        let first = prefix;
+        let last = r"C:\Conda\bin";
+        let environment = merge_environment(
+            [("Path".to_string(), r"C:\Conda;C:\Conda\Library\bin;C:\Conda\Scripts;C:\Conda\bin;C:\npm;C:\daemon-tools".to_string())],
+            [("PATH".to_string(), r"C:\Conda;C:\Conda\Library\bin;C:\Conda\Scripts;C:\npm;C:\fresh-cli".to_string())],
+            [],
+        );
+        let merged = &environment.get("PATH").unwrap().1;
+        let mut entries: Vec<_> = merged.split(';').collect();
+        let first_idx = entries.iter().position(|entry| *entry == first).unwrap();
+        let last_idx = entries.iter().position(|entry| *entry == last).unwrap();
+        // Match Conda's contiguous removal, rather than deleting individual matches.
+        entries.drain(first_idx..=last_idx);
+        entries.splice(
+            first_idx..first_idx,
+            [prefix, r"C:\Conda\Library\bin", r"C:\Conda\Scripts", last],
+        );
+        assert!(entries.contains(&r"C:\npm"));
+        assert!(entries.contains(&r"C:\daemon-tools"));
+        assert!(entries.contains(&r"C:\fresh-cli"));
+        assert_eq!(
+            entries.iter().filter(|entry| **entry == r"C:\npm").count(),
+            1
+        );
+    }
+
+    #[test]
+    // 大小写和空项仍按既有规则去重，保留宿主首个条目的文本与相对顺序。
+    fn path_refresh_preserves_case_and_empty_entry_semantics() {
+        assert_eq!(
+            merge_windows_path(r"c:\windows;C:\Fresh;;", r"C:\Daemon;;C:\Windows;"),
+            r"C:\Daemon;;C:\Windows;C:\Fresh"
         );
     }
 

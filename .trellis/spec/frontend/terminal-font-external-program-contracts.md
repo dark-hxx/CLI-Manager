@@ -16,6 +16,7 @@
 - `externalTerminalProgram` 为 `windows-terminal | cmd | powershell | pwsh`，缺省及未知持久化值归一化为 `windows-terminal`；仅本机保存，sync 排除。
 - Windows Terminal 保留标签模式；其他程序通过新控制台启动，每个 tab 一个窗口。系统可使用默认终端承载这些控制台。
 - 项目入口必须传项目 Shell 或全局默认 Shell；无项目上下文且未传 Shell 时，直接程序模式使用选择的程序本身。
+- Windows Git Bash 的扫描、图标、PTY 与外部启动共用 `shell_resolver::resolve_git_bash_exe`；保留默认位置与传统 PATH 优先级，补充 Git for Windows 布局及 Scoop shims/`SCOOP`/`SCOOP_GLOBAL`/默认用户与全局根。新增候选要求 `cmd/git.exe` 与 `usr/bin/bash.exe` 为文件，优先稳定 `current` 路径；不选任意 PATH bash 或 `git-bash.exe` GUI 启动器，不修改用户 PATH。
 - WSL 不作为 Win32 cwd；UNC 拆发行版及 Linux 路径，CLI 用 Bash 参数，只有 WT 分支处理标签分号转义。
 - CMD 脚本文本不能使用 CRT argv 转义。不同 Shell 使用编码 PowerShell 桥接及 ProcessStartInfo 避免二次解释；不更改执行策略。
 - 直接模式使用 `CreateProcessW(CREATE_NEW_CONSOLE)`，不传 `STARTF_USESTDHANDLES`，禁止继承父进程句柄。单独设置 Rust `Command::creation_flags(CREATE_NEW_CONSOLE)` 仍可能继承桌面日志管道，导致新窗口空白；不可使用管道输出测试代替控制台句柄测试。

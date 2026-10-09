@@ -26,6 +26,6 @@ pub(crate) use keys::{
     update_key,
 };
 pub(crate) use support::{
-    meta_common_config_enabled, meta_enabled, normalize_app_type, parse_meta,
-    project_key_into_settings, unix_timestamp_millis,
+    claude_config_from_settings, meta_common_config_enabled, meta_enabled, normalize_app_type,
+    parse_meta, project_key_into_settings, unix_timestamp_millis,
 };

@@ -2,7 +2,7 @@
 
 CLI-Manager is dual-licensed.
 
-Copyright (c) 2026 Chenyme.
+Copyright © 2026 dark-hxx
 
 ## English
 

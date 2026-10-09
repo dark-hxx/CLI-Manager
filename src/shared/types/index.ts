@@ -412,7 +412,7 @@ export type TreeNode =
   | { type: "project"; project: Project; worktrees?: WorktreeRecord[] }
   | { type: "worktree"; project: Project; worktree: WorktreeRecord };
 
-export type TerminalSessionKind = "pty" | "subagent-transcript" | "file-editor" | "synced-history";
+export type TerminalSessionKind = "pty" | "subagent-transcript" | "file-editor" | "synced-history" | "worktree-conflict";
 
 export interface NativeProviderLaunchSnapshot {
   appType: "claude" | "codex" | "grokbuild";
@@ -945,6 +945,8 @@ export interface HistoryTitleProviderOption {
   providerName: string;
   modelId: string | null;
   apiFormat: string | null;
+  /** 实际请求协议，由后端按 apiFormat 归类：anthropic / chat / responses。 */
+  protocol: "anthropic" | "chat" | "responses" | null;
   ready: boolean;
   reasonCode: string | null;
 }

@@ -606,6 +606,8 @@ async fn post_model_request(
     auxiliary_text::post_text_request(
         client,
         protocol,
+        // 命令建议只使用 Chat 与 Responses 两种 OpenAI 兼容协议，固定 Bearer。
+        auxiliary_text::AuxiliaryTextAuth::Bearer,
         base_url,
         api_key,
         model,

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/worktree-isolation-contracts.md","reason":"沿用普通/强制合并与stash保留规则；补齐abort结果核验、恢复闸门、受管Worktree例外，不能断言主检出任何时刻都无MERGE_HEAD。"}
+{"file":".trellis/spec/frontend/git-changes-performance-contracts.md","reason":"分页/虚拟化、单飞/epoch、Worker阈值及回退；文件列表行高与diff行模型、字节/行/块/JSON限制分别验证。"}
+{"file":".trellis/spec/frontend/ai-architecture-contracts.md","reason":"近2000行模块须职责拆分与窄公开入口，独立strict检查且不新增豁免。"}
+{"file":".trellis/spec/guides/tauri-user-file-security-checklist.md","reason":"不信任客户端路径；fileId绑定原始集合，词法/canonical/reparse/缺失父目录安全检查及精确Git路径参数。"}
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"按行为性跨边界根因修复和新增场景矩阵检查，涵盖compact/外部终端/多窗口/恢复与目标前移。"}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"只读分支检查、限定改动范围、代码实施时同步版本化变更记录；未经授权不提交或同步分支。"}
+{"file":".trellis/tasks/09-30-worktree-merge-conflict-resolution/prd.md","reason":"R1–R20、AC1–AC25是本轮需求与范围依据；方案不等于产品已通过验收。"}
+{"file":".trellis/tasks/09-30-worktree-merge-conflict-resolution/design.md","reason":"冻结左右stage语义、持久化状态机、CAS与恢复、IPC、安全及性能硬门槛。"}
+{"file":".trellis/tasks/09-30-worktree-merge-conflict-resolution/tests/worktree-merge-conflict-resolution-test-cases.md","reason":"逐项执行功能/边界/错误/状态迁移/安全/性能用例，所有产品结果目前NOT_RUN。"}

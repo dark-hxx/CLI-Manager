@@ -1,0 +1,524 @@
+{
+  "measuredAt": "2026-09-30T10:52:45.314Z",
+  "scope": "Edge production React, mocked IPC; NOT native Git or WebView2",
+  "environment": {
+    "os": "10.0.26200",
+    "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+    "logicalCpus": 20,
+    "memory": 34044174336,
+    "node": "v24.18.1",
+    "browser": "154.0.4258.37"
+  },
+  "fixture": {
+    "bytes": 2091566,
+    "lines": 20000,
+    "maxLineBytes": 64014,
+    "blocks": 2000,
+    "jsonBytes": 4240341,
+    "metadata": 64887
+  },
+  "baseline": {
+    "heap": 61438136,
+    "documents": 1,
+    "nodes": 703,
+    "jsEventListeners": 345
+  },
+  "checkpoints": [
+    {
+      "heap": 61852476,
+      "documents": 1,
+      "nodes": 703,
+      "jsEventListeners": 345
+    },
+    {
+      "heap": 61972352,
+      "documents": 1,
+      "nodes": 703,
+      "jsEventListeners": 345
+    },
+    {
+      "heap": 62167220,
+      "documents": 1,
+      "nodes": 703,
+      "jsEventListeners": 345
+    },
+    {
+      "heap": 62327160,
+      "documents": 1,
+      "nodes": 703,
+      "jsEventListeners": 345
+    }
+  ],
+  "quantiles": {
+    "metadataPaint": {
+      "cold": {
+        "p50": 11,
+        "p95": 19.299999997019768,
+        "max": 19.299999997019768
+      },
+      "warm": {
+        "p50": 42.900000002235174,
+        "p95": 44.69999999925494,
+        "max": 44.80000000074506
+      }
+    },
+    "detailPaint": {
+      "cold": {
+        "p50": 129.89999999850988,
+        "p95": 163.40000000223517,
+        "max": 163.40000000223517
+      },
+      "warm": {
+        "p50": 115.29999999701977,
+        "p95": 131.5,
+        "max": 165.69999999925494
+      }
+    },
+    "render": {
+      "cold": {
+        "p50": 121.5,
+        "p95": 153.60000000149012,
+        "max": 153.60000000149012
+      },
+      "warm": {
+        "p50": 109.29999999701977,
+        "p95": 124.19999999925494,
+        "max": 159.30000000074506
+      }
+    },
+    "ipcDouble": {
+      "cold": {
+        "p50": 8.699999999254942,
+        "p95": 9.800000000745058,
+        "max": 9.800000000745058
+      },
+      "warm": {
+        "p50": 6.399999998509884,
+        "p95": 12.400000002235174,
+        "max": 13.300000000745058
+      }
+    },
+    "choicePaint": {
+      "cold": {
+        "p50": 50.100000001490116,
+        "p95": 64.69999999925494,
+        "max": 64.69999999925494
+      },
+      "warm": {
+        "p50": 49.900000002235174,
+        "p95": 50.20000000298023,
+        "max": 50.30000000074506
+      }
+    },
+    "scroll": {
+      "p50": 33.30000000074506,
+      "p95": 34.19999999925494,
+      "max": 35.5
+    }
+  },
+  "cold": [
+    {
+      "metadataPaint": 11,
+      "detailPaint": 163.40000000223517,
+      "render": 153.60000000149012,
+      "ipcDouble": 9.800000000745058,
+      "choicePaint": 50.100000001490116,
+      "scrollTimes": [
+        33.69999999925494,
+        32.400000002235174,
+        33.400000002235174
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 19.299999997019768,
+      "detailPaint": 116,
+      "render": 109.19999999925494,
+      "ipcDouble": 6.800000000745058,
+      "choicePaint": 64.69999999925494,
+      "scrollTimes": [
+        33.100000001490116,
+        33.100000001490116,
+        33.399999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 10.299999997019768,
+      "detailPaint": 144.90000000223517,
+      "render": 136.20000000298023,
+      "ipcDouble": 8.699999999254942,
+      "choicePaint": 49.80000000074506,
+      "scrollTimes": [
+        34.100000001490116,
+        32.5,
+        33.30000000074506
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 18.699999999254942,
+      "detailPaint": 128.39999999850988,
+      "render": 121.5,
+      "ipcDouble": 6.899999998509884,
+      "choicePaint": 64.39999999850988,
+      "scrollTimes": [
+        34.100000001490116,
+        32.599999997764826,
+        33.400000002235174
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 10,
+      "detailPaint": 129.89999999850988,
+      "render": 120.39999999850988,
+      "ipcDouble": 9.5,
+      "choicePaint": 49.900000002235174,
+      "scrollTimes": [
+        33.099999997764826,
+        34.400000002235174,
+        32.30000000074506
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    }
+  ],
+  "warm": [
+    {
+      "metadataPaint": 34.5,
+      "detailPaint": 130.5,
+      "render": 117.19999999925494,
+      "ipcDouble": 13.300000000745058,
+      "choicePaint": 49.900000002235174,
+      "scrollTimes": [
+        33.5,
+        33.100000001490116,
+        34.600000001490116
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 42.80000000074506,
+      "detailPaint": 114.39999999850988,
+      "render": 105.89999999850988,
+      "ipcDouble": 8.5,
+      "choicePaint": 50.30000000074506,
+      "scrollTimes": [
+        33.099999997764826,
+        33.100000001490116,
+        33.399999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 38.69999999925494,
+      "detailPaint": 113.09999999776483,
+      "render": 107.69999999925494,
+      "ipcDouble": 5.399999998509884,
+      "choicePaint": 49.80000000074506,
+      "scrollTimes": [
+        33.20000000298023,
+        35.5,
+        31
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 41.30000000074506,
+      "detailPaint": 113.20000000298023,
+      "render": 103.90000000223517,
+      "ipcDouble": 9.300000000745058,
+      "choicePaint": 50,
+      "scrollTimes": [
+        32.899999998509884,
+        33.600000001490116,
+        34.099999997764826
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.099999997764826,
+      "detailPaint": 99.09999999776483,
+      "render": 94.5,
+      "ipcDouble": 4.599999997764826,
+      "choicePaint": 49.399999998509884,
+      "scrollTimes": [
+        33.30000000074506,
+        33.600000001490116,
+        32.899999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 28.800000000745058,
+      "detailPaint": 115.29999999701977,
+      "render": 109.29999999701977,
+      "ipcDouble": 6,
+      "choicePaint": 49.69999999925494,
+      "scrollTimes": [
+        33.30000000074506,
+        33.399999998509884,
+        33.30000000074506
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.19999999925494,
+      "detailPaint": 115.80000000074506,
+      "render": 111.10000000149012,
+      "ipcDouble": 4.699999999254942,
+      "choicePaint": 49.80000000074506,
+      "scrollTimes": [
+        33.19999999925494,
+        33.400000002235174,
+        33.099999997764826
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.5,
+      "detailPaint": 130.80000000074506,
+      "render": 118.39999999850988,
+      "ipcDouble": 12.400000002235174,
+      "choicePaint": 49.900000002235174,
+      "scrollTimes": [
+        33.19999999925494,
+        33.599999997764826,
+        33.399999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 43,
+      "detailPaint": 165.69999999925494,
+      "render": 159.30000000074506,
+      "ipcDouble": 6.399999998509884,
+      "choicePaint": 49.600000001490116,
+      "scrollTimes": [
+        33.19999999925494,
+        33.5,
+        33.100000001490116
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 42.900000002235174,
+      "detailPaint": 115.59999999776483,
+      "render": 110.89999999850988,
+      "ipcDouble": 4.699999999254942,
+      "choicePaint": 50,
+      "scrollTimes": [
+        33.20000000298023,
+        33.599999997764826,
+        33.100000001490116
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 29,
+      "detailPaint": 131.5,
+      "render": 124.19999999925494,
+      "ipcDouble": 7.300000000745058,
+      "choicePaint": 50,
+      "scrollTimes": [
+        33.19999999925494,
+        33.30000000074506,
+        33.5
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.69999999925494,
+      "detailPaint": 115.69999999925494,
+      "render": 110.69999999925494,
+      "ipcDouble": 5,
+      "choicePaint": 49.70000000298023,
+      "scrollTimes": [
+        33.5,
+        33.19999999925494,
+        33.19999999925494
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.80000000074506,
+      "detailPaint": 115.5,
+      "render": 110.80000000074506,
+      "ipcDouble": 4.699999999254942,
+      "choicePaint": 50.100000001490116,
+      "scrollTimes": [
+        33.100000001490116,
+        33.19999999925494,
+        33.400000002235174
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.30000000074506,
+      "detailPaint": 115.19999999925494,
+      "render": 108.69999999925494,
+      "ipcDouble": 6.5,
+      "choicePaint": 49.69999999925494,
+      "scrollTimes": [
+        33.100000001490116,
+        33.69999999925494,
+        33.099999997764826
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 42.900000002235174,
+      "detailPaint": 116.09999999776483,
+      "render": 111.09999999776483,
+      "ipcDouble": 5,
+      "choicePaint": 50,
+      "scrollTimes": [
+        33.099999997764826,
+        33.400000002235174,
+        33.19999999925494
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 30.900000002235174,
+      "detailPaint": 115.39999999850988,
+      "render": 108.69999999925494,
+      "ipcDouble": 6.699999999254942,
+      "choicePaint": 49.79999999701977,
+      "scrollTimes": [
+        33.400000002235174,
+        33.30000000074506,
+        33.399999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 44.400000002235174,
+      "detailPaint": 115.20000000298023,
+      "render": 110.40000000223517,
+      "ipcDouble": 4.800000000745058,
+      "choicePaint": 50.100000001490116,
+      "scrollTimes": [
+        33.19999999925494,
+        33.5,
+        34.19999999925494
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 42.100000001490116,
+      "detailPaint": 112,
+      "render": 105,
+      "ipcDouble": 7,
+      "choicePaint": 50.20000000298023,
+      "scrollTimes": [
+        33.19999999925494,
+        33.30000000074506,
+        33.400000002235174
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 39.899999998509884,
+      "detailPaint": 113.70000000298023,
+      "render": 102.90000000223517,
+      "ipcDouble": 10.800000000745058,
+      "choicePaint": 50.100000001490116,
+      "scrollTimes": [
+        33.099999997764826,
+        33.70000000298023,
+        32.899999998509884
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    },
+    {
+      "metadataPaint": 43,
+      "detailPaint": 113.30000000074506,
+      "render": 101.40000000223517,
+      "ipcDouble": 11.899999998509884,
+      "choicePaint": 49.80000000074506,
+      "scrollTimes": [
+        33.5,
+        33.100000001490116,
+        33.5
+      ],
+      "fileNodes": 23,
+      "rowNodes": 25,
+      "longTasks": [],
+      "peak": 1
+    }
+  ],
+  "errors": []
+}

@@ -1,0 +1,636 @@
+{
+  "coldDefinition": "five fresh Rust processes; OS cache not flushed; executable launch excluded",
+  "cpu": "12th Gen Intel(R) Core(TM) i7-12700H",
+  "git": "git version 2.50.1.windows.1",
+  "groups": [
+    {
+      "cold": [
+        {
+          "rows": [
+            {
+              "detailMs": 361.132,
+              "firstPageJsonBytes": 75283,
+              "firstPageMs": 258.9762,
+              "lastPageMs": 299.5546,
+              "middlePageMs": 248.2575,
+              "serializeMs": 2.6062
+            }
+          ],
+          "sampledPeakRustProcessBytes": 19488768
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 429.0243,
+              "firstPageJsonBytes": 75283,
+              "firstPageMs": 263.14500000000004,
+              "lastPageMs": 250.2603,
+              "middlePageMs": 257.2488,
+              "serializeMs": 2.1692
+            }
+          ],
+          "sampledPeakRustProcessBytes": 19070976
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 310.9946,
+              "firstPageJsonBytes": 75283,
+              "firstPageMs": 342.7257,
+              "lastPageMs": 228.9805,
+              "middlePageMs": 807.2745,
+              "serializeMs": 2.0475
+            }
+          ],
+          "sampledPeakRustProcessBytes": 19132416
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 302.3815,
+              "firstPageJsonBytes": 75283,
+              "firstPageMs": 251.6618,
+              "lastPageMs": 326.2391,
+              "middlePageMs": 277.5377,
+              "serializeMs": 2.0879000000000003
+            }
+          ],
+          "sampledPeakRustProcessBytes": 19832832
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 562.8910000000001,
+              "firstPageJsonBytes": 75283,
+              "firstPageMs": 244.3661,
+              "lastPageMs": 931.7976,
+              "middlePageMs": 235.2299,
+              "serializeMs": 2.0963000000000003
+            }
+          ],
+          "sampledPeakRustProcessBytes": 19595264
+        }
+      ],
+      "count": 1000,
+      "initialPageMs": 270.4393,
+      "prepareMs": 4103.403700000001,
+      "prepareThroughFirstPageMs": 4373.843000000001,
+      "reachableFiles": 1000,
+      "sampledPreparationPeakRustProcessBytes": 23638016,
+      "summary": {
+        "detailMs": {
+          "cold": {
+            "max": 562.8910000000001,
+            "p50": 361.132,
+            "p95": 562.8910000000001,
+            "samples": 5
+          },
+          "warm": {
+            "max": 758.7862,
+            "p50": 385.9441,
+            "p95": 569.9137,
+            "samples": 20
+          }
+        },
+        "firstPageMs": {
+          "cold": {
+            "max": 342.7257,
+            "p50": 258.9762,
+            "p95": 342.7257,
+            "samples": 5
+          },
+          "warm": {
+            "max": 897.5022,
+            "p50": 323.2814,
+            "p95": 649.7461,
+            "samples": 20
+          }
+        },
+        "lastPageMs": {
+          "cold": {
+            "max": 931.7976,
+            "p50": 299.5546,
+            "p95": 931.7976,
+            "samples": 5
+          },
+          "warm": {
+            "max": 1597.2762,
+            "p50": 351.5275,
+            "p95": 1524.6691,
+            "samples": 20
+          }
+        },
+        "middlePageMs": {
+          "cold": {
+            "max": 807.2745,
+            "p50": 257.2488,
+            "p95": 807.2745,
+            "samples": 5
+          },
+          "warm": {
+            "max": 778.0617,
+            "p50": 295.2868,
+            "p95": 525.0294,
+            "samples": 20
+          }
+        },
+        "serializeMs": {
+          "cold": {
+            "max": 2.6062,
+            "p50": 2.0963000000000003,
+            "p95": 2.6062,
+            "samples": 5
+          },
+          "warm": {
+            "max": 3.7714,
+            "p50": 2.0939,
+            "p95": 3.0526,
+            "samples": 20
+          }
+        }
+      },
+      "warm": {
+        "rows": [
+          {
+            "detailMs": 422.5639,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 390.558,
+            "lastPageMs": 526.7720999999999,
+            "middlePageMs": 434.3672,
+            "serializeMs": 2.779
+          },
+          {
+            "detailMs": 369.698,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 649.7461,
+            "lastPageMs": 290.9951,
+            "middlePageMs": 312.6136,
+            "serializeMs": 2.5802
+          },
+          {
+            "detailMs": 340.1241,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 328.9875,
+            "lastPageMs": 276.6673,
+            "middlePageMs": 283.6695,
+            "serializeMs": 2.1085000000000003
+          },
+          {
+            "detailMs": 343.0472,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 323.8843,
+            "lastPageMs": 1524.6691,
+            "middlePageMs": 485.1817,
+            "serializeMs": 2.6869
+          },
+          {
+            "detailMs": 397.1404,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 442.6536,
+            "lastPageMs": 495.7744,
+            "middlePageMs": 465.2914,
+            "serializeMs": 3.7714
+          },
+          {
+            "detailMs": 556.3554,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 449.4426,
+            "lastPageMs": 1597.2762,
+            "middlePageMs": 435.0838,
+            "serializeMs": 3.0526
+          },
+          {
+            "detailMs": 394.8377,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 522.6548,
+            "lastPageMs": 403.4428,
+            "middlePageMs": 525.0294,
+            "serializeMs": 3.0168
+          },
+          {
+            "detailMs": 492.3184,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 265.3177,
+            "lastPageMs": 269.398,
+            "middlePageMs": 259.8172,
+            "serializeMs": 2.0186
+          },
+          {
+            "detailMs": 336.33570000000003,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 323.2814,
+            "lastPageMs": 252.2024,
+            "middlePageMs": 778.0617,
+            "serializeMs": 2.0725
+          },
+          {
+            "detailMs": 414.6438,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 246.5859,
+            "lastPageMs": 358.8602,
+            "middlePageMs": 274.0933,
+            "serializeMs": 2.0939
+          },
+          {
+            "detailMs": 569.9137,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 264.77570000000003,
+            "lastPageMs": 330.2392,
+            "middlePageMs": 338.33619999999996,
+            "serializeMs": 2.1199
+          },
+          {
+            "detailMs": 374.706,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 897.5022,
+            "lastPageMs": 251.2624,
+            "middlePageMs": 244.397,
+            "serializeMs": 1.8674
+          },
+          {
+            "detailMs": 385.9441,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 285.9589,
+            "lastPageMs": 381.9049,
+            "middlePageMs": 347.9371,
+            "serializeMs": 2.0315
+          },
+          {
+            "detailMs": 441.8517,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 253.0842,
+            "lastPageMs": 1037.4304000000002,
+            "middlePageMs": 258.7888,
+            "serializeMs": 2.1399
+          },
+          {
+            "detailMs": 423.4432000000001,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 238.5115,
+            "lastPageMs": 241.5022,
+            "middlePageMs": 234.1725,
+            "serializeMs": 1.9595
+          },
+          {
+            "detailMs": 364.2991,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 295.6732,
+            "lastPageMs": 254.1547,
+            "middlePageMs": 295.2868,
+            "serializeMs": 1.9774
+          },
+          {
+            "detailMs": 758.7862,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 264.355,
+            "lastPageMs": 929.9769,
+            "middlePageMs": 263.2739,
+            "serializeMs": 2.0349999999999997
+          },
+          {
+            "detailMs": 368.4815,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 581.3876,
+            "lastPageMs": 263.4263,
+            "middlePageMs": 252.6175,
+            "serializeMs": 1.9979
+          },
+          {
+            "detailMs": 373.5559,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 399.8756,
+            "lastPageMs": 351.5275,
+            "middlePageMs": 333.0274,
+            "serializeMs": 2.0130999999999997
+          },
+          {
+            "detailMs": 303.0062,
+            "firstPageJsonBytes": 75283,
+            "firstPageMs": 277.0744,
+            "lastPageMs": 999.8879,
+            "middlePageMs": 273.76460000000003,
+            "serializeMs": 2.1448
+          }
+        ],
+        "sampledPeakRustProcessBytes": 20566016
+      }
+    },
+    {
+      "cold": [
+        {
+          "rows": [
+            {
+              "detailMs": 528.9055000000001,
+              "firstPageJsonBytes": 75285,
+              "firstPageMs": 670.2948,
+              "lastPageMs": 261.91389999999996,
+              "middlePageMs": 253.206,
+              "serializeMs": 1.9696
+            }
+          ],
+          "sampledPeakRustProcessBytes": 28168192
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 612.6141,
+              "firstPageJsonBytes": 75285,
+              "firstPageMs": 367.9575,
+              "lastPageMs": 281.9004,
+              "middlePageMs": 286.8929,
+              "serializeMs": 2.1411
+            }
+          ],
+          "sampledPeakRustProcessBytes": 26402816
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 453.2722,
+              "firstPageJsonBytes": 75285,
+              "firstPageMs": 920.0748,
+              "lastPageMs": 269.3645,
+              "middlePageMs": 284.3478,
+              "serializeMs": 1.8122
+            }
+          ],
+          "sampledPeakRustProcessBytes": 28925952
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 460.233,
+              "firstPageJsonBytes": 75285,
+              "firstPageMs": 306.7395,
+              "lastPageMs": 277.42,
+              "middlePageMs": 283.46569999999997,
+              "serializeMs": 2.133
+            }
+          ],
+          "sampledPeakRustProcessBytes": 26632192
+        },
+        {
+          "rows": [
+            {
+              "detailMs": 454.8755,
+              "firstPageJsonBytes": 75285,
+              "firstPageMs": 364.8814,
+              "lastPageMs": 419.2537,
+              "middlePageMs": 667.187,
+              "serializeMs": 2.3322
+            }
+          ],
+          "sampledPeakRustProcessBytes": 29851648
+        }
+      ],
+      "count": 10000,
+      "initialPageMs": 320.2284,
+      "prepareMs": 33550.9553,
+      "prepareThroughFirstPageMs": 33871.1837,
+      "reachableFiles": 10000,
+      "sampledPreparationPeakRustProcessBytes": 42389504,
+      "summary": {
+        "detailMs": {
+          "cold": {
+            "max": 612.6141,
+            "p50": 460.233,
+            "p95": 612.6141,
+            "samples": 5
+          },
+          "warm": {
+            "max": 664.8092,
+            "p50": 511.98980000000006,
+            "p95": 627.7945000000001,
+            "samples": 20
+          }
+        },
+        "firstPageMs": {
+          "cold": {
+            "max": 920.0748,
+            "p50": 367.9575,
+            "p95": 920.0748,
+            "samples": 5
+          },
+          "warm": {
+            "max": 410.9651,
+            "p50": 315.9845,
+            "p95": 406.3487,
+            "samples": 20
+          }
+        },
+        "lastPageMs": {
+          "cold": {
+            "max": 419.2537,
+            "p50": 277.42,
+            "p95": 419.2537,
+            "samples": 5
+          },
+          "warm": {
+            "max": 613.9160999999999,
+            "p50": 299.8606,
+            "p95": 581.5582999999999,
+            "samples": 20
+          }
+        },
+        "middlePageMs": {
+          "cold": {
+            "max": 667.187,
+            "p50": 284.3478,
+            "p95": 667.187,
+            "samples": 5
+          },
+          "warm": {
+            "max": 1147.2478,
+            "p50": 324.625,
+            "p95": 715.7903,
+            "samples": 20
+          }
+        },
+        "serializeMs": {
+          "cold": {
+            "max": 2.3322,
+            "p50": 2.133,
+            "p95": 2.3322,
+            "samples": 5
+          },
+          "warm": {
+            "max": 3.0514,
+            "p50": 2.1575,
+            "p95": 2.7429,
+            "samples": 20
+          }
+        }
+      },
+      "warm": {
+        "rows": [
+          {
+            "detailMs": 561.8284,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 344.5716,
+            "lastPageMs": 521.3188,
+            "middlePageMs": 340.5708,
+            "serializeMs": 2.1775
+          },
+          {
+            "detailMs": 599.5616,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 406.3487,
+            "lastPageMs": 613.9160999999999,
+            "middlePageMs": 715.7903,
+            "serializeMs": 3.0514
+          },
+          {
+            "detailMs": 445.5171,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 404.4881,
+            "lastPageMs": 247.3531,
+            "middlePageMs": 1147.2478,
+            "serializeMs": 2.7429
+          },
+          {
+            "detailMs": 460.3085,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 282.6663,
+            "lastPageMs": 299.8606,
+            "middlePageMs": 337.5048,
+            "serializeMs": 2.2175
+          },
+          {
+            "detailMs": 442.307,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 280.6825,
+            "lastPageMs": 475.0396,
+            "middlePageMs": 324.042,
+            "serializeMs": 2.2179
+          },
+          {
+            "detailMs": 501.98370000000006,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 309.809,
+            "lastPageMs": 291.51939999999996,
+            "middlePageMs": 277.4954,
+            "serializeMs": 2.2477
+          },
+          {
+            "detailMs": 457.9908,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 270.7152,
+            "lastPageMs": 270.16810000000004,
+            "middlePageMs": 284.9387,
+            "serializeMs": 2.1575
+          },
+          {
+            "detailMs": 664.8092,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 366.8318,
+            "lastPageMs": 388.0148,
+            "middlePageMs": 583.5310000000001,
+            "serializeMs": 2.2582
+          },
+          {
+            "detailMs": 524.1187000000001,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 294.6896,
+            "lastPageMs": 314.4999,
+            "middlePageMs": 272.4641,
+            "serializeMs": 2.0826
+          },
+          {
+            "detailMs": 627.7945000000001,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 371.6293,
+            "lastPageMs": 285.6837,
+            "middlePageMs": 348.6961,
+            "serializeMs": 2.0714
+          },
+          {
+            "detailMs": 440.1081,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 348.11019999999996,
+            "lastPageMs": 293.7031,
+            "middlePageMs": 324.625,
+            "serializeMs": 1.9541
+          },
+          {
+            "detailMs": 484.6301,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 308.7484,
+            "lastPageMs": 362.0827,
+            "middlePageMs": 328.4844,
+            "serializeMs": 2.1423
+          },
+          {
+            "detailMs": 402.6901,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 315.9845,
+            "lastPageMs": 581.5582999999999,
+            "middlePageMs": 453.0238,
+            "serializeMs": 2.3186
+          },
+          {
+            "detailMs": 545.0817,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 273.83459999999997,
+            "lastPageMs": 372.1034,
+            "middlePageMs": 283.7057,
+            "serializeMs": 2.0937
+          },
+          {
+            "detailMs": 584.9484,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 369.673,
+            "lastPageMs": 394.2214,
+            "middlePageMs": 326.4665,
+            "serializeMs": 2.3767
+          },
+          {
+            "detailMs": 511.98980000000006,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 410.9651,
+            "lastPageMs": 275.384,
+            "middlePageMs": 272.6417,
+            "serializeMs": 1.9975
+          },
+          {
+            "detailMs": 612.0896,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 324.4057,
+            "lastPageMs": 295.7436,
+            "middlePageMs": 299.2599,
+            "serializeMs": 2.109
+          },
+          {
+            "detailMs": 462.6931,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 375.9148,
+            "lastPageMs": 249.4268,
+            "middlePageMs": 555.3136,
+            "serializeMs": 2.0671
+          },
+          {
+            "detailMs": 525.1091,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 271.46360000000004,
+            "lastPageMs": 299.4906,
+            "middlePageMs": 300.315,
+            "serializeMs": 2.0828
+          },
+          {
+            "detailMs": 528.7878999999999,
+            "firstPageJsonBytes": 75285,
+            "firstPageMs": 286.71049999999997,
+            "lastPageMs": 360.8325,
+            "middlePageMs": 303.9908,
+            "serializeMs": 2.2249000000000003
+          }
+        ],
+        "sampledPeakRustProcessBytes": 31920128
+      }
+    }
+  ],
+  "memoryDefinition": "50ms sampled Rust process RSS; excludes Git children and WebView2; sampling overhead included",
+  "os": "Windows 11 Home China",
+  "preparationDefinition": "one real prepare per scale; setup excluded; not five cold prepare samples",
+  "profile": "debug",
+  "scope": "real Git + registered Rust command handlers; not Tauri IPC/WebView2"
+}

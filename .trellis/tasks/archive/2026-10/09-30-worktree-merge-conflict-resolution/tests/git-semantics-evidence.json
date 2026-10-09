@@ -1,0 +1,53 @@
+{
+  "root": "C:\\Users\\1\\AppData\\Local\\Temp\\cli-manager-plan-git-validation-5rX1Nq",
+  "gitVersion": "git version 2.50.1.windows.1",
+  "checks": 7,
+  "evidence": [
+    {
+      "name": "stage direction",
+      "status": "PASS",
+      "details": {
+        "stage2": "worktree/right",
+        "stage3": "base/left"
+      }
+    },
+    {
+      "name": "missing stage cannot checkout",
+      "status": "PASS",
+      "details": {
+        "baseDeleted": true,
+        "worktreeDeleted": true
+      }
+    },
+    {
+      "name": "linked worktree private git-dir",
+      "status": "PASS",
+      "details": "distinct from main git-dir"
+    },
+    {
+      "name": "staged file absent from unmerged list",
+      "status": "PASS",
+      "details": "requires persisted original set"
+    },
+    {
+      "name": "choose missing sides deletes and completes two-parent merge",
+      "status": "PASS",
+      "details": {
+        "parents": [
+          "44646c82b5c7d25ac0755d2afc414ce962f9f63a",
+          "b5bbb65a0b1e29aba72d350d13f20a5133c52c13"
+        ]
+      }
+    },
+    {
+      "name": "target advance may conflict again; abort restores clean base",
+      "status": "PASS",
+      "details": "verified"
+    },
+    {
+      "name": "unsafe stage-all can commit unresolved marker text",
+      "status": "PASS",
+      "details": "Git does not enforce confirmation"
+    }
+  ]
+}

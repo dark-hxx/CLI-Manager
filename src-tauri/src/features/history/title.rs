@@ -12,6 +12,12 @@ const MAX_CUSTOM_PROMPT_BYTES: usize = 4096;
 const MAX_TITLE_WORDS: usize = 64;
 const MAX_TITLE_BYTES: usize = 256;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+// A title is short, but relay models sometimes answer with a preamble or a
+// sentence of reasoning. A 64-token ceiling truncated those answers, and the
+// truncated finish reason used to be rejected outright, so the session lost
+// its title instead of getting a slightly long one. Keep a ceiling that still
+// bounds cost while letting the sanitizer trim the result.
+const TITLE_MAX_OUTPUT_TOKENS: u16 = 256;
 // Installed and development builds intentionally share this database. Give
 // short cross-process writer bursts the same budget used by other history
 // writes instead of misclassifying them as Provider failures.
@@ -81,6 +87,8 @@ pub(crate) struct HistoryTitleProviderOption {
     provider_name: String,
     model_id: Option<String>,
     api_format: Option<String>,
+    // 实际请求将使用的协议：anthropic / chat / responses，不可用时为 null。
+    protocol: Option<String>,
     ready: bool,
     reason_code: Option<String>,
 }
@@ -93,6 +101,8 @@ struct ProviderRuntime {
     api_key: String,
     model_id: String,
     api_format: String,
+    // 仅 Anthropic 协议使用；与路由代理和模型探测选择同一认证方案。
+    auth: provider::auxiliary_text::AuxiliaryTextAuth,
 }
 
 #[derive(Debug)]
@@ -413,6 +423,19 @@ fn supported_api_format(app_type: &str, api_format: Option<&str>) -> bool {
     }
 }
 
+// 未配置 api_format 时按 CLI 类型给出默认协议别名：Claude 走 Anthropic，Codex/Grok 走 Responses。
+fn default_api_format(app_type: &str, api_format: Option<&str>) -> String {
+    let format = api_format.unwrap_or_default().trim();
+    if !format.is_empty() {
+        return format.to_string();
+    }
+    if app_type == "claude" {
+        "anthropic".to_string()
+    } else {
+        "responses".to_string()
+    }
+}
+
 // 将显式协议别名映射为标题请求协议，拒绝不支持的组合。
 fn protocol_for_format(app_type: &str, api_format: &str) -> Result<&'static str, String> {
     let format = api_format.trim().to_ascii_lowercase();
@@ -520,7 +543,8 @@ async fn load_provider_runtime(
             base_url: runtime.base_url,
             api_key: runtime.secret_value,
             model_id: model_id.to_string(),
-            api_format: runtime.wire_api.unwrap_or_else(|| "responses".to_string()),
+            api_format: default_api_format("codex", runtime.wire_api.as_deref()),
+            auth: provider::auxiliary_text::AuxiliaryTextAuth::Bearer,
         });
     }
 
@@ -581,14 +605,14 @@ async fn load_provider_runtime(
             find_json_text(env, &["ANTHROPIC_BASE_URL", "base_url", "baseUrl"])
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             find_json_text(env, &["ANTHROPIC_MODEL", "model"]),
-            configured_api_format.unwrap_or_else(|| "anthropic".to_string()),
+            default_api_format("claude", configured_api_format.as_deref()),
         )
     } else {
         let (base_url, configured_model, api_format) = provider::grok::summary(&projected);
         (
             base_url.ok_or_else(|| "history_title_provider_base_url_missing".to_string())?,
             configured_model,
-            api_format.unwrap_or_else(|| "responses".to_string()),
+            default_api_format(app_type, api_format.as_deref()),
         )
     };
     let model_id = if model_id.trim().is_empty() {
@@ -600,14 +624,38 @@ async fn load_provider_runtime(
         return Err("history_title_provider_base_url_missing".to_string());
     }
     protocol_for_format(app_type, &api_format)?;
+    let api_key_field = if app_type == "claude" {
+        provider::repository::claude_config_from_settings(&projected, &meta).api_key_field
+    } else {
+        String::new()
+    };
     Ok(ProviderRuntime {
         app_type: app_type.to_string(),
         provider_id: provider_id.trim().to_string(),
         base_url,
         api_key,
         model_id,
+        auth: title_auth_scheme(app_type, &api_format, &api_key_field),
         api_format,
     })
+}
+
+// 与路由代理及模型探测保持一致：claude 的 Anthropic 协议仅在密钥字段为
+// ANTHROPIC_API_KEY 时使用 x-api-key，授权令牌（ANTHROPIC_AUTH_TOKEN）与
+// OpenAI 兼容协议一律使用 Bearer。
+fn title_auth_scheme(
+    app_type: &str,
+    api_format: &str,
+    api_key_field: &str,
+) -> provider::auxiliary_text::AuxiliaryTextAuth {
+    if app_type == "claude"
+        && api_format.eq_ignore_ascii_case("anthropic")
+        && api_key_field == "ANTHROPIC_API_KEY"
+    {
+        provider::auxiliary_text::AuxiliaryTextAuth::ApiKeyHeader
+    } else {
+        provider::auxiliary_text::AuxiliaryTextAuth::Bearer
+    }
 }
 
 // 从可选 JSON 对象按候选键提取首个非空文本。
@@ -794,11 +842,7 @@ async fn request_title(
         _ => return Err("history_title_provider_protocol_unsupported".to_string()),
     };
     let endpoint_path = request_endpoint_path(protocol_name);
-    let auth_scheme = if protocol_name == "anthropic" {
-        "x-api-key"
-    } else {
-        "bearer"
-    };
+    let auth_scheme = runtime.auth.log_label();
     log::info!(
         target: "cli_manager::history_title",
         "history.title.request.start app_type={} provider_id={} model_id={} api_format={} protocol={} endpoint_path={} auth_scheme={} credential_source=active_provider_key input_bytes={} timeout_ms={}",
@@ -815,12 +859,13 @@ async fn request_title(
     let response = provider::auxiliary_text::post_text_request(
         &client,
         protocol,
+        runtime.auth,
         &runtime.base_url,
         &runtime.api_key,
         &runtime.model_id,
         system_prompt,
         candidate,
-        64,
+        TITLE_MAX_OUTPUT_TOKENS,
         REQUEST_TIMEOUT,
     )
     .await;
@@ -939,7 +984,18 @@ async fn request_title(
         );
         return Err("history_title_response_tool_call".to_string());
     }
-    if response_has_abnormal_finish(&value, protocol_name) {
+    let finish_reason = response_finish_reason(&value, protocol_name);
+    if finish_reason.is_some_and(|reason| finish_reason_blocks_title(protocol_name, reason)) {
+        log::warn!(
+            target: "cli_manager::history_title",
+            "history.title.response.finish_blocked app_type={} provider_id={} model_id={} protocol={} http_status={} finish_reason={}",
+            runtime.app_type,
+            runtime.provider_id,
+            runtime.model_id,
+            protocol_name,
+            status,
+            safe_error_code(finish_reason.unwrap_or("none"))
+        );
         log_title_request_failure(
             runtime,
             protocol_name,
@@ -973,7 +1029,7 @@ async fn request_title(
         Ok(title) => {
             log::info!(
                 target: "cli_manager::history_title",
-                "history.title.request.success app_type={} provider_id={} model_id={} protocol={} endpoint_path={} http_status={} body_bytes={} title_bytes={} elapsed_ms={}",
+                "history.title.request.success app_type={} provider_id={} model_id={} protocol={} endpoint_path={} http_status={} body_bytes={} finish_reason={} title_bytes={} elapsed_ms={}",
                 runtime.app_type,
                 runtime.provider_id,
                 runtime.model_id,
@@ -981,6 +1037,7 @@ async fn request_title(
                 endpoint_path,
                 status,
                 body.len(),
+                safe_error_code(finish_reason.unwrap_or("none")),
                 title.len(),
                 elapsed_ms
             );
@@ -1048,32 +1105,42 @@ fn response_contains_tool_call(value: &Value) -> bool {
     }
 }
 
-// 按协议检查显式结束原因或状态是否异常。
-fn response_has_abnormal_finish(value: &Value, protocol: &str) -> bool {
-    let allowed = match protocol {
-        "anthropic" => &["end_turn", "stop_sequence"][..],
-        "chat" => &["stop", "end_turn"][..],
-        _ => &[][..],
-    };
-    if protocol == "responses"
-        && value
-            .get("status")
-            .and_then(Value::as_str)
-            .is_some_and(|status| status != "completed")
-    {
-        return true;
+// 返回响应的结束原因：Anthropic 读 stop_reason，Chat 读首个 finish_reason，
+// Responses 读 status；字段缺失或非字符串时不判定。
+fn response_finish_reason<'a>(value: &'a Value, protocol: &str) -> Option<&'a str> {
+    if protocol == "responses" {
+        return value.get("status").and_then(Value::as_str);
     }
-    let finish = if protocol == "anthropic" {
-        value.get("stop_reason").and_then(Value::as_str)
-    } else {
-        value
-            .get("choices")
-            .and_then(Value::as_array)
-            .and_then(|items| items.first())
-            .and_then(|item| item.get("finish_reason"))
-            .and_then(Value::as_str)
-    };
-    finish.is_some_and(|reason| !allowed.contains(&reason))
+    if protocol == "anthropic" {
+        return value.get("stop_reason").and_then(Value::as_str);
+    }
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|items| items.first())
+        .and_then(|item| item.get("finish_reason"))
+        .and_then(Value::as_str)
+}
+
+// 仅当结束原因明确表示没有可用回答时才拒绝整个响应：工具调用、拒答、内容过滤
+// 与提供方失败。截断（max_tokens/length/incomplete）及中继实现的未知取值仍按可用
+// 处理，交给 sanitize_title 裁剪——允许清单会把可用标题误判为失败。
+fn finish_reason_blocks_title(protocol: &str, reason: &str) -> bool {
+    let normalized = reason.trim().to_ascii_lowercase();
+    if protocol == "responses" {
+        return matches!(normalized.as_str(), "failed" | "cancelled" | "canceled");
+    }
+    matches!(
+        normalized.as_str(),
+        "tool_use"
+            | "tool_calls"
+            | "function_call"
+            | "refusal"
+            | "content_filter"
+            | "guardrail"
+            | "error"
+            | "failed"
+    )
 }
 
 // 移除终端转义序列、控制字符及不可见方向控制符。
@@ -1450,12 +1517,18 @@ async fn history_title_list_providers_async() -> Result<Vec<HistoryTitleProvider
             } else {
                 None
             };
+            // 与请求阶段使用同一套默认值与别名映射，前端只负责展示。
+            let api_format = default_api_format(&provider.app_type, provider.api_format.as_deref());
+            let protocol = protocol_for_format(&provider.app_type, &api_format)
+                .ok()
+                .map(str::to_string);
             HistoryTitleProviderOption {
                 app_type: provider.app_type,
                 provider_id: provider.id,
                 provider_name: provider.name,
                 model_id: provider.model,
                 api_format: provider.api_format,
+                protocol,
                 ready: reason_code.is_none(),
                 reason_code,
             }
@@ -1686,11 +1759,12 @@ async fn history_title_cancel_async(session_key: String) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        effective_prompt, is_sqlite_busy_code, normalize_custom_prompt, provider_error_diagnostics,
-        response_contains_tool_call, response_has_abnormal_finish, safe_error_code, sanitize_title,
-        HistoryTitleSettingsSelection, BUILTIN_PROMPT, HISTORY_TITLE_DATABASE_BUSY_TIMEOUT,
-        MAX_CUSTOM_PROMPT_BYTES,
+        effective_prompt, finish_reason_blocks_title, is_sqlite_busy_code, normalize_custom_prompt,
+        provider_error_diagnostics, response_contains_tool_call, response_finish_reason,
+        safe_error_code, sanitize_title, title_auth_scheme, HistoryTitleSettingsSelection,
+        BUILTIN_PROMPT, HISTORY_TITLE_DATABASE_BUSY_TIMEOUT, MAX_CUSTOM_PROMPT_BYTES,
     };
+    use crate::provider;
     use serde_json::json;
     use std::time::Duration;
 
@@ -1753,15 +1827,66 @@ mod tests {
     }
 
     #[test]
-    // 验证工具调用响应和长度截断结束原因被识别为异常。
-    fn response_validation_rejects_tools_and_abnormal_finish() {
+    // 验证只拒绝明确的工具调用、拒答与失败结束原因；截断及未知原因仍可用于生成标题。
+    fn response_validation_rejects_tools_and_blocked_finish_only() {
         assert!(response_contains_tool_call(&json!({
             "choices": [{"message": {"tool_calls": [{"id": "call-1"}]}}]
         })));
-        assert!(response_has_abnormal_finish(
-            &json!({"choices": [{"finish_reason": "length"}]}),
-            "chat"
-        ));
+        for reason in ["refusal", "content_filter", "error"] {
+            assert!(
+                finish_reason_blocks_title("anthropic", reason),
+                "expected blocked reason: {reason}"
+            );
+        }
+        assert!(finish_reason_blocks_title("anthropic", "tool_use"));
+        assert!(finish_reason_blocks_title("responses", "failed"));
+        for reason in ["max_tokens", "length", "end_turn", "stop", "incomplete", ""] {
+            assert!(
+                !finish_reason_blocks_title("anthropic", reason),
+                "expected tolerated reason: {reason}"
+            );
+        }
+        assert!(!finish_reason_blocks_title("responses", "incomplete"));
+        assert!(!finish_reason_blocks_title("responses", "completed"));
+    }
+
+    #[test]
+    // 验证结束原因按协议从 stop_reason、finish_reason 或 status 读取。
+    fn finish_reason_is_read_per_protocol() {
+        assert_eq!(
+            response_finish_reason(&json!({"stop_reason": "max_tokens"}), "anthropic"),
+            Some("max_tokens")
+        );
+        assert_eq!(
+            response_finish_reason(&json!({"choices": [{"finish_reason": "length"}]}), "chat"),
+            Some("length")
+        );
+        assert_eq!(
+            response_finish_reason(&json!({"status": "completed"}), "responses"),
+            Some("completed")
+        );
+        assert_eq!(response_finish_reason(&json!({}), "anthropic"), None);
+    }
+
+    #[test]
+    // 验证 Anthropic 认证方案与路由代理、模型探测保持一致。
+    fn anthropic_auth_scheme_follows_key_field() {
+        assert_eq!(
+            title_auth_scheme("claude", "anthropic", "ANTHROPIC_API_KEY"),
+            provider::auxiliary_text::AuxiliaryTextAuth::ApiKeyHeader
+        );
+        assert_eq!(
+            title_auth_scheme("claude", "anthropic", "ANTHROPIC_AUTH_TOKEN"),
+            provider::auxiliary_text::AuxiliaryTextAuth::Bearer
+        );
+        assert_eq!(
+            title_auth_scheme("claude", "openai_chat", "ANTHROPIC_API_KEY"),
+            provider::auxiliary_text::AuxiliaryTextAuth::Bearer
+        );
+        assert_eq!(
+            title_auth_scheme("codex", "responses", ""),
+            provider::auxiliary_text::AuxiliaryTextAuth::Bearer
+        );
     }
 
     #[test]

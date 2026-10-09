@@ -45,13 +45,14 @@ export function clearProjectEditorWorkspacesIfUnused(project: Project, sessions:
 }
 
 export function isPersistableSession(session: TerminalSession | undefined): boolean {
-  return !!session && session.kind !== "subagent-transcript" && session.kind !== "file-editor" && session.kind !== "synced-history";
+  return !!session && (session.kind === undefined || session.kind === "pty");
 }
 
 export function hasBackendPty(session: TerminalSession): boolean {
   return !session.remoteHandoff
     && session.kind !== "subagent-transcript"
-    && session.kind !== "file-editor";
+    && session.kind !== "file-editor"
+    && session.kind !== "worktree-conflict";
 }
 
 export function createSplitSessionTitle(options?: SplitTerminalOptions) {

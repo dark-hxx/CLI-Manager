@@ -34,3 +34,11 @@
 - SHA256：`B007B33E9F1DE45443539068D5F4A421693BA46BA32650D52958BE10C9ACCAC2`。
 - 主程序及 Codex proxy、PTY daemon、Web daemon 均为本次编译产物；旧 NSIS 包保留为同目录 `CLI-Manager_1.4.1_x64-setup.before-config-fix.exe`，需要时可回滚程序版本（不撤销用户新应用的配置）。
 - 构建警告仅为现有大前端 chunk、macOS bundle identifier 建议及 Windows linker 信息，无失败；未启动安装程序或用户应用。
+
+## 合并最新主干与推送前复核（2026-10-09）
+
+- 用户授权按既有流程推送；合并 `origin/master` 的 `917437d1`，保留主干 1.4.2 版本，不重新打包、不修改已有 1.4.1 安装包。
+- 唯一文本冲突位于 `scripts/resumeCliArgs.test.mjs` 的尾部追加测试。保留 Codex 配置与 DeepSeek 恢复两组用例；测试夹具接入主干新增的真实 DeepSeek 命令识别函数，业务实现不额外改写。
+- 配置/恢复前端测试 35/35、DeepSeek TUI/启动回归 37/37；`npx tsc --noEmit`、strict 架构检查（1289 文件、0 超限/违规）通过。
+- 合并后 Rust `provider::` 测试 185/185、`project_policy::tests` 测试 15/15 通过；仅有 Windows linker 信息警告。`git diff --cached --check` 通过，无残留冲突。
+- GitNexus MCP 未暴露，提交前影响复核降级为相对 `origin/master` 的 staged diff、冲突标记检查与定向测试；变更范围仍为原供应商配置传递修复及其文档/测试。模型目录超时仍仅完成诊断，不属于本次修复。

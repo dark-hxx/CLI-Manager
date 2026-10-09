@@ -11,6 +11,31 @@ pub(crate) enum AuxiliaryTextProtocol {
     Responses,
 }
 
+// Anthropic 协议的认证头选择：Anthropic 官方 API Key 用 x-api-key，授权令牌及中继用 Bearer。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuxiliaryTextAuth {
+    ApiKeyHeader,
+    Bearer,
+}
+
+// 返回认证头名与取值，供请求构造及脱敏日志共用。
+pub(crate) fn auth_header(auth: AuxiliaryTextAuth, api_key: &str) -> (&'static str, String) {
+    match auth {
+        AuxiliaryTextAuth::ApiKeyHeader => ("x-api-key", api_key.to_string()),
+        AuxiliaryTextAuth::Bearer => ("authorization", format!("Bearer {api_key}")),
+    }
+}
+
+impl AuxiliaryTextAuth {
+    // 返回不含密钥的认证方案标识，供日志比对实际发出的认证头。
+    pub(crate) fn log_label(self) -> &'static str {
+        match self {
+            AuxiliaryTextAuth::ApiKeyHeader => "x-api-key",
+            AuxiliaryTextAuth::Bearer => "authorization: Bearer",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) enum AuxiliaryTextError {
     Request(reqwest::Error),
@@ -20,9 +45,11 @@ pub(crate) enum AuxiliaryTextError {
 }
 
 // 按协议构造认证头和非流式文本请求，使用调用方超时；返回状态码与正文，不自行拒绝非 2xx。
+// 认证方案只对 Anthropic 协议生效，Chat 与 Responses 固定使用 Bearer。
 pub(crate) async fn post_text_request(
     client: &Client,
     protocol: AuxiliaryTextProtocol,
+    auth: AuxiliaryTextAuth,
     base_url: &str,
     api_key: &str,
     model: &str,
@@ -32,17 +59,20 @@ pub(crate) async fn post_text_request(
     timeout: Duration,
 ) -> Result<(u16, String), AuxiliaryTextError> {
     let request = match protocol {
-        AuxiliaryTextProtocol::Anthropic => client
-            .post(endpoint_url(base_url, "v1/messages"))
-            .header("content-type", "application/json")
-            .header("x-api-key", api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&anthropic_messages_body(
-                model,
-                system_prompt,
-                user_prompt,
-                max_tokens,
-            )),
+        AuxiliaryTextProtocol::Anthropic => {
+            let (name, value) = auth_header(auth, api_key);
+            client
+                .post(endpoint_url(base_url, "v1/messages"))
+                .header("content-type", "application/json")
+                .header(name, value)
+                .header("anthropic-version", "2023-06-01")
+                .json(&anthropic_messages_body(
+                    model,
+                    system_prompt,
+                    user_prompt,
+                    max_tokens,
+                ))
+        }
         AuxiliaryTextProtocol::Chat => client
             .post(endpoint_url(base_url, "v1/chat/completions"))
             .header("content-type", "application/json")
@@ -263,6 +293,19 @@ mod tests {
                 .get("max_tokens")
                 .and_then(Value::as_u64),
             Some(16)
+        );
+    }
+
+    #[test]
+    // 验证 Anthropic 认证方案按密钥字段分别生成 x-api-key 与 Bearer 头。
+    fn anthropic_auth_scheme_selects_expected_header() {
+        assert_eq!(
+            auth_header(AuxiliaryTextAuth::ApiKeyHeader, "secret"),
+            ("x-api-key", "secret".to_string())
+        );
+        assert_eq!(
+            auth_header(AuxiliaryTextAuth::Bearer, "secret"),
+            ("authorization", "Bearer secret".to_string())
         );
     }
 

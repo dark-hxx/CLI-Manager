@@ -13,6 +13,7 @@
 | [Backend Code Comment Contracts](./code-comment-contracts.md) | AI 友好的函数注释范围、内容、放置与可执行等价验证 | Active |
 | [WebDAV Sync Contracts](./webdav-sync-contracts.md) | WebDAV sync request/response boundaries, size checks, and validation cases | Active |
 | [AI Architecture Contracts](../frontend/ai-architecture-contracts.md) | Handwritten Rust/agent/script limits, module boundaries and migration checks | Active |
+| [DeepSeek Harness TUI Contracts](./deepseek-tui-contracts.md) | Official host/plugin launch, readonly profile preflight, pinned identity bridge and per-Tab resume boundaries | Active |
 | [Terminal Runtime Monitoring Contracts](./terminal-runtime-monitoring-contracts.md) | PTY env keys, shell OSC markers, tab runtime status, and resource growth diagnostics | Active |
 | [PTY Daemon Contracts](./pty-daemon-contracts.md) | Detached PtyHost transport, routing control-plane capability, protocol safety, and lifecycle contracts | Active |
 | [Terminal Output Scheduling Contracts](./terminal-output-scheduling-contracts.md) | Daemon live-frame budget, cross-terminal xterm fairness, Replay/Reset and ACK ordering | Active |
@@ -32,6 +33,7 @@
 | [Crash Reporting Contracts](./crash-reporting-contracts.md) | 独立崩溃日志、未清洁退出标记、脱敏与多进程边界 | Active |
 | [Linux Graphics Contracts](./linux-graphics-contracts.md) | WebKitGTK/NVIDIA/Wayland 分级兼容、诊断与 AUR 渠道 | Active |
 | [Worktree Isolation Contracts](./worktree-isolation-contracts.md) | Git worktree 并行任务隔离、生命周期和安全边界合约 | Active |
+| [Worktree Conflict Resolution Contracts](./worktree-conflict-resolution-contracts.md) | V1.4.2 冲突会话 IPC、草稿/CAS、精确暂存、恢复与索引读取边界 | Active |
 | [Git Status Contracts](./git-status-contracts.md) | Git 状态收集三条链路（面板/Replay/WSL）的过滤合约与嵌套子仓库处理 | Active |
 | [Command Suggestion Contracts](./command-suggestion-contracts.md) | LLM 命令提示 Tauri command、OpenAI 兼容请求、快速检测、超时与安全回退合约 | Active |
 | [App Data Persistence Contracts](./app-data-persistence-contracts.md) | Stable `.cli-manager` data paths, non-destructive legacy store migration, and safe legacy DB recovery | Active |
