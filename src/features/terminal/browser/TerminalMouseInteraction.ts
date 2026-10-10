@@ -6,11 +6,14 @@ export type TerminalMouseInteractionOptions = Pick<
 >;
 
 /**
- * Keep mouse-aware TUIs aligned with standard terminal behavior: the
- * application receives unmodified mouse reports and Shift keeps text
- * selection available in xterm.
+ * Require an explicit Alt modifier before xterm emits mouse reports.
+ *
+ * CLI processes can leave mouse tracking enabled after they exit. Without
+ * this guard, ordinary pointer movement in another split pane is encoded as
+ * `ESC [ M ...` and written into the shell's input line as visible text.
+ * Alt still allows mouse-aware TUIs to receive their reports explicitly.
  */
 export const createTerminalMouseInteractionOptions =
   (): TerminalMouseInteractionOptions => ({
-    mouseEventsRequireAlt: false,
+    mouseEventsRequireAlt: true,
   });

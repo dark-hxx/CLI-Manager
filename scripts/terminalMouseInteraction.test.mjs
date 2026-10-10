@@ -27,9 +27,9 @@ const { createTerminalMouseInteractionOptions } = await import(
   pathToFileURL(modulePath).href
 );
 
-test("mouse-aware TUIs receive unmodified click and drag reports", () => {
+test("mouse reports require Alt to avoid leaking stale TUI reports into shells", () => {
   assert.deepEqual(createTerminalMouseInteractionOptions(), {
-    mouseEventsRequireAlt: false,
+    mouseEventsRequireAlt: true,
   });
 });
 
