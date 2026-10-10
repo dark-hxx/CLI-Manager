@@ -74,5 +74,8 @@
 
 ### 本轮 NSIS
 
-- 待修复提交后复用 local 缓存构建，仅 NSIS，不生成 MSI。
+- 修复提交 `ffa4989f`，禁用状态边界补充提交 `5b6219d8`，均在成功打包前提交；不推送远程。
 - 首次构建桌面/Web 前端均成功；最后复核补齐兼容公共同步的“禁用但没有/过期哈希”边界，停止了已验证的本次 local rustc（未停止应用/终端），其构建因此退出 1，未生成新包。补充测试后提交再构建；复用已验证且前端代码未再变化的 dist，通过仅本机临时 build override 跳过重复前端构建，仍重新编译 Rust、准备全部辅助程序并生成 NSIS。没有修改正式构建配置。
+- 最终命令 `npm run tauri:build:local -- --config F:/gitRepository/CLI-Manager/.codex/home-state-package.local.json --bundles nsis --ci` 退出码 0，仅生成 1 个 NSIS，没有 MSI。临时 override 仅把 beforeBuildCommand 置 null，交付后移除；首次完整构建的桌面/Web dist 均成功，前端代码此后未变化。后端 release 编译 4m23s，主程序、Codex proxy、PTY daemon、Web daemon 均重新生成，仅现有 linker/bundle identifier/Vite chunk 警告。
+- 安装包：`F:\gitRepository\CLI-Manager\src-tauri\target\local\release\bundle\nsis\CLI-Manager_1.4.2_x64-setup.exe`，30,182,184 字节，`2026-10-10 10:44:31 +08:00`。主程序 ProductVersion/FileVersion 均为 1.4.2；SHA256：`4381EF2E1B9435DD4C8CA29D98CF6095E70929C791BC4DB61544E972918E1543`。
+- 原安装包保留为同目录 `CLI-Manager_1.4.2_x64-setup.before-home-state-fix.exe`（30,178,504 字节）；没有删除已有安装包或用户数据。最终补测编译产物再次运行上述 5 组 Rust 测试，285/285，均覆盖最终修复代码。未自动安装、未重启用户应用/终端、未执行真实模型请求。
