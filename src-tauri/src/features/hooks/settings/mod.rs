@@ -993,7 +993,7 @@ fn strip_codex_common_config_toml(raw: &str) -> Option<String> {
     (!lines.is_empty()).then(|| format!("{}\n", lines.join("\n")))
 }
 
-// 只同步用户已保存且仍匹配当前命令的信任；不能凭计算哈希伪造确认或丢弃禁用状态。
+// 只同步用户保存的禁用决定或匹配当前命令的信任，不凭计算哈希伪造确认。
 fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<String>>, String> {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let settings = read_json_if_exists(&hooks_path)?;
@@ -1032,14 +1032,16 @@ fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<
                 let Some(saved) = state.get(&key) else {
                     continue;
                 };
-                if saved.get("trusted_hash").and_then(toml::Value::as_str) != Some(hash.as_str()) {
+                let enabled = saved.get("enabled").and_then(toml::Value::as_bool);
+                let trusted = saved.get("trusted_hash").and_then(toml::Value::as_str) == Some(hash.as_str());
+                if !trusted && enabled != Some(false) {
                     continue;
                 }
-                let mut block = vec![
-                    format!("[hooks.state.\"{}\"]", toml_escape_basic_string(&key)),
-                    format!("trusted_hash = \"{hash}\""),
-                ];
-                if let Some(enabled) = saved.get("enabled").and_then(toml::Value::as_bool) {
+                let mut block = vec![format!("[hooks.state.\"{}\"]", toml_escape_basic_string(&key))];
+                if trusted {
+                    block.push(format!("trusted_hash = \"{hash}\""));
+                }
+                if let Some(enabled) = enabled {
                     block.push(format!("enabled = {enabled}"));
                 }
                 blocks.push(block);

@@ -30,6 +30,24 @@ fn codex_common_sync_copies_only_current_saved_trust() {
     let stale = fs::read(&path).unwrap();
     assert_eq!(read_codex_cli_manager_hook_state_blocks(&dir).unwrap().len(), 8);
     assert_eq!(fs::read(&path).unwrap(), stale);
+    // 禁用决定不依赖已有确认；没有/过期哈希不能被公共同步重新启用。
+    for hash in [None, Some("sha256:stale")] {
+        let mut doc: toml::Value = toml::from_str(&trusted).unwrap();
+        let saved = doc["hooks"]["state"].as_table_mut().unwrap().iter_mut().next().unwrap().1
+            .as_table_mut().unwrap();
+        saved.insert("enabled".to_string(), false.into());
+        saved.remove("trusted_hash");
+        if let Some(hash) = hash {
+            saved.insert("trusted_hash".to_string(), hash.into());
+        }
+        fs::write(&path, toml::to_string(&doc).unwrap()).unwrap();
+        let blocks = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
+        assert_eq!(blocks.len(), 9);
+        assert!(blocks.iter().any(|block| block.len() == 2 && block[1] == "enabled = false"));
+        let merged = merge_codex_common_config_toml(None, &blocks);
+        assert!(merged.contains("enabled = false"));
+        assert!(!merged.contains("sha256:stale"));
+    }
 }
 
 // 为临时 Codex 配置中的托管命令追加匹配的信任哈希测试块。

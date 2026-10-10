@@ -65,7 +65,7 @@
 - Rust `provider::` 194/194、`hook_settings::` 39/39、`project_policy::tests` 17/17、`codex_app_server_proxy::tests` 29/29、`codex_statusline::` 6/6；合计 285 项。仅现有 Windows linker 信息警告。
 - 前端真实函数测试（resumeCliArgs、nativeProviderConfigView、nativeProviderEditing、nativeProviderGlobalView）36/36，含待审核 Codex 桥接环境、缺模块/特性关闭/应用桥接关闭与查询无写操作；`npx tsc --noEmit`、strict 架构检查（1290 源文件、0 超限/违规）、`git diff --check` 通过。
 - 回归覆盖：3 种 TOML 表形态 × 3 种 Home 状态，保留 false/空数组/当前信任/当前 untrusted，剔除仅信任的外来路径但保留其他项目选项；清理幂等。供应商 + 公共配置合并后经真实 runtime 生成、runtime → 项目 MCP/Skills、完整/legacy snapshot、旧代理受管与用户 profile 区别均验证。
-- Hook 查询重复检查缺失/已确认/禁用/过期状态时 config.toml 和 hooks.json 字节不变；损坏重复键查询不回写，明确安装才去重且保留禁用决定；旧 CC Switch 同步无确认时不造哈希，过期确认不复制，禁用状态保留。
+- Hook 查询重复检查缺失/已确认/禁用/过期状态时 config.toml 和 hooks.json 字节不变；损坏重复键查询不回写，明确安装才去重且保留禁用决定；旧 CC Switch 同步无确认时不造哈希，过期确认不复制，禁用状态保留，包括只有 enabled=false 或同时带过期哈希的状态（只复制禁用决定）。补测首次使用本版本 TOML Map 不支持的 values_mut，改用 iter_mut 后 39/39。
 - 第一轮 provider 测试发现带引号项目路径的 Key.to_string() 是 TOML 表示而不是实际键，导致空路径条目没被清理；改用 Key.get() 后 194/194。项目组合新增测试最初用了非法快照 ID，前端新增测试最初漏填其余布尔设置，均修正夹具后通过。未删失败用例或跳过检查。
 - 实施后 moderate 重新索引；remove_provider_home_state 确认接入 materializer、snapshot reader、proxy parser 三个入口。GitNexus 未暴露，影响检查降级为 memory 调用图、detect_changes、Git diff/源码及定向测试，不把图谱空结果当作无影响。
 - 未调用有副作用的用户安装/同步接口，未改用户 Home/供应商数据库，未启动应用/热部署或关闭已有终端。无 UI 文案变化，不涉及新增翻译；WSL/SSH 和用户真实 Codex TUI 尚未人工验收。
@@ -75,3 +75,4 @@
 ### 本轮 NSIS
 
 - 待修复提交后复用 local 缓存构建，仅 NSIS，不生成 MSI。
+- 首次构建桌面/Web 前端均成功；最后复核补齐兼容公共同步的“禁用但没有/过期哈希”边界，停止了已验证的本次 local rustc（未停止应用/终端），其构建因此退出 1，未生成新包。补充测试后提交再构建；复用已验证且前端代码未再变化的 dist，通过仅本机临时 build override 跳过重复前端构建，仍重新编译 Rust、准备全部辅助程序并生成 NSIS。没有修改正式构建配置。

@@ -812,7 +812,7 @@ interface HookSettingsStatus {
   native paths otherwise). Database access follows only the DB path: native DBs use sqlx;
   WSL DB reads/writes are routed through the named distro and must never use UNC direct writes.
 - `autoRepair: true` means "the user previously installed Claude Hook"; if CLI-Manager-owned hooks are missing or partial, backend may reinstall them and return `claudeAutoRepaired: true`.
-- Local Codex status inspection is read-only even with `autoRepair: true` (that option is Claude-only). It must not generate hashes, enable Hooks, install missing events or repair duplicate TOML. Explicit installation may deduplicate owned keys but never fabricates trust. Compatibility common sync copies only saved hashes matching the actual current definition and preserves `enabled=false`.
+- Local Codex status inspection is read-only even with `autoRepair: true` (that option is Claude-only). It must not generate hashes, enable Hooks, install missing events or repair duplicate TOML. Explicit installation may deduplicate owned keys but never fabricates trust. Compatibility common sync copies only saved hashes matching the actual current definition and preserves `enabled=false`; a missing/stale hash with an explicit disable copies only the disable, never a fabricated/new trust hash.
 - Terminal launch may prepare bridge environment for complete Codex Hook definitions pending trust. This neither changes installation status nor authorizes Hook execution; Codex continues to enforce trust/disabled state, and this same process can deliver events after the user reviews it.
 
 ### 4. Validation & Error Matrix
