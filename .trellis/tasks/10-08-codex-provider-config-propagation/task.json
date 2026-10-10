@@ -2,8 +2,8 @@
   "id": "codex-provider-config-propagation",
   "name": "codex-provider-config-propagation",
   "title": "Codex provider configuration propagation",
-  "description": "Fix complete Codex configuration propagation; follow up with statusline ownership regression and verify 1.4.2 NSIS.",
-  "status": "completed",
+  "description": "Fix complete Codex configuration propagation; follow up with Home-state ownership, read-only Hook inspection and verify 1.4.2 NSIS.",
+  "status": "in_progress",
   "dev_type": "fullstack",
   "scope": "providers",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-10-08",
-  "completedAt": "2026-10-09",
+  "completedAt": null,
   "branch": "fix/codex-statusline-config-precedence",
   "base_branch": "master",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "2026-10-09: statusline precedence regression completed. 247 targeted tests, typecheck and strict architecture passed; committed before successful 1.4.2 NSIS build. Not installed or pushed; package details and manual TUI acceptance are in verification.md.",
+  "notes": "2026-10-10: user approved appending Home-state ownership and read-only Hook inspection fixes, version 1.4.2. 285 Rust + 36 frontend tests, typecheck and strict architecture passed. Source/common materialization, legacy snapshot/proxy, Hook query/explicit install/common sync and pending-trust bridge env covered. Commit before NSIS; no user config mutation, installation or push.",
   "meta": {}
 }

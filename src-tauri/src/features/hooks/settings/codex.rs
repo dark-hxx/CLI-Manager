@@ -11,6 +11,7 @@ use std::path::Path;
 
 // 重建 Codex 托管事件，开启 hooks 特性、清理旧脚本并写回 JSON。
 pub(super) fn install_codex_hooks(codex_dir: &Path) -> Result<(), String> {
+    super::repair_duplicate_codex_hook_state_blocks(codex_dir)?;
     let exe = hook_exe_for_dir(codex_dir)?;
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
     let mut settings = read_json(&hooks_path)?;
@@ -44,6 +45,7 @@ pub(super) fn install_codex_hook_module(
     codex_dir: &Path,
     module: CodexHookModule,
 ) -> Result<(), String> {
+    super::repair_duplicate_codex_hook_state_blocks(codex_dir)?;
     if matches!(module, CodexHookModule::HooksFeature) {
         return ensure_codex_hooks_feature(codex_dir);
     }

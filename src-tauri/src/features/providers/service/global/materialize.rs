@@ -177,19 +177,54 @@ pub(super) fn copy_toml_owned(
     keys.iter().map(|key| (*key).to_string()).collect()
 }
 
-// 状态栏由各 Codex Home 的界面设置管理；仅移除供应商来源的根级字段。
-pub(crate) fn remove_provider_statusline(document: &mut DocumentMut) -> bool {
-    let Some(tui) = document.get_mut("tui").and_then(Item::as_table_like_mut) else {
-        return false;
-    };
-    let removed = tui.remove("status_line").is_some();
-    if removed && tui.is_empty() {
-        document.remove("tui");
+// 只清理供应商来源的 Home 状态；不清理真实 Home、Hook 定义或显式命名 profiles。
+pub(crate) fn remove_provider_home_state(document: &mut DocumentMut) -> bool {
+    let mut removed = false;
+    for key in ["notice", "windows_wsl_setup_acknowledged"] {
+        removed |= document.remove(key).is_some();
+    }
+    for (section, keys) in [
+        ("tui", &["status_line", "model_availability_nux"][..]),
+        ("hooks", &["state"][..]),
+    ] {
+        let Some(table) = document.get_mut(section).and_then(Item::as_table_like_mut) else {
+            continue;
+        };
+        let mut changed = false;
+        for key in keys {
+            changed |= table.remove(key).is_some();
+        }
+        if changed && table.is_empty() {
+            document.remove(section);
+        }
+        removed |= changed;
+    }
+    if let Some(projects) = document.get_mut("projects").and_then(Item::as_table_like_mut) {
+        let mut empty = Vec::new();
+        let mut changed = false;
+        for (path, item) in projects.iter_mut() {
+            let Some(project) = item.as_table_like_mut() else {
+                continue;
+            };
+            if project.remove("trust_level").is_some() {
+                changed = true;
+                if project.is_empty() {
+                    empty.push(path.get().to_string());
+                }
+            }
+        }
+        for path in empty {
+            projects.remove(&path);
+        }
+        if changed && projects.is_empty() {
+            document.remove("projects");
+        }
+        removed |= changed;
     }
     removed
 }
 
-// 保留完整来源运行配置；状态栏不属于供应商，其他表递归合并并继承未声明的 Home 设置。
+// 保留完整运行参数，剔除来源 Home 状态后合并；目标 Home 的状态与未声明配置不变。
 pub(crate) fn materialize_codex_config(
     before: Option<&[u8]>,
     effective: &Value,
@@ -205,7 +240,7 @@ pub(crate) fn materialize_codex_config(
             .parse::<DocumentMut>()
             .map_err(|_| "provider_config_invalid".to_string())?
     };
-    remove_provider_statusline(&mut source);
+    remove_provider_home_state(&mut source);
     let mut target = toml_document(before)?;
     let mut owned = copy_toml_owned(&source, &mut target, &CODEX_OWNED_CONFIG_KEYS);
     for (key, item) in source.iter() {

@@ -1,5 +1,52 @@
 use super::*;
 
+#[test]
+// 代理读取旧供应商与项目配置时清理状态，真正的用户配置仍完整展开。
+fn legacy_managed_profiles_omit_home_state_without_changing_user_profiles() {
+    let config = r#"
+model_provider = 'custom'
+service_tier = 'fast'
+windows_wsl_setup_acknowledged = true
+[model_providers.custom]
+base_url = 'https://example.test/v1'
+env_key = 'CLI_MANAGER_PROVIDER_KEY'
+[hooks.state.old]
+trusted_hash = 'stale'
+enabled = true
+[notice]
+model_migrations = { old = 'stale' }
+[tui]
+status_line = ['old']
+model_availability_nux = { old = 1 }
+notifications = false
+[projects.old]
+trust_level = 'trusted'
+"#;
+    let generated_name = crate::provider::runtime::codex_profile_name("provider");
+    let id = uuid::Uuid::new_v4().to_string();
+    let project_name = format!("cli-manager-project-{id}");
+    let marked = format!("# cli-manager-project-profile:{id}\n{config}");
+    let crlf_marked = marked.replace('\n', "\r\n");
+    let uuid_name = crate::provider::runtime::codex_profile_name(&id);
+    let custom_env_key = config.replace("CLI_MANAGER_PROVIDER_KEY", "USER_KEY");
+    for (name, text) in [(&generated_name, config), (&project_name, marked.as_str()),
+        (&project_name, crlf_marked.as_str()), (&uuid_name, custom_env_key.as_str())] {
+        let overrides = parse_codex_profile_overrides(name, text).unwrap();
+        assert!(overrides.iter().any(|value| value == "service_tier=\"fast\""));
+        assert!(overrides.iter().any(|value| value == "tui.notifications=false"));
+        assert!(!overrides.iter().any(|value| value.starts_with("hooks.state.")
+            || value.starts_with("notice.") || value.starts_with("projects.")
+            || value.starts_with("tui.status_line=") || value.starts_with("tui.model_availability_nux.")
+            || value.starts_with("windows_wsl_setup_acknowledged=")));
+    }
+    for (name, text) in [("personal", config), ("cli-manager-personal", config),
+        (project_name.as_str(), config), (generated_name.as_str(), &config.replace("CLI_MANAGER_PROVIDER_KEY", "USER_KEY"))] {
+        let overrides = parse_codex_profile_overrides(name, text).unwrap();
+        assert!(overrides.iter().any(|value| value.starts_with("hooks.state.old.trusted_hash=")));
+        assert!(overrides.iter().any(|value| value.starts_with("tui.status_line=")));
+    }
+}
+
 // 按认证模式构造 SSH 传输测试数据，填入虚拟密钥路径或凭据引用。
 fn ssh_transport(auth_mode: &str) -> SshTransportSpec {
     SshTransportSpec {

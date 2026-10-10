@@ -168,6 +168,12 @@ export interface SplitTerminalOptions {
 
 export interface HookToolStatus {
   status: "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
+  sessionStartHookInstalled?: boolean;
+  runningHookInstalled?: boolean;
+  attentionHookInstalled?: boolean;
+  stopHookInstalled?: boolean;
+  subagentStartHookInstalled?: boolean;
+  hooksFeatureInstalled?: boolean;
 }
 
 export interface HookSettingsStatusPayload {

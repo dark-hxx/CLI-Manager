@@ -236,7 +236,15 @@ export async function shouldEnableHookEnv(): Promise<boolean> {
     });
     return openCodeInstalled || (
       (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-      (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
+      // Pending trust must not lose this process's bridge env: Codex still decides whether to run Hooks.
+      (settings.codexHookBridgeEnabled && (
+        status.codex.status === "installed" || (
+          status.codex.status === "partialInstalled" && status.codex.hooksFeatureInstalled === true &&
+          status.codex.sessionStartHookInstalled === true && status.codex.runningHookInstalled === true &&
+          status.codex.attentionHookInstalled === true && status.codex.stopHookInstalled === true &&
+          status.codex.subagentStartHookInstalled === true
+        )
+      )) ||
       (settings.kimiHookBridgeEnabled && status.kimi.status === "installed") ||
       (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
       (settings.grokHookBridgeEnabled && status.grok.status === "installed")

@@ -646,7 +646,18 @@ pub(crate) fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<Str
     if profile.len() as u64 > MAX_CODEX_PROFILE_BYTES {
         return Err("Codex Provider profile is missing or too large".to_string());
     }
-    let document = toml::from_str::<toml::Value>(&profile)
+    parse_codex_profile_overrides(profile_name, &profile)
+}
+
+// 旧受管 profile 也遵守 Home 状态归属；自定义用户 profile 保持原样，不回写文件。
+fn parse_codex_profile_overrides(profile_name: &str, profile: &str) -> Result<Vec<String>, String> {
+    let mut document = profile
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|err| format!("parse Codex Provider profile failed: {err}"))?;
+    if is_managed_codex_profile(profile_name, profile, &document) {
+        crate::provider::global::remove_provider_home_state(&mut document);
+    }
+    let document = toml::from_str::<toml::Value>(&document.to_string())
         .map_err(|err| format!("parse Codex Provider profile failed: {err}"))?;
     let mut overrides = Vec::new();
     flatten_codex_profile_value(None, &document, &mut overrides)?;
@@ -654,6 +665,50 @@ pub(crate) fn load_codex_profile_overrides(profile_name: &str) -> Result<Vec<Str
         return Err("Codex Provider profile contains too many runtime options".to_string());
     }
     Ok(overrides)
+}
+
+// 名称与内容双重识别本应用生成文件，避免仅凭前缀清理用户自定义配置。
+fn is_managed_codex_profile(
+    name: &str,
+    text: &str,
+    document: &toml_edit::DocumentMut,
+) -> bool {
+    if let Some(id) = name.strip_prefix("cli-manager-project-") {
+        if uuid::Uuid::parse_str(id).is_ok()
+            && text.lines().next() == Some(format!("# cli-manager-project-profile:{id}").as_str())
+        {
+            return true;
+        }
+    }
+    let Some((slug, hash)) = name
+        .strip_prefix("cli-manager-")
+        .and_then(|rest| rest.rsplit_once('-'))
+    else {
+        return false;
+    };
+    if slug.is_empty()
+        || slug.len() > 40
+        || hash.len() != 10
+        || !hash.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        return false;
+    }
+    let Some(provider) = document.get("model_provider").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    let Some(table) = document.get("model_providers").and_then(|table| table.get(provider)) else {
+        return false;
+    };
+    let Some(key) = table.get("env_key").and_then(|value| value.as_str()) else {
+        return false;
+    };
+    // 旧 UUID 供应商可能沿用用户自定义 env_key，名称摘要仍可验证其生成身份。
+    let uuid_identity = uuid::Uuid::parse_str(slug).is_ok()
+        && crate::provider::runtime::codex_profile_name(slug) == name
+        && table.get("base_url").and_then(|value| value.as_str()).is_some();
+    key == "CLI_MANAGER_PROVIDER_KEY"
+        || key.starts_with("CLI_MANAGER_CODEX_PROVIDER_")
+        || (uuid_identity && !key.is_empty())
 }
 
 fn resolve_codex_profile_home(

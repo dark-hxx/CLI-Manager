@@ -1,5 +1,27 @@
 use super::*;
 
+#[test]
+// 真实供应商 runtime 到 MCP/Skills 组合入口不能重新引入旧 Home 状态。
+fn codex_project_profile_preserves_runtime_options_without_provider_home_state() {
+    let settings = serde_json::json!({"base_url":"https://example.test/v1", "auth":{"OPENAI_API_KEY":"test-only"},
+        "config": "service_tier='fast'\n[hooks.state.old]\ntrusted_hash='stale'\n[notice]\nmodel_migrations={old='stale'}\n[tui]\nmodel_availability_nux={old=1}\nnotifications=false\n[projects.old]\ntrust_level='trusted'\n"});
+    let runtime = crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
+    let content = codex_profile_content(
+        "12345678-1234-1234-1234-123456789abc", &runtime.profile.profile_text,
+        &["mcp_servers.project.command='tool'".to_string(), "skills.config=[]".to_string()],
+    ).unwrap();
+    let actual: toml::Value = toml::from_slice(&content).unwrap();
+    for section in ["hooks", "notice", "projects"] {
+        assert!(actual.get(section).is_none());
+    }
+    assert!(actual["tui"].get("model_availability_nux").is_none());
+    assert_eq!(actual["tui"]["notifications"].as_bool(), Some(false));
+    assert_eq!(actual["service_tier"].as_str(), Some("fast"));
+    assert_eq!(actual["mcp_servers"]["project"]["command"].as_str(), Some("tool"));
+    assert!(actual["skills"]["config"].as_array().unwrap().is_empty());
+    assert!(!String::from_utf8(content).unwrap().contains("test-only"));
+}
+
 #[tokio::test]
 async fn saving_one_cli_preserves_other_cli_policies() {
     use sqlx::Connection;

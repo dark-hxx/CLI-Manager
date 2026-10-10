@@ -444,6 +444,42 @@ const launchCode = ts.transpileModule(launchFunction.getText(launchSource).repla
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
+test("pending Codex trust keeps bridge env without trusting hooks or writing config", async () => {
+  const fn = launchSource.statements.find((node) =>
+    ts.isFunctionDeclaration(node) && node.name?.text === "shouldEnableHookEnv");
+  const code = ts.transpileModule(fn.getText(launchSource).replace(/^export /, ""), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const complete = { status: "partialInstalled", hooksFeatureInstalled: true,
+    sessionStartHookInstalled: true, runningHookInstalled: true, attentionHookInstalled: true,
+    stopHookInstalled: true, subagentStartHookInstalled: true };
+  for (const [codex, enabled, expected] of [
+    [complete, true, true], [{ status: "installed" }, true, true],
+    [{ ...complete, hooksFeatureInstalled: false }, true, false],
+    [{ ...complete, runningHookInstalled: false }, true, false],
+    [{ status: "partialInstalled" }, true, false], [complete, false, false],
+  ]) {
+    const calls = [];
+    const mocks = {
+      useSettingsStore: { getState: () => ({ codexHookBridgeEnabled: enabled,
+        claudeHookBridgeEnabled: false, kimiHookBridgeEnabled: false,
+        piHookBridgeEnabled: false, grokHookBridgeEnabled: false }) },
+      logError: () => {},
+      invoke: async (command, args) => {
+        calls.push(command);
+        if (command === "opencode_hook_status") return { status: "notInstalled" };
+        assert.equal(command, "hook_settings_get_status");
+        assert.ok(!args.autoRepair);
+        const missing = { status: "notInstalled" };
+        return { codex, claude: missing, kimi: missing, pi: missing, grok: missing };
+      },
+    };
+    const decide = new Function(...Object.keys(mocks), `${code}; return shouldEnableHookEnv;`)(...Object.values(mocks));
+    assert.equal(await decide(), expected);
+    assert.equal(calls.includes("hook_settings_get_status"), enabled);
+  }
+});
+
 async function resolveProviderTestLaunch({ profile = "cli-manager-provider", combined, startup = "codex", shell = "cmd" } = {}) {
   const project = { id: "project", environment_type: "local", cli_tool: "codex" };
   const provider = { appType: "codex", codexProfileName: profile,

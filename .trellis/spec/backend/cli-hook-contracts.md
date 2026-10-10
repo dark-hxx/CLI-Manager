@@ -561,8 +561,8 @@ Claude: PreToolUse matcher=AskUserQuestion -> event=Notification
 - The bridge event remains `Notification`; `toolName` must survive normalization and transport so the frontend can distinguish a question request from an ordinary notification.
 - The Claude Attention module requires both `Notification(permission_prompt|idle_prompt)` and `PreToolUse(AskUserQuestion)`. The Codex Attention module requires both `PermissionRequest` and `PreToolUse(request_user_input)`.
 - Full install, module install, uninstall, status inspection, cc-switch common config, WSL commands, and SSH Agent templates must agree on these entries. Uninstall removes only the CLI-Manager-owned question command and preserves Claude `ToolStart` and sub-agent entries that share `PreToolUse`.
-- Codex maps the native event to trust-state name `pre_tool_use`; the exact matcher participates in `trusted_hash`. Trust-only repair is allowed only after every required event exists.
-- Codex trust-state table keys must be compared by parsed TOML value, not by source quoting. Literal keys such as `[hooks.state.'C:\Users\...']` and escaped basic keys such as `[hooks.state."C:\\Users\\..."]` are equivalent; merge must replace the existing CLI-Manager block instead of creating a duplicate table. Status inspection may collapse equivalent duplicate blocks for current CLI-Manager Hook keys before parsing the full config, while preserving unrelated state.
+- Codex maps the native event to trust-state name `pre_tool_use`; the exact matcher participates in `trusted_hash`. Status inspection never fabricates trust or re-enables a disabled Hook; new/changed definitions require Codex review.
+- Codex trust-state table keys must be compared by parsed TOML value, not by source quoting. Literal keys such as `[hooks.state.'C:\Users\...']` and escaped basic keys such as `[hooks.state."C:\\Users\\..."]` are equivalent; merge must replace the existing CLI-Manager block instead of creating a duplicate table. Only explicit installation may collapse equivalent current CLI-Manager duplicate blocks, preserving the final saved state and unrelated entries; status inspection is read-only.
 - Missing or wrong matchers make an old installation partial/outdated. Status inspection must not silently install the missing event.
 - `Notification + source/toolName` selects the localized “selection or answer required” toast and system-notification copy before using the generic bridge title. Existing attention state, focus suppression, background override, target activation, and third-party notification settings remain authoritative.
 - When no frontend client is connected, an exact question request shares the existing `PermissionRequest` daemon activation path so a background task can ask for user input. Ordinary `Notification` events must not launch the app.
@@ -574,22 +574,22 @@ Claude: PreToolUse matcher=AskUserQuestion -> event=Notification
 | Exact Codex/Claude question matcher | Emit one `Notification` with the matching `toolName`. |
 | Ordinary tool or wrong matcher | No question-request notification. |
 | Old install lacks the question entry | Report partial/outdated; reinstall upgrades it. |
-| Codex question trust is missing/stale | Repair only when the event set and feature flag are complete. |
-| Equivalent literal/basic keys duplicate a current CLI-Manager trust table | Keep the last block, remove only earlier equivalent CLI-Manager blocks, then parse and re-check the full config. |
+| Codex question trust is missing/stale/disabled | Keep partial status and saved state; review/enable is a user decision in Codex. |
+| Equivalent literal/basic keys duplicate a current CLI-Manager trust table | Query preserves bytes and reports parse error; explicit installation keeps the last block and removes only earlier owned duplicates. |
 | Duplicate or invalid unrelated trust table | Preserve the file and return the parse error; do not rewrite user-owned state. |
 | Attention module uninstall | Remove approval/attention plus the owned question entry; preserve unrelated hooks. |
 
 ### 5. Good/Base/Bad Cases
 
 - Good: a background Codex terminal requests one choice; the system notification says it is waiting for a selection or answer and opens the owning terminal when clicked.
-- Good: Codex previously wrote a literal Windows-path trust key and CLI-Manager wrote the equivalent escaped basic key; status inspection collapses the owned duplicate and keeps unrelated project/user state.
+- Good: Codex previously wrote a literal Windows-path trust key and CLI-Manager wrote the equivalent escaped basic key; explicit installation collapses the owned duplicate, while ordinary status checks never rewrite config.
 - Base: Claude `permission_prompt` and Codex `PermissionRequest` keep their existing approval behavior.
 - Bad: registering a catch-all `PreToolUse` command causes every tool call to look like a question, removing all Claude `PreToolUse` entries during Attention uninstall, or comparing raw TOML header text and appending an equivalent duplicate key.
 
 ### 6. Tests Required
 
 - Local Rust tests cover exact matcher install/status/uninstall, Claude common-config completeness, Codex `pre_tool_use` trust hash, and Codex `Notification` admission with unknown-event rejection.
-- Local Rust tests cover literal/basic TOML trust-key normalization, merge replacement, and status recovery from an already duplicated CLI-Manager state table.
+- Local Rust tests cover literal/basic TOML trust-key normalization, merge replacement, explicit recovery of owned duplicate tables and read-only status checks for missing/stale/disabled trust.
 - SSH Agent tests cover managed entry counts, exact matcher merge/removal, and Codex runtime `Notification` admission.
 - Hook-schema tests preserve the question `toolName`; TypeScript type-check covers localized frontend recognition.
 
@@ -812,7 +812,8 @@ interface HookSettingsStatus {
   native paths otherwise). Database access follows only the DB path: native DBs use sqlx;
   WSL DB reads/writes are routed through the named distro and must never use UNC direct writes.
 - `autoRepair: true` means "the user previously installed Claude Hook"; if CLI-Manager-owned hooks are missing or partial, backend may reinstall them and return `claudeAutoRepaired: true`.
-- Local Codex status inspection may automatically rebuild only the current user-level CLI-Manager `[hooks.state.*]` trust blocks when every required Hook event and `[features].hooks` are already present. It must not install missing events or modify unrelated trust blocks.
+- Local Codex status inspection is read-only even with `autoRepair: true` (that option is Claude-only). It must not generate hashes, enable Hooks, install missing events or repair duplicate TOML. Explicit installation may deduplicate owned keys but never fabricates trust. Compatibility common sync copies only saved hashes matching the actual current definition and preserves `enabled=false`.
+- Terminal launch may prepare bridge environment for complete Codex Hook definitions pending trust. This neither changes installation status nor authorizes Hook execution; Codex continues to enforce trust/disabled state, and this same process can deliver events after the user reviews it.
 
 ### 4. Validation & Error Matrix
 
@@ -829,7 +830,7 @@ interface HookSettingsStatus {
 | Existing `common_config_codex` row with `NULL` value | treat as missing config; write minimal `[features]\nhooks = true` TOML |
 | Current Codex `config.toml` has trusted CLI-Manager `hooks.state` entries | copy those state blocks into `common_config_codex` with CLI-Manager marker comments |
 | Current Codex `config.toml` has unrelated or project-local `.codex/hooks.json` state | do not copy into `common_config_codex` |
-| Complete Codex Hook with missing, disabled, or stale CLI-Manager trust state | rebuild the owned trust blocks and return `installed` after re-checking |
+| Complete Codex Hook with missing, disabled, or stale CLI-Manager trust state | remain `partialInstalled`; query changes no bytes and does not grant trust |
 | Codex Hook missing any required event or feature flag | keep `partialInstalled`; do not fabricate trust state |
 | SQLite open/query/write failure | `syncFailed` with stable `db_*`/`db_write_failed` message |
 | Existing non-CLI-Manager hooks | preserved on install, reinstall, and uninstall |
@@ -839,7 +840,7 @@ interface HookSettingsStatus {
 - Good: User selected a moved cc-switch DB in Settings -> Provider; Hook install syncs the relevant `common_config_<tool>` key at that exact path and returns `synced`.
 - Good: `common_config_codex` contains top-level Codex keys plus `[projects.'\\?\F:\idea-work\business-center']`, `[windows]`, and `[tui]`; Hook install preserves all existing lines and inserts `[features].hooks = true` before the first table.
 - Good: Codex has already trusted CLI-Manager entries in user-level `~/.codex/config.toml`; Hook install copies only those current `~/.codex/hooks.json:<event>:<entry>:<hook>` state blocks into `common_config_codex`.
-- Good: every required Codex Hook exists but one owned trust hash is stale; status inspection replaces only CLI-Manager state blocks and preserves user-owned state.
+- Good: every required Codex Hook exists but one owned trust hash is stale; status inspection preserves it and reports partial, leaving review to Codex.
 - Base: cc-switch is not installed; Hook install still writes normal CLI settings and returns `notDetected`.
 - Base: Codex hooks are installed but no trust hash exists yet; common-config sync still writes `[features].hooks = true` and does not fabricate `trusted_hash` values.
 - Base: user previously installed Hook, cc-switch rewrites `settings.json`, and startup calls status with `autoRepair: true`; backend restores missing hooks and frontend shows one lightweight notice.
@@ -854,7 +855,7 @@ interface HookSettingsStatus {
 - Rust unit tests for Claude common-config merge preserving existing fields and non-CLI-Manager hooks, and Codex TOML common-config preserving existing fields while enabling `[features].hooks`.
 - Rust regression tests for Codex common-config with the real cc-switch `settings(key TEXT PRIMARY KEY, value TEXT)` shape, including nullable `value` and Windows project table keys.
 - Rust regression tests for copying only current user-level CLI-Manager Codex `hooks.state` blocks into `common_config_codex`, replacing stale marker-owned hashes, and excluding project-local `.codex/hooks.json` state.
-- Rust regression tests for trust repair covering missing, disabled, and stale hashes; assert unrelated state is preserved and missing required events remain `partialInstalled` without repair.
+- Rust regression tests for read-only inspection covering missing, disabled, stale and duplicate hashes; explicit duplicate repair preserves the last state, common sync copies only actual confirmations and disabled state. Missing events remain `partialInstalled`.
 - Rust unit tests for strip/uninstall preserving non-CLI-Manager hooks.
 - Rust SQLite regression tests must cover full uninstall and module uninstall separately: the former removes all owned entries, while the latter keeps the remaining local CLI-Manager Hook entries and preserves user-owned content.
 - Rust regression test that Claude common-config status requires every installed event, including Claude `Notification`; Codex common-config status requires `[features].hooks = true`.

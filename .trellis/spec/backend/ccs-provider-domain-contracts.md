@@ -173,6 +173,15 @@ legacy cli-manager.db migration unchanged
   documents must retain comments/order. Frontend parsing is only an editor aid.
 - Writers change only documented provider-owned paths. Preserve Hooks,
   permissions, MCP, project trust, statusline and unknown user fields.
+- Codex provider/common runtime materialization excludes root `hooks.state`,
+  `notice`, `tui.status_line`, `tui.model_availability_nux`,
+  `windows_wsl_setup_acknowledged` and `projects.<path>.trust_level`.
+  These are Home-owned state/preferences, not supplier runtime overrides.
+  Preserve the target Home (including false/empty values), actual Hook
+  definitions, features, other TUI/desktop options, project extension fields,
+  explicit user profiles and all other non-secret runtime options. Raw stored
+  documents are not migrated. Legacy snapshot and managed proxy readers use
+  the same filter; never inject host state into WSL or remote Home.
 - When a writer owns a credential-bearing document, it must remove stale
   provider credentials from every owned profile/entry before projecting the
   selected active key; an unselected Grok model profile or legacy top-level

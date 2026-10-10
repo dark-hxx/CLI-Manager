@@ -5,6 +5,33 @@ use super::pi::pi_extension_path;
 use super::*;
 use tempfile::TempDir;
 
+#[test]
+// 兼容公共同步不能凭计算哈希自动信任，只复制真实确认且保留禁用状态。
+fn codex_common_sync_copies_only_current_saved_trust() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("codex");
+    fs::create_dir_all(&dir).unwrap();
+    install_codex_hooks(&dir).unwrap();
+    let path = dir.join(CODEX_CONFIG_FILE_NAME);
+    let original = fs::read(&path).unwrap();
+    assert!(read_codex_cli_manager_hook_state_blocks(&dir).unwrap().is_empty());
+    assert_eq!(fs::read(&path).unwrap(), original);
+    trust_installed_codex_hooks(&dir);
+    let trusted = fs::read_to_string(&path).unwrap();
+    let blocks = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
+    assert_eq!(blocks.len(), 9);
+    fs::write(&path, trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1)).unwrap();
+    let disabled = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
+    assert_eq!(disabled.len(), 9);
+    assert!(disabled.iter().any(|block| block.iter().any(|line| line == "enabled = false")));
+    let merged = merge_codex_common_config_toml(None, &disabled);
+    assert!(merged.contains("enabled = false"));
+    fs::write(&path, trusted.replacen("sha256:", "sha256:stale-", 1)).unwrap();
+    let stale = fs::read(&path).unwrap();
+    assert_eq!(read_codex_cli_manager_hook_state_blocks(&dir).unwrap().len(), 8);
+    assert_eq!(fs::read(&path).unwrap(), stale);
+}
+
 // 为临时 Codex 配置中的托管命令追加匹配的信任哈希测试块。
 fn trust_installed_codex_hooks(codex_dir: &Path) {
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
@@ -318,46 +345,45 @@ fn codex_pre_tool_use_trust_hash_includes_matcher() {
 }
 
 #[test]
-// 验证完整安装可修复缺失、禁用和过期信任，同时保留用户块。
-fn codex_status_repairs_disabled_or_stale_hook_trust() {
+// 状态查询必须保留缺失、禁用和过期信任；重复检查不能替用户确认。
+fn codex_status_preserves_missing_disabled_or_stale_hook_trust() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
     fs::create_dir_all(&codex_dir).unwrap();
     install_codex_hooks(&codex_dir).unwrap();
-    let missing = build_codex_status_with_trust_repair(Some(codex_dir.clone())).unwrap();
-    assert!(matches!(missing.status, HookInstallStatus::Installed));
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
+    let untrusted = fs::read_to_string(&config_path).unwrap();
+    trust_installed_codex_hooks(&codex_dir);
     let mut trusted = fs::read_to_string(&config_path).unwrap();
     trusted.push_str("\n[hooks.state.\"user-hook\"]\ntrusted_hash = \"sha256:user\"\n");
 
-    fs::write(
-        &config_path,
-        trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1),
-    )
-    .unwrap();
-    let disabled = build_codex_status_with_trust_repair(Some(codex_dir.clone())).unwrap();
-    assert!(matches!(disabled.status, HookInstallStatus::Installed));
-
-    fs::write(
-        &config_path,
-        trusted.replacen("sha256:", "sha256:stale-", 1),
-    )
-    .unwrap();
-    let stale = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
-    assert!(matches!(stale.status, HookInstallStatus::Installed));
-    assert!(fs::read_to_string(config_path)
-        .unwrap()
-        .contains("[hooks.state.\"user-hook\"]\ntrusted_hash = \"sha256:user\""));
+    let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
+    let hooks = fs::read(&hooks_path).unwrap();
+    for (config, installed) in [
+        (untrusted, false),
+        (trusted.clone(), true),
+        (trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1), false),
+        (trusted.replacen("sha256:", "sha256:stale-", 1), false),
+    ] {
+        fs::write(&config_path, &config).unwrap();
+        for _ in 0..3 {
+            let status = build_codex_status(Some(codex_dir.clone())).unwrap();
+            assert_eq!(matches!(status.status, HookInstallStatus::Installed), installed);
+            assert_eq!(fs::read_to_string(&config_path).unwrap(), config);
+            assert_eq!(fs::read(&hooks_path).unwrap(), hooks);
+        }
+    }
 }
 
 #[test]
-// 验证状态检查修复不同引号形成的重复托管信任键。
-fn codex_status_repairs_equivalent_duplicate_hook_state_keys() {
+// 查询不写坏配置，显式安装才去重，并保留最后一个块的禁用决定。
+fn codex_explicit_install_repairs_duplicate_keys_without_trusting_or_enabling() {
     let tmp = TempDir::new().unwrap();
     let codex_dir = tmp.path().join("codex");
     fs::create_dir_all(&codex_dir).unwrap();
     install_codex_hooks(&codex_dir).unwrap();
-    let installed = build_codex_status_with_trust_repair(Some(codex_dir.clone())).unwrap();
+    trust_installed_codex_hooks(&codex_dir);
+    let installed = build_codex_status(Some(codex_dir.clone())).unwrap();
     assert!(matches!(installed.status, HookInstallStatus::Installed));
 
     let hooks_path = codex_dir.join(CODEX_HOOKS_FILE_NAME);
@@ -367,14 +393,17 @@ fn codex_status_repairs_equivalent_duplicate_hook_state_keys() {
         .next()
         .unwrap();
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
-    let config = fs::read_to_string(&config_path).unwrap();
+    let config = fs::read_to_string(&config_path).unwrap()
+        .replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1);
     let broken = format!("[hooks.state.'{key}']\ntrusted_hash = \"sha256:old\"\n\n{config}");
-    fs::write(&config_path, broken).unwrap();
+    fs::write(&config_path, &broken).unwrap();
     assert!(build_codex_status(Some(codex_dir.clone())).is_err());
+    assert_eq!(fs::read_to_string(&config_path).unwrap(), broken);
 
-    let repaired = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+    install_codex_hooks(&codex_dir).unwrap();
+    let repaired = build_codex_status(Some(codex_dir)).unwrap();
 
-    assert!(matches!(repaired.status, HookInstallStatus::Installed));
+    assert!(matches!(repaired.status, HookInstallStatus::PartialInstalled));
     let config = fs::read_to_string(config_path).unwrap();
     toml::from_str::<toml::Value>(&config).unwrap();
     assert!(!config.contains("sha256:old"));
@@ -400,7 +429,7 @@ fn codex_status_does_not_repair_trust_when_required_hook_is_missing() {
     )
     .unwrap();
 
-    let status = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+    let status = build_codex_status(Some(codex_dir)).unwrap();
 
     assert!(matches!(status.status, HookInstallStatus::PartialInstalled));
     assert!(fs::read_to_string(config_path)
@@ -448,7 +477,7 @@ fn codex_status_requires_internal_tool_lifecycle_upgrade() {
     remove_named_hook_command(&mut settings, "PostToolUse", "codex", "ToolStop");
     write_json(&hooks_path, &settings).unwrap();
 
-    let status = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+    let status = build_codex_status(Some(codex_dir)).unwrap();
     assert!(!status.subagent_start_hook_installed);
     assert!(matches!(status.status, HookInstallStatus::PartialInstalled));
 }
@@ -715,7 +744,7 @@ fn wrong_question_matcher_keeps_local_hook_status_partial() {
         .unwrap();
     codex_question["matcher"] = json!("OtherTool");
     write_json(&codex_path, &codex_settings).unwrap();
-    let codex_status = build_codex_status_with_trust_repair(Some(codex_dir)).unwrap();
+    let codex_status = build_codex_status(Some(codex_dir)).unwrap();
     assert!(!codex_status.attention_hook_installed);
     assert!(matches!(
         codex_status.status,
