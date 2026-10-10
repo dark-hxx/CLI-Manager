@@ -76,6 +76,10 @@ export function useAgentCapabilities({
     [project?.cli_tool, terminalSession?.cliTool, terminalSession?.startupCmd, terminalSession?.title]
   );
   const cliSessionId = terminalSession?.cliSessionId?.trim() ?? "";
+  // 旧 Hook 可能缺少 WSL 身份；只有当前 Agent 的精确会话详情可补来源，切换 Tab 后残留的历史不可复用。
+  const exactBoundSession = cliSessionId && boundSession?.session_id === cliSessionId && boundSession.source === agent
+    ? boundSession
+    : null;
   const environment = terminalSession ? environmentFor(terminalSession, project) : "local";
   const wslLocation = environment === "wsl"
     ? resolveWslCapabilityLocation({
@@ -83,6 +87,7 @@ export function useAgentCapabilities({
         sessionCwd: terminalSession?.cwd,
         projectPath,
         configRoot: project?.cli_config_root,
+        boundSessionFilePath: exactBoundSession?.file_path,
       })
     : null;
   const wslDistroName = wslLocation?.distroName ?? null;
@@ -133,7 +138,7 @@ export function useAgentCapabilities({
       configRoot: project?.cli_config_root?.trim() || null,
       launchArgs: project?.cli_args ?? "",
       baselineConfigFingerprint: baselineFingerprints.get(scopeKey) ?? null,
-      runtimeEvidence: buildSessionMcpEvidence(boundSession?.session_id === cliSessionId && boundSession.source === agent ? boundSession : null),
+      runtimeEvidence: buildSessionMcpEvidence(exactBoundSession),
       wslDistroName,
     };
     if (environment === "ssh") {
@@ -147,7 +152,7 @@ export function useAgentCapabilities({
       request.sshConsumerId = `agent-capabilities:${cached.launch.clientInstanceId}:${cached.launch.hostId}:${project.id}:${terminalSession.id}`;
     }
     return request;
-  }, [agent, boundSession, cliSessionId, effectiveCwd, environment, project, scopeKey, terminalSession, wslDistroName]);
+  }, [agent, exactBoundSession, cliSessionId, effectiveCwd, environment, project, scopeKey, terminalSession, wslDistroName]);
 
   const load = useCallback(async (probe: boolean) => {
     const requestScope = scopeKey;

@@ -98,6 +98,9 @@ resolveCliHookTarget(input) -> { tabId, reason } | null
 - Binding order is exact Tab ID, valid legacy primary mapping, existing session owner, unique source/path candidate, then one recently active candidate. Ambiguous candidates are rejected.
 - Windows drive and `/mnt/<drive>` paths compare as one local path; `\\wsl$`/`\\wsl.localhost` and Linux paths compare only within the same WSL distro. Local events never bind SSH tabs.
 - Realtime stats continue to query only an explicitly bound session ID; project-latest history is not a recovery mechanism.
+- Managed direct Codex terminal launches must pass `--no-daemon` per invocation, including SSH bootstrap and local/WSL new, split and resumed sessions. A shared Codex app-server can inherit the first PTY's `CLI_MANAGER_TAB_ID` and callback endpoint and send subsequent threads' Hooks to that still-valid Tab/application. Fix at process launch, never infer ownership from foreground focus or a completed/running indicator.
+- `features.daemon_auto_start=false` is insufficient: it prevents starting a daemon but still permits connecting to an existing one. The launch contract requires a Codex version supporting `--no-daemon`; do not claim old-CLI compatibility or silently fall back to the ineffective config key. Preserve provider/profile arguments and avoid duplicate flags on restore. Do not rewrite global Codex Home or terminate existing shared servers. Manual shell input, custom wrappers and explicit `--remote` connections remain caller-owned.
+- Existing PTYs must be recreated after upgrade to obtain the current application's callback environment; restarting Codex inside an old PTY does not refresh inherited port/token values. An installed Hook executable from another build may be reused: its environment, not its executable path, selects the receiving instance.
 
 ### 4. Validation & Error Matrix
 
@@ -121,6 +124,7 @@ resolveCliHookTarget(input) -> { tabId, reason } | null
 
 - Rust: duplicate IDs deliver once; invalid IDs are rejected; Hook receiver tests pass.
 - TypeScript/Node: exact priority, unique external binding, recent-output disambiguation, ambiguity refusal, Windows/WSL normalization, and SSH exclusion.
+- TypeScript/Node: local shell/WSL and SSH startup isolation, resume/provider argument preservation, repeat preparation, light-theme composition and three-terminal exact Hook targeting (`scripts/codexHookIsolation.test.mjs`, `scripts/terminalHookBinding.test.mjs`).
 - Run `npx tsc --noEmit`, Rust check/test, and `git diff --check`.
 
 ### 7. Wrong vs Correct
@@ -213,7 +217,8 @@ interface Settings {
 - When both tools are disabled, the sidebar light is neutral/gray and clicking it only opens Hook settings.
 - Claude auto-repair may be requested only when `claudeHookBridgeEnabled && claudeHookAutoRepairKnownInstalled`.
 - Stats availability is true only when at least one enabled tool reports `status === "installed"`.
-- New terminals inject the shared Hook bridge environment only when at least one enabled tool reports `status === "installed"`.
+- New terminals inject the current application's Hook bridge environment whenever any configurable bridge (Claude/Codex/Kimi/Pi/Grok) is enabled, independently of installation health. An executable path belonging to another build must not leave a parent application's callback port/token in place. The backend overwrites these reserved values with the current instance's endpoint when `hookEnvEnabled` is true.
+- Terminal creation does not inspect or auto-repair shared Hook installation files. Installation health and stats availability keep their own checks. If all configurable bridges are disabled, an installed OpenCode plugin may independently enable Hook environment injection; an OpenCode status failure returns false and logs the error.
 - Disabling a bridge does not uninstall or rewrite existing user Hook files.
 
 ### 4. Validation & Error Matrix
@@ -223,8 +228,9 @@ interface Settings {
 | Stored enable value is missing/invalid | Use default `true` |
 | Claude disabled, Codex installed/enabled | Health is green; no Claude auto-repair |
 | Codex disabled, Claude installed/enabled | Health is green; Claude auto-repair may run when previously installed |
-| All bridges disabled | Neutral light; no reinstall; no Hook env injection |
-| Enabled tool status request fails | Preserve existing caller error handling; do not assume installed |
+| All configurable bridges disabled | No configurable-tool reinstall; Hook env injection depends on the independent OpenCode installed-plugin check |
+| Bridge enabled; installed Hook belongs to another build, is partial, or status inspection fails | Inject current-instance Hook environment without a status/repair request; do not claim the installation is healthy |
+| All configurable bridges disabled and OpenCode absent/status request fails | No new Hook env injection; log OpenCode inspection errors |
 | A saved config directory is missing during status inspection or another tool's action | Report that tool as missing; do not fail the shared status request or block the target tool's action |
 
 ### 5. Good/Base/Bad Cases
@@ -241,7 +247,8 @@ interface Settings {
 - Manual settings persistence check across restart for both switches.
 - Manual settings UI check: disabling either bridge collapses only that bridge's detail content and enabling it restores the content.
 - Manual health matrix: Claude-only, Codex-only, both enabled, both disabled, and partial enabled installation.
-- Manual terminal check: both disabled must not inject the Hook bridge environment into new PTY sessions.
+- Node regression: every configurable bridge independently enables environment injection without installation/status/repair IPC; all disabled preserves OpenCode installed/missing/partial/error handling.
+- Manual terminal check: with all configurable bridges disabled and no installed OpenCode plugin, new PTY sessions must not request Hook environment injection. With Codex enabled, launch dev from a release terminal and create a new dev terminal; callbacks must reach dev even if the installed Hook command points to the release executable.
 
 ### 7. Wrong vs Correct
 
@@ -813,7 +820,7 @@ interface HookSettingsStatus {
   WSL DB reads/writes are routed through the named distro and must never use UNC direct writes.
 - `autoRepair: true` means "the user previously installed Claude Hook"; if CLI-Manager-owned hooks are missing or partial, backend may reinstall them and return `claudeAutoRepaired: true`.
 - Local Codex status inspection is read-only even with `autoRepair: true` (that option is Claude-only). It must not generate hashes, enable Hooks, install missing events or repair duplicate TOML. Explicit installation may deduplicate owned keys but never fabricates trust. Compatibility common sync copies only saved hashes matching the actual current definition and preserves `enabled=false`; a missing/stale hash with an explicit disable copies only the disable, never a fabricated/new trust hash.
-- Terminal launch may prepare bridge environment for complete Codex Hook definitions pending trust. This neither changes installation status nor authorizes Hook execution; Codex continues to enforce trust/disabled state, and this same process can deliver events after the user reviews it.
+- Terminal launch prepares the current instance's bridge environment whenever a configurable bridge is enabled, regardless of missing/partial/pending-trust installation health, without querying or repairing shared installation files. This neither changes installation status nor authorizes Hook execution; Codex continues to enforce trust/disabled state, and the same process can deliver events after the user reviews it. With all configurable bridges disabled, only an independently installed OpenCode plugin may enable the environment.
 
 ### 4. Validation & Error Matrix
 

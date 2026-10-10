@@ -128,15 +128,18 @@ export interface WslCapabilityLocation {
 }
 
 // 组装 WSL 能力诊断目标：发行版以 hook 上报的 WSL_DISTRO_NAME 为准，UNC 路径推断兜底；
-// cwd 必须是 guest 内路径，否则后端 inspect_wsl 会直接拒绝。
+// boundSessionFilePath 必须先校验 Agent 与 CLI session ID，仅补身份，不把历史文件目录当作 cwd。
 export function resolveWslCapabilityLocation(input: {
   hookDistroName?: string | null;
   sessionCwd?: string | null;
   projectPath?: string | null;
   configRoot?: string | null;
+  boundSessionFilePath?: string | null;
 }): WslCapabilityLocation {
   const hookDistroName = input.hookDistroName?.trim();
-  const distroName = hookDistroName || inferWslDistroName(input.sessionCwd, input.projectPath, input.configRoot);
+  const distroName = hookDistroName || inferWslDistroName(
+    input.sessionCwd, input.projectPath, input.configRoot, input.boundSessionFilePath,
+  );
   const cwd = toWslGuestPath(input.projectPath) ?? toWslGuestPath(input.sessionCwd);
   return { distroName: distroName || null, cwd };
 }

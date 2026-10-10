@@ -6,7 +6,7 @@ import { logError, logWarn } from "../../../shared/platform/logger";
 import {
   appendResumeCliArgs, isDirectCodexStartupCommand, normalizeDirectCodexStartupCommand,
   resolveProjectStartupCommand as resolveProjectCommand, withClaudeMcpConfigPath, withClaudeSettingsPath,
-  withCodexConfigOverrides, withCodexProfile,
+  withCodexConfigOverrides, withCodexProfile, withCodexNoDaemon,
   withCodexLightTuiTheme, withGrokModelOverride,
 } from "../../projects/api/projectStartupCommand";
 import { getTerminalTheme } from "../../../shared/lib/terminalThemes";
@@ -29,7 +29,7 @@ import {
   type TerminalCodexProviderLaunchConfig, type TerminalGrokProviderLaunchConfig,
 } from "../api/TerminalProcessManager";
 import {
-  type HookSettingsStatusPayload, type OpenCodeHookStatusPayload, type DetachedPtyLaunchOptions,
+  type OpenCodeHookStatusPayload, type DetachedPtyLaunchOptions,
   type DetachedPtyLaunchResult, type ProviderLaunchSnapshotResponse, type ResolvedPtyLaunch,
 } from "../types/terminalStoreTypes";
 import { SHELL_RUNTIME_MONITORING_ENV } from "./terminalStatus";
@@ -102,9 +102,12 @@ export function getCurrentTerminalColors() {
   };
 }
 
+// Codex 的共享 app-server 会保留首个 PTY 的 Hook 环境；自动启动必须使用独立服务。
+// --no-daemon 同时禁止复用已经运行的服务；手工输入仍由终端原样处理。
 export function prepareStartupCommandForPty(command: string | undefined, shell: ShellKey | null): string | undefined {
-  if (!command || shell !== "gitbash" || !isCurrentTerminalBackgroundLight()) return command;
-  return withCodexLightTuiTheme(command);
+  const prepared = withCodexNoDaemon(command);
+  if (!prepared || shell !== "gitbash" || !isCurrentTerminalBackgroundLight()) return prepared;
+  return withCodexLightTuiTheme(prepared);
 }
 
 export const CODEX_COMMAND_PATTERN = /(?:^|\s)codex(?:\.(?:cmd|exe|ps1))?(?:\s|$)/i;
@@ -206,52 +209,22 @@ export function formatManualDirectCodexInputForPty(command: string, shell?: Shel
 
 export const HOOK_RUNNING_TIMEOUT_MS = 30 * 60 * 1000;
 
+// 回调地址属于当前应用实例，不依赖安装健康度；另一版本的 Hook 可执行文件也应回调当前 PTY。
+// 启动检查不得因路径不同/部分安装而沿用父进程端口，也不在启动终端时重写共享 Hook 配置。
 export async function shouldEnableHookEnv(): Promise<boolean> {
   const settings = useSettingsStore.getState();
-  let openCodeInstalled = false;
+  if (
+    settings.claudeHookBridgeEnabled || settings.codexHookBridgeEnabled || settings.kimiHookBridgeEnabled
+    || settings.piHookBridgeEnabled || settings.grokHookBridgeEnabled
+  ) return true;
+
+  // OpenCode 没有上述逐工具开关，保留已安装插件的独立启用判定。
   try {
     const openCodeStatus = await invoke<OpenCodeHookStatusPayload>("opencode_hook_status");
-    openCodeInstalled = openCodeStatus.status === "installed";
+    return openCodeStatus.status === "installed";
   } catch (err) {
     logError("opencode_hook_status failed while deciding terminal hook env", { err });
-  }
-  if (
-    !settings.claudeHookBridgeEnabled &&
-    !settings.codexHookBridgeEnabled &&
-    !settings.kimiHookBridgeEnabled &&
-    !settings.piHookBridgeEnabled &&
-    !settings.grokHookBridgeEnabled
-  ) {
-    return openCodeInstalled;
-  }
-  try {
-    const status = await invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
-      selectedDir: settings.claudeHookConfigDir?.trim() || null,
-      codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
-      kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
-      piSelectedDir: settings.piHookConfigDir?.trim() || null,
-      grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
-      ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
-      autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
-    });
-    return openCodeInstalled || (
-      (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-      // Pending trust must not lose this process's bridge env: Codex still decides whether to run Hooks.
-      (settings.codexHookBridgeEnabled && (
-        status.codex.status === "installed" || (
-          status.codex.status === "partialInstalled" && status.codex.hooksFeatureInstalled === true &&
-          status.codex.sessionStartHookInstalled === true && status.codex.runningHookInstalled === true &&
-          status.codex.attentionHookInstalled === true && status.codex.stopHookInstalled === true &&
-          status.codex.subagentStartHookInstalled === true
-        )
-      )) ||
-      (settings.kimiHookBridgeEnabled && status.kimi.status === "installed") ||
-      (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
-      (settings.grokHookBridgeEnabled && status.grok.status === "installed")
-    );
-  } catch (err) {
-    logError("hook_settings_get_status failed while deciding terminal hook env", { err });
-    return openCodeInstalled;
+    return false;
   }
 }
 
@@ -469,6 +442,8 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     if (getDeepSeekTuiCommandSourceRoot(resolvedStartupCmd)) {
       throw deepSeekLaunchError(new Error("deepseek_source_native_only"));
     }
+    // SSH 启动由远端 bootstrap 执行，也必须隔离 Codex 的 Hook 环境。
+    resolvedStartupCmd = prepareStartupCommandForPty(resolvedStartupCmd, "bash");
     const resolvedEnvironmentOverrides = { ...(options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
       : options.envVars ?? {}) };

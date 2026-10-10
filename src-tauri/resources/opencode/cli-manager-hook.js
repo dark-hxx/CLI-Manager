@@ -293,7 +293,7 @@ export function createOpenCodeSessionIdentity() {
   return new OpenCodeSessionIdentity();
 }
 
-// 检查回调环境并先记录去重状态，再尝试发送本地 Hook；发送失败不抛出。
+// 检查回调环境并上报当前 guest 发行版；成功后记录去重状态，发送失败不抛出。
 async function post(event, sessionId) {
   const tabId = nonEmpty(process.env.CLI_MANAGER_TAB_ID);
   const port = nonEmpty(process.env.CLI_MANAGER_NOTIFY_PORT);
@@ -312,6 +312,7 @@ async function post(event, sessionId) {
         event,
         sessionId,
         cwd: process.cwd(),
+        wslDistroName: nonEmpty(process.env.WSL_DISTRO_NAME),
         timestamp: new Date().toISOString(),
       }),
     });

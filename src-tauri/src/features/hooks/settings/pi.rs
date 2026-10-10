@@ -67,7 +67,7 @@ pub(super) fn pi_extension_source(modules: &[PiHookModule]) -> String {
         .any(|module| matches!(module, PiHookModule::Stop));
 
     // 内嵌 nonEmpty：修剪可选字符串，空值返回 null，不读写外部状态。
-    // 内嵌 postHookEvent：缺少回调环境即返回；携带令牌 POST 到本机 Hook，吞掉请求异常并在 finally 清理计时器。
+    // 内嵌 postHookEvent：缺少回调环境即返回；从当前运行环境上报 WSL 身份，携带令牌 POST，吞掉异常并清理计时器。
     // 内嵌 setTimeout 回调：一秒后中止该次 fetch，不启动重试；中止异常由 postHookEvent 捕获。
     // 内嵌 readSessionId：调用可选会话管理器取得 ID，调用异常或空 ID 返回 null。
     // 内嵌默认扩展函数：仅为启用模块注册 Pi 监听器，不等待通知请求，也不捕获注册异常。
@@ -109,6 +109,7 @@ async function postHookEvent(event: NotifyEvent, sessionId: string | null, messa
     message: message ?? null,
     sessionId,
     cwd: process.cwd(),
+    wslDistroName: nonEmpty(process.env.WSL_DISTRO_NAME),
     timestamp: new Date().toISOString(),
   }};
 

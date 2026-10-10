@@ -455,9 +455,9 @@ test("pending Codex trust keeps bridge env without trusting hooks or writing con
     stopHookInstalled: true, subagentStartHookInstalled: true };
   for (const [codex, enabled, expected] of [
     [complete, true, true], [{ status: "installed" }, true, true],
-    [{ ...complete, hooksFeatureInstalled: false }, true, false],
-    [{ ...complete, runningHookInstalled: false }, true, false],
-    [{ status: "partialInstalled" }, true, false], [complete, false, false],
+    [{ ...complete, hooksFeatureInstalled: false }, true, true],
+    [{ ...complete, runningHookInstalled: false }, true, true],
+    [{ status: "partialInstalled" }, true, true], [complete, false, false],
   ]) {
     const calls = [];
     const mocks = {
@@ -465,18 +465,16 @@ test("pending Codex trust keeps bridge env without trusting hooks or writing con
         claudeHookBridgeEnabled: false, kimiHookBridgeEnabled: false,
         piHookBridgeEnabled: false, grokHookBridgeEnabled: false }) },
       logError: () => {},
-      invoke: async (command, args) => {
+      invoke: async (command) => {
         calls.push(command);
-        if (command === "opencode_hook_status") return { status: "notInstalled" };
-        assert.equal(command, "hook_settings_get_status");
-        assert.ok(!args.autoRepair);
-        const missing = { status: "notInstalled" };
-        return { codex, claude: missing, kimi: missing, pi: missing, grok: missing };
+        assert.equal(command, "opencode_hook_status",
+          `terminal creation must not inspect or repair Codex ${codex.status} hooks`);
+        return { status: "notInstalled" };
       },
     };
     const decide = new Function(...Object.keys(mocks), `${code}; return shouldEnableHookEnv;`)(...Object.values(mocks));
     assert.equal(await decide(), expected);
-    assert.equal(calls.includes("hook_settings_get_status"), enabled);
+    assert.deepEqual(calls, enabled ? [] : ["opencode_hook_status"]);
   }
 });
 
