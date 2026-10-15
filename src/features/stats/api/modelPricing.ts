@@ -90,6 +90,8 @@ export const DEFAULT_MODEL_PRICES: ModelPrice[] = [
   seed("o3-mini", 0.55, 2.2, 0.55, 0.0),
   seed("o4", 2.5, 10.0, 0.625, 0.0),
   seed("o4-mini", 1.1, 4.4, 0.275, 0.0),
+  seed("MiniMax-M3", 0.6, 2.4, 0.12, 0.0),
+  seed("MiniMax-M2.7", 0.3, 1.2, 0.06, 0.375),
 ];
 
 // 模型上下文窗口映射表（单位：tokens）。优先使用日志中携带的精确 context_window，缺失时才回退到这里。
@@ -115,6 +117,8 @@ const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   "claude-3-haiku-20240307": 200_000,
   "o4": 200_000,
   "o4-mini": 128_000,
+  "minimax-m3": 1_000_000,
+  "minimax-m2.7": 204_800,
 };
 
 const LITELLM_CONTEXT_KEYS = ["max_input_tokens", "context_window", "max_tokens"] as const;
