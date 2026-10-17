@@ -1,0 +1,185 @@
+/* 對話頁的 Tap-Code 呈現：工具步驟列與展開內容（改動、命令輸出、任務清單）、收尾列、對話搜尋。
+   移植自 Tap-Code 的 styles.css；顏色一律用工作台的主題變數，淺色、深色都成立，
+   命令輸出與原生終端一樣固定用深色底。 */
+
+/* 搜尋列在對話上方，內容往下讓；捲動區要 relative，標示色塊才能跟著內容捲動。 */
+.tap-chat-wrap { display: flex; flex-direction: column; --diff-add: var(--success); --diff-del: var(--danger); }
+:root[data-theme="dark"] .tap-chat-wrap { --diff-add: oklch(.78 .15 150); --diff-del: oklch(.74 .16 24); }
+.tap-chat-wrap > .tap-chat { position: relative; flex: 1; min-height: 0; height: auto; }
+/* 對話裡的增刪行數跟差異用同一組顏色；深色時調亮，數字才讀得清楚。 */
+.tap-chat-wrap .tap-add { color: var(--diff-add); }
+.tap-chat-wrap .tap-del { color: var(--diff-del); }
+/* 對話欄貼近右緣時（窄視窗、手機），頂端留出搜尋鈕的位置，第一則提問不被蓋住。 */
+@container session (max-width: 920px) { .tap-chat-wrap > .tap-chat { padding-top: 50px; } }
+
+/* 執行過程：小字的步驟軌跡，左邊一條細線把它和最終回答分開。 */
+.tap-process { gap: 2px; margin-left: 6px; padding-left: 10px; border-left: 1px solid var(--border); }
+.tap-process > .tap-message { margin: 6px 0 6px 4px; }
+.tap-process > .tap-truncated { padding: 4px; }
+
+/* 一個步驟一列：箭頭、圖示、工具標籤、關鍵參數（等寬小字）、右邊的增刪行數或結束碼。 */
+.tap-step { min-width: 0; }
+.tap-step-row, .tap-process .tap-activity-toggle {
+  display: flex; align-items: center; gap: 7px; width: 100%; min-height: 30px; padding: 4px 8px 4px 4px; border-radius: 7px;
+  color: var(--fg-2); font-size: 12.5px; line-height: 1.4; text-align: left;
+}
+.tap-step-caret { flex-shrink: 0; color: var(--muted-fg); transition: transform 150ms ease; }
+.tap-step-caret.is-open { transform: rotate(90deg); }
+.tap-step-icon { flex-shrink: 0; color: var(--muted-fg); }
+.tap-step-verb { flex-shrink: 0; color: var(--fg-2); font-weight: 500; }
+.tap-step-summary {
+  flex: 1; min-width: 0; overflow: hidden; color: var(--muted-fg); font: 12px/1.4 var(--mono); white-space: nowrap; text-overflow: ellipsis;
+}
+.tap-step-summary.is-path { display: flex; align-items: baseline; gap: 7px; }
+.tap-step-file { flex-shrink: 0; max-width: 100%; overflow: hidden; color: var(--fg-2); text-overflow: ellipsis; }
+.tap-step-dir { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; opacity: .85; }
+/* 搜尋命中摘要時整段顯示，標示才看得到。 */
+.tap-step-row.is-hit .tap-step-summary { white-space: normal; overflow-wrap: anywhere; }
+.tap-step-row.is-hit .tap-step-summary.is-path { flex-wrap: wrap; }
+.tap-step-meta {
+  display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; color: var(--muted-fg); font-size: 11.5px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.tap-step-changes { display: inline-flex; align-items: baseline; gap: 4px; font-variant-numeric: tabular-nums; }
+.tap-step-exit, .tap-step-failed { color: var(--danger); }
+.tap-step-detail { display: flex; flex-direction: column; gap: 8px; min-width: 0; margin: 2px 0 8px 24px; }
+
+/* 原本的過程卡（思考、讀不出參數的工具）在過程裡排成同一種列，展開內容和工具步驟對齊。 */
+.tap-process .tap-activity { border: 0; border-radius: 7px; background: none; overflow: visible; }
+.tap-process .tap-activity-toggle { min-height: 30px; }
+.tap-process .tap-activity-toggle > svg { color: var(--muted-fg); }
+.tap-process .tap-activity-toggle > small { font-size: 11.5px; }
+.tap-process .tap-activity-body { margin: 2px 0 8px 24px; padding: 0; border-top: 0; }
+.tap-process .tap-activity-part pre, .tap-step-outputs .tap-activity-part pre { border: 1px solid var(--border); background: var(--surface); }
+.tap-step-detail .tap-activity-part > p { margin: 4px 0 5px; }
+.tap-step-detail .tap-activity-part pre { margin-top: 0; }
+
+/* 改檔步驟的工具輸出：預設收起的一行。 */
+.tap-step-outputs > button {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 24px; padding: 0 6px 0 2px; border-radius: 6px;
+  color: var(--muted-fg); font-size: 12px;
+}
+.tap-step-outputs > button svg { transition: transform 150ms ease; }
+.tap-step-outputs > button svg.is-open { transform: rotate(90deg); }
+
+/* 改動：多個檔案時每個檔案一個標題；新增綠、刪除紅，行號只在確定時顯示，否則只標 +、−。 */
+.tap-diff { display: flex; flex-direction: column; gap: 8px; min-width: 0; max-height: 480px; overflow: auto; overscroll-behavior: contain; }
+.tap-diff-file { flex-shrink: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.tap-diff-head {
+  display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 4px 10px; border-bottom: 1px solid var(--border);
+  background: var(--surface); font-size: 12px;
+}
+.tap-diff-op { flex-shrink: 0; padding: 1px 6px; border-radius: 5px; background: var(--muted); color: var(--fg-2); font-size: 11px; line-height: 1.4; }
+.tap-diff-op.is-add { background: color-mix(in oklch, var(--diff-add) 13%, transparent); color: var(--diff-add); }
+.tap-diff-op.is-delete { background: color-mix(in oklch, var(--diff-del) 11%, transparent); color: var(--diff-del); }
+.tap-diff-path { flex: 1; min-width: 0; overflow: hidden; color: var(--fg-2); font-family: var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+.tap-hunk { font: 12px/1.55 var(--mono); }
+.tap-hunk + .tap-hunk { border-top: 1px dashed var(--border); }
+.tap-hunk-head { display: flex; flex-wrap: wrap; gap: 8px; padding: 3px 10px; background: var(--surface); color: var(--muted-fg); font: 11.5px/1.5 var(--sans); }
+.tap-hunk-head code { font-family: var(--mono); }
+.tap-hunk-line { display: grid; grid-template-columns: 1.7em minmax(0, 1fr); }
+.tap-hunk.is-numbered .tap-hunk-line { grid-template-columns: 3.6em 1.4em minmax(0, 1fr); }
+.tap-hunk-num { padding: 0 4px 0 6px; color: var(--muted-fg); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
+.tap-hunk-sign { color: var(--muted-fg); text-align: center; user-select: none; }
+.tap-hunk-text { padding-right: 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tap-hunk-line.is-add { background: color-mix(in oklch, var(--diff-add) 11%, transparent); }
+.tap-hunk-line.is-del { background: color-mix(in oklch, var(--diff-del) 10%, transparent); }
+.tap-hunk-line.is-add :is(.tap-hunk-num, .tap-hunk-sign) { color: var(--diff-add); }
+.tap-hunk-line.is-del :is(.tap-hunk-num, .tap-hunk-sign) { color: var(--diff-del); }
+.tap-diff-empty { padding: 6px 10px; color: var(--muted-fg); font-size: 12px; }
+
+/* 命令與輸出：與原生終端相同的深色區塊；靠空白排版的輸出不換行，改成左右捲動。 */
+.tap-command { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tap-command-note { color: var(--muted-fg); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.tap-term {
+  min-width: 0; max-height: 420px; padding: 8px 10px; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--term-border);
+  border-radius: 8px; background: var(--term-bg); color: #e4e4e7; font: 12px/1.5 "Tap Mono", var(--mono);
+}
+.tap-term pre { margin: 0; font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
+.tap-term-command { color: #fafafa; }
+.tap-term-prompt { color: #a78bfa; user-select: none; }
+.tap-term > pre + pre { margin-top: 6px; padding-top: 6px; border-top: 1px solid oklch(1 0 0 / .09); }
+.tap-term-output.is-laid { overflow-x: auto; white-space: pre; overflow-wrap: normal; line-height: 1.35; }
+.tap-term-note { display: block; margin-top: 6px; color: #a1a1aa; font: 11.5px/1.5 var(--sans); }
+.tap-term-note.is-error { color: #fca5a5; }
+/* 字型裡沒有的符號與全形字各佔固定的 1 或 2 欄，像終端一樣對齊。 */
+.tap-ansi-cell { display: inline-block; width: 1ch; text-align: center; }
+.tap-ansi-cell.is-wide { width: 2ch; }
+
+/* 任務清單：完成的劃掉，進行中的用品牌色。 */
+.tap-todos { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tap-todos ul {
+  display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); font-size: 12.5px; line-height: 1.5; list-style: none;
+}
+.tap-todos li { display: flex; align-items: flex-start; gap: 8px; color: var(--fg-2); overflow-wrap: anywhere; }
+.tap-todos li > svg { margin-top: 3px; color: var(--muted-fg); }
+.tap-todos li.is-completed > span { color: var(--muted-fg); text-decoration: line-through; }
+.tap-todos li.is-in_progress { color: var(--fg); }
+.tap-todos li.is-in_progress > svg { color: var(--brand); }
+.tap-todos li > small { flex-shrink: 0; margin-left: auto; color: var(--muted-fg); font-size: 11px; }
+
+/* 收尾列：時刻、用時與增刪行數沿用維護者的圓點分隔；複製只寫出部分或失敗的回饋。 */
+.tap-turn-foot .tap-meta { gap: 4px; white-space: nowrap; }
+.tap-turn-changes { gap: 5px; }
+.tap-turn-feedback { min-width: 0; margin-left: 6px; overflow: hidden; color: var(--muted-fg); white-space: nowrap; text-overflow: ellipsis; }
+.tap-turn-feedback:empty { display: none; }
+
+/* 跳到某一輪（跳轉點、回到提問）：短暫標示那一輪的提問。 */
+.tap-turn.is-jump .tap-bubble { animation: tap-flash-ring 1.6s var(--ease); }
+@keyframes tap-flash-ring {
+  0%, 35% { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 50%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 0%, transparent); }
+}
+
+/* 對話搜尋：搜尋列寬度跟對話欄一樣、置中；打開搜尋的圓鈕浮在右上角，往上翻閱時先藏起來。 */
+.tap-chat-find { flex-shrink: 0; padding: 8px 24px; border-bottom: 1px solid var(--border); background: var(--bg); animation: tap-fade 150ms var(--ease); }
+.tap-chat-find-row, .tap-chat-find-note { width: var(--column, 100%); max-width: 100%; margin: 0 auto; }
+.tap-chat-find-row {
+  display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 3px 0 11px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface);
+}
+.tap-chat-find-row:focus-within {
+  border-color: color-mix(in oklch, var(--brand) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 12%, transparent);
+}
+.tap-chat-find-icon { flex-shrink: 0; margin-right: 6px; color: var(--muted-fg); }
+.tap-chat-find-row input {
+  flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font-size: 14px;
+  -webkit-appearance: none; appearance: none;
+}
+.tap-chat-find-row input::-webkit-search-cancel-button { display: none; }
+.tap-chat-find-count { flex-shrink: 0; padding: 0 6px; color: var(--muted-fg); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tap-chat-find-sep { flex-shrink: 0; width: 1px; height: 16px; margin: 0 3px; background: var(--border); }
+.tap-chat-find-button { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 7px; color: var(--muted-fg); }
+.tap-chat-find-note { display: flex; align-items: center; gap: 4px; padding: 4px 2px 0; color: var(--muted-fg); font-size: 12px; }
+.tap-chat-find-note .tap-text-button { min-height: 26px; padding: 0 6px; font-size: 12px; }
+.tap-chat-find-open {
+  position: absolute; top: 10px; right: 14px; z-index: 3; display: grid; place-items: center; width: 32px; height: 32px;
+  border: 1px solid var(--border); border-radius: 50%; background: color-mix(in oklch, var(--bg) 82%, transparent); color: var(--muted-fg);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: var(--shadow-float); transition: opacity 200ms, color 150ms;
+}
+.tap-chat-wrap.is-scrolling .tap-chat-find-open { opacity: 0; pointer-events: none; }
+/* 符合處：全部淡黃，目前這一處實心；深色的命令輸出裡一樣看得清楚。 */
+::highlight(tap-chat-find) { background-color: color-mix(in oklch, var(--warning) 34%, transparent); }
+::highlight(tap-chat-find-current) { background-color: var(--warning); color: oklch(.2 .03 70); }
+/* 不支援 Custom Highlight 的瀏覽器：在捲動區裡疊色塊，跟著內容捲動。 */
+.tap-chat-find-marks { position: absolute; top: 0; left: 0; pointer-events: none; }
+.tap-chat-find-marks i { position: absolute; border-radius: 2px; background: color-mix(in oklch, var(--warning) 34%, transparent); }
+.tap-chat-find-marks i.is-current { background: color-mix(in oklch, var(--warning) 62%, transparent); }
+
+@media (hover: hover) {
+  .tap-step-row:hover, .tap-step-outputs > button:hover { background: var(--muted); }
+  .tap-chat-find-open:hover { color: var(--fg); }
+  .tap-chat-find-button:hover:not(:disabled) { background: var(--muted); color: var(--fg); }
+}
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  .tap-process { margin-left: 2px; padding-left: 7px; }
+  .tap-step-detail, .tap-process .tap-activity-body { margin-left: 6px; }
+  .tap-step-dir { display: none; }
+  .tap-chat-find { padding: 6px 10px; }
+  .tap-chat-find-row input { font-size: 15px; }
+  .tap-chat-find-open { top: 8px; right: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tap-turn.is-jump .tap-bubble { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 50%, transparent); }
+}

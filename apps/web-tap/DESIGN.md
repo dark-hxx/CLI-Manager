@@ -81,6 +81,7 @@ The workspace is flat with one-pixel borders. The composer, floating buttons and
 - ⋯ menu: terminal font stepper, settings, and a danger "End session…" that turns the menu into an inline confirmation tied to that session.
 - Composer: multiline textarea with agent-specific placeholder, "+" menu (image, type directly), interrupt, round send button; disabled state keeps the draft and names the reason.
 - Conversation: right-aligned user bubble (long prompts clamp with "Show more"), unboxed assistant Markdown, interim replies folded into one row per turn, a footer with copy and time, and a "jump to latest" button with an unread dot.
+- Process steps (from Tap-Code): one compact row per tool call behind a thin left rule (chevron, muted icon, localized verb, mono key parameter, right-aligned +N −M or exit code). Details stay folded; diffs use tinted add/delete lines with a sign column (line numbers only when known), command output sits in the same `#1c1b22` block as the terminal, task lists use status circles. The turn footer adds elapsed time and +N −M ("~" when incomplete); a tick rail on the right and a search bar above the column navigate loaded turns.
 - Side panel: segmented Details / Changes / Files tabs, Git status letters, file and diff previews with a back header.
 - Overlays: portal layer with backdrop siblings; no `inert`/`showModal()`. Only the top overlay handles Escape and Tab; touch never steals focus or reopens the keyboard.
 

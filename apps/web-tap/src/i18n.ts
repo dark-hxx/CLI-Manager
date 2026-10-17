@@ -54,6 +54,25 @@ const zh = {
   missing: "这次会话的记录暂时读不到，可以在终端里继续。", unsupported: "这个 CLI 暂不提供对话视图。",
   noChat: "当前选择的设备尚不支持对话读取。若已启动新版，请从会话栏底部切换到标注「支持对话」的设备；否则请更新此设备上的 CLI-Manager（含 Web 辅助程序）后重新连接。",
   codeBlock: "代码", copyCode: "复制代码", collapseCode: "收起代码", expandCode: "展开代码", copyFailed: "复制失败，请手动选择代码复制。",
+  // Conversation: tool steps
+  toolRead: "读取", toolEdit: "编辑", toolWrite: "写入", toolNotebook: "编辑笔记本", toolBash: "运行", toolBashOutput: "查看输出",
+  toolStop: "停止", toolGrep: "搜索", toolGlob: "查找文件", toolFetch: "抓取网页", toolWebSearch: "搜索网页", toolAgent: "子代理",
+  toolSkill: "技能", toolSearchTools: "查找工具", toolLsp: "代码索引", toolPlanMode: "进入计划模式", toolExitPlan: "提交计划",
+  toolAsk: "向你提问", toolTodo: "任务清单", toolPlan: "更新计划", toolImage: "查看图片",
+  stepFailed: "CLI 记录为失败", exitCode: "退出码 {code}", noChanges: "没有改动", replaceAll: "替换文件里所有相同的内容",
+  fileAdded: "新增", fileUpdated: "修改", fileDeleted: "删除", todoProgress: "{done}/{total} 已完成",
+  todoPending: "待处理", todoInProgress: "进行中", todoCompleted: "已完成",
+  // Conversation: turn footer
+  copyAnswer: "复制最终回答", answerCopied: "已复制最终回答", answerCopiedPartial: "已复制显示的部分（回答过长，未完整记录）",
+  copyAnswerFailed: "复制失败，请手动选择文字复制", toPrompt: "回到这一轮的提问", finishedAt: "完成于 {time}", turnTime: "本轮用时 {time}",
+  approx: "约", turnChanges: "本轮改动：新增 {added} 行，删除 {removed} 行",
+  turnChangesApprox: "本轮约新增 {added} 行、删除 {removed} 行：部分改动内容过长未完整记录、替换全部时只按一处计算，或本轮开头尚未读取，统计不完整",
+  // Conversation: search and turn rail
+  searchChat: "搜索对话", searchShortcut: "搜索对话（{key}）", noResults: "无结果", prevMatch: "更早的一处", prevMatchHint: "更早的一处（回车）",
+  nextMatch: "更新的一处", nextMatchHint: "更新的一处（Shift+回车）", closeSearch: "关闭搜索", closeSearchHint: "关闭（Esc）",
+  searchedLoaded: "只搜索了已读取的记录",
+  jumpTurn: "跳到某一轮", jumpTurnCount: "跳到某一轮（共 {n} 轮）", turnLabel: "第 {n} 轮：{text}", turnNumber: "第 {n} 轮",
+  olderTurnsLoading: "正在读取更早的对话…",
   // Side panel
   details: "详情", changes: "改动", files: "文件", refresh: "刷新", back: "返回", readOnly: "只读",
   cleanTree: "工作区干净", filesChanged: "{n} 个文件", notRepo: "这个目录不是 Git 仓库", noFiles: "这个目录是空的",
@@ -121,6 +140,22 @@ const en: Record<TextKey, string> = {
   unsupported: "This CLI does not provide a conversation view yet.",
   noChat: "The selected device does not support conversation reading yet. If a newer desktop is running, switch to a device marked Conversation supported at the bottom of the session sidebar. Otherwise, update CLI-Manager on this device, including its Web helper, and reconnect.",
   codeBlock: "Code", copyCode: "Copy code", collapseCode: "Collapse code", expandCode: "Expand code", copyFailed: "Copy failed. Select the code and copy it manually.",
+  toolRead: "Read", toolEdit: "Edit", toolWrite: "Write", toolNotebook: "Edit notebook", toolBash: "Run", toolBashOutput: "Read output",
+  toolStop: "Stop", toolGrep: "Search", toolGlob: "Find files", toolFetch: "Fetch page", toolWebSearch: "Web search", toolAgent: "Subagent",
+  toolSkill: "Skill", toolSearchTools: "Find tools", toolLsp: "Code index", toolPlanMode: "Enter plan mode", toolExitPlan: "Propose plan",
+  toolAsk: "Ask you", toolTodo: "Tasks", toolPlan: "Update plan", toolImage: "View image",
+  stepFailed: "Recorded as failed by the CLI", exitCode: "Exit code {code}", noChanges: "No changes", replaceAll: "Replace every match in the file",
+  fileAdded: "Added", fileUpdated: "Modified", fileDeleted: "Deleted", todoProgress: "{done} of {total} done",
+  todoPending: "Pending", todoInProgress: "In progress", todoCompleted: "Completed",
+  copyAnswer: "Copy final answer", answerCopied: "Final answer copied", answerCopiedPartial: "Copied the shown part (the answer was too long to be recorded in full)",
+  copyAnswerFailed: "Copy failed. Select the text and copy it manually.", toPrompt: "Back to this turn's prompt", finishedAt: "Finished at {time}",
+  turnTime: "Time for this turn: {time}", approx: "~", turnChanges: "Changes this turn: {added} lines added, {removed} removed",
+  turnChangesApprox: "About {added} lines added and {removed} removed this turn: some changes were too long to record in full, replace-all edits count one match, or the start of this turn is not loaded, so the count is incomplete",
+  searchChat: "Search conversation", searchShortcut: "Search conversation ({key})", noResults: "No results",
+  prevMatch: "Earlier match", prevMatchHint: "Earlier match (Enter)", nextMatch: "Later match", nextMatchHint: "Later match (Shift+Enter)",
+  closeSearch: "Close search", closeSearchHint: "Close (Esc)", searchedLoaded: "Only loaded messages were searched",
+  jumpTurn: "Jump to a turn", jumpTurnCount: "Jump to a turn ({n} turns)", turnLabel: "Turn {n}: {text}", turnNumber: "Turn {n}",
+  olderTurnsLoading: "Loading earlier turns…",
   details: "Details", changes: "Changes", files: "Files", refresh: "Refresh", back: "Back", readOnly: "Read only",
   cleanTree: "Working tree clean", filesChanged: "{n} files", notRepo: "This folder is not a Git repository", noFiles: "This folder is empty",
   project: "Project", pathLabel: "Project path", branch: "Branch", worktree: "Worktree", cli: "CLI", size: "Terminal size",
@@ -128,9 +163,21 @@ const en: Record<TextKey, string> = {
   theme: "Appearance", light: "Light", dark: "Dark", system: "System", language: "Language", display: "Display", account: "Account",
   error: "Operation failed", retry: "Retry", ended: "Ended",
 };
-/** App-scoped translations never import desktop settings or classic UI state. */
-export const translator = (language: Language) => (key: TextKey) => (language === "en-US" ? en : zh)[key];
-export type Translate = ReturnType<typeof translator>;
+export type Translate = (key: TextKey) => string;
+const translators = new Map<Language, Translate>();
+/**
+ * App-scoped translations never import desktop settings or classic UI state.
+ * 同一種語言傳回同一個函式：對話裡 memo 的步驟列與跳轉點不會因為上層重繪拿到新的 t 而整串重畫。
+ */
+export const translator = (language: Language): Translate => {
+  let translate = translators.get(language);
+  if (!translate) {
+    const table = language === "en-US" ? en : zh;
+    translate = (key) => table[key];
+    translators.set(language, translate);
+  }
+  return translate;
+};
 /** Fill `{name}` placeholders in a translated string. */
 export const fill = (text: string, values: Record<string, string | number>) =>
   text.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""));

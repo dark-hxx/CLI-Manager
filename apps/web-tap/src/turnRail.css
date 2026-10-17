@@ -1,0 +1,69 @@
+/* 對話右側的跳轉點（參考 ChatGPT 網頁版）：每一輪的提問一條短橫線，讀到的那條加深加長；
+   電腦上滑過在左邊展開提問清單。移植自 Tap-Code 的 turnRail.css。 */
+.tap-turn-rail { position: absolute; top: 50%; right: 6px; z-index: 3; translate: 0 -50%; }
+.tap-turn-rail.is-tight { display: none; }
+.tap-turn-ticks { display: flex; flex-direction: column; align-items: flex-end; padding: 8px 0 8px 12px; }
+.tap-turn-tick { display: grid; place-items: center end; width: 26px; height: 8px; padding: 0 4px 0 0; cursor: pointer; }
+.tap-turn-tick::after {
+  content: ""; width: 10px; height: 2px; border-radius: 1px; background: color-mix(in oklch, var(--fg) 20%, transparent);
+  transition: width 160ms var(--ease), background-color 160ms;
+}
+.tap-turn-tick.is-active::after { width: 16px; background: color-mix(in oklch, var(--fg) 78%, transparent); }
+.tap-turn-tick.is-hover::after { width: 16px; background: color-mix(in oklch, var(--fg) 55%, transparent); }
+.tap-turn-tick.is-active.is-hover::after { background: var(--fg); }
+.tap-turn-tick:focus-visible { outline: none; }
+.tap-turn-tick:focus-visible::after { width: 16px; background: var(--brand); }
+@media (hover: hover) {
+  .tap-turn-tick:hover::after { width: 16px; background: color-mix(in oklch, var(--fg) 55%, transparent); }
+  .tap-turn-tick.is-active:hover::after { background: var(--fg); }
+}
+
+/* 提問清單：刻度左邊的浮動卡片。 */
+.tap-turn-list {
+  position: absolute; top: 50%; right: calc(100% - 4px); width: min(320px, 70vw); max-height: min(60vh, 480px); margin: 0; padding: 5px;
+  overflow-y: auto; overscroll-behavior: contain; list-style: none; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); box-shadow: var(--shadow-float); translate: 0 -50%; animation: tap-turn-list-in 140ms var(--ease);
+}
+@keyframes tap-turn-list-in { from { opacity: 0; transform: translateX(6px); } }
+.tap-turn-row {
+  display: flex; align-items: baseline; gap: 12px; width: 100%; padding: 6px 9px; border-radius: 8px; color: var(--muted-fg);
+  font-size: 13px; line-height: 1.45; text-align: left;
+}
+.tap-turn-row.is-active { color: var(--fg); font-weight: 500; }
+.tap-turn-row.is-hover { background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+.tap-turn-row:focus-visible { outline: 2px solid color-mix(in oklch, var(--brand) 55%, transparent); outline-offset: -2px; }
+.tap-turn-row-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.tap-turn-row-meta { flex-shrink: 0; color: var(--muted-fg); font-size: 11.5px; font-weight: 400; font-variant-numeric: tabular-nums; }
+
+/* 觸控裝置：刻度貼著右緣、小一點，整排是一個按鈕（點了打開清單面板）。 */
+.tap-turn-rail.is-touch { right: 0; }
+.tap-turn-rail.is-touch .tap-turn-ticks { padding: 10px 3px 10px 14px; }
+.tap-turn-rail.is-touch .tap-turn-tick { width: auto; height: 7px; padding: 0; }
+.tap-turn-rail.is-touch .tap-turn-tick::after { width: 7px; }
+.tap-turn-rail.is-touch .tap-turn-tick.is-active::after { width: 12px; }
+
+/* 底部面板裡的清單：每一列兩行字，下面一行是第幾輪與時刻。 */
+.tap-turn-list.is-sheet {
+  position: static; width: auto; max-height: none; margin: 4px -10px 0; padding: 0; overflow: visible; border: 0; border-radius: 0;
+  background: none; box-shadow: none; translate: none; animation: none;
+}
+.tap-turn-list.is-sheet .tap-turn-row {
+  flex-direction: column; align-items: stretch; gap: 3px; min-height: var(--hit); padding: 9px 10px; border-radius: 10px; font-size: 14px;
+}
+.tap-turn-list.is-sheet .tap-turn-row-text { display: -webkit-box; white-space: normal; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.tap-turn-list.is-sheet .tap-turn-row.is-active { background: color-mix(in oklch, var(--brand) 10%, transparent); }
+
+/* 前面還有沒讀進來的對話：刻度最上面一小段虛線；清單最上面一列可以讀（捲到頂端也會自動讀）。 */
+.tap-turn-ticks.has-more::before {
+  content: ""; align-self: flex-end; width: 10px; height: 2px; margin: 0 4px 6px 0;
+  background: repeating-linear-gradient(to right, color-mix(in oklch, var(--fg) 22%, transparent) 0 2px, transparent 2px 4px);
+}
+.tap-turn-more { display: flex; justify-content: center; padding: 2px 0 4px; }
+.tap-turn-more > button, .tap-turn-more > span {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 10px; border-radius: 7px; color: var(--muted-fg); font-size: 12px;
+}
+.tap-turn-list.is-sheet .tap-turn-more > button, .tap-turn-list.is-sheet .tap-turn-more > span { min-height: var(--hit); }
+@media (hover: hover) {
+  .tap-turn-row:hover { background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+  .tap-turn-more > button:hover { background: color-mix(in oklch, var(--fg) 6%, transparent); color: var(--fg); }
+}

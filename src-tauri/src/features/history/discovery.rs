@@ -45,6 +45,12 @@ pub(super) fn collect_session_files_with_force(
     let files = scan_session_files(source_filter, roots);
 
     if let Ok(mut cache) = get_files_cache().lock() {
+        if source_filter.is_none() {
+            // 全量掃描的結果比各來源的快取新：清掉同一組根目錄下各來源的快取，下次依來源讀取時重新掃描。
+            // 否則索引已經看得到剛出現的會話檔（例如 /clear 之後），驗證卻還沿用最多 60 秒前的清單。
+            let suffix = format!("|{}", roots.cache_key());
+            cache.by_source.retain(|key, _| !key.ends_with(&suffix));
+        }
         cache.by_source.insert(
             cache_key,
             CachedSessionFiles {

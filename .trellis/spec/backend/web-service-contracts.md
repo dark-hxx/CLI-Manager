@@ -68,6 +68,7 @@
 - Migration SQL files must use LF. Before SQLx validation, startup may rewrite an applied migration checksum only when it exactly matches the same embedded SQL with the alternate LF/CRLF representation; any other checksum mismatch must remain an error.
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
+- Finished `terminal.transcript` operations, with their `operation.updated` browser events, are deleted two minutes after completion; events are selected by the IDs of the operations being deleted, so a transcript operation still waiting or running keeps all of its events. Pruning runs when a new transcript operation arrives, at most once per 30 seconds; other operation kinds keep their existing retention.
 
 ## 3. Contracts
 

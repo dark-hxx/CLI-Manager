@@ -37,6 +37,14 @@ export function clock(at: string | number | null | undefined, now = new Date()):
   return date.toDateString() === now.toDateString() ? time : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
+/** 完整的 24 小時制時間（滑過收尾列的時刻時顯示），例如 2026-10-17 18:05:09；無效時為空字串。 */
+export function fullTime(at: string | number | null | undefined): string {
+  if (at === null || at === undefined || at === "") return "";
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 /** Compact elapsed time: 41s, 2m 17s, 1h 5m. */
 export function duration(milliseconds: number): string {
   const seconds = Math.max(0, Math.round(milliseconds / 1000));

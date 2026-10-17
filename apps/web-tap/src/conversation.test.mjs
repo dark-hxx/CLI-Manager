@@ -7,6 +7,10 @@ import remarkGfm from "remark-gfm";
 import { translator, fill } from "./i18n.ts";
 import { groupTurns } from "./turns.ts";
 import * as format from "./format.ts";
+import * as tools from "./tools.ts";
+import * as chatFind from "./chatFind.ts";
+import * as turnRail from "./turnRail.ts";
+import * as chatScroll from "./chatScroll.ts";
 import { hookHarness, loadModule, nodes, textContent } from "../tests/reactHarness.mjs";
 
 const noTimers = { setTimeout: () => 1, clearTimeout() {} };
@@ -14,6 +18,10 @@ const conversationDeps = {
   "react-markdown": { default: Markdown, __esModule: true }, "remark-gfm": { default: remarkGfm, __esModule: true },
   "./i18n": { fill }, "./turns": { groupTurns }, "./format": format,
   "./ConversationActivity": loadModule("ConversationActivity.tsx"),
+  // 工具步驟摘要、對話搜尋與跳轉點：純邏輯用實際模組，畫面元件以名稱代替（各自另有測試）。
+  "./tools": tools, "./chatFind": chatFind, "./turnRail": turnRail, "./chatScroll": chatScroll,
+  "./ConversationStep": { ConversationStep: "Step" }, "./TurnRail": { TurnRail: "TurnRail" },
+  "./ChatSearch": { SearchProvider: "SearchProvider", useChatSearch: () => ({ hits: null, bar: null, button: null, layer: null }) },
 };
 
 test("conversation entry remains visible for old hosts, on desktop and phone, in both languages", () => {

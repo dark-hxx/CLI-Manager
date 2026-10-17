@@ -45,13 +45,15 @@ npm run web:build
 
 「执行过程」与工具/思考详情默认折叠，收到新输出也不自动展开，手动选择在同轮刷新后保留。仅按 call ID 关联工具输入/输出；没有 ID 或跨页尚未加载的调用不猜配，不根据有结果推断成功。每页最多 40 条源消息、512 KiB JSON；正文最多 4000 UTF-16 单元，过程最多 23 块/8000 单元，每块最多 4000 单元，并明确提示截断。页被字节预算缩短时游标同步前移，不跳过记录。需使用包含新版 Rust 解析器的桌面程序，单独刷新网页无法补回旧解析器丢弃的 Codex 过程。
 
+执行过程里的每个工具调用显示为一行摘要：图标、按界面语言的工具标签与关键参数（Claude 的 Read/Edit/MultiEdit/Write 路径、Bash 命令首行、Grep/Glob 样式、WebFetch 网址、WebSearch 关键词、Task 描述、TodoWrite、NotebookEdit；Codex 的 shell/exec_command 命令、apply_patch 涉及的文件、update_plan、view_image；MCP 显示服务器与工具名）。展开后 Edit/MultiEdit 显示由 old_string/new_string 算出的行级差异（不知道文件位置时不编行号），Write 与新增文件整份视为新增，apply_patch 按文件分组；Bash/exec 显示命令与带终端颜色的输出；TodoWrite/update_plan 显示带状态的任务清单；其他工具维持原始输入与输出。参数被截断或无法解析时不推导，退回原本的过程卡。只有 CLI 明确写出的结束码、`<tool_use_error>` 或拒绝执行才标为失败。每轮收尾列提供复制最终回答、24 小时制完成时刻、提问到最终回答的用时与本轮 +N −M；截断、replace_all、被省略的过程或本轮开头尚未加载时不计入并标「约」。右侧跳转点（触控设备为面板）与对话搜索（Ctrl/⌘+F）只针对已读取的记录，搜索命中折叠内容时临时展开，关闭搜索即恢复原折叠；读取更早的对话时以画面最上方那一项保持阅读位置。
+
 输入始终进入同一原生 PTY，不调用 `conversation.start/prompt`。审批仍在原生 CLI 菜单中通过键帽操作；没有伪造的消息、审批卡或终端菜单自动化。顶部「对话 / 终端」始终可切换；旧主机没有 capability 时提示更新执行设备上的桌面程序（含 Web 辅助程序），重新开启桌面 Web 连接，再在网页重连；单独更新网页不能让旧主机提供记录。浏览器重连重新读取设备能力，同时保留授权设备范围和较新的设备事件。未绑定或记录缺失时明确提示，终端仍可使用；不会按目录/时间猜配另一段会话。首次打开及可见时随终端输出合并刷新，空闲/隐藏时不持续轮询；旧页显式加载并保持阅读锚点。同一轮里最终回复之前的过程回复折叠为一行（有时间戳时显示“工作了 Xm Ys”），离开底部时出现“回到最新”。
 
-本次提供文件列表/文本预览、Git 分支/变更/只读 Diff。未提供 SSH、完整工具轨迹、历史恢复、消息队列、用量统计、Web Push、模型/审批自动切换、文件编辑或 Service Worker。PWA manifest 仅支持添加入口，不提供离线执行。
+本次提供文件列表/文本预览、Git 分支/变更/只读 Diff。未提供 SSH、超过主机截断上限的完整工具参数与输出、历史恢复、消息队列、用量统计、Web Push、模型/审批自动切换、文件编辑或 Service Worker。PWA manifest 仅支持添加入口，不提供离线执行。
 
 ## 来源与许可
 
-体验参考 [Tap-Code](https://github.com/tapaixx/Tap-Code/tree/1a3d946)，包括会话分组、输入卡、键帽、三会话挂载和键盘平移策略。Tap-Code 当前没有项目级 LICENSE，因此此 PR 不搬运其源文件或图标，也不推定商业再许可权：客户端与视口处理在本仓库实现，PWA PNG 从本目录 `public/icon.svg` 生成。
+体验参考 [Tap-Code](https://github.com/tapaixx/Tap-Code/tree/1a3d946)，包括会话分组、输入卡、键帽、三会话挂载和键盘平移策略。对话页的工具步骤摘要规则、差异与 ANSI 呈现、跳转点与对话搜索移植自 Tap-Code（相关文件开头注明来源）；其余客户端与视口处理在本仓库实现，PWA PNG 从本目录 `public/icon.svg` 生成。
 
 浏览器 HTTP/socket、DTO、terminal stream、图片准备来自本仓库已有实现，抽到 `src/shared`，经典入口保留明确兼容导出及缓存副作用。新增代码沿用仓库 AGPL-3.0-or-later 许可。
 

@@ -5,6 +5,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { groupTurns } from "./turns.ts";
 import { translator, fill } from "./i18n.ts";
 import * as format from "./format.ts";
+import * as tools from "./tools.ts";
+import * as chatFind from "./chatFind.ts";
 import { hookHarness, loadModule, nodes, textContent } from "../tests/reactHarness.mjs";
 
 const part = (id, kind, text, extra = {}) => ({ id, kind, text, ...extra });
@@ -95,6 +97,9 @@ test("the process group does not auto-expand during live output or after complet
     react: h.react, "react-markdown": { default: "Markdown" }, "remark-gfm": {},
     "./turns": { groupTurns }, "./format": format, "./i18n": { fill },
     "./ConversationCodeBlock": {}, "./ConversationActivity": { ConversationActivity: "Activity" },
+    // TurnView 用到步驟摘要與搜尋比對；其餘新模組只在 Conversation 本身使用。
+    "./tools": tools, "./chatFind": chatFind, "./ConversationStep": { ConversationStep: "Step" },
+    "./ChatSearch": {}, "./TurnRail": {}, "./turnRail": {}, "./chatScroll": {},
   }, {}, ["TurnView"]);
   let live = true;
   let turn = groupTurns([message("s:0", "user", "Run"), message("s:1", "assistant", "", [part("p1", "tool_call", "cmd")])])[0];

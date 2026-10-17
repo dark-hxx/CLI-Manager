@@ -4,7 +4,7 @@ use crate::auth::{
 };
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::storage::now_ms;
+use crate::storage::{is_transcript_operation, now_ms};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -481,6 +481,12 @@ pub async fn create_operation(
     }
     if !state.registry.is_device_online(&request.device_id).await {
         return Err(AppError::conflict("device_offline", "device is offline"));
+    }
+    // 轉錄結果只是當下的快照；趁新的輪詢進來時清掉過期的，清理失敗不影響這次請求。
+    if is_transcript_operation(&request.kind) {
+        if let Err(error) = state.storage.prune_transcript_operations(now_ms()).await {
+            tracing::warn!(%error, "transcript operation prune failed");
+        }
     }
     let mut operation = state
         .storage

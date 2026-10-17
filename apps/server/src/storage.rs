@@ -11,8 +11,13 @@ use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
+use std::sync::atomic::AtomicI64;
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+
+mod transcript_retention;
+pub use transcript_retention::is_transcript_operation;
 
 const KNOWN_MIGRATIONS: &[(i64, &[u8])] = &[
     (1, include_bytes!("../migrations/0001_initial.sql")),
@@ -58,6 +63,8 @@ pub struct DeviceWallpaper {
 #[derive(Clone)]
 pub struct Storage {
     pool: SqlitePool,
+    /// 上次清理對話轉錄 operation 的時間（毫秒），供節流使用，見 `transcript_retention`。
+    transcript_pruned_at: Arc<AtomicI64>,
 }
 
 impl Storage {
@@ -80,7 +87,10 @@ impl Storage {
             .await?;
         repair_migration_line_endings(&pool).await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            transcript_pruned_at: Arc::new(AtomicI64::new(0)),
+        })
     }
 
     #[cfg(test)]
@@ -96,7 +106,10 @@ impl Storage {
             .connect_with(options)
             .await?;
         sqlx::migrate!("./migrations").run(&pool).await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            transcript_pruned_at: Arc::new(AtomicI64::new(0)),
+        })
     }
 
     pub fn pool(&self) -> &SqlitePool {

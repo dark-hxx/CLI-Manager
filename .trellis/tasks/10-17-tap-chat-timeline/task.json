@@ -1,0 +1,36 @@
+{
+  "id": "tap-chat-timeline",
+  "name": "tap-chat-timeline",
+  "title": "Tap chat timeline on top of the includeDetails transcript",
+  "description": "Add Tap-Code style tool summaries, diffs, task lists, turn footers, turn rail and chat search to the existing Tap conversation view; prune finished transcript operations; refresh per-source session-file caches after full scans",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "web",
+  "package": null,
+  "priority": "P2",
+  "creator": "claude",
+  "assignee": "claude",
+  "createdAt": "2026-10-17",
+  "completedAt": null,
+  "branch": "feat/tap-chat-timeline",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": "eaabfb5e7665e473d32e7d8625874b761dc8046f",
+  "pr_url": "https://github.com/dark-hxx/CLI-Manager/pull/289",
+  "subtasks": [],
+  "children": [],
+  "parent": "tap-chat-reading",
+  "relatedFiles": [
+    "apps/web-tap/src",
+    "apps/server/src/storage/transcript_retention.rs",
+    "apps/server/src/api.rs",
+    "src-tauri/src/features/history/discovery.rs",
+    "src-tauri/src/features/history/tests/session_file_cache.rs",
+    ".trellis/spec/backend/web-service-contracts.md",
+    ".trellis/spec/backend/history-index-contracts.md"
+  ],
+  "notes": "Rebuilt on the maintainer's 63bae0f/a6aeb76 direction after closing #288. The Linux author machine cannot compile src-tauri (no GTK/WebKitGTK); the discovery change was compiled and tested in a stub harness extracted verbatim from the real file. PR #289 opened against dark-hxx/CLI-Manager:master (mergeable); Windows/WSL, src-tauri cargo test and long-running DB checks are left to the maintainer.",
+  "meta": {
+    "verification": "verification.md"
+  }
+}

@@ -1,5 +1,7 @@
 /* Tap workspace: quiet neutral surfaces, violet interaction states, native dark terminal. */
 @import "./session.css";
+@import "./chat.css";
+@import "./turnRail.css";
 @import "./completion.css";
 @import "./panels.css";
 
