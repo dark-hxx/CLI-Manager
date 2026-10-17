@@ -694,3 +694,44 @@ fn events_primed_before_the_window_count_toward_the_page_budget() {
         );
     }
 }
+
+#[test]
+fn a_cursor_inside_the_unterminated_last_line_waits_and_then_skips_that_line() {
+    // 還在寫的最後一行沒有「下一個行首」可對齊：先什麼都不讀，游標不動；那一行寫完後照
+    // 「行中游標對齊到下一個行首」越過它，之後的新行照常讀到。
+    let directory = TempDir::new("api-align-unterminated");
+    let path = directory.path().join("claude.jsonl");
+    let first = format!("{}\n", claude_prompt("u0", "a"));
+    let partial = claude_prompt("u1", "b").to_string();
+    fs::write(&path, format!("{first}{partial}")).unwrap();
+    let inside = (first.len() + 5) as u64;
+
+    let waiting = transcript(
+        Source::Claude,
+        &path,
+        Window::After(inside),
+        &web_limits(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(waiting.events.is_empty() && !waiting.reset && !waiting.partial);
+    assert_eq!(waiting.cursor, inside);
+
+    let next = format!("{}\n", claude_prompt("u2", "c"));
+    fs::write(&path, format!("{first}{partial}\n{next}")).unwrap();
+    let page = transcript(
+        Source::Claude,
+        &path,
+        Window::After(inside),
+        &web_limits(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(uuids(&page), ["u2"]);
+    assert_eq!(
+        page.cursor,
+        (first.len() + partial.len() + 1 + next.len()) as u64
+    );
+}

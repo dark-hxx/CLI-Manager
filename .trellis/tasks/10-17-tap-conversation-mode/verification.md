@@ -6,7 +6,7 @@
 
 | 項目 | 指令 | 結果 |
 |---|---|---|
-| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 55 通過（35 個移植自 Tap-Code，20 個新增：預讀事件計入預算、任務清單達欄位上限時降級、上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、多事件單行只留放得下的部分、位置 key、游標對齊行首） |
+| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 56 通過（35 個移植自 Tap-Code，21 個新增：未寫完的最後一行內的游標、預讀事件計入預算、任務清單達欄位上限時降級、上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、多事件單行只留放得下的部分、位置 key、游標對齊行首） |
 | 解析器格式與 lint | `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` | 皆無問題；子代理另以 `x86_64-pc-windows-msvc` 目標跑 clippy 無問題，crate 內沒有任何 `std::os::unix` 或平台條件編譯 |
 | 伺服器 | `cargo test --manifest-path apps/server/Cargo.toml` | lib 60、reconnect 5、tap_static 1，全數通過；新增 5 項：新 operation 的位元組位置驗證、能力對應、保留期刪除範圍（含執行中 operation 的事件保留）、節流、只清轉錄種類 |
 | 伺服器格式 | `cargo fmt --manifest-path apps/server/Cargo.toml --check` | 本次改動的部分無差異；`config.rs`、`lib.rs`、`ws.rs`、`tests/reconnect.rs` 與 `api.rs`、`storage.rs` 的既有段落有上游原本就存在的格式差異，未擴大重排 |
@@ -45,6 +45,8 @@
 複審（Codex CLI）確認上述 6 項中 5 項已解決；第 1 項另指出 `keep_within` 無條件保留第一個事件，單一任務清單事件在欄位上限下可達約 543 KB，仍超過 512 KiB 的事件預算。已再修正：降級也涵蓋任務清單（30 項、標題 200 字），並移除「至少保留一個」的規則，連第一個事件都放不下時整行只留 `line_truncated` 提示，整頁保證在預算內；以同樣的最壞情況補測試。
 
 第三輪（Codex CLI）確認任務清單情境已解決、其他事件降級後也不會超過預算；另指出 Codex 的最新一段與往前翻頁在逐行計算前預讀放進的 Status 沒有計入預算（實驗 525,893 bytes）。已修正：預讀事件計入整頁總量，裁切時一併捨棄；增量讀取改以「已收下的行數」保證前進。補上精確邊界的測試（預算等於視窗內各行大小總和），並以變異版本確認此測試在修正前會失敗；crate 共 55 項測試通過。
+
+最終確認（Codex CLI）：以探針實測 `Tail`、`Before`、`After` 與重置後的讀取，事件都不超過 512 KiB，`d3b2319` 未引入新缺陷。另指出游標落在尚未寫完的最後一行中間時原樣返回，與契約字面不一致（僅不合法的請求會碰到，正常游標都在行首）：補充契約說明此時不讀取、等該行寫完再越過，並加測試鎖定；crate 共 56 項測試通過。
 
 ## 需要維護者在 Windows 上驗收
 
