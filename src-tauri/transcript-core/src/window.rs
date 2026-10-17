@@ -137,7 +137,13 @@ pub fn read_with(
         file.seek(SeekFrom::Start(start))?;
         let reader = BufReader::with_capacity(64 * 1024, file.take(stop - start));
         let incremental = matches!(window, Window::After(_)) && !reset;
-        let mut output = Output::new(limits.output, incremental);
+        // 預讀結束時可能已經放進事件（Codex 的最新狀態），也要算進這一頁的總量。
+        let base = if limits.output == usize::MAX {
+            0
+        } else {
+            encoded_len(&events)
+        };
+        let mut output = Output::new(limits.output, incremental, base);
         for_each_line_from(reader, limits.line, start, |offset, line| {
             let before = events.len();
             parser.parse_line_at(offset, line, &mut events);
@@ -173,6 +179,10 @@ struct Output {
     limit: usize,
     incremental: bool,
     used: usize,
+    /// 預讀結束時已經放進這一頁的事件位元組數（在第一行之前）。
+    base: usize,
+    /// 增量讀取已經收下的行數；至少收一行，讀取才會前進。
+    taken: usize,
     /// 增量讀取提早停下的位置：被排除那一行的行首，下次由此繼續。
     cut: Option<u64>,
     /// 其他視窗每一行的（行首位置、事件起始索引、事件位元組數），供超過時從前面捨棄。
@@ -180,11 +190,13 @@ struct Output {
 }
 
 impl Output {
-    fn new(limit: usize, incremental: bool) -> Self {
+    fn new(limit: usize, incremental: bool, base: usize) -> Self {
         Self {
             limit,
             incremental,
-            used: 0,
+            used: base,
+            base,
+            taken: 0,
             cut: None,
             lines: Vec::new(),
         }
@@ -214,19 +226,20 @@ impl Output {
             self.lines.push((offset, before, bytes));
             return true;
         }
-        if self.used > 0 && self.used + bytes > self.limit {
+        if self.taken > 0 && self.used + bytes > self.limit {
             events.truncate(before);
             self.cut = Some(offset);
             return false;
         }
         self.used += bytes;
+        self.taken += 1;
         true
     }
 
-    /// 視窗的事件超過上限時，從最舊的行開始捨棄：傳回新的起點與要保留的第一個事件索引。
-    /// 最新的一行一定保留。
+    /// 視窗的事件（含預讀放進的）超過上限時，從最舊的行開始捨棄：傳回新的起點與要保留的第一個
+    /// 事件索引。預讀放進的事件在第一行之前，一有裁切就一併捨棄；最新的一行一定保留。
     fn trim(&self) -> Option<(u64, usize)> {
-        let total: usize = self.lines.iter().map(|line| line.2).sum();
+        let total: usize = self.base + self.lines.iter().map(|line| line.2).sum::<usize>();
         if total <= self.limit {
             return None;
         }

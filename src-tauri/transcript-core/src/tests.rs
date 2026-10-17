@@ -299,6 +299,10 @@ fn windows_keep_the_newest_lines_within_the_output_budget_and_page_back_seamless
     .unwrap();
     let previous = uuids(&older);
     assert_eq!(previous.last(), Some(&format!("u{}", first - 1)));
+    // 往前一頁同樣裁切：起點落在它保留的第一行的行首。
+    let older_first: usize = previous[0][1..].parse().unwrap();
+    assert_eq!(older.start, offsets[older_first]);
+    assert!(serde_json::to_vec(&older.events).unwrap().len() <= 10_000);
 }
 
 #[test]
@@ -619,4 +623,74 @@ fn an_incremental_cursor_inside_a_line_starts_at_the_next_line() {
     )
     .unwrap();
     assert_eq!(uuids(&page), ["u2"]);
+}
+
+#[test]
+fn events_primed_before_the_window_count_toward_the_page_budget() {
+    // Codex 的最新一段與往前翻頁：預讀到的設定（模型）會在第一行之前放進一則 Status，也要算進預算。
+    // 預算剛好等於視窗內每一行的事件大小總和：只看逐行就不必裁切，加上 Status 才會超過。
+    let directory = TempDir::new("api-output-primed");
+    let path = directory.path().join("rollout.jsonl");
+    let line = |kind: &str, payload: Value| json!({"timestamp":T,"type":kind,"payload":payload});
+    let context = format!(
+        "{}\n",
+        line(
+            "turn_context",
+            json!({"cwd":"/work/app","model":"gpt-5-codex","effort":"high"})
+        )
+    );
+    let prompts = (0..40)
+        .map(|index| {
+            line(
+                "event_msg",
+                json!({"type":"user_message","message":format!("{index} {}", "z".repeat(300))}),
+            )
+        })
+        .collect::<Vec<_>>();
+    let content = context.clone() + &lines(&prompts);
+    fs::write(&path, &content).unwrap();
+    let size = content.len() as u64;
+    let window = size - context.len() as u64;
+
+    let unbounded = transcript(
+        Source::Codex,
+        &path,
+        Window::Tail,
+        &Limits {
+            window,
+            ..budget(usize::MAX)
+        },
+        None,
+        None,
+    )
+    .unwrap();
+    let (primed, prompts) = unbounded.events.split_first().unwrap();
+    assert_eq!(serde_json::to_value(primed).unwrap()["kind"], "status");
+    assert_eq!(prompts.len(), 40);
+    let output: usize = prompts
+        .iter()
+        .map(|event| {
+            serde_json::to_vec(std::slice::from_ref(event))
+                .unwrap()
+                .len()
+        })
+        .sum();
+
+    let limits = Limits {
+        window,
+        ..budget(output)
+    };
+    for read in [Window::Tail, Window::Before(size)] {
+        let page = transcript(Source::Codex, &path, read, &limits, None, None).unwrap();
+        let bytes = serde_json::to_vec(&page.events).unwrap().len();
+        assert!(
+            bytes <= output,
+            "{read:?} with budget {output} produced {bytes} bytes"
+        );
+        assert_eq!(
+            page.events.len(),
+            40,
+            "every prompt fits once the primed status is dropped"
+        );
+    }
 }
