@@ -861,6 +861,7 @@ dependencies = [
  "cli-manager-agent-capabilities",
  "cli-manager-history-core",
  "cli-manager-hook-schema",
+ "cli-manager-transcript-core",
  "cli-manager-web-protocol",
  "cli-manager-web-server",
  "display-info",
@@ -950,6 +951,15 @@ dependencies = [
  "serde",
  "serde_json",
  "toml_edit 0.25.4+spec-1.1.0",
+]
+
+[[package]]
+name = "cli-manager-transcript-core"
+version = "0.1.0"
+dependencies = [
+ "memchr",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

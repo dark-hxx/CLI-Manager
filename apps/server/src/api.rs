@@ -4,7 +4,7 @@ use crate::auth::{
 };
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::storage::now_ms;
+use crate::storage::{is_transcript_operation, now_ms};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -17,12 +17,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const MAX_OPERATION_PAYLOAD_BYTES: usize = 256 * 1024;
+/// 對話紀錄的位元組位置上限（1 TiB）：長對話的 JSONL 可能超過百 MB，但不會到這個量級。
+const MAX_TRANSCRIPT_OFFSET: u64 = 1 << 40;
 const ENABLED_OPERATION_KINDS: &[&str] = &[
     "conversation.start",
     "conversation.prompt",
     "conversation.history",
     "terminal.attach_image",
     "terminal.transcript",
+    "terminal.transcript_events",
     "project.tree.reorder",
     "project.start",
     "project.action",
@@ -482,6 +485,12 @@ pub async fn create_operation(
     if !state.registry.is_device_online(&request.device_id).await {
         return Err(AppError::conflict("device_offline", "device is offline"));
     }
+    // 轉錄結果只是當下的快照；趁新的輪詢進來時清掉過期的，清理失敗不影響這次請求。
+    if is_transcript_operation(&request.kind) {
+        if let Err(error) = state.storage.prune_transcript_operations(now_ms()).await {
+            tracing::warn!(%error, "transcript operation prune failed");
+        }
+    }
     let mut operation = state
         .storage
         .create_operation(
@@ -589,16 +598,18 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "operation payload is too large",
         ));
     }
-    if request.kind == "terminal.transcript" {
+    if matches!(
+        request.kind.as_str(),
+        "terminal.transcript" | "terminal.transcript_events"
+    ) {
+        let invalid_id = |value: &str| {
+            value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control)
+        };
         for key in ["projectId", "sessionId"] {
             if payload
                 .get(key)
                 .and_then(Value::as_str)
-                .is_none_or(|value| {
-                    value.trim().is_empty()
-                        || value.len() > 128
-                        || value.chars().any(char::is_control)
-                })
+                .is_none_or(invalid_id)
             {
                 return Err(AppError::bad_request(
                     "invalid_operation_payload",
@@ -607,9 +618,33 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             }
         }
         if payload
+            .get("worktreeId")
+            .is_some_and(|value| value.as_str().is_none_or(invalid_id))
+        {
+            return Err(AppError::bad_request(
+                "invalid_operation_payload",
+                "transcript requires registered context IDs",
+            ));
+        }
+    }
+    if request.kind == "terminal.transcript"
+        && payload
             .get("before")
             .is_some_and(|value| value.as_u64().is_none_or(|cursor| cursor > 10_000_000))
-        {
+    {
+        return Err(AppError::bad_request(
+            "invalid_operation_payload",
+            "invalid transcript cursor",
+        ));
+    }
+    if request.kind == "terminal.transcript_events" {
+        let offsets = ["cursor", "before"].map(|key| payload.get(key));
+        let invalid_offset = offsets.iter().flatten().any(|value| {
+            value
+                .as_u64()
+                .is_none_or(|offset| offset > MAX_TRANSCRIPT_OFFSET)
+        });
+        if invalid_offset || offsets.iter().all(Option::is_some) {
             return Err(AppError::bad_request(
                 "invalid_operation_payload",
                 "invalid transcript cursor",
@@ -718,6 +753,9 @@ fn operation_capability(kind: &str) -> &'static str {
     if kind == "terminal.transcript" {
         return "terminal.transcript";
     }
+    if kind == "terminal.transcript_events" {
+        return "terminal.transcript_events";
+    }
     match kind.split_once('.').map(|(prefix, _)| prefix) {
         Some("conversation") => "conversation",
         Some("terminal") => "conversation",
@@ -801,6 +839,39 @@ mod tests {
             serde_json::json!({"projectId":"p1","sessionId":"pty-a","cwd":"/private"}),
         ] {
             assert!(validate_operation_request(&request("terminal.transcript", payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn transcript_events_accept_one_bounded_byte_offset() {
+        assert_eq!(
+            operation_capability("terminal.transcript_events"),
+            "terminal.transcript_events"
+        );
+        for payload in [
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a"}),
+            serde_json::json!({"projectId":"p1","worktreeId":"w1","sessionId":"pty-a","cursor":0}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cursor":250_000_000}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","before":1_572_864}),
+        ] {
+            assert!(
+                validate_operation_request(&request("terminal.transcript_events", payload)).is_ok()
+            );
+        }
+        for payload in [
+            serde_json::json!({"sessionId":"pty-a"}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","worktreeId":""}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cursor":-1}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cursor":"12"}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","before":1.5}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cursor":(1u64 << 40) + 1}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cursor":10,"before":20}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","rootPath":"/private"}),
+        ] {
+            assert!(
+                validate_operation_request(&request("terminal.transcript_events", payload))
+                    .is_err()
+            );
         }
     }
 

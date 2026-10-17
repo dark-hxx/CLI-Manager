@@ -630,6 +630,7 @@ fn default_capabilities() -> Vec<String> {
         "history.snapshot".to_string(),
         "conversation".to_string(),
         "terminal.transcript".to_string(),
+        "terminal.transcript_events".to_string(),
         "conversation.start".to_string(),
         "conversation.prompt".to_string(),
         "terminal.stream".to_string(),

@@ -42,7 +42,7 @@ use legacy_listing::history_list_sessions_legacy;
 mod opencode_detail;
 use opencode_detail::build_opencode_session_detail;
 mod scope;
-pub(crate) use scope::validate_session_file_ref;
+pub(crate) use scope::{validate_session_file_ref, validate_session_file_ref_rescanned};
 use scope::{
     codex_runtime_path, history_source_base, path_within_history_scope,
     should_register_codex_state_db, validate_session_file_ref_for_conversion,

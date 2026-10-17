@@ -19,6 +19,7 @@ export {
   fetchHistoryStatsProjectOptions,
   fetchHistoryStatsPayload,
   fetchRemoteHistoryStatsPayload,
+  fetchBoundSessionSummary,
   fetchLatestProjectSessionDetail,
   fetchDiscoveredModels,
   fetchTodayProjectStats,

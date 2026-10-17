@@ -3,7 +3,7 @@ import { logInfo, logWarn } from "../../../shared/platform/logger";
 import { queryClient } from "../../../shared/platform/queryClient";
 import { normalizeHistoryProjectPaths } from "../api/historyProjectPaths";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
-import { getHistoryPathArgs } from "../api/historyPathArgs";
+import { getHistoryPathArgs, type HistoryPathArgs } from "../api/historyPathArgs";
 import { useSshAgentIntegrationStore } from "../../remote/api/sshAgentIntegrationStore";
 import { useBackgroundOperationStore } from "../../terminal/api/backgroundOperationStore";
 import type {
@@ -139,6 +139,71 @@ export async function fetchRemoteHistoryStatsPayload(
   }
 }
 
+/**
+ * 找出綁定的 CLI 會話在歷史索引裡的摘要（含 file_path 與 cwd），只查 catalog、不讀會話內容。
+ * 查詢失敗會直接拋出，由呼叫端決定如何處理。
+ */
+export async function fetchBoundSessionSummary(
+  projectPath: string,
+  source: HistorySource | null | undefined,
+  cliSessionId: string | null | undefined,
+  options?: { forceCatalogRefresh?: boolean; waitForCatalogRefresh?: boolean },
+  pathArgs?: HistoryPathArgs,
+): Promise<HistorySessionSummary | null> {
+  const args = pathArgs ?? await getHistoryPathArgs();
+  const loadSummary = async (
+    query: string | null,
+    scopedProjectPath: string | null
+  ): Promise<HistorySessionSummary | null> => {
+    const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
+      source: source ?? null,
+      ...args,
+      projectPath: scopedProjectPath,
+      query,
+      limit: 1,
+      offset: 0,
+    });
+    const summary = (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
+    logInfo("history.realtime.lookup.summary", {
+      source: source ?? null,
+      projectPath: scopedProjectPath,
+      query,
+      cliSessionId: cliSessionId ?? null,
+      found: Boolean(summary),
+      sessionId: summary?.session_id ?? null,
+      sessionProjectKey: summary?.project_key ?? null,
+      sessionFilePath: summary?.file_path ?? null,
+    });
+    return summary;
+  };
+
+  // 绑定了 CLI sessionId 时：先按项目过滤找，失败再仅按 sessionId 找（Pi 等 cwd/project_key 口径与 Claude 不同）。
+  // 仍 miss 时后台刷新 catalog 再试一次；Grok 精确 sessionId 可由后端绕过 catalog 直接命中。
+  const sessionQuery = cliSessionId?.trim() || null;
+  if (!sessionQuery) {
+    return loadSummary(null, projectPath);
+  }
+  let summary = await loadSummary(sessionQuery, projectPath);
+  if (summary?.session_id === sessionQuery) return summary;
+  summary = await loadSummary(sessionQuery, null);
+  if (summary?.session_id === sessionQuery) return summary;
+  if (!options?.forceCatalogRefresh) return null;
+  try {
+    await invoke("history_refresh_index", { ...args, wait: Boolean(options.waitForCatalogRefresh) });
+  } catch (error) {
+    logWarn("history.realtime.lookup.refreshFailed", {
+      source: source ?? null,
+      projectPath,
+      cliSessionId: sessionQuery,
+      error: String(error),
+    });
+  }
+  summary = await loadSummary(sessionQuery, projectPath);
+  if (summary?.session_id === sessionQuery) return summary;
+  summary = await loadSummary(sessionQuery, null);
+  return summary?.session_id === sessionQuery ? summary : null;
+}
+
 export async function fetchLatestProjectSessionDetail(
   projectPath: string,
   prev?: { filePath: string; updatedAt: number },
@@ -161,61 +226,14 @@ export async function fetchLatestProjectSessionDetail(
       previousUpdatedAt: prev?.updatedAt ?? null,
     });
     const pathArgs = await getHistoryPathArgs();
-    const loadSummary = async (
-      query: string | null,
-      scopedProjectPath: string | null
-    ): Promise<HistorySessionSummary | null> => {
-      const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
-        source: source ?? null,
-        ...pathArgs,
-        projectPath: scopedProjectPath,
-        query,
-        limit: 1,
-        offset: 0,
-      });
-      const summary = (summariesRaw ?? []).map((item) => normalizeSummary(item))[0] ?? null;
-      logInfo("history.realtime.lookup.summary", {
-        source: source ?? null,
-        projectPath: scopedProjectPath,
-        query,
-        cliSessionId: cliSessionId ?? null,
-        found: Boolean(summary),
-        sessionId: summary?.session_id ?? null,
-        sessionProjectKey: summary?.project_key ?? null,
-        sessionFilePath: summary?.file_path ?? null,
-      });
-      return summary;
-    };
-
-    // 绑定了 CLI sessionId 时：先按项目过滤找，失败再仅按 sessionId 找（Pi 等 cwd/project_key 口径与 Claude 不同）。
-    // 仍 miss 时后台刷新 catalog 再试一次；Grok 精确 sessionId 可由后端绕过 catalog 直接命中。
     const sessionQuery = cliSessionId?.trim() || null;
-    const resolveBoundSummary = async (): Promise<HistorySessionSummary | null> => {
-      if (!sessionQuery) {
-        return loadSummary(null, projectPath);
-      }
-      let summary = await loadSummary(sessionQuery, projectPath);
-      if (summary?.session_id === sessionQuery) return summary;
-      summary = await loadSummary(sessionQuery, null);
-      if (summary?.session_id === sessionQuery) return summary;
-      if (!forceCatalogRefresh) return null;
-      try {
-        await invoke("history_refresh_index", { ...pathArgs, wait: waitForCatalogRefresh });
-      } catch (error) {
-        logWarn("history.realtime.lookup.refreshFailed", {
-          source: source ?? null,
-          projectPath,
-          cliSessionId: sessionQuery,
-          error: String(error),
-        });
-      }
-      summary = await loadSummary(sessionQuery, projectPath);
-      if (summary?.session_id === sessionQuery) return summary;
-      summary = await loadSummary(sessionQuery, null);
-      return summary?.session_id === sessionQuery ? summary : null;
-    };
-
-    const summary = await resolveBoundSummary();
+    const summary = await fetchBoundSessionSummary(
+      projectPath,
+      source,
+      cliSessionId,
+      { forceCatalogRefresh, waitForCatalogRefresh },
+      pathArgs,
+    );
     if (sessionQuery && summary?.session_id !== sessionQuery) {
       logWarn("history.realtime.lookup.sessionMismatch", {
         source: source ?? null,

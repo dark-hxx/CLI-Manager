@@ -13,6 +13,7 @@ import { parseProjectEnvVars, getProviderSwitchAppType } from "../../providers/a
 import { fetchLatestProjectSessionDetail } from "../../history/index";
 import { normalizeProjectPath } from "../api/terminalProject";
 import { terminalTranscriptPage } from "./webTerminalTranscript";
+import { executeTranscriptEvents, transcriptWindow } from "./webTranscriptEvents";
 import { openWindowsTerminal } from "../api/externalTerminal";
 import { requestWebDeviceAction, type WebDeviceActionTarget } from "../../../shared/lib/webDeviceActionBus";
 import { webDeviceApi, type WebDeviceOperation } from "../../../shared/lib/webDevice";
@@ -22,6 +23,7 @@ const MANAGEMENT_KINDS = new Set([
   "project.tree.reorder",
   "terminal.attach_image",
   "terminal.transcript",
+  "terminal.transcript_events",
   "project.start",
   "project.action",
   "ssh.hosts.list", "ssh.client_status", "ssh.test_connection", "ssh.check_path", "ssh.list_directories",
@@ -421,7 +423,7 @@ async function resolveLocalContext(payload: Payload): Promise<LocalContext> {
 }
 
 /** Resolve the selected PTY against its authoritative registered context. */
-async function transcriptContext(payload: Payload) {
+async function transcriptSession(payload: Payload) {
   const context = await resolveLocalContext(payload);
   const sessionId = requiredString(payload, "sessionId", 128);
   const session = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
@@ -429,8 +431,14 @@ async function transcriptContext(payload: Payload) {
     || (session.worktreeId ?? null) !== (context.worktree?.id ?? null)
     || session.environmentType === "ssh" || session.remoteHandoff || (session.kind && session.kind !== "pty"))
     managementError("history_context_not_found");
-  numberValue(payload, "before", 0, 0, 10_000_000);
   return { ...context, session };
+}
+
+/** 舊版純文字轉錄：`before` 是訊息索引。 */
+async function transcriptContext(payload: Payload) {
+  const resolved = await transcriptSession(payload);
+  numberValue(payload, "before", 0, 0, 10_000_000);
+  return resolved;
 }
 
 /** Exact live binding only: do not substitute a recent conversation in the cwd. */
@@ -775,6 +783,11 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
     await transcriptContext(payload);
     return;
   }
+  if (operation.kind === "terminal.transcript_events") {
+    transcriptWindow(payload);
+    await transcriptSession(payload);
+    return;
+  }
 
   if (operation.kind === "project.tree.reorder") {
     await projectTreeOrder(payload);
@@ -904,6 +917,7 @@ export async function executeWebManagementOperation(operation: WebDeviceOperatio
   if (!validated) await validateWebManagementOperation(operation);
   const payload = payloadObject(operation);
   if (operation.kind === "terminal.transcript") return executeTerminalTranscript(payload);
+  if (operation.kind === "terminal.transcript_events") return executeTranscriptEvents(payload, transcriptSession);
   if (operation.kind === "project.tree.reorder") return executeProjectTree(payload);
   if (operation.kind === "project.start") return executeProjectStart(payload);
   if (operation.kind === "project.action") return executeProjectAction(payload);

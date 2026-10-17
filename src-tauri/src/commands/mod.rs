@@ -38,6 +38,8 @@ pub mod history;
 pub mod history_backup;
 #[path = "../features/history/edit.rs"]
 pub mod history_edit;
+#[path = "../features/history/live_transcript.rs"]
+pub mod history_live_transcript;
 #[path = "../features/history/sources.rs"]
 pub mod history_sources;
 #[path = "../features/history/title.rs"]

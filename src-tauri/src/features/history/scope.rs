@@ -1,9 +1,9 @@
 use super::{
-    collect_session_files, get_or_scan_session_project, is_jsonl, kimi, project_key_from_cwd,
-    resolve_antigravity_history_root, resolve_claude_history_root, resolve_codex_history_root,
-    resolve_copilot_history_root, resolve_cursor_history_root, resolve_gemini_history_root,
-    resolve_grok_history_root, resolve_kiro_history_root, resolve_pi_history_root, HistoryRoots,
-    SessionFileRef,
+    collect_session_files, collect_session_files_with_force, get_or_scan_session_project, is_jsonl,
+    kimi, project_key_from_cwd, resolve_antigravity_history_root, resolve_claude_history_root,
+    resolve_codex_history_root, resolve_copilot_history_root, resolve_cursor_history_root,
+    resolve_gemini_history_root, resolve_grok_history_root, resolve_kiro_history_root,
+    resolve_pi_history_root, HistoryRoots, SessionFileRef,
 };
 use log::{debug, warn};
 use std::path::{Path, PathBuf};
@@ -75,6 +75,27 @@ pub(crate) fn validate_session_file_ref(
     project_key: &str,
     roots: &HistoryRoots,
 ) -> Result<SessionFileRef, String> {
+    validate_session_file_ref_with(file_path, source, project_key, roots, false)
+}
+
+// 新會話的紀錄檔可能還不在 60 秒的目錄快取裡：強制重掃該來源的目錄後再驗證。
+// 只供即時轉錄在快取未命中（session_file_not_indexed）時使用，其他驗證規則相同。
+pub(crate) fn validate_session_file_ref_rescanned(
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    roots: &HistoryRoots,
+) -> Result<SessionFileRef, String> {
+    validate_session_file_ref_with(file_path, source, project_key, roots, true)
+}
+
+fn validate_session_file_ref_with(
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    roots: &HistoryRoots,
+    rescan: bool,
+) -> Result<SessionFileRef, String> {
     let source = source.trim().to_lowercase();
     let project_key = project_key.trim();
     let base = history_source_base(&source, roots)?
@@ -85,7 +106,7 @@ pub(crate) fn validate_session_file_ref(
         &source,
         project_key,
         &base,
-        collect_session_files(Some(&source), roots),
+        collect_session_files_with_force(Some(&source), roots, rescan),
     )
 }
 
