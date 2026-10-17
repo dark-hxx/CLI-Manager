@@ -1,0 +1,38 @@
+{
+  "id": "tap-conversation-mode",
+  "name": "tap-conversation-mode",
+  "title": "Tap conversation mode phase 1: structured transcript",
+  "description": "Port Tap-Code's transcript parser and conversation timeline into the optional /tap/ Web workspace with incremental host reads and bounded server retention",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "web",
+  "package": null,
+  "priority": "P2",
+  "creator": "claude",
+  "assignee": "claude",
+  "createdAt": "2026-10-17",
+  "completedAt": null,
+  "branch": "feat/tap-conversation-mode",
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "optional-tap-web",
+  "relatedFiles": [
+    "src-tauri/transcript-core",
+    "src-tauri/src/features/history/live_transcript.rs",
+    "src/features/terminal/lib/webTranscriptEvents.ts",
+    "src/features/terminal/lib/webManagement.ts",
+    "src/features/history/lib/historyRequests.ts",
+    "apps/server/src/api.rs",
+    "apps/server/src/storage/transcript_retention.rs",
+    "apps/web-tap/src",
+    ".trellis/spec/backend/web-service-contracts.md"
+  ],
+  "notes": "Phase 1 of 4 agreed with the user on 2026-10-17. Tap-Code source is contributed by its author under this repository's licensing. Desktop Tauri crate cannot be compiled on the Linux author machine (no GTK/WebKitGTK); the glue is kept thin and verified through a stub harness.",
+  "meta": {
+    "verification": "verification.md"
+  }
+}

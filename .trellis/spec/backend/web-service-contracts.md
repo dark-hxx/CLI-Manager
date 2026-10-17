@@ -36,6 +36,17 @@
     truncated?: boolean, at?: string, model?: string }> }
 ```
 
+`terminal.transcript_events` is the read-only structured transcript behind the Tap conversation view, with capability `terminal.transcript_events`. `terminal.transcript` stays for older servers and pages:
+
+```typescript
+{ kind: "terminal.transcript_events", payload: { projectId, worktreeId?, sessionId, cursor? | before? } }
+// cursor/before: mutually exclusive byte offsets (0..=2^40) into the CLI's own transcript file
+// result: field names are owned by `src-tauri/transcript-core` (`Transcript`, `Event`)
+{ parser: number, available: boolean, reason?: "unbound" | "missing" | "unsupported",
+  agentSessionId?: string, start: number, cursor: number, size: number, reset?: boolean,
+  more: boolean, partial?: boolean, events: Array<{ kind: string, ... }> }
+```
+
 ### WebSocket
 
 - Browser: `/ws/browser?afterSequence=<i64>`; authenticated by browser session Cookie and exact Origin.
@@ -66,6 +77,7 @@
 - Migration SQL files must use LF. Before SQLx validation, startup may rewrite an applied migration checksum only when it exactly matches the same embedded SQL with the alternate LF/CRLF representation; any other checksum mismatch must remain an error.
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
+- Finished `terminal.transcript` and `terminal.transcript_events` operations, with their `operation.updated` browser events, are deleted two minutes after completion. Pruning runs when a new transcript operation arrives, at most once per 30 seconds; other operation kinds keep their existing retention.
 
 ## 3. Contracts
 
@@ -77,8 +89,11 @@
 - Both clients reuse the Cookie, device ownership/mobile scope, existing PTY and operation state machine. Shared browser HTTP/socket/types/stream/image primitives live in `src/shared`; Classic compatibility exports retain its directory-cache and file-operation side effects. No client imports the other's app model or view components.
 - Tap sends registered project/Worktree IDs to `project.start`, then attaches the returned native PTY ID. Chat submission stays PTY input, not `conversation.start/prompt`; native permissions remain in the CLI. Browser detach and mounted-terminal eviction never close the process. Close confirmation freezes the account/device/session ID and displayed title when opened; a late project start or session switch must not retarget it.
 - Transcript host resolves the current local project/Worktree and PTY tuple. SSH, remote handoff and non-PTY sessions are rejected. Only the exact host-owned `cliSessionId` may be read; match history source/CLI ID/canonical cwd, then revalidate the binding and root after asynchronous history I/O. Never substitute the latest session in a directory. Only Claude/Codex is supported in this operation.
-- Transcript pages cover at most 40 source messages, `before` is a nonnegative integer ≤10,000,000, and message text is capped at 4000 UTF-16 code units with an explicit truncation marker. If the boundary splits a surrogate pair, omit its trailing high surrogate so Rust JSON remains valid. Only canonical `parts.kind=text` for user/assistant without tool/call metadata crosses the boundary. Tool arguments/results, reasoning, flattened internal content and system messages do not. Existing operation result byte limits still apply.
+- Legacy `terminal.transcript` pages cover at most 40 source messages, `before` is a nonnegative integer ≤10,000,000, and message text is capped at 4000 UTF-16 code units with an explicit truncation marker. If the boundary splits a surrogate pair, omit its trailing high surrogate so Rust JSON remains valid. Only canonical `parts.kind=text` for user/assistant without tool/call metadata crosses the boundary. Tool arguments/results, reasoning, flattened internal content and system messages do not. Existing operation result byte limits still apply.
 - Transcript is demand-loaded and refreshed only while visible in response to terminal output. Older pages are explicit and preserve scroll anchor. Unbound/missing/unsupported is an honest read result, not a fabricated conversation. No queue, Push, history-resume or menu automation is implied.
+- `terminal.transcript_events` keeps the same binding rules. The desktop resolves the transcript file once per PTY and CLI session ID from the history catalog summary (exact ID, source and canonical cwd), caches it, and backs off 5 seconds (counted from when the lookup finishes) after a miss before refreshing the catalog again; a failing lookup is reported as `transcript_lookup_failed`, never as a new conversation. The native command `history_live_transcript_read` accepts only a file that passes `validate_session_file_ref` and whose file name contains the bound CLI session ID; when a brand-new file is not yet in the 60-second session-file cache (`session_file_not_indexed`), it rescans that source once with `validate_session_file_ref_rescanned`. The desktop revalidates the binding after I/O. It never reuses the general history parser, which drops tool-only and thinking-only lines.
+- Reads are byte windows over complete lines, bounded by output rather than raw size: the latest window and `before` pages scan up to 4 MiB of raw transcript and keep only the newest lines whose events fit 512 KiB of JSON (`start` is then the first kept line); `cursor` reads up to 8 MiB of new lines and stops before the line that would exceed 512 KiB, setting `partial` so the client reads again at once. Falling more than 8 MiB behind returns the latest window with `reset`. At least one line is always kept, so reads always advance; a single line whose events alone exceed the budget is degraded first (diffs and ANSI dropped, long text cut to 4000 characters, results marked `truncated`). Every event field has a cap (constants in `transcript-core`), and the desktop still rejects a result above 650 KiB as `transcript_too_large`. Clients discard held events when `parser` or `agentSessionId` changes.
+- Events carry user/assistant text, recorded thinking, bounded tool inputs/outputs and diffs, plans/tasks, slash commands and output, errors and notices. Notices may carry a stable `code` that clients localize; parsers never emit UI-language text. Events that have a `uuid` field but no value get a positional key `pos:<line offset>:<index>`, so client keys stay stable across paging and rereads. An unavailable page never resets a held cursor, and repeated failures while content is held show a retry notice instead of freezing silently. Images are counts only, and per-turn cost, statusLine, queue and menu automation are absent in this phase. Tap polls only while the chat view is visible: about every 1.2 seconds while the session runs, once for an ended session.
 - Tap keeps at most three terminal mounts. Adjacent same-grid frames coalesce up to 256 KiB of encoded data without crossing reset/grid boundaries. A document-wide scheduler starts one batch per animation frame, yields after three visible batches to waiting hidden work and uses a hidden/stalled-rAF timer fallback. Rendered cursor advances only after xterm's write callback and the final fragment. The browser mirror never answers host terminal queries or resizes a desktop-owned grid. A bounded render queue failure disables that session's input and offers explicit replay. Retry remounts only the failed renderer, never cached siblings; never silently drop output or retry input.
 - Draft/selection storage is local and scoped by account/device/session. Account/device changes cancel operations and clear sockets, subscriptions and mounted sensitive content. Delayed input/resize/close callbacks retain their captured account/device/auth generation, even if opaque terminal IDs collide. A disposed workspace HTTP flight must ignore all errors, including a 401 whose headers arrived before aborting its body; it cannot expire a newer scope. Drafts remain local after logout, documented for shared browsers. A session URL is validated against current inventory before restoring; manual reconnect resets selection restoration without resubmitting input.
 - Mobile tokens are scrubbed from URL to memory and require explicit confirmation before redemption, including same-document hash navigation. Canceling an authorization screen restores the draft and replays into the remounted terminal instead of reusing its old renderer cursor. Cancellation is disabled during redemption. Native approval is never synthesized from such a token.
@@ -231,6 +246,8 @@ non-terminal -> canceled | timed_out
 | Unknown `/api/*` path | JSON 404; never SPA `index.html` |
 | Tap session deep link is not in authenticated inventory | Do not attach it; show the normal workspace selection |
 | Missing transcript project/session IDs, control characters, or fractional/negative/oversized cursor | `invalid_operation_payload` before dispatch |
+| `terminal.transcript_events` with both `cursor` and `before`, a non-integer offset, or an offset above 2^40 | `invalid_operation_payload` before dispatch |
+| Structured transcript file is outside the history roots or not named after the bound CLI session | Native read fails; no events are returned |
 | Transcript PTY belongs to another project/Worktree, is SSH/handoff/non-PTY, or was removed during I/O | `history_context_not_found`; no text returned |
 | No exact CLI binding, missing/mismatched history, or unsupported CLI | `available=false` with `unbound`, `missing` or `unsupported`; do not guess |
 | CLI binding or project root changed during history I/O | Revalidate and withhold the old content |
@@ -268,7 +285,8 @@ non-terminal -> canceled | timed_out
 - Bad: let the browser send `cwd`, shell text, environment variables, or a direct delete command; the desktop must resolve the target ID and reuse the native Sidebar action handler.
 - Bad: accept a browser-provided partial sibling list, persist Web-only ordering, allow Worktree dragging, or move a group into itself/its descendants.
 - Good: Tap reads an exact bound Claude/Codex transcript, keeps input on the same PTY, and exposes native permission menus through terminal keys.
-- Base: old devices lack `terminal.transcript`, or a new CLI has no binding yet; Tap explicitly reports unavailable chat and keeps terminal usable.
+- Good: Tap follows the structured transcript by byte cursor, so each poll parses only new lines and the server drops the result two minutes after it finishes.
+- Base: old devices lack `terminal.transcript_events` (or `terminal.transcript`), or a new CLI has no binding yet; Tap explicitly reports unavailable chat or asks to update the desktop, and keeps terminal usable.
 - Bad: use a recent-by-cwd conversation as a terminal's chat, expose tool/internal log fields, or export a stale binding after asynchronous I/O.
 
 ## 6. Tests Required
@@ -296,6 +314,7 @@ non-terminal -> canceled | timed_out
 - Project-action contract tests must assert target/action prefix matching, allowlist rejection, native confirmation for destructive actions, and reuse of the desktop Sidebar behavior through the action bus.
 - Tap: `npm run tap:typecheck`, `npm run tap:test`; shared renderer queue and host transcript unit/integration tests; `apps/server/tests/tap_static.rs` for both SPA roots, deep links, static asset and JSON API isolation.
 - Transcript tests assert canonical text-only export, pagination/Unicode-safe truncation, exact source/CLI/cwd/context, missing binding and rejection after PTY/root changes during I/O. Server tests assert required IDs/cursor bounds/capability and forbidden cwd/root payload fields.
+- `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` locks the event schema, byte windows, rewind branches, per-event caps and the result budget. `src/features/terminal/lib/webTranscriptEvents.integration.test.mjs` asserts exact binding, path caching and miss backoff, cursor validation and withholding after a binding change during I/O. Server tests assert `terminal.transcript_events` offsets and the transcript retention/throttle.
 - `apps/web-tap/src/terminalWrites.test.mjs` asserts one start per frame, three-batch visible priority, hidden/timer/wake progress and cancellation.
 - Browser fixture in `.trellis/tasks/10-16-optional-tap-web/browser-check.mjs` covers IME, draft/selection restore, interrupted paste without retry, desktop grid ownership, 5001-frame batching, two-renderer scheduling, renderer retry with sibling identity retained, phone reading/direct input, optional-font failure, frozen close target, late 401/stale callbacks across devices, Escape ownership and explicit token redemption/cancellation. Synthetic viewport tests cannot replace real iOS/Android keyboard acceptance.
 
