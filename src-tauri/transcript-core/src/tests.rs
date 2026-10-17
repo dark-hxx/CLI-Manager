@@ -316,11 +316,62 @@ fn a_single_line_over_the_output_budget_still_makes_progress() {
         None,
     )
     .unwrap();
-    assert_eq!(uuids(&page), ["u0"]);
+    // 預算小到連一個事件都放不下：那一行只剩提示，游標照樣越過它。
+    assert_eq!(notice_codes(&page), [Some("line_truncated".to_string())]);
     assert_eq!(page.cursor, offsets[1]);
     let tail = transcript(Source::Claude, &path, Window::Tail, &budget(10), None, None).unwrap();
-    assert_eq!(uuids(&tail), ["u2"]);
+    assert_eq!(notice_codes(&tail), [Some("line_truncated".to_string())]);
     assert_eq!(tail.start, offsets[2]);
+}
+
+/// 每個事件的種類為 notice 時取它的代碼，其他事件為 None。
+fn notice_codes(page: &Transcript) -> Vec<Option<String>> {
+    page.events
+        .iter()
+        .map(|event| {
+            let value = serde_json::to_value(event).unwrap();
+            (value["kind"] == "notice")
+                .then(|| value["code"].as_str().unwrap_or_default().to_string())
+        })
+        .collect()
+}
+
+#[test]
+fn a_task_list_at_its_field_limits_is_shrunk_to_fit_the_budget() {
+    // 複審時構造的最壞情況：100 項任務、每個欄位都塞滿需要跳脫的字元，單一事件就超過 512 KiB。
+    let directory = TempDir::new("api-output-tasks");
+    let path = directory.path().join("claude.jsonl");
+    let noisy = |count: usize| "\u{1}".repeat(count);
+    let tasks = (0..100)
+        .map(|index| json!({"id":format!("{index}{}", noisy(300)),"subject":noisy(600),"status":noisy(300)}))
+        .collect::<Vec<_>>();
+    let content = lines(&[
+        json!({"type":"user","uuid":"r1","timestamp":T,"message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]},"toolUseResult":{"tasks":tasks}}),
+    ]);
+    fs::write(&path, &content).unwrap();
+    let unbounded = transcript(
+        Source::Claude,
+        &path,
+        Window::Tail,
+        &budget(usize::MAX),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(serde_json::to_vec(&unbounded.events).unwrap().len() > WEB_OUTPUT);
+
+    for window in [Window::Tail, Window::After(0)] {
+        let page = transcript(Source::Claude, &path, window, &web_limits(), None, None).unwrap();
+        assert!(serde_json::to_vec(&page.events).unwrap().len() <= WEB_OUTPUT);
+        assert_eq!(page.cursor, content.len() as u64);
+        let tasks = page
+            .events
+            .iter()
+            .map(|event| serde_json::to_value(event).unwrap())
+            .find(|event| event["kind"] == "tasks")
+            .expect("the shrunk task list is still shown");
+        assert_eq!(tasks["items"].as_array().unwrap().len(), SHRUNK_TASKS);
+    }
 }
 
 #[test]

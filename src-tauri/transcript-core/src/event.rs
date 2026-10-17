@@ -224,6 +224,9 @@ pub enum Event {
 
 /// 降級時長文字保留的字數：單一行整理出的事件就超過一頁的總量時才會用到。
 pub const SHRUNK_TEXT: usize = 4_000;
+/// 降級時任務清單保留的項目數與每項標題的字數。
+pub const SHRUNK_TASKS: usize = 30;
+pub const SHRUNK_SUBJECT: usize = 200;
 
 impl Event {
     /// 有 `uuid` 欄位但沒有值時補上 `key`（紀錄行的位置），讓前端的 key 不必用流水號：
@@ -245,7 +248,8 @@ impl Event {
     }
 
     /// 單一行整理出的事件就超過一頁的總量時降級：拿掉 diff 與彩色輸出、長文字只留開頭
-    /// [`SHRUNK_TEXT`] 字，拿掉 diff 的結果標成已截斷。步驟、摘要與增刪行數照樣顯示，讀取也能前進。
+    /// [`SHRUNK_TEXT`] 字，拿掉 diff 的結果標成已截斷，任務清單只留 [`SHRUNK_TASKS`] 項、標題
+    /// [`SHRUNK_SUBJECT`] 字。步驟、摘要與增刪行數照樣顯示，讀取也能前進。
     pub(crate) fn shrink(&mut self) {
         let shorten = |text: &mut String| {
             let short = keep_head(text, SHRUNK_TEXT);
@@ -277,6 +281,13 @@ impl Event {
                 }
                 if diff.take().is_some() {
                     *truncated = Some(true);
+                }
+            }
+            Event::Tasks { items, .. } => {
+                items.truncate(SHRUNK_TASKS);
+                for item in items {
+                    let short = keep_head(&item.subject, SHRUNK_SUBJECT);
+                    item.subject = short;
                 }
             }
             _ => {}

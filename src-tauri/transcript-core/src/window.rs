@@ -243,7 +243,8 @@ impl Output {
     }
 }
 
-/// 只保留這一行最前面放得下 `limit` 的事件（至少一個），略過的部分以一則提示代替。
+/// 只保留這一行最前面放得下 `limit` 的事件，略過的部分以一則提示代替；連第一個都放不下時，
+/// 整行只剩提示。整頁因此一定在預算內，讀取也照樣越過這一行。
 fn keep_within(events: &mut Vec<Event>, before: usize, limit: usize) {
     let notice = Event::Notice {
         at: None,
@@ -256,15 +257,15 @@ fn keep_within(events: &mut Vec<Event>, before: usize, limit: usize) {
     let mut kept = 0;
     for event in &events[before..] {
         let size = encoded_len(std::slice::from_ref(event)) - 2 + usize::from(kept > 0);
-        if kept > 0 && used + size > budget {
+        if used + size > budget {
             break;
         }
         used += size;
         kept += 1;
     }
-    // 至少保留一個；真的略過了事件才附上提示。
-    if kept.max(1) < events.len() - before {
-        events.truncate(before + kept.max(1));
+    // 真的略過了事件才附上提示。
+    if kept < events.len() - before {
+        events.truncate(before + kept);
         events.push(notice);
     }
 }

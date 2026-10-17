@@ -6,7 +6,7 @@
 
 | 項目 | 指令 | 結果 |
 |---|---|---|
-| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 53 通過（35 個移植自 Tap-Code，18 個新增：上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、多事件單行只留放得下的部分、位置 key、游標對齊行首） |
+| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 54 通過（35 個移植自 Tap-Code，19 個新增：任務清單達欄位上限時降級、上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、多事件單行只留放得下的部分、位置 key、游標對齊行首） |
 | 解析器格式與 lint | `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` | 皆無問題；子代理另以 `x86_64-pc-windows-msvc` 目標跑 clippy 無問題，crate 內沒有任何 `std::os::unix` 或平台條件編譯 |
 | 伺服器 | `cargo test --manifest-path apps/server/Cargo.toml` | lib 60、reconnect 5、tap_static 1，全數通過；新增 5 項：新 operation 的位元組位置驗證、能力對應、保留期刪除範圍（含執行中 operation 的事件保留）、節流、只清轉錄種類 |
 | 伺服器格式 | `cargo fmt --manifest-path apps/server/Cargo.toml --check` | 本次改動的部分無差異；`config.rs`、`lib.rs`、`ws.rs`、`tests/reconnect.rs` 與 `api.rs`、`storage.rs` 的既有段落有上游原本就存在的格式差異，未擴大重排 |
@@ -40,7 +40,9 @@
 - 中文介面的 `Fast` 寫死：改用 `fastMode` 文案。
 - （建議）游標落在一行中間時原生端對齊到下一個行首；情境矩陣補上 UI 呈現模式、專注模式與 Workspan。
 
-修正後重跑全部檢查：transcript-core 53、伺服器 66、串接層框架 2、桌面型別檢查與 27 項測試、Tap 型別檢查與 74 項測試、打包、嚴格架構檢查與 `git diff --check` 皆通過；真實資料契約檢查 Claude 149 頁、Codex 58 頁，0 個形狀錯誤、0 頁超過 650 KiB。
+修正後重跑全部檢查：transcript-core 54、伺服器 66、串接層框架 2、桌面型別檢查與 27 項測試、Tap 型別檢查與 74 項測試、打包、嚴格架構檢查與 `git diff --check` 皆通過；真實資料契約檢查 Claude 149 頁、Codex 58 頁，0 個形狀錯誤、0 頁超過 650 KiB。
+
+複審（Codex CLI）確認上述 6 項中 5 項已解決；第 1 項另指出 `keep_within` 無條件保留第一個事件，單一任務清單事件在欄位上限下可達約 543 KB，仍超過 512 KiB 的事件預算。已再修正：降級也涵蓋任務清單（30 項、標題 200 字），並移除「至少保留一個」的規則，連第一個事件都放不下時整行只留 `line_truncated` 提示，整頁保證在預算內；以同樣的最壞情況補測試。
 
 ## 需要維護者在 Windows 上驗收
 
