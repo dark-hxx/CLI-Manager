@@ -72,7 +72,7 @@ function LiveCapsule({ model, since, tool, done, t }: {
     <i className="tap-live-dot" aria-hidden />
     <span className="tap-live-lines">
       <span className="tap-live-line">
-        {model && <ModelTag used={model} />}
+        {model && <ModelTag used={model} t={t} />}
         <span className="tap-live-text">{t("working")}</span>
         <i className={`tap-live-sep${pending}`} aria-hidden />
         <span className={`tap-live-time${pending}`} aria-hidden>{duration(elapsed)}</span>

@@ -318,6 +318,7 @@ test("有代碼的通知照介面語言顯示：已知代碼對到文案，不�
   assert.deepEqual(notices.map((item) => item.code), ["turn_interrupted", "turn_replaced", "turn_aborted", "something_new", undefined]);
   assert.deepEqual(notices.map((item) => noticeKey(item.code)), ["noticeInterrupted", "noticeReplaced", "noticeAborted", undefined, undefined]);
   assert.equal(noticeKey("toString"), undefined);
+  assert.equal(noticeKey("line_truncated"), "noticeTruncated");
   // 搜尋找的是畫面上的字：有代碼的用介面文案，其他照原文。
   const label = (key) => ({ noticeInterrupted: "已中断本轮对话", noticeReplaced: "本轮被新的请求取代", noticeAborted: "本轮已中止" })[key];
   assert.deepEqual(notices.map((item) => itemText(item, label)), ["已中断本轮对话", "本轮被新的请求取代", "本轮已中止", "Something new", "后台命令完成"]);

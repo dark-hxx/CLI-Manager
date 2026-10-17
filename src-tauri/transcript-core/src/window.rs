@@ -95,6 +95,7 @@ pub fn read_with(
     let end = last_newline(&mut file, size)?.map_or(0, |position| position + 1);
     let (start, stop, reset) = match window {
         Window::After(from) if from <= size && end.saturating_sub(from) <= limits.catch_up => {
+            let from = align_to_line(&mut file, from, end)?;
             (from, end.max(from), false)
         }
         Window::After(_) => (
@@ -203,6 +204,12 @@ impl Output {
             }
             bytes = encoded_len(&events[before..]);
         }
+        // 降級後仍超過（同一行有很多事件，例如舊版 Claude Code 把整則訊息寫成一行）：只留放得下的
+        // 前幾個事件，其餘略過並附上提示，讀取照樣越過這一行。
+        if bytes > self.limit {
+            keep_within(events, before, self.limit);
+            bytes = encoded_len(&events[before..]);
+        }
         if !self.incremental {
             self.lines.push((offset, before, bytes));
             return true;
@@ -234,6 +241,47 @@ impl Output {
         }
         first.map(|index| (self.lines[index].0, self.lines[index].1))
     }
+}
+
+/// 只保留這一行最前面放得下 `limit` 的事件（至少一個），略過的部分以一則提示代替。
+fn keep_within(events: &mut Vec<Event>, before: usize, limit: usize) {
+    let notice = Event::Notice {
+        at: None,
+        code: Some("line_truncated".into()),
+        text: "Part of this record was too large to show".into(),
+    };
+    let budget = limit.saturating_sub(encoded_len(std::slice::from_ref(&notice)) + 2);
+    // 陣列的方括號與逗號：每多一個事件多一個逗號。
+    let mut used = 2;
+    let mut kept = 0;
+    for event in &events[before..] {
+        let size = encoded_len(std::slice::from_ref(event)) - 2 + usize::from(kept > 0);
+        if kept > 0 && used + size > budget {
+            break;
+        }
+        used += size;
+        kept += 1;
+    }
+    // 至少保留一個；真的略過了事件才附上提示。
+    if kept.max(1) < events.len() - before {
+        events.truncate(before + kept.max(1));
+        events.push(notice);
+    }
+}
+
+/// 增量讀取的起點應該是行首；不是時（例如請求帶了一行中間的位置）往後對齊到下一個行首，
+/// 不把半行當成一筆紀錄解析。落在最後一行（還在寫入）之內時照舊，什麼都不讀。
+fn align_to_line(file: &mut File, from: u64, end: u64) -> io::Result<u64> {
+    if from == 0 || from >= end {
+        return Ok(from);
+    }
+    let mut previous = [0u8; 1];
+    file.seek(SeekFrom::Start(from - 1))?;
+    file.read_exact(&mut previous)?;
+    if previous[0] == b'\n' {
+        return Ok(from);
+    }
+    Ok(next_newline(file, from, end)?.map_or(end, |position| position + 1))
 }
 
 /// 一組事件序列化後的位元組數。

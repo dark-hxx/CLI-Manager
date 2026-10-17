@@ -6,13 +6,13 @@
 
 | 項目 | 指令 | 結果 |
 |---|---|---|
-| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 51 通過（35 個移植自 Tap-Code，16 個新增：上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、位置 key） |
+| 解析器 crate | `cargo test --manifest-path src-tauri/transcript-core/Cargo.toml` | 53 通過（35 個移植自 Tap-Code，18 個新增：上限、高階 API、回應契約、rewinds 身分、輸出預算與續讀、單行降級（含審查重現的 Codex 大修補情境）、多事件單行只留放得下的部分、位置 key、游標對齊行首） |
 | 解析器格式與 lint | `cargo fmt --check`、`cargo clippy --all-targets -- -D warnings` | 皆無問題；子代理另以 `x86_64-pc-windows-msvc` 目標跑 clippy 無問題，crate 內沒有任何 `std::os::unix` 或平台條件編譯 |
-| 伺服器 | `cargo test --manifest-path apps/server/Cargo.toml` | lib 60、reconnect 5、tap_static 1，全數通過；新增 5 項：新 operation 的位元組位置驗證、能力對應、保留期刪除範圍、節流、只清轉錄種類 |
+| 伺服器 | `cargo test --manifest-path apps/server/Cargo.toml` | lib 60、reconnect 5、tap_static 1，全數通過；新增 5 項：新 operation 的位元組位置驗證、能力對應、保留期刪除範圍（含執行中 operation 的事件保留）、節流、只清轉錄種類 |
 | 伺服器格式 | `cargo fmt --manifest-path apps/server/Cargo.toml --check` | 本次改動的部分無差異；`config.rs`、`lib.rs`、`ws.rs`、`tests/reconnect.rs` 與 `api.rs`、`storage.rs` 的既有段落有上游原本就存在的格式差異，未擴大重排 |
 | 伺服器 clippy | `cargo clippy --all-targets -- -D warnings` | 3 項錯誤皆為上游既有程式碼（`upsert_device_hello`、`validate_device_hello` 參數過多，`load_file_config` 參數型別），與本次改動無關 |
 | 桌面型別檢查 | `npx tsc --noEmit` | 通過 |
-| 桌面整合測試 | `node --test src/features/terminal/lib/*.test.mjs` | 22 通過；新增 11 項（精確綁定與路徑快取、未綁定與不支援、cwd 不符與退避、查詢慢時退避從結束起算、查詢失敗回報錯誤、待寫出的新對話、檔案消失後重查、游標驗證、跨專案拒絕、讀檔期間換綁定、讀檔失敗後重查） |
+| 桌面整合測試 | `node --test src/features/terminal/lib/*.test.mjs` | 23 通過；新增 12 項（專案路徑改變後不沿用快取、精確綁定與路徑快取、未綁定與不支援、cwd 不符與退避、查詢慢時退避從結束起算、查詢失敗回報錯誤、待寫出的新對話、檔案消失後重查、游標驗證、跨專案拒絕、讀檔期間換綁定、讀檔失敗後重查） |
 | 歷史查詢重構 | `node --test src/features/history/lib/historyRequests.boundSummary.test.mjs` | 4 通過；其中詳情查詢的斷言也對上游原始版本執行並通過，確認抽取前後行為一致 |
 | Tap 型別檢查與測試 | `npm run tap:typecheck`、`npm run tap:test` | 通過；74 測試通過（時間軸、頁面驗證與合併、unavailable 不歸零游標、任務缺狀態、ANSI、diff、跳轉點、搜尋） |
 | Tap 打包 | `vite build`（輸出到 `/tmp`，不覆寫 `apps/web/dist`） | 通過 |
@@ -30,6 +30,17 @@
 ## 獨立審查
 
 送出前另以子代理做唯讀審查（安全、競態、契約一致性、規範），確認路徑驗證無法繞過、沒有 XSS（無 `dangerouslySetInnerHTML`，react-markdown 不解析原始 HTML 且擋 `javascript:`）、清理 SQL 只刪已結束的轉錄 operation 與其事件、`fetchBoundSessionSummary` 抽取前後行為一致。實驗重現並已修正 6 項：單一行事件超過上限時讀取卡住、Codex 事件以流水號為 key 導致錯位、新會話紀錄檔不在 60 秒目錄快取、退避在查詢很慢時失效與查詢錯誤被當成新對話、unavailable 頁面把游標歸零、任務項目缺狀態被丟掉；每項都補了測試。
+
+## Codex CLI 審查
+
+依使用者要求交由 Codex CLI 做推送前的唯讀審查，結論為「需修正」，4 項應修、2 項建議，已全部處理並補測試：
+- 單一行有很多事件時，逐一降級後仍可能超限：降級後仍超過就只留放得下的前幾個事件，附上 `line_truncated` 提示，游標照樣越過這一行。
+- 路徑快取命中時沒有核對專案根目錄：命中時也要對上目前的根目錄，否則重新查索引。
+- 清理 SQL 刪事件時沒有對照 operation 狀態：改成只刪這次被清掉的 operation 的事件，等待或執行中的轉錄 operation 的事件保留。
+- 中文介面的 `Fast` 寫死：改用 `fastMode` 文案。
+- （建議）游標落在一行中間時原生端對齊到下一個行首；情境矩陣補上 UI 呈現模式、專注模式與 Workspan。
+
+修正後重跑全部檢查：transcript-core 53、伺服器 66、串接層框架 2、桌面型別檢查與 27 項測試、Tap 型別檢查與 74 項測試、打包、嚴格架構檢查與 `git diff --check` 皆通過；真實資料契約檢查 Claude 149 頁、Codex 58 頁，0 個形狀錯誤、0 頁超過 650 KiB。
 
 ## 需要維護者在 Windows 上驗收
 

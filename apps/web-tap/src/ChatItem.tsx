@@ -121,12 +121,12 @@ export const ChatItem = memo(function ChatItem({ item, last, live, inserted, t }
   }
 });
 
-/** 「Opus 5.5 Max Fast」：思考強度小一號、淡一點；開了快速模式才寫 Fast。 */
-export function ModelTag({ used }: { used: ModelUsed }) {
+/** 「Opus 5.5 Max 快速」：思考強度小一號、淡一點；開了快速模式才標出來（文案依介面語言）。 */
+export function ModelTag({ used, t }: { used: ModelUsed; t: Translate }) {
   return <span className="tap-work-model">
     {used.model}
     {used.effort && <small className="tap-work-effort">{used.effort}</small>}
-    {used.fast && <small className="tap-work-fast">Fast</small>}
+    {used.fast && <small className="tap-work-fast">{t("fastMode")}</small>}
   </span>;
 }
 
@@ -153,7 +153,7 @@ export const WorkFoldRows = memo(function WorkFoldRows({ fold, items, answer, re
     <li className={`tap-chat-work${expanded ? " is-open" : ""}`} data-key={fold.key}>
       <button type="button" className="tap-steps-head" aria-expanded={expanded} onClick={() => setOpen(!expanded)}>
         <ChevronRight size={12} aria-hidden />
-        {used && <ModelTag used={used} />}
+        {used && <ModelTag used={used} t={t} />}
         <span className="tap-steps-time">{fold.ms && fold.ms >= 1000 ? fill(t("workedFor"), { time: duration(fold.ms) }) : t("workProcess")}</span>
       </button>
     </li>

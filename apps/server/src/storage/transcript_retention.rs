@@ -35,6 +35,21 @@ impl Storage {
         }
         let cutoff = now - RETENTION_MS;
         let mut tx = self.pool.begin().await?;
+        // 先刪事件，而且只刪這次要清掉的 operation 的事件：仍在等待或執行中的轉錄 operation，
+        // 事件全部保留，重播時狀態不會缺漏。
+        sqlx::query(
+            "DELETE FROM browser_events
+             WHERE json_extract(payload_json, '$.type') = 'operation.updated'
+               AND json_extract(payload_json, '$.operation.id') IN (
+                   SELECT id FROM operations
+                   WHERE kind IN ('terminal.transcript', 'terminal.transcript_events')
+                     AND status IN ('succeeded', 'failed', 'rejected', 'timed_out', 'canceled')
+                     AND updated_at < ?1
+               )",
+        )
+        .bind(cutoff)
+        .execute(&mut *tx)
+        .await?;
         let removed = sqlx::query(
             "DELETE FROM operations
              WHERE kind IN ('terminal.transcript', 'terminal.transcript_events')
@@ -45,16 +60,6 @@ impl Storage {
         .execute(&mut *tx)
         .await?
         .rows_affected();
-        sqlx::query(
-            "DELETE FROM browser_events
-             WHERE occurred_at < ?1
-               AND json_extract(payload_json, '$.type') = 'operation.updated'
-               AND json_extract(payload_json, '$.operation.kind')
-                   IN ('terminal.transcript', 'terminal.transcript_events')",
-        )
-        .bind(cutoff)
-        .execute(&mut *tx)
-        .await?;
         tx.commit().await?;
         Ok(removed)
     }
@@ -203,6 +208,7 @@ mod tests {
         event(&storage, &user_id, stale.clone(), old).await;
         event(&storage, &user_id, fresh.clone(), now - 1_000).await;
         event(&storage, &user_id, other.clone(), old).await;
+        event(&storage, &user_id, pending.clone(), old).await;
 
         assert_eq!(storage.prune_transcript_operations(now).await.unwrap(), 2);
 
@@ -221,6 +227,8 @@ mod tests {
         assert!(!events.contains(&stale.id));
         assert!(events.contains(&fresh.id));
         assert!(events.contains(&other.id));
+        // 還在執行中的轉錄 operation：operation 與它的舊事件都保留，重播時狀態不缺。
+        assert!(events.contains(&pending.id));
     }
 
     #[tokio::test]

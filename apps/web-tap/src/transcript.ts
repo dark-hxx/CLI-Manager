@@ -34,7 +34,7 @@ export type TranscriptEvent =
   | { kind: "compact"; at?: number }
   | { kind: "error"; at?: number; text: string; retryInMs?: number; attempt?: number; max?: number }
   /**
-   * code：主機用穩定代碼標出的通知（turn_interrupted、turn_replaced、turn_aborted），照介面語言顯示；
+   * code：主機用穩定代碼標出的通知（turn_interrupted、turn_replaced、turn_aborted、line_truncated），照介面語言顯示；
    * text 是英文後備文字或 CLI 自己寫的原文，沒有 code 或不認得的 code 時照原樣顯示。
    */
   | { kind: "notice"; at?: number; code?: string; text: string }
@@ -440,7 +440,9 @@ export function stepsText(steps: Step[]): string {
 }
 
 /** 主機用穩定代碼標出的通知，對應介面文案的 key；不認得的代碼傳回 undefined（照原文顯示）。 */
-const NOTICE_TEXT = { turn_interrupted: "noticeInterrupted", turn_replaced: "noticeReplaced", turn_aborted: "noticeAborted" } as const;
+const NOTICE_TEXT = {
+  turn_interrupted: "noticeInterrupted", turn_replaced: "noticeReplaced", turn_aborted: "noticeAborted", line_truncated: "noticeTruncated",
+} as const;
 export type NoticeTextKey = (typeof NOTICE_TEXT)[keyof typeof NOTICE_TEXT];
 export function noticeKey(code?: string): NoticeTextKey | undefined {
   return code && Object.hasOwn(NOTICE_TEXT, code) ? NOTICE_TEXT[code as keyof typeof NOTICE_TEXT] : undefined;

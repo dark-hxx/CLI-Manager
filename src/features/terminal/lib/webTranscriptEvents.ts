@@ -110,7 +110,9 @@ async function transcriptFile(
 ): Promise<TranscriptFile | Miss["kind"]> {
   const key = cacheKey(ptySessionId, cliSessionId);
   const cached = files.get(key);
-  if (cached?.source === source) return cached;
+  // 快取也要對上目前的來源與專案根目錄：專案路徑被改過時，舊路徑的紀錄不能再用。
+  if (cached?.source === source && normalizeProjectPath(cached.cwd ?? "") === normalizeProjectPath(rootPath)) return cached;
+  if (cached) files.delete(key);
   const miss = misses.get(key);
   if (miss && miss.until > Date.now()) return miss.kind;
   let summary: Awaited<ReturnType<typeof fetchBoundSessionSummary>>;

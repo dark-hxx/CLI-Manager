@@ -144,6 +144,17 @@ test("changing the CLI identity while the file is being read withholds the page"
   assert.equal(result.events.length, 0);
 });
 
+test("a cached path is not reused after the project moves to another root", async () => {
+  const f = fixture();
+  assert.equal((await f.run()).available, true);
+  f.projects.projects[0].path = "C:/moved";
+  const result = await f.run();
+  assert.equal(result.available, false);
+  assert.equal(result.agentSessionId, undefined);
+  assert.equal(f.calls.lookups, 2);
+  assert.equal(f.calls.reads.length, 1);
+});
+
 test("a failed read drops the cached path so the next poll looks it up again", async () => {
   let fail = true;
   const f = fixture({ read: async () => { if (fail) throw Error("gone"); return page; } });

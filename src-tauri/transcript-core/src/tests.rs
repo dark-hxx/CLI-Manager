@@ -485,3 +485,87 @@ fn a_codex_patch_touching_many_large_files_still_fits_one_web_result() {
             .all(|result| result["uuid"].as_str().is_some()));
     }
 }
+
+#[test]
+fn a_line_with_too_many_events_keeps_what_fits_and_still_advances() {
+    // 舊版 Claude Code 把整則訊息寫成一行：一行裡有很多工具呼叫，逐一降級後仍超過預算。
+    let directory = TempDir::new("api-output-many-events");
+    let path = directory.path().join("claude.jsonl");
+    let blocks = (0..30)
+        .map(|index| json!({"type":"tool_use","id":format!("b{index}"),"name":"Bash","input":{"command":format!("echo {}", "y".repeat(3_000)),"description":"run"}}))
+        .collect::<Vec<_>>();
+    let content = lines(&[
+        json!({"type":"assistant","uuid":"a1","timestamp":T,"message":{"model":"claude-test","content":blocks}}),
+    ]);
+    fs::write(&path, &content).unwrap();
+    let full = transcript(
+        Source::Claude,
+        &path,
+        Window::After(0),
+        &budget(usize::MAX),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(serde_json::to_vec(&full.events).unwrap().len() > 10_000);
+
+    let page = transcript(
+        Source::Claude,
+        &path,
+        Window::After(0),
+        &budget(10_000),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(page.cursor, content.len() as u64);
+    assert!(!page.partial);
+    assert!(serde_json::to_vec(&page.events).unwrap().len() <= 10_000);
+    let last = serde_json::to_value(page.events.last().unwrap()).unwrap();
+    assert_eq!(
+        (last["kind"].as_str(), last["code"].as_str()),
+        (Some("notice"), Some("line_truncated"))
+    );
+    assert!(page.events.len() > 1 && page.events.len() < full.events.len());
+
+    let tail = transcript(
+        Source::Claude,
+        &path,
+        Window::Tail,
+        &budget(10_000),
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(serde_json::to_vec(&tail.events).unwrap().len() <= 10_000);
+}
+
+#[test]
+fn an_incremental_cursor_inside_a_line_starts_at_the_next_line() {
+    let directory = TempDir::new("api-align-cursor");
+    let path = directory.path().join("claude.jsonl");
+    let (content, offsets) = prompts(3, 100);
+    fs::write(&path, &content).unwrap();
+    let page = transcript(
+        Source::Claude,
+        &path,
+        Window::After(offsets[1] - 10),
+        &web_limits(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(uuids(&page), ["u1", "u2"]);
+    assert_eq!(page.cursor, content.len() as u64);
+    // 行首的游標照舊。
+    let page = transcript(
+        Source::Claude,
+        &path,
+        Window::After(offsets[2]),
+        &web_limits(),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_eq!(uuids(&page), ["u2"]);
+}
