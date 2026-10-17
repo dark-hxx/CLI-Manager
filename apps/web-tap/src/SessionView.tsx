@@ -12,6 +12,7 @@ import { resolved, TERMINAL_SIZES, type Preferences, type ViewMode } from "./pre
 import type { WorkspaceModel } from "./useWorkspace";
 import type { Translate } from "./i18n";
 import type { Modifiers } from "./input";
+import type { ChatMode } from "./Conversation";
 
 const Conversation = lazy(() => import("./Conversation").then((module) => ({ default: module.Conversation })));
 export type PanelTab = "details" | "changes" | "files";
@@ -30,6 +31,7 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
   const [modifiers, setModifiers] = useState<Modifiers>({ ctrl: false, alt: false });
   const [info, setInfo] = useState<TerminalInfo>({ size: "", direct: false });
   const [writing, setWriting] = useState(false);
+  const [chatTitle, setChatTitle] = useState<string>();
   const session = model.workspace.terminals?.find((item) => item.sessionId === id);
   const project = model.workspace.projects.find((item) => item.id === session?.projectId);
   const worktree = model.workspace.worktrees.find((item) => item.id === session?.worktreeId);
@@ -40,7 +42,11 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
   const running = ["running", "attached"].includes(state.status);
   const disabled = !active || !linkOk || !online || !running;
   const status: SessionStatus = ended ? "ended" : !online ? "offline" : !linkOk || !running ? "connecting" : "running";
-  const supported = Boolean(model.device?.capabilities.includes("terminal.transcript"));
+  const capabilities = model.device?.capabilities ?? [];
+  // 主機能力：讀結構化的對話事件，或只有舊版的純文字讀取（對話視圖請使用者更新桌面端）；都沒有時只有終端。
+  const chatMode: ChatMode | undefined = capabilities.includes("terminal.transcript_events") ? "events"
+    : capabilities.includes("terminal.transcript") ? "legacy" : undefined;
+  const supported = Boolean(chatMode);
   const view: ViewMode = supported ? chosen ?? defaults.view : "terminal";
   const context = { projectId: session?.projectId ?? "", ...(session?.worktreeId ? { worktreeId: session.worktreeId } : {}) };
   const git = useGit(session ? gitKey(model.user?.id, model.deviceId, session.projectId, session.worktreeId) : undefined, context, model.run, active);
@@ -59,7 +65,9 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
   const later = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(later.current), []);
   const agent = agentName(project?.source);
-  const title = session?.title || project?.name || t("app");
+  // 分頁標題還是預設的專案或工作樹名稱時，改用 CLI 給這段對話取的標題；改過名的分頁照舊。
+  const defaultTitle = !session?.title || session.title === project?.name || session.title === worktree?.name;
+  const title = (defaultTitle && chatTitle) || session?.title || project?.name || t("app");
   const blocked = ended ? t("blockedEnded") : !online ? t("blockedOffline") : !linkOk || !running ? t("blockedConnecting") : undefined;
   return <section className={`tap-session${active ? " is-visible" : ""} is-${view}`} aria-hidden={!active}>
     <SessionHeader active={active} title={title} project={worktree ? `${project?.name ?? ""} · ${worktree.name}` : project?.name ?? ""}
@@ -76,9 +84,10 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
           onError={(code) => { if (!code.startsWith("terminal_")) model.setError(code); }} onRetry={() => model.reopen(id)} />
       </div>
       <div id={`chat-${id}`} className="tap-chat-panel" role="tabpanel" hidden={view !== "chat"}>
-        {chatOpened && <Suspense fallback={<p className="tap-chat-empty" role="status">{t("loading")}</p>}>
+        {chatOpened && chatMode && <Suspense fallback={<p className="tap-chat-empty" role="status">{t("loading")}</p>}>
           <Conversation sessionId={id} stream={model.stream} context={context} run={model.run} chatSize={defaults.chatSize}
-            active={active && view === "chat"} supported={supported} onTerminal={() => choose("terminal")} t={t} />
+            active={active && view === "chat"} mode={chatMode} running={running && online} agent={agent} phone={phone}
+            onTerminal={() => choose("terminal")} onTitle={setChatTitle} t={t} />
         </Suspense>}
       </div>
     </div>

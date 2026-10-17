@@ -10,22 +10,6 @@ export function agentKey(source: string | null | undefined): string {
   return source === "claude" || source === "codex" ? source : "cli";
 }
 
-const words = (value: string) => value.split(/[-_ ]+/).filter(Boolean)
-  .map((part) => /^\d/.test(part) ? part : part.charAt(0).toUpperCase() + part.slice(1));
-
-/** Turn raw model IDs into the names CLIs show, e.g. claude-opus-4-1 → Opus 4.1, gpt-5-codex → GPT-5 Codex. */
-export function modelName(model: string | null | undefined): string {
-  const raw = (model ?? "").trim();
-  if (!raw) return "";
-  const claude = /^claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(\[1m\])?$/i.exec(raw);
-  if (claude) return `${words(claude[1]!)[0]} ${claude[2]}${claude[3] ? `.${claude[3]}` : ""}${claude[4] ? " 1M" : ""}`;
-  const legacy = /^claude-(\d+)(?:-(\d))?-([a-z]+)(?:-\d{8})?$/i.exec(raw);
-  if (legacy) return `${words(legacy[3]!)[0]} ${legacy[1]}${legacy[2] ? `.${legacy[2]}` : ""}`;
-  const gpt = /^gpt-(\d+(?:\.\d+)?)(?:-(.+))?$/i.exec(raw);
-  if (gpt) return [`GPT-${gpt[1]}`, ...words(gpt[2] ?? "")].join(" ");
-  return raw;
-}
-
 const pad = (value: number) => String(value).padStart(2, "0");
 
 /** 24-hour clock; earlier days add the date so footers stay unambiguous. */
@@ -37,9 +21,19 @@ export function clock(at: string | number | null | undefined, now = new Date()):
   return date.toDateString() === now.toDateString() ? time : `${date.getMonth() + 1}/${date.getDate()} ${time}`;
 }
 
-/** Compact elapsed time: 41s, 2m 17s, 1h 5m. */
+/** 提示用的完整日期時間（24 小時制），例如 2026-10-16 09:05:07。 */
+export function fullTime(at: string | number | null | undefined): string {
+  if (at === null || at === undefined || at === "") return "";
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return "";
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} `
+    + `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/** 精簡的用時：0.5s、41s、2m 17s、1h 5m；不到一秒時保留一位小數。 */
 export function duration(milliseconds: number): string {
-  const seconds = Math.max(0, Math.round(milliseconds / 1000));
+  if (milliseconds < 1000) return `${Math.max(0, Math.round(milliseconds / 100) / 10)}s`;
+  const seconds = Math.round(milliseconds / 1000);
   if (seconds < 60) return `${seconds}s`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ${seconds % 60}s`;

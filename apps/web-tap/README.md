@@ -37,15 +37,15 @@ npm run web:build
 
 ## 对话与能力边界
 
-对话页只读主机已精确绑定的 Claude/Codex 会话记录。新增 `terminal.transcript` operation 使用注册 `projectId`、可选 `worktreeId` 与 PTY `sessionId`，由主机验证 source、CLI ID、cwd，并在异步读取后再次验证绑定。只返回规范的 user/assistant 文本部分，不附带工具参数、推理、主机凭据字段或原始日志；正文仍可能包含用户自己输入的敏感信息，应仅授权可信浏览器。
+对话页只读主机已精确绑定的 Claude/Codex 会话记录。`terminal.transcript_events` operation 使用注册 `projectId`、可选 `worktreeId` 与 PTY `sessionId`，以字节游标增量读取；主机验证 source、CLI ID、cwd，只读取历史索引中、位于历史根目录且文件名包含该会话 ID 的记录，异步读取后再次验证绑定。解析由 `src-tauri/transcript-core` 完成，返回用户/助手正文、已记录的思考、工具步骤（输入、输出与 diff 均有上限）、计划与任务、斜杠命令及输出、错误与提示，不附带主机凭据字段或原始日志。工具输出可能包含敏感信息，应仅授权可信浏览器；服务端在转录操作结束两分钟后删除其结果。旧桌面端只有 `terminal.transcript` 时，对话页提示更新桌面端。
 
-输入始终进入同一原生 PTY，不调用 `conversation.start/prompt`。审批仍在原生 CLI 菜单中通过键帽操作；没有伪造的消息、审批卡或终端菜单自动化。设备没有 capability、未绑定或记录缺失时明确提示，终端仍可使用；不会按目录/时间猜配另一段会话。首次打开及可见时随终端输出合并刷新，空闲/隐藏时不持续轮询；旧页显式加载并保持阅读锚点。同一轮里最终回复之前的过程回复折叠为一行（有时间戳时显示“工作了 Xm Ys”），离开底部时出现“回到最新”。
+输入始终进入同一原生 PTY，不调用 `conversation.start/prompt`。审批仍在原生 CLI 菜单中通过键帽操作；没有伪造的消息、审批卡或终端菜单自动化。设备没有 capability、未绑定或记录缺失时明确提示，终端仍可使用；不会按目录/时间猜配另一段会话。只在对话视图可见时读取：运行中约每 1.2 秒取增量，已结束的会话读取一次；主机因单次结果上限只读到一部分时立即续读。旧页显式加载并保持阅读锚点。每轮结束后过程折叠为“工作了 Xm Ys”，工具步骤可展开 diff 与输出，命令输出保留颜色；收尾列提供复制、完成时刻、用时与本轮 +N −M。右侧跳转点（手机为面板）与对话搜索可定位任一轮，离开底部时出现“回到最新”。
 
-本次提供文件列表/文本预览、Git 分支/变更/只读 Diff。未提供 SSH、完整工具轨迹、历史恢复、消息队列、用量统计、Web Push、模型/审批自动切换、文件编辑或 Service Worker。PWA manifest 仅支持添加入口，不提供离线执行。
+本次提供文件列表/文本预览、Git 分支/变更/只读 Diff。未提供 SSH、历史恢复、消息队列、插入当前回合、用量与花费、图片缩略图、`/rewind`、Web Push、模型/审批自动切换、文件编辑或 Service Worker。PWA manifest 仅支持添加入口，不提供离线执行。
 
 ## 来源与许可
 
-体验参考 [Tap-Code](https://github.com/tapaixx/Tap-Code/tree/1a3d946)，包括会话分组、输入卡、键帽、三会话挂载和键盘平移策略。Tap-Code 当前没有项目级 LICENSE，因此此 PR 不搬运其源文件或图标，也不推定商业再许可权：客户端与视口处理在本仓库实现，PWA PNG 从本目录 `public/icon.svg` 生成。
+体验参考 [Tap-Code](https://github.com/tapaixx/Tap-Code)，包括会话分组、输入卡、键帽、三会话挂载和键盘平移策略。对话视图的记录解析（`src-tauri/transcript-core`）以及时间轴、跳转点、对话搜索、ANSI 与 diff 呈现移植自 Tap-Code，由 Tap-Code 原作者以本仓库许可（AGPL-3.0-or-later 及维护者的商业授权）贡献；其余客户端与视口处理在本仓库实现，PWA PNG 从本目录 `public/icon.svg` 生成。
 
 浏览器 HTTP/socket、DTO、terminal stream、图片准备来自本仓库已有实现，抽到 `src/shared`，经典入口保留明确兼容导出及缓存副作用。新增代码沿用仓库 AGPL-3.0-or-later 许可。
 
@@ -55,4 +55,4 @@ Inconsolata 字体来自 `@fontsource-variable/inconsolata` 的 Latin WOFF2，�
 
 可复现命令、浏览器 fixture、截图和实机待验收项记录在 [Trellis 验证记录](../../.trellis/tasks/10-16-optional-tap-web/verification.md)。Chromium fixture 不等于 Windows/WSL 真 CLI、移动 Safari/Android 软键盘或安装包验收。
 
-English: this optional client keeps Classic Web and the existing Cookie/device/native-PTY authority. Chat is read-only and requires an exact host-owned session binding. No input retry, new agent host, SSH fallback, queue, Push or automatic permission bypass is introduced.
+English: this optional client keeps Classic Web and the existing Cookie/device/native-PTY authority. Chat is read-only, requires an exact host-owned session binding, and shows structured events parsed on the host from the CLI's own records. No input retry, new agent host, SSH fallback, queue, Push or automatic permission bypass is introduced.

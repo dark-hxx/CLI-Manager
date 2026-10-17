@@ -80,7 +80,7 @@ The workspace is flat with one-pixel borders. The composer, floating buttons and
 - Topbar: status glyph + title; phone subtitle `project · cli · cols×rows`; segmented chat/terminal toggle; desktop crumb and +N −M chip that toggles the side panel.
 - ⋯ menu: terminal font stepper, settings, and a danger "End session…" that turns the menu into an inline confirmation tied to that session.
 - Composer: multiline textarea with agent-specific placeholder, "+" menu (image, type directly), interrupt, round send button; disabled state keeps the draft and names the reason.
-- Conversation: right-aligned user bubble (long prompts clamp with "Show more"), unboxed assistant Markdown, interim replies folded into one row per turn, a footer with copy and time, and a "jump to latest" button with an unread dot.
+- Conversation (Tap-Code timeline): right-aligned user bubble (long prompts clamp with "Show more"), unboxed assistant Markdown; a finished turn folds its process — tool steps with expandable diff/output, thinking, plans and tasks — into one "Worked Xm Ys" row; command output keeps ANSI colors; the footer carries copy, completion time, duration and the turn's +N −M. A turn rail (a panel on phones), in-chat search and a "jump to latest" button with an unread dot help navigation.
 - Side panel: segmented Details / Changes / Files tabs, Git status letters, file and diff previews with a back header.
 - Overlays: portal layer with backdrop siblings; no `inert`/`showModal()`. Only the top overlay handles Escape and Tab; touch never steals focus or reopens the keyboard.
 

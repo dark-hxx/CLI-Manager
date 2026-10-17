@@ -33,12 +33,29 @@ const zh = {
   readingView: "阅读版", nativeView: "原生画面", nativeHint: "切回按桌面宽度显示的原生画面，可操作 CLI 菜单", readingHint: "桌面的终端比这里宽，先按纯文本排版；切到原生画面可操作 CLI 菜单",
   desktopSize: "由桌面决定", browserSize: "跟随此浏览器", jumpBottom: "回到底部", unavailable: "终端暂时不可用",
   // Conversation
-  older: "读取更早的对话", loading: "正在读取…", copy: "复制", copied: "已复制", truncated: "内容过长，此处仅显示一部分。",
-  chatEmpty: "发出第一条消息，CLI 的回复会显示在这里。", jumpLatest: "回到最新", workedFor: "工作了 {time}",
-  interimReplies: "{n} 条过程回复", expand: "展开", collapse: "收起", openTerminal: "查看终端",
+  older: "读取更早的对话", olderLoading: "正在读取更早的内容", loading: "正在读取…", chatLoading: "正在读取对话记录…", chatStale: "对话暂时无法更新，正在重试。",
+  copy: "复制", copied: "已复制", jumpLatest: "回到最新", expand: "展开", collapse: "收起", openTerminal: "查看终端",
+  chatEmpty: "还没有对话。在下面输入第一条消息，{agent} 的回复会显示在这里。",
   unbound: "还没对上这次 CLI 的对话记录。可以先在终端里继续；主机确认会话后，对话会显示在这里。",
   missing: "这次会话的记录暂时读不到，可以在终端里继续。", unsupported: "这个 CLI 暂不提供对话视图。",
-  noChat: "主机还没提供这个版本的对话读取能力。",
+  upgradeDesktop: "这台主机上的 CLI-Manager 版本较旧，要先更新桌面端才能使用对话视图。可以先在终端里继续。",
+  workedFor: "工作了 {time}", workProcess: "工作过程", working: "工作中", inserted: "插入当前回合", images: "图片 ×{n}",
+  stepOne: "1 个步骤", stepCount: "{n} 个步骤", stepsFailed: "{n} 个失败", commandsRan: "运行了 {n} 条命令", commandsFailed: "{n} 条失败",
+  stepRunning: "执行中", stepFailed: "失败", thinking: "思考", thoughtFor: "思考了 {time}",
+  plan: "计划", planApproved: "已确认", planRejected: "未采用", planPending: "等你确认", compacted: "上下文已压缩",
+  noticeInterrupted: "已中断本轮对话", noticeReplaced: "本轮被新的请求取代", noticeAborted: "本轮已中止",
+  retryCount: "重试 {attempt}/{max}", tasks: "任务 {done}/{total}", diffTruncated: "改动较多，只显示前面一部分",
+  copyReply: "复制这一轮的回复", copyReplyShort: "复制回复", replyCopied: "已复制回复",
+  toPrompt: "回到这一轮的提问", toPromptShort: "回到提问", finishedAt: "完成于 {time}",
+  turnTime: "本轮用时", turnTimeLabel: "本轮用时 {time}", turnChanges: "这一轮新增 {added} 行、删除 {removed} 行",
+  searchChat: "搜索对话", searchShortcut: "搜索对话（{key}）", noResults: "无结果", prevMatch: "更早的一处", prevMatchHint: "更早的一处（回车）",
+  nextMatch: "更新的一处", nextMatchHint: "更新的一处（Shift+回车）", closeSearch: "关闭搜索", closeSearchHint: "关闭（Esc）",
+  searchedLoaded: "只搜索了已加载的记录", loadEarlier: "加载更早的记录", loadingEarlier: "正在加载…",
+  jumpTurn: "跳到某一轮", jumpTurnCount: "跳到某一轮（共 {n} 轮）", turnLabel: "第 {n} 轮：{text}", turnNumber: "第 {n} 轮",
+  olderTurnsLoading: "正在读取更早的对话…",
+  toolRead: "读取", toolEdit: "编辑", toolWrite: "写入", toolNotebook: "编辑笔记本", toolBash: "运行", toolBashOutput: "查看输出",
+  toolStop: "停止", toolGrep: "搜索", toolGlob: "查找文件", toolFetch: "抓取网页", toolWebSearch: "搜索网页", toolAgent: "子代理",
+  toolSkill: "技能", toolPlanMode: "进入计划模式", toolSearchTools: "查找工具", toolLsp: "代码索引",
   // Side panel
   details: "详情", changes: "改动", files: "文件", refresh: "刷新", back: "返回", readOnly: "只读",
   cleanTree: "工作区干净", filesChanged: "{n} 个文件", notRepo: "这个目录不是 Git 仓库", noFiles: "这个目录是空的",
@@ -84,12 +101,31 @@ const en: Record<TextKey, string> = {
   nativeHint: "Show the native screen at the desktop width to operate CLI menus",
   readingHint: "The desktop terminal is wider than this screen, so text is reflowed; switch to the native screen to operate CLI menus",
   desktopSize: "Set by desktop", browserSize: "Follows this browser", jumpBottom: "Scroll to bottom", unavailable: "Terminal unavailable",
-  older: "Load earlier messages", loading: "Loading…", copy: "Copy", copied: "Copied", truncated: "This content is long; only part is shown here.",
-  chatEmpty: "Send your first message. The CLI's replies will appear here.", jumpLatest: "Jump to latest", workedFor: "Worked {time}",
-  interimReplies: "{n} interim replies", expand: "Show more", collapse: "Show less", openTerminal: "Open terminal",
+  older: "Load earlier messages", olderLoading: "Loading earlier messages", loading: "Loading…", chatLoading: "Loading the conversation…", chatStale: "The conversation can't be refreshed right now. Retrying.",
+  copy: "Copy", copied: "Copied", jumpLatest: "Jump to latest", expand: "Show more", collapse: "Show less", openTerminal: "Open terminal",
+  chatEmpty: "No conversation yet. Type your first message below; {agent}'s replies will appear here.",
   unbound: "This CLI's conversation has not been matched yet. Keep going in the terminal; messages appear here once the host confirms the session.",
   missing: "This session's messages are temporarily unavailable. Continue in the terminal.",
-  unsupported: "This CLI does not provide a conversation view yet.", noChat: "The host does not provide conversation reading in this version yet.",
+  unsupported: "This CLI does not provide a conversation view yet.",
+  upgradeDesktop: "The CLI-Manager on this host is out of date. Update the desktop app to use the conversation view; you can keep going in the terminal meanwhile.",
+  workedFor: "Worked for {time}", workProcess: "Work details", working: "Working", inserted: "Sent during this turn", images: "Images ×{n}",
+  stepOne: "1 step", stepCount: "{n} steps", stepsFailed: "{n} failed", commandsRan: "Ran {n} commands", commandsFailed: "{n} failed",
+  stepRunning: "Running", stepFailed: "Failed", thinking: "Thinking", thoughtFor: "Thought for {time}",
+  plan: "Plan", planApproved: "Approved", planRejected: "Not approved", planPending: "Awaiting approval", compacted: "Context compacted",
+  noticeInterrupted: "Turn interrupted", noticeReplaced: "Turn replaced by a new request", noticeAborted: "Turn aborted",
+  retryCount: "retry {attempt}/{max}", tasks: "Tasks {done}/{total}", diffTruncated: "Large change; only the beginning is shown",
+  copyReply: "Copy this turn's reply", copyReplyShort: "Copy reply", replyCopied: "Reply copied",
+  toPrompt: "Back to this turn's prompt", toPromptShort: "Back to prompt", finishedAt: "Finished at {time}",
+  turnTime: "Time for this turn", turnTimeLabel: "Time for this turn: {time}", turnChanges: "This turn added {added} and removed {removed} lines",
+  searchChat: "Search conversation", searchShortcut: "Search conversation ({key})", noResults: "No results",
+  prevMatch: "Earlier match", prevMatchHint: "Earlier match (Enter)", nextMatch: "Later match", nextMatchHint: "Later match (Shift+Enter)",
+  closeSearch: "Close search", closeSearchHint: "Close (Esc)", searchedLoaded: "Only loaded messages were searched",
+  loadEarlier: "Load earlier messages", loadingEarlier: "Loading…",
+  jumpTurn: "Jump to a turn", jumpTurnCount: "Jump to a turn ({n} turns)", turnLabel: "Turn {n}: {text}", turnNumber: "Turn {n}",
+  olderTurnsLoading: "Loading earlier turns…",
+  toolRead: "Read", toolEdit: "Edit", toolWrite: "Write", toolNotebook: "Edit notebook", toolBash: "Run", toolBashOutput: "Read output",
+  toolStop: "Stop", toolGrep: "Search", toolGlob: "Find files", toolFetch: "Fetch page", toolWebSearch: "Web search", toolAgent: "Subagent",
+  toolSkill: "Skill", toolPlanMode: "Enter plan mode", toolSearchTools: "Find tools", toolLsp: "Code index",
   details: "Details", changes: "Changes", files: "Files", refresh: "Refresh", back: "Back", readOnly: "Read only",
   cleanTree: "Working tree clean", filesChanged: "{n} files", notRepo: "This folder is not a Git repository", noFiles: "This folder is empty",
   project: "Project", pathLabel: "Project path", branch: "Branch", worktree: "Worktree", cli: "CLI", size: "Terminal size",
@@ -97,9 +133,21 @@ const en: Record<TextKey, string> = {
   theme: "Appearance", light: "Light", dark: "Dark", system: "System", language: "Language", display: "Display", account: "Account",
   error: "Operation failed", retry: "Retry", ended: "Ended",
 };
-/** App-scoped translations never import desktop settings or classic UI state. */
-export const translator = (language: Language) => (key: TextKey) => (language === "en-US" ? en : zh)[key];
-export type Translate = ReturnType<typeof translator>;
+export type Translate = (key: TextKey) => string;
+const translators = new Map<Language, Translate>();
+/**
+ * App-scoped translations never import desktop settings or classic UI state.
+ * 同一種語言傳回同一個函式：對話裡 memo 的列不會因為上層重繪拿到新的 t 而整串重畫。
+ */
+export const translator = (language: Language): Translate => {
+  let translate = translators.get(language);
+  if (!translate) {
+    const table = language === "en-US" ? en : zh;
+    translate = (key) => table[key];
+    translators.set(language, translate);
+  }
+  return translate;
+};
 /** Fill `{name}` placeholders in a translated string. */
 export const fill = (text: string, values: Record<string, string | number>) =>
   text.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ""));

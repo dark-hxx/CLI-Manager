@@ -1,0 +1,342 @@
+/* 對話視圖：CLI 自己的對話紀錄排成時間軸。移植自 Tap-Code 的 styles.css，沿用本工作台的主題變數。 */
+.tap-chat-panel { height: 100%; }
+.tap-chat { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--bg); }
+.tap-chat-pane { position: relative; display: flex; flex: 1; flex-direction: column; min-height: 0; }
+/* 底部一直留著工作中膠囊（兩行）的高度：膠囊出現、消失、多一行時內容都不必上下移動。 */
+.tap-chat-scroll {
+  position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  padding: 14px 18px 64px;
+}
+/* 對話清單與底部「工作中」那一列各自隔離繪製：圓點、轉圈在動時不用每一幀重算整段對話。留 8px 給焦點框與陰影。 */
+.tap-chat-list {
+  display: flex; flex-direction: column; gap: 12px; max-width: var(--column); margin: 0 auto; padding: 0; list-style: none;
+  contain: layout paint; overflow-clip-margin: 8px;
+}
+.tap-chat-empty { max-width: 30em; margin: 48px auto; color: var(--muted-fg); font-size: 13px; line-height: 1.7; text-align: center; }
+.tap-chat-notice {
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px; max-width: var(--column); margin: 16px auto; padding: 12px 14px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--muted-fg); font-size: 12.5px; line-height: 1.6;
+}
+.tap-chat-notice > svg { margin-top: 3px; }
+.tap-chat-notice p { flex: 1; min-width: 12em; }
+.tap-chat-notice.is-error { color: color-mix(in oklch, var(--warning) 65%, var(--fg)); }
+/* 上面還有更早的內容：固定高度，讀取中的轉圈與按鈕互換時不推動畫面。 */
+.tap-chat-older { display: grid; place-items: center; height: 32px; margin: 0 auto 8px; color: var(--muted-fg); }
+.tap-chat-older > button { padding: 3px 12px; border-radius: 999px; color: var(--muted-fg); font-size: 12px; }
+
+/* 你的訊息：靠右的淡紫氣泡；每一輪從你的訊息開始，與上一輪的收尾列多隔一點。 */
+.tap-chat-user { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; align-self: flex-end; max-width: min(86%, 620px); }
+.tap-bubble { padding: 9px 14px; border-radius: 12px; background: var(--bubble); color: var(--bubble-fg); font-size: var(--chat-text, 15px); line-height: 1.5; }
+.tap-bubble .tap-clamp-toggle { color: var(--bubble-link); }
+.tap-chat-list > .tap-chat-user:not(:first-child), .tap-chat-list > .tap-chat-command:not(:first-child) { margin-top: 14px; }
+.tap-bubble-meta { display: inline-flex; align-items: center; gap: 10px; color: var(--muted-fg); font-size: 11.5px; }
+.tap-bubble-insert { display: inline-flex; align-items: center; gap: 4px; color: var(--brand); }
+.tap-image-count { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-fg); font-size: 11.5px; font-weight: 400; white-space: nowrap; }
+
+/* 可收起的長文字 */
+.tap-clamp-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.is-clamped > .tap-clamp-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: var(--lines); overflow: hidden; }
+.tap-clamp-toggle { margin-top: 4px; color: var(--brand); font-family: var(--sans); font-size: 12px; }
+.tap-step-detail > .tap-clamp-toggle { align-self: flex-start; }
+
+/* 斜杠命令與輸出：深色終端區塊，照終端的顏色上色；靠空白排版的輸出不換行，改成左右捲動。 */
+.tap-chat-command { align-self: flex-end; max-width: 86%; }
+.tap-chat-command code {
+  display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--brand-soft); color: var(--brand);
+  font: 12.5px var(--mono); overflow-wrap: anywhere;
+}
+.tap-code {
+  margin: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--fg-2);
+  font: 12px/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.tap-code.is-command, .tap-code.is-term { border-color: var(--term-border); background: var(--term-bg); color: #e4e4e7; }
+.tap-code.is-term .tap-clamp-toggle { color: #c4b5fd; }
+.tap-code.is-error { border-color: color-mix(in oklch, var(--danger) 30%, var(--border)); color: var(--danger); }
+.tap-clamp-text.is-laid { white-space: pre; overflow-wrap: normal; overflow-x: auto; line-height: 1.35; scrollbar-width: thin; }
+.is-clamped > .tap-clamp-text.is-laid { display: block; max-height: calc(var(--lines) * 1lh); overflow: auto hidden; }
+/* 右邊還有內容：右緣淡出，提示可以左右捲動。 */
+.tap-clamp-text.is-laid.has-more {
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 36px), transparent);
+}
+/* 字型裡沒有的符號（⛁ ⛶…）與全形字各佔固定的 1 或 2 欄，像終端一樣對齊。 */
+.tap-ansi-cell { display: inline-block; width: 1ch; text-align: center; }
+.tap-ansi-cell.is-wide { width: 2ch; }
+
+/* 回覆正文：中文為主、夾英文與程式碼，行高取中文舒適範圍的下緣。 */
+.tap-chat-assistant { min-width: 0; color: var(--fg); font-size: var(--chat-text, 15px); line-height: 1.6; overflow-wrap: anywhere; }
+.tap-md > :first-child { margin-top: 0; }
+.tap-md > :last-child { margin-bottom: 0; }
+.tap-md p, .tap-md ul, .tap-md ol, .tap-md pre, .tap-md blockquote, .tap-md .tap-md-table { margin: 0 0 .7em; }
+.tap-md ul { padding-left: 1.4em; list-style: disc; }
+/* 數字比圓點寬：留夠空間，編號才不會超出對話清單被裁掉（清單有 contain: paint）。 */
+.tap-md ol { padding-left: 1.9em; list-style: decimal; }
+.tap-md li > ul { list-style: circle; }
+.tap-md li::marker { color: var(--muted-fg); }
+.tap-md li + li { margin-top: .3em; }
+/* 標題跟著對話字號：h1、h2 稍大，h3 以下與正文同大、靠粗細區分。 */
+.tap-md h1, .tap-md h2, .tap-md h3, .tap-md h4, .tap-md h5 { margin: 1.1em 0 .4em; font-size: 1em; font-weight: 600; line-height: 1.4; }
+.tap-md h1 { font-size: 1.25em; }
+.tap-md h2 { font-size: 1.125em; }
+.tap-md code { padding: .1em .35em; border-radius: 5px; background: var(--muted); font-family: var(--mono); font-size: .88em; overflow-wrap: anywhere; }
+.tap-md pre {
+  padding: 10px 12px; border: 1px solid var(--term-border); border-radius: 10px; background: var(--term-bg); color: #e4e4e7;
+  font: calc(var(--chat-text, 15px) * .84)/1.55 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.tap-md pre code { padding: 0; background: none; color: inherit; font-size: inherit; }
+.tap-md blockquote { padding-left: 12px; border-left: 3px solid var(--border-strong); color: var(--fg-2); }
+.tap-md a { color: var(--brand); text-decoration: underline; text-underline-offset: 2px; }
+.tap-md hr { margin: 1em 0; border: 0; border-top: 1px solid var(--border); }
+.tap-md-table { max-width: 100%; overflow-x: auto; }
+.tap-md table { border-collapse: collapse; font-size: .92em; }
+.tap-md th, .tap-md td { padding: 5px 10px; border: 1px solid var(--border); text-align: left; vertical-align: top; }
+.tap-md th { background: var(--surface); font-weight: 600; }
+/* 回覆裡的圖片這一版不載入：留一個虛線框的說明文字。 */
+.tap-md-image {
+  display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 2px 8px; border: 1px dashed var(--border);
+  border-radius: 6px; color: var(--muted-fg); font-size: 12.5px; vertical-align: middle; overflow-wrap: anywhere;
+}
+
+/* 過程（思考、步驟）是正文之間的小字軌跡：和前後的訊息靠近一點。 */
+.tap-chat-steps, .tap-chat-thought { line-height: 1.35; list-style: none; }
+.tap-chat-list > .tap-chat-steps, .tap-chat-list > .tap-chat-thought, .tap-chat-list > .tap-chat-work { margin-block: -5px; }
+/* 做完的一輪收起來的過程（參考 Codex）：「工作了 X」後面一條細線，和最後的回答分開。 */
+.tap-chat-list > .tap-chat-work { display: flex; align-items: center; gap: 8px; }
+.tap-chat-work::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.tap-chat-work.is-open > .tap-steps-head svg { rotate: 90deg; }
+.tap-thought-head, .tap-steps-head {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-height: 22px; padding: 0 6px 0 2px; border-radius: 6px;
+  color: var(--muted-fg); font-size: 11.5px; text-align: left;
+}
+.tap-thought-head > svg { flex-shrink: 0; }
+.tap-thought-head > span:first-of-type { flex-shrink: 0; font-variant-numeric: tabular-nums; }
+button.tap-thought-head svg, .tap-steps-head svg { transition: rotate 150ms var(--ease); }
+.tap-chat-thought.is-open > .tap-thought-head svg, .tap-chat-steps.is-open > .tap-steps-head svg { rotate: 90deg; }
+.tap-thought-preview { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: .8; }
+.tap-thought-body { margin: 1px 0 4px 8px; padding: 2px 0 2px 9px; border-left: 1px solid var(--border); }
+.tap-thinking-text { color: var(--muted-fg); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+.tap-steps-time { font-variant-numeric: tabular-nums; }
+.tap-steps-error { color: var(--danger); }
+/* 一輪用的模型與思考強度：「Opus 5.5 Max 工作了 2m 17s」，思考強度小一號、淡一點；快速模式用品牌色。 */
+.tap-work-model { display: inline-flex; align-items: baseline; gap: 3px; margin-right: 3px; white-space: nowrap; }
+.tap-work-effort { color: color-mix(in oklch, var(--muted-fg) 72%, var(--bg)); font-size: 10px; }
+.tap-work-fast { color: var(--brand); font-size: 10px; font-weight: 500; }
+.tap-steps { display: flex; flex-direction: column; margin: 1px 0 2px 8px; padding: 1px 0 1px 7px; border-left: 1px solid var(--border); list-style: none; }
+.tap-steps.is-nested { margin: 1px 0 3px 12px; }
+.tap-step-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 22px; padding: 1px 6px; border-radius: 6px;
+  color: var(--fg-2); font-size: 12px; line-height: 1.35; text-align: left;
+}
+/* 不能展開的步驟照常顯示，不套用停用按鈕的淡化。 */
+.tap-step-row:disabled { opacity: 1; cursor: default; }
+.tap-step-row > svg { flex-shrink: 0; color: var(--muted-fg); }
+.tap-step-verb { flex-shrink: 0; color: var(--fg-2); font-weight: 500; }
+/* 摘要多半是路徑或命令，用等寬小字。 */
+.tap-step-summary {
+  flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted-fg); font: 11px var(--mono);
+}
+.tap-step.is-thinking .tap-step-summary { font-family: inherit; font-size: 11.5px; }
+.tap-step-row.is-hit .tap-step-summary { white-space: normal; overflow-wrap: anywhere; }
+.tap-step-meta { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
+.tap-step.is-error .tap-step-meta svg, .tap-step-failed { color: var(--danger); }
+.tap-step.is-running .tap-step-verb, .tap-step.is-running .tap-step-meta { color: var(--brand); }
+.tap-step.is-group .tap-step-caret { color: var(--muted-fg); transition: rotate 160ms var(--ease); }
+.tap-step.is-group > .tap-step-row[aria-expanded="true"] .tap-step-caret { rotate: 90deg; }
+.tap-step-detail { display: flex; flex-direction: column; gap: 6px; margin: 3px 0 6px 19px; }
+
+/* 改動：每一行標出行號，新增綠、刪除紅。 */
+.tap-hunks { overflow: hidden; border: 1px solid var(--border); border-radius: 8px; font: 12px/1.5 var(--mono); }
+.tap-hunk + .tap-hunk { border-top: 1px dashed var(--border); }
+.tap-hunk-line { display: grid; grid-template-columns: 3.4em minmax(0, 1fr); }
+.tap-hunk-num { padding: 0 6px; background: var(--surface); color: var(--muted-fg); text-align: right; font-variant-numeric: tabular-nums; user-select: none; }
+.tap-hunk-text { padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tap-hunk-line.is-add { background: color-mix(in oklch, var(--success) 10%, transparent); }
+.tap-hunk-line.is-add .tap-hunk-num { background: color-mix(in oklch, var(--success) 15%, transparent); color: var(--success); }
+.tap-hunk-line.is-del { background: color-mix(in oklch, var(--danger) 9%, transparent); }
+.tap-hunk-line.is-del .tap-hunk-num { background: color-mix(in oklch, var(--danger) 14%, transparent); color: var(--danger); }
+.tap-hunk-more { padding: 4px 10px; background: var(--surface); color: var(--muted-fg); font: 11.5px var(--sans); }
+
+/* 計劃卡片 */
+.tap-chat-plan {
+  padding: 10px 14px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); font-size: 13.5px; line-height: 1.6;
+}
+.tap-chat-plan header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.tap-plan-state {
+  margin-left: auto; padding: 1px 8px; border-radius: 999px; background: var(--warning-soft);
+  color: color-mix(in oklch, var(--warning) 60%, var(--fg)); font-size: 11.5px;
+}
+.tap-plan-state.is-ok { background: color-mix(in oklch, var(--success) 12%, transparent); color: var(--success); }
+.tap-plan-state.is-no { background: var(--muted); color: var(--muted-fg); }
+
+/* 一輪的收尾列：複製、回到提問、時刻、用時、增刪行數；分隔點用圓點畫，不靠字元。 */
+.tap-chat-turn {
+  display: flex; align-items: center; gap: 2px; height: 26px; margin: -4px 0 0 -5px; color: var(--muted-fg); font-size: 11.5px;
+  line-height: 1; font-variant-numeric: tabular-nums;
+}
+.tap-turn-action { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; color: var(--muted-fg); }
+.tap-turn-meta { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 4px; white-space: nowrap; }
+/* 裁掉字體上下的留白，數字才會跟圖示、圓點真正置中。 */
+.tap-turn-meta > span { text-box: trim-both cap alphabetic; }
+.tap-turn-meta + .tap-turn-meta::before {
+  content: ""; flex-shrink: 0; width: 3px; height: 3px; margin-right: 5px; border-radius: 50%; background: currentColor; opacity: .45;
+}
+.tap-turn-changes { gap: 5px; }
+.tap-chat-divider { display: flex; align-items: center; gap: 10px; color: var(--muted-fg); font-size: 11.5px; }
+.tap-chat-divider::before, .tap-chat-divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.tap-chat-info { display: flex; align-items: flex-start; gap: 8px; color: var(--muted-fg); font-size: 12.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.tap-chat-info svg { flex-shrink: 0; margin-top: 3px; }
+.tap-chat-info.is-error { color: color-mix(in oklch, var(--warning) 65%, var(--fg)); }
+
+/* 工作中的膠囊：浮在對話區底部、輸入卡上方，周圍透明、點得穿；回到最新的圓鈕在右邊。 */
+.tap-chat-live-bar {
+  position: absolute; right: 0; bottom: 8px; left: 0; z-index: 4; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end; column-gap: 8px; padding: 0 16px; pointer-events: none;
+}
+.tap-chat-live-bar > * { pointer-events: auto; }
+.tap-chat-live {
+  grid-column: 2; display: flex; align-items: flex-start; gap: 9px; min-width: 0; max-width: calc(100cqi - 104px); padding: 7px 16px 7px 13px;
+  overflow: hidden; border: 1px solid color-mix(in oklch, var(--brand) 16%, var(--border)); border-radius: 999px;
+  background: linear-gradient(180deg, color-mix(in oklch, var(--brand) 6%, var(--bg)), color-mix(in oklch, var(--brand) 2%, var(--bg)));
+  box-shadow: 0 1px 2px oklch(.25 .03 285 / .06), 0 10px 24px -14px oklch(.4 .14 285 / .45);
+  color: var(--fg-2); font-size: 12.5px; white-space: nowrap;
+}
+:root[data-theme="dark"] .tap-chat-live {
+  border-color: color-mix(in oklch, var(--brand) 26%, var(--border));
+  background: linear-gradient(180deg, color-mix(in oklch, var(--brand) 14%, var(--bg)), color-mix(in oklch, var(--brand) 7%, var(--bg)));
+  box-shadow: 0 1px 2px oklch(0 0 0 / .4), 0 10px 26px -14px oklch(.55 .18 285 / .5);
+}
+.tap-chat.has-tool .tap-chat-live { border-radius: 18px; }
+.tap-chat-live .tap-work-model { margin-right: 0; }
+.tap-live-lines { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.tap-live-line { display: flex; align-items: center; gap: 8px; min-width: 0; line-height: 1.45; }
+/* 會呼吸的點：外圈放大淡出（只動 transform 與 opacity，交給合成器）。 */
+.tap-live-dot {
+  position: relative; flex-shrink: 0; width: 7px; height: 7px; margin-top: calc((1.45em - 7px) / 2); border-radius: 50%; background: var(--brand);
+}
+.tap-live-dot::after {
+  content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--brand);
+  animation: tap-live-ring 1.8s cubic-bezier(.2, .6, .3, 1) infinite;
+}
+/* 「工作中」：一道光從左到右掃過。 */
+.tap-live-text {
+  flex-shrink: 0; font-weight: 500; color: transparent; -webkit-background-clip: text; background-clip: text; background-size: 260% 100%;
+  background-image: linear-gradient(100deg, var(--fg-2) 30%, color-mix(in oklch, var(--brand) 55%, var(--fg)) 50%, var(--fg-2) 70%);
+  animation: tap-live-shimmer 2.4s linear infinite;
+}
+.tap-live-sep { flex-shrink: 0; width: 3px; height: 3px; border-radius: 50%; background: color-mix(in oklch, var(--muted-fg) 55%, transparent); }
+.tap-live-time { flex-shrink: 0; min-width: 2.2ch; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+/* 剛開始的一秒多不顯示用時，但位置先留著，時間出現時膠囊不變寬。 */
+.tap-live-sep.is-pending, .tap-live-time.is-pending { visibility: hidden; }
+/* 第二行：正在跑的工具，小一號、淡一點；寬度跟著第一行，太長就截斷，膠囊不會左右晃。 */
+.tap-live-tool {
+  width: 0; min-width: 100%; overflow: hidden; color: var(--muted-fg); font-size: 11.5px; line-height: 1.45; white-space: nowrap; text-overflow: ellipsis;
+}
+.tap-live-summary { font-family: var(--mono); font-size: .94em; }
+/* 工具跑完、下一個還沒開始：留著上一個（淡一點），膠囊不會一下兩行一下一行。 */
+.tap-live-tool.is-done { opacity: .6; }
+@keyframes tap-live-ring { from { transform: scale(1); opacity: .55; } to { transform: scale(2.8); opacity: 0; } }
+@keyframes tap-live-shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+@media (prefers-reduced-motion: reduce) { .tap-live-dot::after, .tap-live-text { animation: none; } }
+
+/* 任務清單：對話區下方、輸入卡上方的一張卡片。 */
+.tap-chat-tasks {
+  flex-shrink: 0; width: min(100% - 24px, var(--column)); margin: 0 auto 8px; border: 1px solid var(--border); border-radius: 12px;
+  background: var(--bg); box-shadow: var(--shadow-float);
+}
+.tap-tasks-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 34px; padding: 0 12px; color: var(--fg-2); font-size: 12.5px; text-align: left;
+}
+.tap-tasks-head strong { flex-shrink: 0; color: var(--fg); font-weight: 600; }
+.tap-tasks-head span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted-fg); }
+.tap-tasks-head > svg:last-child { rotate: -90deg; transition: rotate 150ms var(--ease); }
+.tap-chat-tasks.is-open .tap-tasks-head > svg:last-child { rotate: 90deg; }
+.tap-chat-tasks ul {
+  display: flex; flex-direction: column; gap: 4px; max-height: 30vh; margin: 0; padding: 0 12px 10px; overflow-y: auto; list-style: none; font-size: 12.5px;
+}
+.tap-chat-tasks li { display: flex; align-items: flex-start; gap: 8px; color: var(--fg-2); }
+.tap-chat-tasks li svg { flex-shrink: 0; margin-top: 3px; color: var(--muted-fg); }
+.tap-chat-tasks li.is-completed span { color: var(--muted-fg); text-decoration: line-through; }
+.tap-chat-tasks li.is-in_progress { color: var(--fg); }
+.tap-chat-tasks li.is-in_progress svg { color: var(--brand); }
+
+/* 回到最新：自己一層、疊在最上面（iPhone 的 Safari 捲動時捲動區會合成成單獨一層）。 */
+.tap-jump {
+  position: absolute; right: 26px; bottom: 12px; z-index: 5; transform: translateZ(0); display: inline-flex; align-items: center;
+  justify-content: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 50%; background: var(--bg);
+  color: var(--fg-2); box-shadow: var(--shadow-float); animation: tap-pop 180ms var(--ease);
+}
+.tap-jump i { position: absolute; top: -1px; right: -1px; width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 2px var(--bg); }
+.tap-chat-tasks ~ .tap-jump { bottom: 90px; }
+.tap-chat-live-bar > .tap-jump { grid-column: 3; justify-self: end; position: static; transform: none; width: 32px; height: 32px; }
+@keyframes tap-pop { from { opacity: 0; transform: translateY(6px); } }
+
+/* 對話裡的搜尋：搜尋列在對話上方，內容往下讓；寬度跟對話一樣，置中。 */
+.tap-chat-find { flex-shrink: 0; padding: 8px 18px; border-bottom: 1px solid var(--border); background: var(--bg); animation: tap-fade 150ms var(--ease); }
+.tap-chat-find-row, .tap-chat-find-note { max-width: var(--column); margin: 0 auto; }
+.tap-chat-find-row {
+  display: flex; align-items: center; gap: 2px; height: 36px; padding: 0 3px 0 11px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface);
+}
+.tap-chat-find-row:focus-within {
+  border-color: color-mix(in oklch, var(--brand) 45%, transparent); box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 12%, transparent);
+}
+.tap-chat-find-icon { flex-shrink: 0; margin-right: 6px; color: var(--muted-fg); }
+.tap-chat-find-row input {
+  flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--fg); font-size: 14px;
+  -webkit-appearance: none; appearance: none;
+}
+.tap-chat-find-row input::-webkit-search-cancel-button { display: none; }
+.tap-chat-find-count { flex-shrink: 0; padding: 0 6px; color: var(--muted-fg); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tap-chat-find-sep { flex-shrink: 0; width: 1px; height: 16px; margin: 0 3px; background: var(--border); }
+.tap-chat-find-button { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 7px; color: var(--muted-fg); }
+/* 還有更早的紀錄沒載入：一行小字說明，旁邊可以接著載入。 */
+.tap-chat-find-note { display: flex; align-items: center; gap: 4px; padding: 4px 2px 0; color: var(--muted-fg); font-size: 12px; }
+.tap-chat-find-note .tap-text-button { min-height: 26px; padding: 0 6px; font-size: 12px; }
+/* 打開搜尋的圓鈕：浮在對話右上角，半透明，往上翻閱時先藏起來。 */
+.tap-chat-find-open {
+  position: absolute; top: 10px; right: 14px; z-index: 3; display: grid; place-items: center; width: 32px; height: 32px;
+  border: 1px solid var(--border); border-radius: 50%; background: color-mix(in oklch, var(--bg) 80%, transparent); color: var(--muted-fg);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); box-shadow: var(--shadow-float); transition: opacity 200ms, color 150ms;
+}
+.tap-chat.is-scrolling .tap-chat-find-open { opacity: 0; pointer-events: none; }
+/* 符合處：全部淡黃，目前這一處實心；深色的程式碼與命令輸出裡一樣看得清楚。 */
+::highlight(tap-chat-find) { background-color: color-mix(in oklch, var(--warning) 34%, transparent); }
+::highlight(tap-chat-find-current) { background-color: var(--warning); color: oklch(.2 .03 70); }
+/* 不支援 Custom Highlight 的瀏覽器：在捲動區裡疊色塊，跟著內容捲動。 */
+.tap-chat-find-marks { position: absolute; top: 0; left: 0; pointer-events: none; }
+.tap-chat-find-marks i { position: absolute; border-radius: 2px; background: color-mix(in oklch, var(--warning) 34%, transparent); }
+.tap-chat-find-marks i.is-current { background: color-mix(in oklch, var(--warning) 62%, transparent); }
+
+/* 跳到某一項（回到提問、跳轉點）：短暫標示那一項。 */
+.tap-chat-user.is-jump .tap-bubble, .tap-chat-command.is-jump code { animation: tap-flash-ring 1.6s var(--ease); }
+.tap-chat-list > .is-jump:not(.tap-chat-user, .tap-chat-command) { border-radius: 8px; animation: tap-flash-soft 1.6s var(--ease); }
+@keyframes tap-flash-ring {
+  0%, 35% { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 50%, transparent); }
+  100% { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 0%, transparent); }
+}
+@keyframes tap-flash-soft {
+  0%, 35% { background-color: var(--brand-soft); box-shadow: 0 0 0 6px var(--brand-soft); }
+  100% { background-color: transparent; box-shadow: 0 0 0 6px transparent; }
+}
+
+@media (hover: hover) {
+  .tap-chat-older > button:hover, .tap-step-row:not(:disabled):hover, .tap-turn-action:hover { background: var(--muted); }
+  .tap-steps-head:hover, button.tap-thought-head:hover { background: var(--muted); color: var(--fg-2); }
+  .tap-turn-action:hover, .tap-jump:hover, .tap-chat-find-open:hover { color: var(--fg); }
+  .tap-chat-find-button:hover:not(:disabled) { background: var(--muted); color: var(--fg); }
+  .tap-tasks-head:hover strong { color: var(--brand); }
+}
+@media (max-width: 767px), (pointer: coarse) and (max-height: 500px) {
+  .tap-chat-scroll { padding: 10px 12px 64px; }
+  .tap-chat-list { gap: 10px; }
+  .tap-chat-user { max-width: 88%; }
+  .tap-jump { right: 16px; bottom: 10px; }
+  .tap-chat-find { padding: 6px 10px; }
+  .tap-chat-find-row input { font-size: 15px; }
+  .tap-chat-find-open { top: 8px; right: 10px; }
+}
+/* 減少動態：標示不淡出，停留到 is-jump 拿掉為止。 */
+@media (prefers-reduced-motion: reduce) {
+  .tap-chat-user.is-jump .tap-bubble, .tap-chat-command.is-jump code { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 50%, transparent); }
+  .tap-chat-list > .is-jump:not(.tap-chat-user, .tap-chat-command) { background-color: var(--brand-soft); box-shadow: 0 0 0 6px var(--brand-soft); }
+}

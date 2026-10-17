@@ -6,8 +6,7 @@ export type { BrowserSocketConnection } from "../../../src/shared/lib/webBrowser
 export type { TerminalStream } from "../../../src/shared/lib/webTerminalStream";
 export type {
   AuthStatus, AuthUser, Device, WorkspaceSnapshot, WorkspaceProject, WorkspaceWorktree,
-  Operation, JsonObject, JsonValue, BrowserMessage, TerminalControlMode,
-  TerminalTranscript, TranscriptMessage, TerminalOutputFrame,
+  Operation, JsonObject, JsonValue, BrowserMessage, TerminalControlMode, TerminalOutputFrame,
 } from "../../../src/shared/types/webBrowser";
 import type { AuthStatus, Device, WorkspaceSnapshot, Operation, JsonObject } from "../../../src/shared/types/webBrowser";
 
