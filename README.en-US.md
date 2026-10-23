@@ -324,6 +324,13 @@ When developing across multiple projects, you may run into these problems:
 - **Ordered replay and recovery** - restore terminal output, tab metadata, split layout, and live output in order after reconnecting
 - **Background task center** - inspect, restore, discard, or clean up tasks that continue outside the main window
 
+#### DeepSeek Harness TUI
+
+- **Embedded TUI** - run the [official DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) with the [dsh-TUI plugin](https://github.com/ccch1mneyyy/dsh-TUI) through `dsh-tui` in the project or Worktree directory, using existing tabs, splits, and background session management.
+- **Common project configuration** - select **DeepSeek Harness TUI** when creating, editing, or cloning a project, then use the normal arguments, shell, and environment fields. No source-directory selection is required.
+
+DSH/dsh-TUI owns conversation storage, models, and plugin configuration. CLI-Manager's current DSH integration does not provide history indexing, Token analytics, provider switching, or Hook completion notifications. Use the `--resume <session ID>` argument to resume a known explicit conversation ID; new native conversation IDs are not automatically captured by the manager.
+
 ---
 
 ### ⚡ Command Reuse and Shortcuts
@@ -488,6 +495,7 @@ CLI-Manager provides two mature parallel-work paths: automatic sub-agent visuali
 - Cross-platform desktop app (Windows / macOS / Linux, based on Tauri 2)
 - Multi-shell support (Windows: PowerShell / CMD / Pwsh / WSL / Git Bash; macOS / Linux: Bash / Zsh, etc.)
 - PTY session management and status broadcasting
+- DeepSeek Harness TUI launch in the embedded terminal (`dsh-tui`)
 - Daemon-backed background tasks, ordered replay, attach, and workspace recovery
 - Claude Code / Codex Hook Bridge (127.0.0.1 loopback + bearer token validation)
 - Automatic sub-agent splitting (cmux-like, creates split terminals when Claude Code dispatches sub-agents)
@@ -510,6 +518,22 @@ CLI-Manager provides two mature parallel-work paths: automatic sub-agent visuali
 Go to the [Releases](https://github.com/dark-hxx/CLI-Manager/releases) page and download the latest version.
 
 > Windows builds are the primary release artifact at the moment. macOS / Linux users are recommended to build from source.
+
+### Use DeepSeek Harness TUI
+
+Follow the [dsh-TUI installation guide](https://github.com/ccch1mneyyy/dsh-TUI#quick-start) to prepare Node.js, pnpm, and compatible versions of the official DSH host and dsh-TUI launcher. Run the first launch in a standalone terminal:
+
+```sh
+dsh-tui
+```
+
+Initialize the `dsh-tui` profile and model configuration, and confirm that the TUI opens. Then:
+
+1. Create or edit a project in CLI-Manager, select **DeepSeek Harness TUI**, and set the project path and shell.
+2. Keep the default startup command `dsh-tui`. No extra arguments are required; add arguments or environment variables as needed.
+3. Start the project terminal to interact with the TUI inside CLI-Manager.
+
+CLI-Manager does not install or initialize the plugin for you. If you use a custom `DSH_HOME`, use the same value in the standalone terminal and project environment. WSL/SSH projects require the host, launcher, and profile in their own target environment.
 
 ### SSH Remote Agent
 
@@ -637,6 +661,7 @@ cd src-tauri && cargo test
 <details>
 <summary><b>AI CLI Integration and Session History</b></summary>
 
+- DeepSeek Harness TUI: native `dsh-tui` launch and explicit conversation-ID resume
 - Real-time hook notifications (approval / completed / failed)
 - Tab status dots (running / waiting approval / completed / failed)
 - Live session statistics (tokens / cost / tool calls / Git branch)

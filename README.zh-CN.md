@@ -323,6 +323,13 @@ CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将�
 - **有序回放与恢复** — 重连后按顺序恢复终端输出、Tab 元数据、分屏布局与实时输出
 - **后台任务中心** — 查看、恢复、丢弃或清理由主窗口外持续运行的任务
 
+#### DeepSeek Harness TUI
+
+- **内嵌 TUI** — 使用 [官方 DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 与 [dsh-TUI 插件](https://github.com/ccch1mneyyy/dsh-TUI)，通过 `dsh-tui` 在项目或 Worktree 目录中交互，沿用 Tab、分屏与后台会话管理。
+- **通用项目配置** — 新建、编辑或克隆项目时选择 **DeepSeek Harness TUI**，使用普通的参数、Shell 和环境变量字段，无需选择源码目录。
+
+DSH/dsh-TUI 负责对话存储、模型和插件配置。当前 CLI-Manager 的 DSH 适配不提供历史索引、Token 统计、供应商切换或 Hook 完成通知。已有明确会话 ID 时可通过参数 `--resume <会话ID>` 恢复；普通新会话 ID 不会自动采集到管理器。
+
 ---
 
 ### ⚡ 命令复用与快捷操作
@@ -487,6 +494,7 @@ CLI-Manager 提供两条成熟的并行工作路径：在终端工作区内自�
 - 跨平台桌面应用（Windows / macOS / Linux，基于 Tauri 2）
 - 多 Shell 支持（Windows：PowerShell / CMD / Pwsh / WSL / Git Bash；macOS / Linux：Bash / Zsh 等）
 - PTY 会话管理与状态广播
+- DeepSeek Harness TUI 内嵌终端启动（`dsh-tui`）
 - daemon 后台任务托管、有序回放、attach 与工作区恢复
 - Claude Code / Codex Hook Bridge（127.0.0.1 回环 + bearer token 校验）
 - 子 Agent 自动分屏（类 cmux，Claude Code 派发子 Agent 时自动创建分屏终端）
@@ -509,6 +517,22 @@ CLI-Manager 提供两条成熟的并行工作路径：在终端工作区内自�
 前往 [Releases](https://github.com/dark-hxx/CLI-Manager/releases) 页面获取最新版本。
 
 > 目前主要提供 Windows 构建产物；macOS / Linux 用户建议从源码构建（见下方）。
+
+### 使用 DeepSeek Harness TUI
+
+先按 [dsh-TUI 的安装说明](https://github.com/ccch1mneyyy/dsh-TUI#quick-start)准备 Node.js、pnpm，以及相互兼容的官方 DSH 宿主和 dsh-TUI 启动器。首次在独立终端运行：
+
+```sh
+dsh-tui
+```
+
+完成 `dsh-tui` profile 初始化与模型配置，确认能进入 TUI 后：
+
+1. 在 CLI-Manager 新建或编辑项目，选择 **DeepSeek Harness TUI**，设置项目路径与 Shell。
+2. 保留默认启动命令 `dsh-tui`；无需额外参数即可启动，按需填写参数或环境变量。
+3. 从项目启动终端，在 CLI-Manager 内嵌终端中使用 TUI。
+
+CLI-Manager 不会代为安装或初始化插件。若使用自定义 `DSH_HOME`，独立终端和项目环境变量应指向同一位置；WSL/SSH 项目需在各自目标环境中准备宿主、启动器和 profile。
 
 ### SSH 远端 Agent
 
@@ -619,6 +643,7 @@ cd src-tauri && cargo test
 <details>
 <summary><b>AI CLI 集成与会话历史</b></summary>
 
+- DeepSeek Harness TUI：原生 `dsh-tui` 启动与明确会话 ID 恢复
 - Hook 实时通知（权限审批 / 任务完成 / 失败）
 - Tab 状态点（运行中 / 待审批 / 完成 / 失败）
 - 会话实时统计（Token / 费用 / 工具调用 / Git 分支）
