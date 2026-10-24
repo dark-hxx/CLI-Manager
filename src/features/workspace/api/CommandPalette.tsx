@@ -13,7 +13,8 @@ import { logError } from "../../../shared/platform/logger";
 import { openWindowsTerminal } from "../../terminal/api/externalTerminal";
 import { resolveProjectStartupCommand } from "../../projects/api/projectStartupCommand";
 import { parseProjectEnvVars } from "../../providers/api/providerSwitching";
-import { terminalProcessManager } from "../../terminal/api/TerminalProcessManager";
+import { submitTerminalText } from "../../terminal/api/terminalTextSubmission";
+import { translateCurrent } from "../../../shared/i18n/index";
 import { resolveProjectPath } from "../../projects/api/groupPath";
 
 export const useCommandPaletteStore = create<{
@@ -182,10 +183,11 @@ export function CommandPalette() {
           description: t.command,
           category: "命令模板",
           action: () => {
+            // Freeze the selected PTY; shared submission keeps Enter outside pasted text.
             const sid = useTerminalStore.getState().activeSessionId;
             if (sid) {
-              terminalProcessManager.write(sid, t.command + "\r").catch((err) => {
-                toast.error("执行模板命令失败", { description: String(err) });
+              submitTerminalText(sid, t.command).catch((err) => {
+                toast.error(translateCurrent("commandTemplate.toast.runFailed"), { description: String(err) });
                 logError("CommandPalette failed to run template", {
                   templateId: t.id,
                   sessionId: sid,

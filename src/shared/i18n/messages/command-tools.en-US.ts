@@ -30,6 +30,7 @@ export const en: Record<keyof typeof zh, string> = {
   "commandTemplate.deleteNamed": "Delete template {name}",
   "commandTemplate.inactiveHint": "No active terminal. Only global/project templates can be managed.",
   "commandTemplate.toast.runFailed": "Failed to run template command",
+  "commandTemplate.toast.terminalNotReady": "Terminal input is not ready. Wait for the terminal to connect, then try again.",
   "commandTemplate.toast.saveSuccess": "Template saved",
   "commandTemplate.toast.saveFailed": "Failed to save template",
   "commandHistory.title": "Command History",

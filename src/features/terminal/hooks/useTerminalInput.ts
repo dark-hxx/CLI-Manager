@@ -47,6 +47,7 @@ import {
 import { resolveManualDirectCodexEnterData } from "../lib/codexManualInput";
 import { getTerminalCellWidth, resolveCursorIndexFromCellOffset } from "../lib/terminalCellWidth";
 import { trimTerminalPasteBoundaryLineBreaks } from "../lib/terminalKeyboard";
+import { registerTerminalTextSubmissionTarget } from "../api/terminalTextSubmission";
 import {
   attachTerminalIme,
   type TerminalImeAnchorResolver,
@@ -782,6 +783,8 @@ export function useTerminalInput({
       onCommandSubmitted,
     }: TerminalInputForwardingOptions,
   ): TerminalInputForwardingController => {
+    // Native paste events are captured only while a programmatic submission is assembled.
+    const textSubmission = registerTerminalTextSubmissionTarget(sessionId, terminal);
     const inputDeduper = createTerminalImeInputDeduper({
       shouldEnableSameSourceProcessKeyDedup: () => (
         osPlatformRef.current === "macos"
@@ -789,6 +792,7 @@ export function useTerminalInput({
       ),
     });
     const forwardTerminalInput = (data: string, source: TerminalInputSource) => {
+      if (textSubmission.captureInput(data)) return;
       const now = performance.now();
       if (!inputDeduper.shouldForward(data, source, now)) return;
 
@@ -830,6 +834,7 @@ export function useTerminalInput({
 
     return {
       dispose: () => {
+        textSubmission.dispose();
         detachInputSuggestions();
         onDataDisposable.dispose();
         onBinaryDisposable.dispose();
