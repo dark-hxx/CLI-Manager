@@ -38,6 +38,7 @@ export const SETTING_BACKUP_POLICY = {
   sidebarDensity: "preferences",
   sidebarProjectFilterVisible: "preferences",
   viewMode: "preferences",
+  windowsExplorerContextMenuEnabled: "excluded",
   closeBehavior: "preferences",
   exitWithRunningTasksBehavior: "preferences",
   backgroundIncludeFinishedTasks: "preferences",

@@ -17,6 +17,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { toast } from "sonner";
+import { invoke } from "@tauri-apps/api/core";
 import { debugConsoleWarn } from "../../../../shared/platform/debugConsole";
 import {
   useSettingsStore,
@@ -40,6 +41,7 @@ import {
   type SystemFontFamily,
 } from "../../../../shared/platform/systemFonts";
 import { resolveCcusageWslTarget, useCcusageStore } from "../../../stats/api/ccusageStore";
+import { getOsPlatform } from "../../../../shared/platform/shell";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../../shared/ui/dialog";
 import { FontFamilySelect } from "../FontFamilySelect";
 import { DataStorageSection } from "./DataStorageSection";
@@ -412,6 +414,7 @@ export function GeneralSettingsPage() {
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const ccusageUseWsl = useSettingsStore((s) => s.ccusageUseWsl);
+  const windowsExplorerContextMenuEnabled = useSettingsStore((s) => s.windowsExplorerContextMenuEnabled);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const sidebarToolbarVisibility = useSettingsStore((s) => s.sidebarToolbarVisibility);
@@ -428,6 +431,7 @@ export function GeneralSettingsPage() {
   const [systemFontsLoading, setSystemFontsLoading] = useState(false);
   const [systemFontsError, setSystemFontsError] = useState<string | null>(null);
   const [ccusageWslDialogOpen, setCcusageWslDialogOpen] = useState(false);
+  const [isWindows, setIsWindows] = useState<boolean | null>(null);
   const themeOptions = useMemo<{ value: ThemeMode; label: string }[]>(
     () => [
       { value: "light", label: t("settings.options.theme.light") },
@@ -457,6 +461,16 @@ export function GeneralSettingsPage() {
       cancelled = true;
     };
   }, [t]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void getOsPlatform().then((platform) => {
+      if (!cancelled) setIsWindows(platform === "windows");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     setUiFontSizeDraft(uiFontSize);
@@ -787,6 +801,47 @@ export function GeneralSettingsPage() {
             </Stack>
         </Stack>
       </section>
+
+      {isWindows && (
+        <section className="ui-surface-card rounded-2xl border border-border p-4">
+          <Stack gap="sm">
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("settings.general.windowsIntegration")}
+            </Text>
+            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
+              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
+                <Box>
+                  <Text size="xs" c="var(--on-surface-variant)">
+                    {t("settings.general.explorerContextMenu")}
+                  </Text>
+                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
+                    {t("settings.general.explorerContextMenuDescription")}
+                  </Text>
+                </Box>
+                <Switch
+                  color="cliPrimary"
+                  checked={windowsExplorerContextMenuEnabled}
+                  onChange={(event) => {
+                    const enabled = event.currentTarget.checked;
+                    void invoke("set_windows_explorer_context_menu", { enabled })
+                      .then(() => update("windowsExplorerContextMenuEnabled", enabled))
+                      .catch((error) => {
+                        toast.error(t("settings.general.explorerContextMenuUpdateFailed"), {
+                          description: String(error),
+                        });
+                      });
+                  }}
+                  aria-label={t(
+                    windowsExplorerContextMenuEnabled
+                      ? "settings.general.disableExplorerContextMenu"
+                      : "settings.general.enableExplorerContextMenu"
+                  )}
+                />
+              </Group>
+            </Card>
+          </Stack>
+        </section>
+      )}
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">

@@ -920,6 +920,7 @@ dependencies = [
  "wallpaper",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
+ "winreg 0.55.0",
  "zbus-secret-service-keyring-store",
  "zip 0.6.6",
 ]

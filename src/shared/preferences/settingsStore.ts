@@ -414,6 +414,7 @@ export interface Settings {
   sidebarDensity: SidebarDensity;
   sidebarProjectFilterVisible: boolean;
   viewMode: ViewMode;
+  windowsExplorerContextMenuEnabled: boolean;
   closeBehavior: CloseBehavior;
   exitWithRunningTasksBehavior: ExitWithRunningTasksBehavior;
   /** 退出检测是否把「已完成/失败」的 Claude/Codex 会话也算作可转入后台的任务（默认仅检测运行中）。 */
@@ -580,6 +581,7 @@ const DEFAULTS: Settings = {
   sidebarDensity: "comfortable",
   sidebarProjectFilterVisible: false,
   viewMode: "standard",
+  windowsExplorerContextMenuEnabled: true,
   closeBehavior: "ask",
   exitWithRunningTasksBehavior: "ask",
   backgroundIncludeFinishedTasks: false,

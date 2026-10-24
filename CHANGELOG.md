@@ -8,6 +8,10 @@
 
 ## [V1.4.5] - 2026-10-17
 
+### Windows Explorer context-menu discovery
+
+- Explorer registration now writes both the plain shell-verb value and `MUIVerb`, broadcasts a shell-association refresh, and improves discovery of the CLI-Manager entry on Windows 11 while preserving the classic "Show more options" menu.
+
 ### Tap 对话输入补全
 
 - 对话输入框输入 `/` 后，在当前对话页内展开 Codex/Claude 原生命令面板；菜单、已加载 skills、插件命令和 `/mcp` 后续交互直接由运行中的 CLI 提供，不再维护静态候选表或自动切走对话视图。前缀只输入一次，不附加回车；提供方向键、Tab、Esc、Enter 和手机键盘入口，完成或取消后可返回对话。
@@ -45,6 +49,13 @@
 - 提交前边界复审补齐关闭确认目标冻结、旧设备回调/迟到 401 隔离、授权取消回放、单终端失败重连不影响其他挂载、手机直接输入退出及输入法 Esc 保护；输出合批与跨终端公平调度、转录 Unicode 截断及可选字体失败均有回归覆盖。
 - 界面与交互对齐 Tap-Code：会话顶栏（状态、连接点、`项目 · CLI · 尺寸`、对话/终端切换、⋯ 菜单内字号与二次确认结束）；输入卡“+”菜单、对 Claude/Codex 发 Esc 的中断、圆形发送；键帽只在终端视图显示并在输入时让位；输入卡下一行只显示终端尺寸、项目、Git 分支与 +N −M。新增右侧栏（详情/改动/文件，宽屏停靠）、手机左右边缘滑入与跟手关闭的抽屉、带搜索与 CLI 图标的分组会话栏、无原生下拉框的设置、对话过程回复折叠与“回到最新”。弹层改为不使用 `inert`，避免手机整页重算样式。
 - 不新增独立主机、认证库、Hook、消息队列、Web Push、SSH 或自动审批。已验证定向协议、类型、构建及 Chromium fixture；Windows/WSL 真 CLI、原生手机软键盘与安装包仍待实机验收。
+
+### Windows 资源管理器右键打开 CLI-Manager（Issue #291）
+
+- 安装后在 Windows 资源管理器的文件夹和文件夹空白处右键菜单注册“Open CLI-Manager here / 在此处打开 CLI-Manager”，分别使用 `%1` 与 `%V` 传递目标目录。
+- 新增 `--open-terminal <path>` 与 `--open-terminal=<path>` 启动参数；应用未运行时创建普通终端，已运行时通过单实例事件在现有窗口中新建标签页。
+- 外部打开沿用默认 Shell，不绑定项目、Worktree 或 Claude/Codex 启动命令；保留中文、空格、盘符根目录和 UNC 路径，并限制待处理请求队列避免异常参数持续堆积。
+- 设置 -> 通用新增 Windows 资源管理器右键菜单开关；开发模式也会按该开关实时写入当前用户 HKCU 菜单，非 Windows 平台不显示此选项。
 
 ## [V1.4.4] - 2026-10-16
 

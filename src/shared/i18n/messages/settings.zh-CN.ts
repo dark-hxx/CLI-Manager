@@ -644,4 +644,10 @@ export const zh = {
   "settings.webServer.toast.started": "Web 服务已启动",
   "settings.webServer.toast.stopped": "Web 服务已停止",
   "settings.webServer.toast.restarted": "Web 服务已重启",
+  "settings.general.windowsIntegration": "Windows 集成",
+  "settings.general.explorerContextMenu": "资源管理器右键菜单",
+  "settings.general.explorerContextMenuDescription": "在文件夹和文件夹空白处的右键菜单中添加或移除“在此处打开 CLI-Manager”，修改后立即生效。",
+  "settings.general.enableExplorerContextMenu": "启用资源管理器右键菜单",
+  "settings.general.disableExplorerContextMenu": "停用资源管理器右键菜单",
+  "settings.general.explorerContextMenuUpdateFailed": "更新资源管理器右键菜单失败",
 } as const;

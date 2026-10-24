@@ -43,6 +43,8 @@ import { useExternalSessionSyncStore } from "../features/history/api/externalSes
 import { useKeyboardShortcuts } from "../features/workspace/api/useKeyboardShortcuts";
 import { useDesktopPetCoordinator } from "../features/desktop-pet/api/useDesktopPetCoordinator";
 import { useWebDeviceBridge } from "../features/terminal/hooks/useWebDeviceBridge";
+import { useExternalOpenTerminalRequests } from "../features/terminal/api/externalOpenTerminal";
+import { useWindowsExplorerContextMenu } from "../features/terminal/api/windowsExplorerContextMenu";
 import { useUpdateStore } from "../features/settings/api/updateStore";
 import { useReplayStore } from "../features/terminal/api/replayStore";
 import { useTerminalStore, type CliHookPayload } from "../features/terminal/state";
@@ -766,7 +768,7 @@ function App() {
       .then((platform) => setIsMacOs(platform === "macos"))
       .catch((err) => logWarn("Failed to read OS platform for window sizing", err));
   }, []);
-
+  useWindowsExplorerContextMenu(settingsLoaded && startupReady);
   useEffect(() => {
     if (!IN_TAURI) return;
     const handleF12 = (event: KeyboardEvent) => {
@@ -940,6 +942,13 @@ function App() {
     terminalFullscreen,
     onOpenSettings: () => handleOpenSettings("desktop-pet"),
     onActivateSession: handleActivateHookNotificationTarget,
+  });
+
+  useExternalOpenTerminalRequests({
+    enabled: startupReady,
+    closeHistory: () => useHistoryStore.getState().closeHistory(),
+    createSession: (projectId, cwd, title) => useTerminalStore.getState().createSession(projectId, cwd, title),
+    setActive: (sessionId) => useTerminalStore.getState().setActive(sessionId),
   });
 
   useWebDeviceBridge(settingsLoaded && startupReady);

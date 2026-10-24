@@ -53,6 +53,8 @@ pub mod codex_app_server_proxy;
 #[path = "features/statusline/codex.rs"]
 pub mod codex_statusline;
 mod commands;
+#[path = "features/open_terminal.rs"]
+mod open_terminal;
 #[path = "infrastructure/process/agent_launcher.rs"]
 pub(crate) mod agent_launcher;
 #[path = "infrastructure/storage/legacy_remote_state.rs"]
@@ -155,6 +157,18 @@ fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
 
 #[derive(Default)]
 struct PendingBackgroundSession(Mutex<Option<String>>);
+
+#[tauri::command]
+fn take_pending_open_terminal_requests(
+    pending: tauri::State<'_, open_terminal::PendingOpenTerminalRequests>,
+) -> Vec<String> {
+    open_terminal::take_pending(&pending)
+}
+
+#[tauri::command]
+fn set_windows_explorer_context_menu(enabled: bool) -> Result<(), String> {
+    open_terminal::set_windows_explorer_context_menu(enabled)
+}
 
 // 从相邻命令行参数中提取非空后台会话恢复目标。
 fn background_session_arg(args: &[String]) -> Option<String> {
@@ -382,6 +396,14 @@ pub fn run() {
             if let Some(session_id) = background_session_arg(&args) {
                 set_pending_background_session(app, session_id);
             }
+            let result = open_terminal::enqueue(app, open_terminal::parse_open_terminal_args(&args));
+            if result.dropped > 0 {
+                log::warn!(
+                    "dropped {} open-terminal request(s) because the queue is full",
+                    result.dropped
+                );
+            }
+            open_terminal::emit_request_event(app, &result.accepted);
             show_main_window(app);
         }))
         .plugin({
@@ -415,6 +437,16 @@ pub fn run() {
                 if let Ok(mut pending) = app.state::<PendingBackgroundSession>().0.lock() {
                     *pending = Some(session_id);
                 }
+            }
+            let result = open_terminal::enqueue(
+                &app.handle(),
+                open_terminal::parse_open_terminal_args(&startup_args),
+            );
+            if result.dropped > 0 {
+                log::warn!(
+                    "dropped {} open-terminal startup request(s) because the queue is full",
+                    result.dropped
+                );
             }
             if let Err(err) = app_paths::migrate_legacy_app_files(app.handle()) {
                 log::warn!("CLI-Manager data migration skipped: {err}");
@@ -558,6 +590,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_notification::init())
         .manage(PendingBackgroundSession::default())
+        .manage(open_terminal::PendingOpenTerminalRequests::default())
         .manage(daemon::client::DaemonBridge::new())
         .manage(file_watcher::FileWatcherBridge::new())
         .manage(git_watcher::GitWatcherBridge::new())
@@ -620,6 +653,8 @@ pub fn run() {
             commands::app_data::app_inspect_data_dir,
             commands::app_data::app_prepare_data_dir_switch,
             take_pending_background_session,
+            take_pending_open_terminal_requests,
+            set_windows_explorer_context_menu,
             commands::desktop_pet::desktop_pet_catalog,
             commands::desktop_pet::desktop_pet_list_installed,
             commands::desktop_pet::desktop_pet_get_installed,

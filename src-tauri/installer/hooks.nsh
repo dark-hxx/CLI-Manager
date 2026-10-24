@@ -26,10 +26,34 @@
   ${EndIf}
 !macroend
 
+!macro CLI_MANAGER_REGISTER_EXPLORER_MENU
+  WriteRegStr HKCU "Software\Classes\Directory\shell\CLIManager" "" "Open CLI-Manager here"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\CLIManager" "MUIVerb" "Open CLI-Manager here"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\CLIManager" "Icon" "$INSTDIR\CLI-Manager.exe"
+  WriteRegStr HKCU "Software\Classes\Directory\shell\CLIManager\command" "" '"$INSTDIR\CLI-Manager.exe" --open-terminal "%1"'
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\CLIManager" "" "Open CLI-Manager here"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\CLIManager" "MUIVerb" "Open CLI-Manager here"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\CLIManager" "Icon" "$INSTDIR\CLI-Manager.exe"
+  WriteRegStr HKCU "Software\Classes\Directory\Background\shell\CLIManager\command" "" '"$INSTDIR\CLI-Manager.exe" --open-terminal "%V"'
+!macroend
+
+!macro CLI_MANAGER_UNREGISTER_EXPLORER_MENU
+  DeleteRegKey HKCU "Software\Classes\Directory\shell\CLIManager"
+  DeleteRegKey HKCU "Software\Classes\Directory\Background\shell\CLIManager"
+!macroend
+
 !macro NSIS_HOOK_PREINSTALL
   !insertmacro CLI_MANAGER_STOP_INSTALLED_PROCESSES
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
   !insertmacro CLI_MANAGER_STOP_INSTALLED_PROCESSES
+!macroend
+
+!macro NSIS_HOOK_POSTINSTALL
+  !insertmacro CLI_MANAGER_REGISTER_EXPLORER_MENU
+!macroend
+
+!macro NSIS_HOOK_POSTUNINSTALL
+  !insertmacro CLI_MANAGER_UNREGISTER_EXPLORER_MENU
 !macroend

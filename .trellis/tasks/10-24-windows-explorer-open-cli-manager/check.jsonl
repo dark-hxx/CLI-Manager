@@ -1,0 +1,4 @@
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"新功能场景矩阵与跨边界发现清单入口约束"}
+{"file":".trellis/spec/guides/cross-platform-thinking-guide.md","reason":"Windows Shell、PTY 与路径兼容性检查要求"}
+{"file":".trellis/spec/guides/version-update-checklist.md","reason":"V1.4.5 版本源同步与发布验收要求"}
+{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"代码变更交付、验证和文档记录要求"}
