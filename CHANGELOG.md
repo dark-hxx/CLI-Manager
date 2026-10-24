@@ -1,5 +1,15 @@
 # Changelog
 
+## [TEMP] - 2026-10-24
+
+### PTY daemon 生命周期与终端重连
+
+- Windows helper binaries are packaged with per-binary version metadata, so Task Manager shows `cli-manager-daemon` and `cli-manager-web-daemon` instead of indistinguishable `CLI-Manager` entries in local and production builds.
+
+- daemon 优先使用独立的 `cli-manager-daemon` 可执行文件启动，任务管理器中可与 GUI 进程区分；开发环境保留自分流回退路径。
+- “不保留任务退出”会停止路由、关闭 daemon 内全部 PTY 会话并请求 daemon 退出，避免后台守护进程残留。
+- daemon 控制连接发生 I/O 失败或超时后自动清理失效连接，并在终端端点、创建和 legacy 请求入口串行恢复 daemon，避免无限重连后只能重启应用。
+
 ## [TEMP] - 2026-10-19
 
 ### 内置终端输入法修复

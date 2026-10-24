@@ -1488,11 +1488,17 @@ function App() {
       // Phase 2：daemon 模式"转入后台"时 closePty=false——PTY 留在守护进程里继续跑，
       // 快照仍落盘作为 daemon 也挂掉时的最终兜底。
       const terminalCleanup = await cleanupTerminalProcessesForExit(
-        { closePty, closeAllPty, foregroundSessionIds: ptySessionIds },
+        {
+          closePty,
+          closeAllPty,
+          foregroundSessionIds: ptySessionIds,
+          forceDaemonShutdown: discardSessions,
+        },
         {
           closeAll: () => terminalProcessManager.closeAll(),
           close: (sessionId) => terminalProcessManager.close(sessionId),
           shutdownDaemonIfIdle: () => invoke<boolean>("pty_daemon_shutdown_if_idle"),
+          forceShutdownDaemon: () => invoke<boolean>("pty_daemon_force_shutdown"),
         },
       );
       if (terminalCleanup.closeAllError) {

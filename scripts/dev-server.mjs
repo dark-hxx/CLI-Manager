@@ -1,5 +1,8 @@
 import http from "node:http";
 import { createServer } from "vite";
+import { copyFileSync, existsSync, statSync } from "node:fs";
+import path from "node:path";
+import { buildAndInstallHelperBinaries, helperBinaryPaths, helperProfile, helperTargetRoot } from "./prepare-helper-binaries.mjs";
 
 const DEV_PORT = 1420;
 const DEV_HOST = "127.0.0.1";
@@ -88,6 +91,12 @@ if (currentServer.available) {
   process.exit(1);
 }
 
+const helperTarget = process.platform === "win32" ? helperTargetRoot() : null;
+const helperProfileName = process.platform === "win32" ? helperProfile({ TAURI_ENV_DEBUG: "true" }) : null;
+if (helperTarget && helperProfileName) {
+  buildAndInstallHelperBinaries({ targetRoot: helperTarget, profile: helperProfileName });
+}
+
 const server = await createServer({
   server: {
     host: DEV_HOST,
@@ -99,8 +108,32 @@ await server.listen();
 server.printUrls();
 server.bindCLIShortcuts({ print: true });
 
+let helperWatch;
+if (helperTarget && helperProfileName) {
+  const outputPaths = helperBinaryPaths(helperTarget, helperProfileName);
+  const sourceDir = path.join(helperTarget, "helper-binaries", helperProfileName);
+  const lastOutputMtimes = new Map();
+  helperWatch = setInterval(() => {
+    for (const output of outputPaths) {
+      const name = path.basename(output);
+      const source = path.join(sourceDir, name);
+      if (!existsSync(source) || !existsSync(output)) continue;
+      try {
+        const outputMtime = statSync(output).mtimeMs;
+        if (lastOutputMtimes.get(output) === outputMtime) continue;
+        copyFileSync(source, output);
+        lastOutputMtimes.set(output, statSync(output).mtimeMs);
+      } catch {
+        // The daemon may already be running and hold the executable open.
+      }
+    }
+  }, 250);
+  helperWatch.unref();
+}
+
 // 创建自有 Vite 服务后，退出前先关闭该服务。
 close = async () => {
+  if (helperWatch) clearInterval(helperWatch);
   await server.close();
   process.exit(0);
 };

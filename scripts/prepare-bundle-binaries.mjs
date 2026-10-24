@@ -2,12 +2,24 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildAndInstallHelperBinaries, helperProfile, helperTargetRoot } from "./prepare-helper-binaries.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const targetRoot = path.join(repoRoot, "src-tauri", "target");
 const profile = process.env.TAURI_ENV_DEBUG === "true" ? "debug" : "release";
 const universalDir = path.join(targetRoot, "universal-apple-darwin", profile);
 const helperBinaryNames = ["cli-manager-daemon", "cli-manager-web-daemon", "cli-manager-codex-proxy"];
+
+const isWindowsTarget = process.env.TAURI_ENV_PLATFORM
+  ? process.env.TAURI_ENV_PLATFORM === "windows"
+  : process.platform === "win32";
+
+if (isWindowsTarget) {
+  buildAndInstallHelperBinaries({
+    targetRoot: helperTargetRoot(),
+    profile: helperProfile(),
+  });
+}
 
 if (process.env.TAURI_ENV_PLATFORM !== "darwin" || process.env.TAURI_ENV_ARCH !== "universal") {
   process.exit(0);

@@ -17,6 +17,7 @@ use uuid::Uuid;
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 static DAEMON_UPGRADE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static DAEMON_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // SSH 启动丢弃全部本机供应商快照配置，本机启动则原样保留各应用配置。
 fn provider_launch_configs(
@@ -47,6 +48,28 @@ async fn wait_for_daemon(daemon_bridge: &DaemonBridge) -> Option<Arc<DaemonClien
         }
     }
     None
+}
+
+async fn ensure_daemon(
+    app_handle: &AppHandle,
+    daemon_bridge: &DaemonBridge,
+) -> Result<Arc<DaemonClient>, String> {
+    if let Some(client) = daemon_bridge.get() {
+        return Ok(client);
+    }
+    let _recovery_guard = DAEMON_RECOVERY_LOCK.lock().await;
+    if let Some(client) = daemon_bridge.get() {
+        return Ok(client);
+    }
+    let data_dir = crate::app_paths::cli_manager_data_dir()?;
+    let handle = app_handle.clone();
+    let client = tokio::task::spawn_blocking(move || {
+        crate::daemon::client::connect_or_spawn(handle, &data_dir, cfg!(debug_assertions))
+    })
+    .await
+    .map_err(|err| format!("daemon recovery task failed: {err}"))??;
+    daemon_bridge.set(client.clone());
+    Ok(client)
 }
 
 // 仅当守护进程版本与应用完全相同且支持二进制 WebSocket 输出时判定契约符合当前要求。
@@ -159,9 +182,7 @@ pub async fn pty_prepare_create(
     }
 
     // Hook 上报指向 daemon 的稳定端口，确保 app 重启后仍然有效。
-    let mut daemon_client = wait_for_daemon(&daemon_bridge)
-        .await
-        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
+    let mut daemon_client = ensure_daemon(&app_handle, &daemon_bridge).await?;
     let mut daemon_restarted = false;
     if ssh_launch.is_some() && !daemon_is_current(&daemon_client) {
         let stale_version = daemon_client.info().version.clone();
@@ -285,6 +306,16 @@ pub async fn pty_daemon_shutdown_if_idle(
     Ok(true)
 }
 
+#[tauri::command]
+pub async fn pty_daemon_force_shutdown(
+    app_handle: AppHandle,
+    daemon_bridge: tauri::State<'_, DaemonBridge>,
+) -> Result<bool, String> {
+    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
+    client.force_shutdown()?;
+    Ok(true)
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PtyHostEndpoint {
@@ -301,11 +332,10 @@ pub struct PtyHostEndpoint {
 #[tauri::command]
 // 等待客户端后根据端口、协议版本与二进制能力返回 WebSocket 地址和令牌，缺能力时返回 legacy 模式。
 pub async fn pty_host_get_endpoint(
+    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Option<PtyHostEndpoint>, String> {
-    let Some(client) = wait_for_daemon(&daemon_bridge).await else {
-        return Ok(None);
-    };
+    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
     let info = client.info();
     let websocket_available = info.ws_port > 0
         && info.protocol_version > 0
@@ -369,15 +399,14 @@ fn legacy_client_frame_id(frame: &ClientFrame) -> Result<u64, &'static str> {
 #[tauri::command]
 // 解析并校验旧传输请求，等待已鉴权客户端后转发控制帧并序列化响应。
 pub async fn pty_legacy_request(
+    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     frame: serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let frame: ClientFrame = serde_json::from_value(frame)
         .map_err(|err| format!("invalid legacy PtyHost request: {err}"))?;
     let id = legacy_client_frame_id(&frame).map_err(str::to_string)?;
-    let client = wait_for_daemon(&daemon_bridge)
-        .await
-        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
+    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
     let reply = client.request(id, &frame)?;
     serde_json::to_value(reply).map_err(|err| err.to_string())
 }

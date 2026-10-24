@@ -2,12 +2,14 @@ export interface TerminalExitCleanupOptions {
   closePty: boolean;
   closeAllPty: boolean;
   foregroundSessionIds: string[];
+  forceDaemonShutdown?: boolean;
 }
 
 export interface TerminalExitCleanupDependencies {
   closeAll: () => Promise<void>;
   close: (sessionId: string) => Promise<void>;
   shutdownDaemonIfIdle: () => Promise<boolean>;
+  forceShutdownDaemon?: () => Promise<boolean>;
 }
 
 export interface TerminalExitCleanupResult {
@@ -49,7 +51,9 @@ export async function cleanupTerminalProcessesForExit(
   }
 
   try {
-    result.daemonStopped = await dependencies.shutdownDaemonIfIdle();
+    result.daemonStopped = options.forceDaemonShutdown && dependencies.forceShutdownDaemon
+      ? await dependencies.forceShutdownDaemon()
+      : await dependencies.shutdownDaemonIfIdle();
   } catch (error) {
     result.canExit = false;
     result.shutdownError = error;

@@ -126,3 +126,22 @@ test("closeAll failure still exits when daemon confirms it is idle", async () =>
   assert.match(String(result.closeAllError), /response lost/);
   assert.deepEqual(calls, [["closeAll"], ["shutdown"]]);
 });
+
+test("discard exit uses force daemon shutdown after cleanup", async () => {
+  const { calls, dependencies } = createDependencies({
+    async forceShutdownDaemon() {
+      calls.push(["force-shutdown"]);
+      return true;
+    },
+  });
+  const result = await cleanupTerminalProcessesForExit({
+    closePty: true,
+    closeAllPty: true,
+    foregroundSessionIds: [],
+    forceDaemonShutdown: true,
+  }, dependencies);
+
+  assert.equal(result.canExit, true);
+  assert.equal(result.daemonStopped, true);
+  assert.deepEqual(calls, [["closeAll"], ["force-shutdown"]]);
+});

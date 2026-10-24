@@ -31,21 +31,21 @@ pub(crate) use app::migrations::{
 #[cfg(test)]
 pub(crate) use app::migrations::{
     MIGRATION_ADD_NODE_APPEARANCE_VERSION, MIGRATION_ADD_SSH_CONFIG_FILE_SQL,
-    MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION, MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL,
     MIGRATION_CREATE_EXTENSION_MCP_RESOURCES_VERSION,
     MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION,
     MIGRATION_CREATE_EXTENSION_SKILLS_DESCRIPTION, MIGRATION_CREATE_EXTENSION_SKILLS_SQL,
-    MIGRATION_CREATE_EXTENSION_SKILLS_VERSION, MIGRATION_CREATE_MESSAGE_STARS_DESCRIPTION,
-    MIGRATION_CREATE_MESSAGE_STARS_SQL, MIGRATION_CREATE_MESSAGE_STARS_VERSION,
+    MIGRATION_CREATE_EXTENSION_SKILLS_VERSION, MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
+    MIGRATION_CREATE_MESSAGE_STARS_DESCRIPTION, MIGRATION_CREATE_MESSAGE_STARS_SQL,
+    MIGRATION_CREATE_MESSAGE_STARS_VERSION, MIGRATION_CREATE_SSH_AGENT_INTEGRATIONS_SQL,
     MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
 };
 
+#[path = "infrastructure/process/agent_launcher.rs"]
+pub(crate) mod agent_launcher;
 #[path = "infrastructure/storage/app_paths.rs"]
 pub mod app_paths;
 #[path = "features/providers/ccswitch_db.rs"]
 mod ccswitch_db;
-#[path = "features/extensions/mod.rs"]
-pub(crate) mod extensions;
 #[path = "features/hooks/claude.rs"]
 mod claude_hook;
 #[path = "features/codex-proxy/mod.rs"]
@@ -55,20 +55,22 @@ pub mod codex_statusline;
 mod commands;
 #[path = "features/open_terminal.rs"]
 mod open_terminal;
-#[path = "infrastructure/process/agent_launcher.rs"]
-pub(crate) mod agent_launcher;
-#[path = "infrastructure/storage/legacy_remote_state.rs"]
-pub(crate) mod legacy_remote_state;
 #[path = "infrastructure/process/conpty_sideload.rs"]
 mod conpty_sideload;
 #[path = "infrastructure/diagnostics/crash_reporter.rs"]
 mod crash_reporter;
 #[path = "infrastructure/storage/credential_store.rs"]
 pub(crate) mod credential_store;
+#[path = "features/extensions/mod.rs"]
+pub(crate) mod extensions;
+#[path = "infrastructure/storage/legacy_remote_state.rs"]
+pub(crate) mod legacy_remote_state;
 #[path = "infrastructure/storage/repo_operation.rs"]
 pub(crate) mod repo_operation;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
 // 因此 app_paths 与 daemon 需 pub。
+#[path = "features/hooks/codex_goal.rs"]
+mod codex_goal;
 #[path = "infrastructure/daemon/mod.rs"]
 pub mod daemon;
 pub mod device_identity;
@@ -78,8 +80,6 @@ mod file_watcher;
 mod git_watcher;
 #[path = "features/hooks/client.rs"]
 pub mod hook_client;
-#[path = "features/hooks/codex_goal.rs"]
-mod codex_goal;
 #[path = "infrastructure/system/linux_graphics.rs"]
 mod linux_graphics;
 #[path = "features/files/live_server/mod.rs"]
@@ -124,11 +124,11 @@ pub mod web_daemon;
 mod web_device_outbox;
 #[path = "infrastructure/webdav/mod.rs"]
 mod webdav;
-#[path = "infrastructure/process/wsl.rs"]
-mod wsl;
 #[cfg(target_os = "windows")]
 #[path = "shared/windows_command_line.rs"]
 mod windows_command_line;
+#[path = "infrastructure/process/wsl.rs"]
+mod wsl;
 
 use log::LevelFilter;
 use serde_json::Value;
@@ -645,6 +645,7 @@ pub fn run() {
             commands::terminal::pty_status,
             commands::terminal::pty_daemon_active,
             commands::terminal::pty_daemon_shutdown_if_idle,
+            commands::terminal::pty_daemon_force_shutdown,
             commands::terminal::pty_host_get_endpoint,
             commands::terminal::pty_legacy_request,
             commands::terminal::pty_daemon_upgrade_if_idle,
@@ -1370,11 +1371,9 @@ mod provider_migration_tests {
         MIGRATION_BACKFILL_REQUEST_LOG_PROJECT_PATH_VERSION,
         MIGRATION_CREATE_EXTENSION_MCP_RESOURCES_VERSION,
         MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION,
-        MIGRATION_CREATE_EXTENSION_SKILLS_DESCRIPTION,
-        MIGRATION_CREATE_EXTENSION_SKILLS_SQL,
+        MIGRATION_CREATE_EXTENSION_SKILLS_DESCRIPTION, MIGRATION_CREATE_EXTENSION_SKILLS_SQL,
         MIGRATION_CREATE_EXTENSION_SKILLS_VERSION,
-        MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION,
-        MIGRATION_CREATE_MESSAGE_STARS_VERSION,
+        MIGRATION_CREATE_HISTORY_GENERATED_TITLES_VERSION, MIGRATION_CREATE_MESSAGE_STARS_VERSION,
         MIGRATION_MATERIALIZE_REQUEST_LOG_PROJECT_PATH_VERSION,
     };
 
@@ -1494,9 +1493,7 @@ mod provider_migration_tests {
         assert!(project_path_mode_migration.version < ssh_attachment_root_migration.version);
         let extension_mcp_migration = registry
             .iter()
-            .find(|migration| {
-                migration.version == MIGRATION_CREATE_EXTENSION_MCP_RESOURCES_VERSION
-            })
+            .find(|migration| migration.version == MIGRATION_CREATE_EXTENSION_MCP_RESOURCES_VERSION)
             .expect("extension MCP migration must be registered");
         assert_eq!(extension_mcp_migration.version, 38);
         assert!(extension_mcp_migration
@@ -1514,7 +1511,10 @@ mod provider_migration_tests {
             MIGRATION_CREATE_EXTENSION_SKILLS_DESCRIPTION
         );
         assert!(extension_mcp_migration.version < extension_skill_migration.version);
-        assert_eq!(extension_skill_migration.sql, MIGRATION_CREATE_EXTENSION_SKILLS_SQL);
+        assert_eq!(
+            extension_skill_migration.sql,
+            MIGRATION_CREATE_EXTENSION_SKILLS_SQL
+        );
         assert!(extension_skill_migration
             .sql
             .contains("CREATE TABLE IF NOT EXISTS extension_skill_packages"));
@@ -1523,7 +1523,9 @@ mod provider_migration_tests {
             .contains("CREATE TABLE IF NOT EXISTS extension_skill_installations"));
         let scope_policy_migration = registry
             .iter()
-            .find(|migration| migration.version == MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION)
+            .find(|migration| {
+                migration.version == MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION
+            })
             .expect("extension scope policy migration must be registered");
         assert_eq!(scope_policy_migration.version, 40);
         assert!(extension_skill_migration.version < scope_policy_migration.version);
@@ -1550,15 +1552,21 @@ mod extension_scope_policy_migration_tests {
         let registry = migrations();
         let migration = registry
             .iter()
-            .find(|migration| migration.version == MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION)
+            .find(|migration| {
+                migration.version == MIGRATION_CREATE_EXTENSION_SCOPE_POLICIES_VERSION
+            })
             .expect("extension scope policy migration must be registered");
         assert_eq!(migration.version, 40);
         assert_eq!(migration.description, "create_extension_scope_policies");
         assert!(migration
             .sql
             .contains("PRIMARY KEY (scope_kind, scope_id, cli, extension_kind)"));
-        assert!(migration.sql.contains("CHECK(mode IN ('inherit', 'custom'))"));
-        assert!(migration.sql.contains("REFERENCES projects(id) ON DELETE CASCADE"));
+        assert!(migration
+            .sql
+            .contains("CHECK(mode IN ('inherit', 'custom'))"));
+        assert!(migration
+            .sql
+            .contains("REFERENCES projects(id) ON DELETE CASCADE"));
     }
 }
 
@@ -1578,12 +1586,17 @@ mod message_star_migration_tests {
             .find(|migration| migration.version == MIGRATION_CREATE_MESSAGE_STARS_VERSION)
             .expect("message star migration must be registered");
         assert_eq!(migration.version, 41);
-        assert_eq!(migration.description, MIGRATION_CREATE_MESSAGE_STARS_DESCRIPTION);
+        assert_eq!(
+            migration.description,
+            MIGRATION_CREATE_MESSAGE_STARS_DESCRIPTION
+        );
         assert_eq!(migration.sql, MIGRATION_CREATE_MESSAGE_STARS_SQL);
         assert!(migration
             .sql
             .contains("CREATE TABLE IF NOT EXISTS message_stars"));
-        assert!(migration.sql.contains("PRIMARY KEY (session_key, message_index)"));
+        assert!(migration
+            .sql
+            .contains("PRIMARY KEY (session_key, message_index)"));
         assert!(migration
             .sql
             .contains("idx_message_stars_session ON message_stars(session_key)"));

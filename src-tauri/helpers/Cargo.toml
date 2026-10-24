@@ -1,0 +1,24 @@
+[package]
+name = "cli-manager-helpers"
+version = "1.4.4"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "cli-manager-daemon"
+path = "src/daemon.rs"
+
+[[bin]]
+name = "cli-manager-web-daemon"
+path = "src/web_daemon.rs"
+
+[[bin]]
+name = "cli-manager-codex-proxy"
+path = "src/codex_proxy.rs"
+
+[dependencies]
+cli-manager = { package = "cli-manager", path = ".." }
+log = "0.4"
+
+[build-dependencies]
+embed-resource = "3.0.12"

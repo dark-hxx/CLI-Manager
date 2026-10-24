@@ -93,6 +93,17 @@ impl DaemonClient {
         self.connected.load(Ordering::SeqCst)
     }
 
+    /// Mark the control channel unusable after an I/O failure or timeout.
+    /// The bridge will drop this client on its next `get`, allowing callers
+    /// to establish a fresh daemon connection instead of reusing a stale
+    /// endpoint.
+    pub fn mark_disconnected(&self) {
+        self.connected.store(false, Ordering::SeqCst);
+        if let Ok(mut pending) = self.pending.lock() {
+            pending.clear();
+        }
+    }
+
     /// 连接并完成鉴权握手；成功后启动推送分发线程。
     // 连接本机 daemon 并完成鉴权，更新协议能力后启动后台接收线程。
     pub fn connect(mut info: DaemonInfo, app_handle: AppHandle) -> Result<Arc<Self>, String> {
@@ -294,7 +305,7 @@ impl DaemonClient {
                 writer
                     .write_all(encode_frame(frame).as_bytes())
                     .map_err(|err| {
-                        self.connected.store(false, Ordering::SeqCst);
+                        self.mark_disconnected();
                         format!("daemon write failed: {err}")
                     })
             });
@@ -304,9 +315,13 @@ impl DaemonClient {
             }
             return Err(error);
         }
-        let reply = rx
-            .recv_timeout(timeout)
-            .map_err(|err| format!("daemon reply timeout: {err}"));
+        let reply = rx.recv_timeout(timeout).map_err(|err| {
+            // A request timeout means the control stream can no longer be
+            // trusted.  Leave the bridge in a recoverable state so the next
+            // endpoint/PTY request can respawn and reconnect the daemon.
+            self.mark_disconnected();
+            format!("daemon reply timeout: {err}")
+        });
         if let Ok(mut pending) = self.pending.lock() {
             pending.remove(&id);
         }
@@ -373,6 +388,26 @@ impl DaemonClient {
     pub fn shutdown_if_idle(&self) -> Result<(), String> {
         let id = self.next_request_id();
         self.expect_ok(&ClientFrame::Shutdown { id }, id)
+    }
+
+    /// Stop routing and close every PTY before terminating the daemon.
+    /// This is used only for the explicit discard-and-exit path.
+    pub fn force_shutdown(&self) -> Result<(), String> {
+        let routing_id = self.next_request_id();
+        match self.request(routing_id, &ClientFrame::RoutingStop { id: routing_id })? {
+            DaemonFrame::RoutingEvent { event } if event.error.is_none() => {}
+            DaemonFrame::RoutingEvent { event } => {
+                let message = event
+                    .error
+                    .map(|error| error.code)
+                    .unwrap_or_else(|| "routing stop failed".to_string());
+                return Err(message);
+            }
+            other => return Err(format!("daemon unexpected routing stop reply: {other:?}")),
+        }
+        let close_id = self.next_request_id();
+        self.expect_ok(&ClientFrame::CloseAll { id: close_id }, close_id)?;
+        self.shutdown_if_idle()
     }
 
     // 按远程请求类别选择应答等待时限，发送 SSH Agent 请求并返回其载荷。
@@ -497,10 +532,25 @@ fn daemon_executable_path() -> Result<std::path::PathBuf, String> {
 
 // 以 __daemon 子命令启动当前程序，丢弃标准流；Unix 使用独立会话，Windows 隐藏窗口。
 fn spawn_daemon_process() -> Result<(), String> {
-    let exe = daemon_executable_path()?;
+    let current_exe = daemon_executable_path()?;
+    let helper_name = if cfg!(target_os = "windows") {
+        "cli-manager-daemon.exe"
+    } else {
+        "cli-manager-daemon"
+    };
+    let helper = current_exe
+        .parent()
+        .map(|parent| parent.join(helper_name))
+        .filter(|path| path.is_file());
+    let (exe, use_self_dispatch) = match helper {
+        Some(path) => (path, false),
+        None => (current_exe, true),
+    };
     let mut command = std::process::Command::new(&exe);
+    if use_self_dispatch {
+        command.arg("__daemon");
+    }
     command
-        .arg("__daemon")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
