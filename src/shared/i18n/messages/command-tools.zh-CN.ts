@@ -28,6 +28,7 @@ export const zh = {
   "commandTemplate.deleteNamed": "删除模板 {name}",
   "commandTemplate.inactiveHint": "当前无活跃终端，仅可管理全局/项目模板",
   "commandTemplate.toast.runFailed": "执行模板命令失败",
+  "commandTemplate.toast.terminalNotReady": "终端输入尚未就绪，请等待终端连接后重试。",
   "commandTemplate.toast.saveSuccess": "模板保存成功",
   "commandTemplate.toast.saveFailed": "模板保存失败",
   "commandHistory.title": "命令历史",

@@ -1,0 +1,32 @@
+{
+  "id": "fix-codex-template-submit",
+  "name": "fix-codex-template-submit",
+  "title": "Fix command template submission in Codex",
+  "description": "Repair Codex template submission by preserving negotiated paste boundaries in both template execution entry points, then rebuild the local macOS app.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "felix",
+  "assignee": "felix",
+  "createdAt": "2026-10-24",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/features/terminal/api/terminalTextSubmission.ts",
+    "src/features/terminal/hooks/useTerminalInput.ts",
+    "src/features/prompts/api/CommandTemplatePanel.tsx",
+    "src/features/workspace/api/CommandPalette.tsx",
+    "scripts/terminalTextSubmission.test.mjs"
+  ],
+  "notes": "Implementation and signed local build ready for user GUI acceptance. Changes intentionally left uncommitted; live sessions were not restarted.",
+  "meta": {}
+}
