@@ -15,12 +15,12 @@
   "branch": "fix/tap-transcript-performance",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": "4fc1e018",
+  "commit": "d8fdf36b",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "补充修复已获用户确认：手机默认文本重排及原生网格下半屏裁剪；沿用 1.4.4，仅更新 Tap 前端，先提交再封装 NSIS，复用 4fc1e018 后端；未同步、推送或安装。此前包 SHA256 0C4176E8BEB8E489242F95C243650A2DE5270FEAF087BC662976E487966D05DC；本轮包验证后追加。",
+  "notes": "手机默认文本重排及原生网格下半屏裁剪修复已提交并封装；前端源码 d8fdf36b，复用 4fc1e018 后端。1.4.4 NSIS 31,644,365 字节，SHA256 472B12C9F42AA879720AEA4868A7ECF96979DB790AF9C5F30C150FD5B80B4ED2。19 个 Web/Tap 资源、11 个引用及 4 个复用后端实包校验通过；120 项单测及隔离浏览器通过。未同步、推送或安装，待用户 Safari 实机验收。",
   "meta": {}
 }

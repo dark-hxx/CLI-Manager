@@ -66,3 +66,13 @@ GitNexus 工具本会话未暴露，按契约降级到 codebase-memory 与源码
 - 浏览器为隔离 Edge/Chromium；真实 iPhone Safari、原生软键盘、惯性触摸尚待用户实机测试。测试的触摸为浏览器合成事件，高度变化模拟键盘挤占，不等于真机验证。未写入用户 PTY 或启动桌面应用。
 - 前端源码提交、NSIS 解包及复用后端哈希核对结果于打包后追加。
 - 增强浏览器断言同时要求原生容器非 hidden，避免把隐藏层的正确几何当作可见；显式选择原生后再测字号/高度。真实 xterm 额外写入 90 行后，外层顶部继续滚轮可进入原生历史；小网格自动模式覆盖触摸横屏及桌面/手机视口往返。最后单独终端浏览器回归再次通过。
+
+### 前端重新封装 NSIS 结果
+
+- 先提交 `d8fdf36b4317462dd4b55c552a0c9be25a9a14fe`，干净工作区运行 `npm run tap:build`，然后用官方 `tauri bundle --bundles nsis` 封装既有 release 主程序，不编译 Rust。`CARGO_TARGET_DIR=src-tauri/target/local`；叠加既有 `tauri.local.conf.json` 和本地 ignored 配置，仅将 `beforeBundleCommand` 置 null，避免重复构建未修改的 helper；正式打包配置不变。
+- 停用 helper 构建前已核对主程序、3 个 helper 与上一轮已验证 NSIS 完全一致（仅主程序 release 的 UNK / NSIS 的 NSS 标记区别）；既有 4 个经典 Web 资源也与旧包一致。旧安装包完整备份并核对 SHA256 后才覆盖。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.4_x64-setup.exe`，31,644,365 字节，2026-10-26 11:15:07 +08:00。
+- SHA256：`472B12C9F42AA879720AEA4868A7ECF96979DB790AF9C5F30C150FD5B80B4ED2`，与前一包不同，生成时间晚于本轮开始。
+- 7-Zip 完整性测试及非安装式解包通过；19 个 Web/Tap 文件（其中 Tap 15 个）的路径/哈希逐项匹配本轮产物，11 个 HTML/CSS/manifest 静态引用存在，经典 Web 4 个资源未变。
+- 新旧两个 NSIS 中的主程序和全部 3 个 helper 字节完全相同，证明复用 `4fc1e018` 后端；打包前后 release 原始 SHA256 均未变，仅新 Tap 资源替换。主程序构建目录/NSIS 之间仍仅有已验证的 NSS/UNK 3 字节标记差异。
+- 解包与详细指纹在 ignored `.codex/tap-viewport-nsis-*` 和 `.codex/tap-viewport-package-verification.json`。仅交付 NSIS，不生成 MSI；未安装、未启动用户应用、未推送。用户需安装后刷新网页，真实 Safari 验收仍未完成。
