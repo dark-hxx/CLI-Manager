@@ -16,6 +16,8 @@ import { terminalWrites } from "./terminalWrites";
 import { readerLines } from "./format";
 import { nativeCommandPrefix } from "./completion";
 import type { Translate } from "./i18n";
+import { PHONE_QUERY } from "./preferences";
+import { installTerminalViewport } from "./terminalViewport";
 
 export type TerminalHandle = {
   key: (key: Key, modifiers: Modifiers) => boolean;
@@ -42,18 +44,19 @@ const DESKTOP_MONO = "ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Monaco, 'C
 export function Terminal({ ref, sessionId, stream, active, visible, connected, state, fontSize, t, onInput, onResize, onError, onRetry, onInfo, nativeMenu = false }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const terminal = useRef<Xterm | null>(null);
-  const options = useRef({ active, visible, connected, state, onInput, onResize, onError });
-  options.current = { active, visible, connected, state, onInput, onResize, onError };
+  const options = useRef({ active, visible, connected, state, onInput, onResize, onError, nativeMenu });
+  options.current = { active, visible, connected, state, onInput, onResize, onError, nativeMenu };
   const relayout = useRef(() => {});
   const [direct, setDirect] = useState(false);
   const [dimensions, setDimensions] = useState("");
   const [reading, setReading] = useState(false);
   const [readerText, setReaderText] = useState("");
-  const [wide, setWide] = useState(false);
   const [failed, setFailed] = useState(false);
   const broken = useRef(false);
-  const forceNative = useRef(false);
+  const presentation = useRef<"auto" | "native" | "reader">("auto");
+  const directInput = useRef(false);
   const reader = useRef<HTMLDivElement>(null);
+  const readerPinned = useRef(true);
   const sendVersion = useRef(0);
   useEffect(() => { if (!connected || !active) sendVersion.current++; }, [connected, active]);
 
@@ -80,23 +83,37 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
   }), []);
   function enterDirect() {
     if (!options.current.connected || broken.current) return;
-    forceNative.current = true;
-    flushSync(() => setReading(false));
+    directInput.current = true;
+    flushSync(() => { setReading(false); setDirect(true); });
+    relayout.current();
     const textarea = terminal.current?.textarea;
     if (textarea) { textarea.readOnly = false; textarea.inputMode = "text"; }
-    terminal.current?.focus(); setDirect(true);
+    terminal.current?.focus();
   }
   function leaveDirect() {
     const textarea = terminal.current?.textarea;
     const coarse = matchMedia("(pointer: coarse)").matches;
     if (textarea) { textarea.readOnly = coarse; textarea.inputMode = coarse ? "none" : "text"; }
-    terminal.current?.blur(); setDirect(false);
+    directInput.current = false;
+    terminal.current?.blur(); setDirect(false); relayout.current();
   }
   const info = useRef(onInfo);
   info.current = onInfo;
   useEffect(() => { info.current?.({ size: dimensions, direct }); }, [dimensions, direct]);
   useEffect(() => { if (!connected && direct) leaveDirect(); }, [connected, direct]);
   const lines = useMemo(() => readerLines(readerText.split("\n")), [readerText]);
+  useEffect(() => {
+    if (!reading || !active || !visible || !reader.current) return;
+    let frame = 0;
+    const pin = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        if (readerPinned.current && reader.current) reader.current.scrollTop = reader.current.scrollHeight;
+      });
+    };
+    const observer = new ResizeObserver(pin); observer.observe(reader.current); pin();
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); };
+  }, [reading, readerText, fontSize, active, visible]);
 
   useEffect(() => {
     if (!host.current) return;
@@ -143,9 +160,7 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
         else lines.push(text);
       }
       while (lines.length && !lines.at(-1)) lines.pop();
-      const pinned = !reader.current || reader.current.scrollHeight - reader.current.scrollTop - reader.current.clientHeight < 32;
       setReaderText(lines.join("\n"));
-      if (pinned) requestAnimationFrame(() => { if (!disposed && reader.current) reader.current.scrollTop = reader.current.scrollHeight; });
     };
     const scheduleReader = () => {
       if (usingReader && readerTimer === undefined) readerTimer = setTimeout(readBuffer, 150);
@@ -163,15 +178,16 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
       }
       const fitCols = fit.proposeDimensions()?.cols ?? term.cols;
       const narrow = options.current.state.controlMode === "desktop" && term.cols > fitCols + 2;
-      usingReader = narrow && !forceNative.current;
-      setWide(narrow); setReading(usingReader);
+      usingReader = !options.current.nativeMenu && !directInput.current
+        && (presentation.current === "reader" || (presentation.current === "auto" && (phoneFont.matches || narrow)));
+      setReading(usingReader);
       if (usingReader) readBuffer();
       setDimensions(`${term.cols}×${term.rows}`);
     };
     const schedule = () => { cancelAnimationFrame(raf); raf = requestAnimationFrame(resize); };
     relayout.current = schedule;
     const observer = new ResizeObserver(schedule); observer.observe(host.current);
-    const phoneFont = matchMedia("(max-width: 767px)");
+    const phoneFont = matchMedia(PHONE_QUERY);
     const applyFont = () => {
       if (disposed) return;
       if (phoneFont.matches) {
@@ -263,37 +279,27 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
   useEffect(() => {
     if (terminal.current) terminal.current.options.fontSize = fontSize;
     relayout.current();
-  }, [fontSize, active, visible, state.controlMode, state.cols, state.rows]);
+  }, [fontSize, active, visible, state.controlMode, state.cols, state.rows, nativeMenu]);
 
   useEffect(() => {
     const term = terminal.current, container = host.current;
-    if (!nativeMenu || !active || !visible || !term || !container) return;
-    // A desktop-owned grid can exceed this embedded panel. Reveal its prompt without resizing the PTY.
-    const reveal = () => {
-      const screen = container.querySelector<HTMLElement>(".xterm-screen");
-      if (!screen) return;
-      const row = screen.clientHeight / term.rows, col = screen.clientWidth / term.cols;
-      const top = term.buffer.active.cursorY * row, left = term.buffer.active.cursorX * col;
-      if (top < container.scrollTop || top + row * 8 > container.scrollTop + container.clientHeight)
-        container.scrollTop = Math.max(0, top - Math.max(row * 2, container.clientHeight / 3));
-      if (left < container.scrollLeft || left + col * 2 > container.scrollLeft + container.clientWidth)
-        container.scrollLeft = Math.max(0, left - container.clientWidth / 2);
-    };
-    const rendered = term.onRender(reveal);
-    const resized = new ResizeObserver(reveal); resized.observe(container);
-    reveal();
-    return () => { rendered.dispose(); resized.disconnect(); };
-  }, [nativeMenu, active, visible, sessionId, stream]);
+    if (reading || !active || !visible || !term || !container) return;
+    return installTerminalViewport(term, container, nativeMenu);
+  }, [reading, nativeMenu, direct, active, visible, sessionId, stream]);
 
   return <div className={`tap-terminal${direct ? " is-direct" : ""}`} aria-label={t("terminal")}>
     {failed && <div className="tap-terminal-failed" role="alert">{t("unavailable")} <button type="button" onClick={onRetry}>{t("reconnect")}</button></div>}
     <div ref={host} className="tap-terminal-screen" style={reading ? { visibility: "hidden" } : undefined} />
-    <div ref={reader} className="tap-terminal-reader" hidden={!reading} style={{ fontSize }}>
+    <div ref={reader} className="tap-terminal-reader" hidden={!reading} style={{ fontSize }} onScroll={(event) => {
+      if (!reading) return;
+      const node = event.currentTarget;
+      readerPinned.current = node.scrollHeight - node.scrollTop - node.clientHeight < 32;
+    }}>
       {lines.map(({ text, rule }, index) => <div key={index} className={rule ? "is-rule" : undefined}>{text || "\u00a0"}</div>)}
     </div>
-    {(wide || direct) && <div className="tap-terminal-chips">
-      {wide && !direct && <button type="button" className="tap-terminal-chip" title={t(reading ? "nativeHint" : "readingHint")}
-        onClick={() => { forceNative.current = reading; relayout.current(); }}>
+    {(!nativeMenu || direct) && <div className="tap-terminal-chips">
+      {!nativeMenu && !direct && <button type="button" className="tap-terminal-chip" title={t(reading ? "nativeHint" : "readingHint")}
+        onClick={() => { presentation.current = reading ? "native" : "reader"; relayout.current(); }}>
         {reading ? <MonitorUp size={13} /> : <BookOpenText size={13} />}{t(reading ? "nativeView" : "readingView")}
       </button>}
       {direct && <button type="button" className="tap-terminal-chip is-direct" aria-pressed onClick={leaveDirect}>

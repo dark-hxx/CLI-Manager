@@ -736,6 +736,7 @@ pub fn run() {
             commands::deepseek::deepseek_tui_prepare_launch,
             commands::history::history_list_sessions,
             commands::history::history_get_session,
+            commands::history::history_read_live_transcript,
             commands::history::history_convert_session,
             commands::history::history_delete_session,
             commands::history_edit::history_update_message,

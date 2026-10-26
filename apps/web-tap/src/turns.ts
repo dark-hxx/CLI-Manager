@@ -15,6 +15,38 @@ const time = (message?: TranscriptMessage) => {
   return Number.isFinite(value) ? value : undefined;
 };
 
+const sources = new WeakMap<Turn, TranscriptMessage[]>();
+
+/** Rebuild only changed turns; source identity is stable after page reconciliation. */
+export function stableTurns(messages: TranscriptMessage[], previous: Turn[]): Turn[] {
+  const old = new Map(previous.map((turn) => [turn.key, turn]));
+  const segments: TranscriptMessage[][] = [];
+  for (const message of messages) {
+    if (!segments.length || (message.role === "user" && message.text.trim())) segments.push([]);
+    segments.at(-1)!.push(message);
+  }
+  const next = segments.map((segment) => {
+    const cached = old.get(segment[0]!.id);
+    const before = cached && sources.get(cached);
+    if (before?.length === segment.length && before.every((message, index) => message === segment[index])) return cached!;
+    const turn = groupTurns(segment)[0]!;
+    sources.set(turn, segment);
+    return turn;
+  });
+  return next.length === previous.length && next.every((turn, index) => turn === previous[index]) ? previous : next;
+}
+
+/** Bounded response pages overlap; reuse identical rows instead of repainting old Markdown. */
+export function mergeTranscript(old: TranscriptMessage[], page: { messages: TranscriptMessage[]; total: number }, reset: boolean): TranscriptMessage[] {
+  const existing = new Map((reset ? [] : old).filter((m) => Number(m.id.slice(m.id.lastIndexOf(":") + 1)) < page.total).map((m) => [m.id, m]));
+  for (const message of page.messages) {
+    const cached = existing.get(message.id);
+    if (!cached || JSON.stringify(cached) !== JSON.stringify(message)) existing.set(message.id, message);
+  }
+  const next = [...existing.values()].sort((a, b) => Number(a.id.slice(a.id.lastIndexOf(":") + 1)) - Number(b.id.slice(b.id.lastIndexOf(":") + 1)));
+  return next.length === old.length && next.every((m, index) => m === old[index]) ? old : next;
+}
+
 /** Tool results never start a user turn; pair tools only by an explicit call ID. */
 export function groupTurns(messages: TranscriptMessage[]): Turn[] {
   const turns: Turn[] = [];

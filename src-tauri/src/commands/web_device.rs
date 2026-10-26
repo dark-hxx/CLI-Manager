@@ -145,6 +145,7 @@ pub struct TerminalStatusRequest {
 
 #[derive(Default)]
 struct RuntimeState {
+    transcript_notifications: bool,
     running: bool,
     connected: bool,
     paired: bool,
@@ -509,13 +510,14 @@ impl WebDeviceManager {
         generation: u64,
     ) -> Result<(), String> {
         match frame {
-            ServerToDeviceFrame::HelloOk { paired, .. } => {
+            ServerToDeviceFrame::HelloOk { paired, capabilities, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
                     if self.generation.load(Ordering::SeqCst) != generation {
                         return Ok(());
                     }
                     runtime.connected = true;
                     runtime.paired = paired;
+                    runtime.transcript_notifications = capabilities.iter().any(|s| s == "terminal.transcript.changed");
                 }
                 self.emit_status(app);
             }
@@ -630,6 +632,7 @@ fn default_capabilities() -> Vec<String> {
         "history.snapshot".to_string(),
         "conversation".to_string(),
         "terminal.transcript".to_string(),
+        "terminal.transcript.incremental".to_string(),
         "conversation.start".to_string(),
         "conversation.prompt".to_string(),
         "terminal.stream".to_string(),
@@ -1520,6 +1523,19 @@ pub async fn web_device_terminal_status(
 ) -> Result<(), String> {
     let manager = manager.inner().clone();
     run_web_device_blocking(move || web_device_terminal_status_blocking(manager, request)).await
+}
+
+pub(crate) fn publish_transcript_change(app: &AppHandle, session_id: &str) -> Result<(), String> {
+    let manager = app.state::<WebDeviceManager>();
+    let (running, supported) = {
+        let runtime = manager.runtime.lock().map_err(|_| "web device state lock poisoned")?;
+        (runtime.running, runtime.connected && runtime.transcript_notifications)
+    };
+    if running {
+        if !supported { return Ok(()); }
+        return manager.queue(DeviceToServerFrame::TranscriptChanged { session_id: session_id.into() });
+    }
+    daemon_call::<()>(crate::web_daemon::Request::TranscriptChanged { session_id: session_id.into() })
 }
 
 pub(crate) fn web_device_terminal_status_blocking(

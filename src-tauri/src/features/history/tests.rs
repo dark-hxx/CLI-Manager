@@ -33,6 +33,7 @@ mod scope_paths;
 mod session_file_cache;
 mod session_pipeline;
 mod transcript_activity;
+mod live_transcript;
 mod usage_stats;
 
 mod tool_observations;

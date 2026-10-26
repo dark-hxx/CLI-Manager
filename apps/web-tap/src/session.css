@@ -12,8 +12,9 @@
   border: 1px solid var(--term-border); border-radius: 12px; background: var(--term-bg); transition: box-shadow 150ms;
 }
 .tap-terminal.is-direct { box-shadow: 0 0 0 3px color-mix(in oklch, var(--brand) 30%, transparent); }
-.tap-terminal-screen { position: relative; flex: 1; min-height: 0; overflow: hidden; }
-.tap-terminal-screen .xterm { height: 100%; }
+.tap-terminal-screen { position: relative; flex: 1; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+/* The mirrored grid keeps its intrinsic size; this viewport, not the PTY, fits the panel. */
+.tap-terminal-screen .xterm { width: max-content; min-width: 100%; height: auto; }
 .tap-terminal-screen :is(.xterm, .xterm-viewport, .xterm-scrollable-element) { background-color: var(--term-bg) !important; }
 .tap-terminal-reader {
   position: absolute; inset: 0; padding: 10px 12px 24px 14px; overflow: auto; overscroll-behavior: contain; color: #e4e4e7;

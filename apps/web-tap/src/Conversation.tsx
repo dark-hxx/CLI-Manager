@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
@@ -7,7 +7,8 @@ import {
 import type { JsonObject, JsonValue, TerminalStream, TerminalTranscript, TranscriptMessage } from "./protocol";
 import { fill, type Translate } from "./i18n";
 import { clock, duration, fullTime, modelName } from "./format";
-import { groupTurns, type Turn } from "./turns";
+import { stableTurns, mergeTranscript, type Turn } from "./turns";
+import type { createTranscriptSignals } from "./transcriptSignals";
 import { ConversationCodeBlock, ConversationCodeI18n } from "./ConversationCodeBlock";
 import { ConversationActivity } from "./ConversationActivity";
 import { ConversationStep } from "./ConversationStep";
@@ -18,10 +19,11 @@ import { captureAnchor, restoreAnchor, scrollToItem, type ScrollAnchor } from ".
 import { hitIn, type Hits } from "./chatFind";
 import { processText, stepViews, turnChanges, type TurnChanges } from "./tools";
 
-/** Update visible history in response to output; idle/hidden chats never poll continuously. */
-export function Conversation({ sessionId, context, run, stream, active, supported, chatSize, onTerminal, onReconnect, t }: {
+/** Visible chats use bounded revision reads; legacy/hidden chats never poll full history. */
+export function Conversation({ sessionId, context, run, stream, active, supported, incremental = false, changes, scope = "", chatSize, onTerminal, onReconnect, t }: {
   sessionId: string; context: JsonObject; run: (kind: string, payload: JsonObject) => Promise<JsonValue>;
   stream: TerminalStream; active: boolean; supported: boolean; chatSize: number; onTerminal: () => void; onReconnect: () => void; t: Translate;
+  incremental?: boolean; changes?: ReturnType<typeof createTranscriptSignals>; scope?: string;
 }) {
   const [page, setPage] = useState<TerminalTranscript>();
   const [messages, setMessages] = useState<TranscriptMessage[]>([]);
@@ -33,7 +35,8 @@ export function Conversation({ sessionId, context, run, stream, active, supporte
   const [unread, setUnread] = useState(false);
   const [flowing, setFlowing] = useState(false);
   const flowTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const turns = useMemo(() => groupTurns(messages), [messages]);
+  const turnCache = useRef<Turn[]>([]);
+  const turns = useMemo(() => (turnCache.current = stableTurns(messages, turnCache.current)), [messages]);
   const reading = useRef<{ height: number; top: number } | undefined>(undefined);
   // 讀更早的內容前畫面最上面那一項；換完內容後放回原處，比整體高度差準（上面那一輪重新分組時也對）。
   const anchor = useRef<ScrollAnchor | undefined>(undefined);
@@ -41,15 +44,25 @@ export function Conversation({ sessionId, context, run, stream, active, supporte
   const list = useRef<HTMLOListElement>(null);
   const scrolling = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const binding = useRef<string | undefined>(undefined);
+  const revision = useRef<string | undefined>(undefined);
+  const epoch = useRef<string | undefined>(undefined);
+  const generation = useRef(0);
+  const identity = JSON.stringify([scope, sessionId, context.projectId, context.worktreeId]);
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const previousIdentity = useRef(identity);
   const busy = useRef(false);
   const again = useRef(false);
+  const queuedBefore = useRef<number | undefined>(undefined);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const alive = useRef(true);
   const options = useRef({ active, context, run }); options.current = { active, context, run };
 
   const load = useCallback(async (before?: number) => {
     if (!supported || !options.current.active || document.visibilityState === "hidden") return;
-    if (busy.current) { again.current = true; return; }
+    if (busy.current) { again.current = true; if (before !== undefined) queuedBefore.current = before; return; }
+    const owner = generation.current;
+    const owns = () => alive.current && generation.current === owner && identityRef.current === identity;
     busy.current = true;
     if (before !== undefined && box.current) {
       reading.current = { height: box.current.scrollHeight, top: box.current.scrollTop };
@@ -59,51 +72,74 @@ export function Conversation({ sessionId, context, run, stream, active, supporte
     try {
       const result = await options.current.run("terminal.transcript", {
         ...options.current.context, sessionId, includeDetails: true, ...(before !== undefined ? { before } : {}),
+        ...(incremental && before === undefined && revision.current ? { revision: revision.current } : {}),
       });
-      if (!alive.current) return;
+      if (!owns()) return;
       const value = result as unknown as TerminalTranscript;
       if (!value || !Array.isArray(value.messages)) throw new Error("invalid_transcript");
-      const changed = value.cliSessionId !== binding.current;
+      const changed = value.cliSessionId !== binding.current || (value.epoch !== undefined && value.epoch !== epoch.current);
       binding.current = value.cliSessionId;
+      epoch.current = value.epoch;
+      revision.current = value.revision;
+      if (value.unchanged && !changed) { setError(false); return; }
       setPage((old) => before !== undefined ? { ...value, start: value.start } : { ...value, start: changed ? value.start : Math.min(old?.start ?? value.start, value.start) });
       setMessages((old) => {
-        if (changed || !value.available) return value.messages;
-        const next = new Map(old.filter((message) => Number(message.id.slice(message.id.lastIndexOf(":") + 1)) < value.total)
-          .map((message) => [message.id, message]));
-        for (const message of value.messages) next.set(message.id, message);
-        return [...next.values()].sort((a, b) => Number(a.id.slice(a.id.lastIndexOf(":") + 1)) - Number(b.id.slice(b.id.lastIndexOf(":") + 1)));
+        return mergeTranscript(old, value, changed || !value.available);
       });
       setError(false);
     } catch (caught) {
       // 讀更早的內容失敗：不留讀取前的位置，免得之後的刷新把畫面拉回那裡。
-      if (before !== undefined) { reading.current = undefined; anchor.current = undefined; }
-      if (alive.current && !(caught instanceof DOMException && caught.name === "AbortError")) setError(true);
+      if (owns() && before !== undefined) { reading.current = undefined; anchor.current = undefined; }
+      if (owns() && !(caught instanceof DOMException && caught.name === "AbortError")) setError(true);
     }
     finally {
-      busy.current = false;
-      if (alive.current) setLoading(false);
-      if (again.current && alive.current) {
-        again.current = false;
-        timer.current = setTimeout(() => { timer.current = undefined; void load(); }, 2000);
+      if (owns()) {
+        busy.current = false;
+        setLoading(false);
+        if (again.current) {
+          again.current = false;
+          const nextBefore = queuedBefore.current; queuedBefore.current = undefined;
+          timer.current = setTimeout(() => { timer.current = undefined; void load(nextBefore); }, incremental ? 0 : 2000);
+        }
       }
     }
-  }, [sessionId, supported]);
+  }, [sessionId, supported, incremental, identity]);
 
   useEffect(() => {
+    generation.current++;
     alive.current = true;
+    busy.current = false; again.current = false; queuedBefore.current = undefined;
+    if (previousIdentity.current !== identity) {
+      previousIdentity.current = identity;
+      binding.current = undefined; revision.current = undefined; epoch.current = undefined;
+      reading.current = undefined; anchor.current = undefined;
+      pinned.current = true; setMessages([]); setPage(undefined); setError(false); setAway(false); setUnread(false);
+    }
     if (active) void load();
     const schedule = () => {
-      setFlowing(true);
-      clearTimeout(flowTimer.current);
-      flowTimer.current = setTimeout(() => setFlowing(false), 4000);
       if (!options.current.active || document.visibilityState === "hidden" || timer.current) return;
-      timer.current = setTimeout(() => { timer.current = undefined; void load(); }, 2000);
+      if (busy.current) { again.current = true; return; }
+      timer.current = setTimeout(() => { timer.current = undefined; void load(); }, incremental ? 400 : 2000);
     };
-    const unsubscribe = stream.subscribe(sessionId, schedule);
+    const unsubscribe = stream.subscribe(sessionId, () => {
+      if (!options.current.active || document.visibilityState === "hidden") return;
+      setFlowing(true); clearTimeout(flowTimer.current);
+      flowTimer.current = setTimeout(() => setFlowing(false), 4000);
+      schedule();
+    });
+    const unsubscribeChanges = changes?.subscribe(sessionId, schedule);
+    // Renews the bounded host lease and recovers lost notifications/final delayed log writes.
+    // Never turn this on for hosts whose reader still scans the complete history.
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const check = () => { schedule(); fallback = setTimeout(check, 5000); };
+    if (incremental && active && supported) fallback = setTimeout(check, 5000);
     const visible = () => { if (document.visibilityState === "visible") void load(); };
     document.addEventListener("visibilitychange", visible);
-    return () => { alive.current = false; clearTimeout(timer.current); timer.current = undefined; unsubscribe(); document.removeEventListener("visibilitychange", visible); };
-  }, [active, load, sessionId, stream]);
+    return () => {
+      alive.current = false; generation.current++; clearTimeout(timer.current); clearTimeout(fallback);
+      timer.current = undefined; unsubscribe(); unsubscribeChanges?.(); document.removeEventListener("visibilitychange", visible);
+    };
+  }, [active, load, sessionId, stream, incremental, supported, changes, identity]);
 
   useLayoutEffect(() => {
     if (!box.current) return;
@@ -156,7 +192,7 @@ export function Conversation({ sessionId, context, run, stream, active, supporte
           {loading && !page && <p className="tap-chat-empty" role="status">{t("loading")}</p>}
           {page?.available && !messages.length && <p className="tap-chat-empty">{t("chatEmpty")}</p>}
           <ol className="tap-chat-list" ref={list}>
-            {turns.map((turn, index) => <TurnView key={turn.key} turn={turn} live={flowing && index === turns.length - 1}
+            {turns.map((turn, index) => <MemoTurnView key={turn.key} turn={turn} live={flowing && index === turns.length - 1}
               hits={search.hits} t={t} />)}
           </ol>
         </div>
@@ -175,6 +211,7 @@ export function Conversation({ sessionId, context, run, stream, active, supporte
  * Process details always start folded, including while new output arrives.
  * hits：對話搜尋命中收起來的過程或長提問時暫時展開；關掉搜尋就回到使用者原本的選擇。
  */
+const MemoTurnView = memo(TurnView);
 function TurnView({ turn, live, hits, t }: { turn: Turn; live: boolean; hits?: Hits | null; t: Translate }) {
   const [open, setOpen] = useState(false);
   const steps = turn.steps.length;
@@ -183,6 +220,8 @@ function TurnView({ turn, live, hits, t }: { turn: Turn; live: boolean; hits?: H
   const changes = useMemo(() => turnChanges(turn, views), [turn, views]);
   const processHit = useMemo(() => Boolean(hits) && hitIn(processText(turn.steps, views), hits), [hits, turn.steps, views]);
   const expanded = open || processHit;
+  const [mounted, setMounted] = useState(expanded);
+  useEffect(() => { if (expanded) setMounted(true); }, [expanded]);
   const model = modelName(turn.answer?.model ?? turn.steps.at(-1)?.model);
   const label = steps ? fill(t("processSteps"), { n: steps })
     : turn.elapsed !== undefined ? fill(t("workedFor"), { time: duration(turn.elapsed) }) : "";
@@ -196,7 +235,7 @@ function TurnView({ turn, live, hits, t }: { turn: Turn; live: boolean; hits?: H
       {steps > 0 && turn.elapsed !== undefined && <span>{fill(t("workedFor"), { time: duration(turn.elapsed) })}</span>}
     </button>}
     <div className="tap-process" hidden={!expanded}>
-      {turn.steps.map((message) => {
+      {(mounted || expanded) && turn.steps.map((message) => {
         const view = views.get(message.id);
         if (view) return <ConversationStep key={message.id} view={view} t={t} />;
         return message.parts

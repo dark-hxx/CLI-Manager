@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { translator, fill } from "./i18n.ts";
-import { groupTurns } from "./turns.ts";
+import { groupTurns, stableTurns, mergeTranscript } from "./turns.ts";
 import * as format from "./format.ts";
 import * as tools from "./tools.ts";
 import * as chatFind from "./chatFind.ts";
@@ -16,7 +16,7 @@ import { hookHarness, loadModule, nodes, textContent } from "../tests/reactHarne
 const noTimers = { setTimeout: () => 1, clearTimeout() {} };
 const conversationDeps = {
   "react-markdown": { default: Markdown, __esModule: true }, "remark-gfm": { default: remarkGfm, __esModule: true },
-  "./i18n": { fill }, "./turns": { groupTurns }, "./format": format,
+  "./i18n": { fill }, "./turns": { groupTurns, stableTurns, mergeTranscript }, "./format": format,
   "./ConversationActivity": loadModule("ConversationActivity.tsx"),
   // 工具步驟摘要、對話搜尋與跳轉點：純邏輯用實際模組，畫面元件以名稱代替（各自另有測試）。
   "./tools": tools, "./chatFind": chatFind, "./rail": rail, "./chatScroll": chatScroll,
@@ -101,7 +101,7 @@ test("old host explains update/reconnect, sends no unsupported request, and load
   assert.equal(calls[0].kind, "terminal.transcript");
   assert.equal(calls[0].payload.sessionId, "pty-a");
   assert.equal(calls[0].payload.includeDetails, true);
-  const turn = nodes(h.value).find((node) => node.type?.name === "TurnView").props.turn;
+  const turn = nodes(h.value).find((node) => (node.type?.name ?? node.type?.type?.name) === "TurnView").props.turn;
   assert.equal(turn.prompt.text, "Question");
   assert.equal(turn.answer.text, "Answer");
   h.dispose();

@@ -316,6 +316,7 @@ pub struct OperationView {
     rename_all_fields = "camelCase"
 )]
 pub enum DeviceToServerFrame {
+    TranscriptChanged { session_id: String },
     TerminalOutput {
         session_id: String,
         sequence: u64,
@@ -401,6 +402,8 @@ pub enum ServerToDeviceFrame {
     HelloOk {
         paired: bool,
         device_token: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        capabilities: Vec<String>,
     },
     PairingOffered {
         pairing_id: String,
@@ -462,6 +465,7 @@ pub enum BrowserEventPayload {
     rename_all_fields = "camelCase"
 )]
 pub enum BrowserSocketFrame {
+    TranscriptChanged { device_id: String, session_id: String },
     Heartbeat,
     TerminalOutput {
         device_id: String,
@@ -689,6 +693,16 @@ mod tests {
             panic!("expected terminal status");
         };
         assert_eq!((cols, rows), (None, None));
+    }
+
+    #[test]
+    fn transcript_notification_negotiation_is_optional_and_contains_no_content() {
+        let old: ServerToDeviceFrame = serde_json::from_value(serde_json::json!({"type":"hello_ok","paired":true,"deviceToken":null})).unwrap();
+        assert!(matches!(old, ServerToDeviceFrame::HelloOk { capabilities, .. } if capabilities.is_empty()));
+        let frame = BrowserSocketFrame::TranscriptChanged { device_id: "host".into(), session_id: "pty".into() };
+        let value = serde_json::to_value(&frame).unwrap();
+        assert_eq!(value, serde_json::json!({"type":"transcript_changed","deviceId":"host","sessionId":"pty"}));
+        assert_eq!(serde_json::from_value::<BrowserSocketFrame>(value).unwrap(), frame);
     }
 
     #[test]

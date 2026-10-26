@@ -3,7 +3,7 @@ import { test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { translator, fill } from "./i18n.ts";
-import { groupTurns } from "./turns.ts";
+import { groupTurns, stableTurns, mergeTranscript } from "./turns.ts";
 import * as format from "./format.ts";
 import * as tools from "./tools.ts";
 import * as chatFind from "./chatFind.ts";
@@ -13,7 +13,7 @@ import { hookHarness, loadModule, nodes, textContent } from "../tests/reactHarne
 
 const deps = (react) => ({
   ...(react ? { react } : {}), "react-markdown": { default: "Markdown" }, "remark-gfm": {},
-  "./turns": { groupTurns }, "./format": format, "./i18n": { fill }, "./ConversationCodeBlock": {},
+  "./turns": { groupTurns, stableTurns, mergeTranscript }, "./format": format, "./i18n": { fill }, "./ConversationCodeBlock": {},
   "./ConversationActivity": { ConversationActivity: "Activity" }, "./ConversationStep": { ConversationStep: "Step" },
   "./tools": tools, "./chatFind": chatFind, "./rail": rail, "./chatScroll": chatScroll, "./ConversationTurnRail": { TurnRail: "TurnRail" },
   "./ChatSearch": { SearchProvider: "SearchProvider", useChatSearch: () => ({ hits: null, bar: null, button: null, layer: null }) },
@@ -36,8 +36,11 @@ test("過程裡讀得出參數的工具用新的步驟列，其他（思考、�
   const { TurnView } = loadModule("Conversation.tsx", deps(h.react), {}, ["TurnView"]);
   const [turn] = groupTurns(turnMessages);
   h.mount(() => TurnView({ turn, live: false, t }));
-  const process = nodes(h.value).find((node) => node.props.className === "tap-process");
+  let process = nodes(h.value).find((node) => node.props.className === "tap-process");
   assert.equal(process.props.hidden, true, "the process stays folded by default");
+  assert.equal([process.props.children].flat(Infinity).filter(Boolean).length, 0, "closed process does not mount tool details");
+  nodes(h.value).find((node) => node.props.className === "tap-fold").props.onClick(); h.render();
+  process = nodes(h.value).find((node) => node.props.className === "tap-process");
   const children = [process.props.children].flat(Infinity).filter(Boolean);
   assert.deepEqual(children.map((node) => node.type), ["Activity", "Step", "Activity"]);
   assert.equal(children[1].props.view.summary, "/repo/parser.ts");

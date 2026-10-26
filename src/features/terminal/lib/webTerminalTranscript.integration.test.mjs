@@ -19,7 +19,12 @@ function fixture(load) {
     if (id.endsWith("webGitRead")) return gitRead;
     if (id.endsWith("projectStore")) return { useProjectStore: { getState: () => projects } };
     if (id.endsWith("/state")) return { useTerminalStore: { getState: () => terminals } };
-    if (id.endsWith("history/index")) return { fetchLatestProjectSessionDetail: load };
+    if (id === "@tauri-apps/api/core") return { invoke: async (command, { request }) => {
+      assert.equal(command, "history_read_live_transcript");
+      const value = await load(request);
+      return terminalTranscriptPage({ id: request.sessionId, cliSessionId: request.cliSessionId }, value, request.before, request.includeDetails);
+    } };
+    if (id.endsWith("historyPathArgs")) return { getHistoryPathArgs: async () => ({ claudeConfigDir: "fixture-home" }) };
     if (id.endsWith("terminalProject")) return { normalizeProjectPath: (value) => value };
     if (id.endsWith("webDevice")) return { webDeviceApi: { validateContext: async (root, cwd) => {
       if (root !== cwd) throw Error("canonical context mismatch");

@@ -30,8 +30,6 @@
 .has-native-command > .tap-chat-panel { order: 0; flex: 1 1 28%; min-height: 0; height: auto; }
 .has-native-command > .tap-terminal-panel { order: 1; flex: 1 1 72%; display: flex; flex-direction: column; gap: 8px; min-height: 0; height: auto; padding-top: 6px; }
 .has-native-command .tap-terminal { flex: 1; height: auto; }
-.has-native-command .tap-terminal-screen { overflow: auto; overscroll-behavior: contain; }
-.has-native-command .tap-terminal-screen .xterm { width: max-content; min-width: 100%; height: auto; }
 .tap-native-command-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .tap-native-command-heading > div { flex: 1; min-width: 180px; }
 .tap-native-command-heading p { margin: 2px 0 0; color: var(--muted-fg); font-size: 11px; line-height: 1.4; }

@@ -5,6 +5,7 @@ import {
   type TerminalControlMode, type WorkspaceProject,
 } from "./protocol";
 import { createOperationRunner } from "./operations";
+import { createTranscriptSignals } from "./transcriptSignals";
 
 export type TerminalState = { status: string; controlMode: TerminalControlMode; cols?: number; rows?: number };
 const EMPTY: WorkspaceSnapshot = { groups: [], projects: [], worktrees: [], terminals: [], updatedAt: 0 };
@@ -42,6 +43,7 @@ export function useWorkspace() {
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
   const [stream] = useState(createTerminalStream);
+  const [transcripts] = useState(createTranscriptSignals);
   const [runner] = useState(() => createOperationRunner(api));
   const [socketVersion, setSocketVersion] = useState(0);
   const [requestedSession, setRequestedSession] = useState(linkedSession);
@@ -198,6 +200,7 @@ export function useWorkspace() {
     refreshRef.current = refresh;
     refresh();
     const connection = connectBrowserSocket({
+      transcriptChanges: true,
       afterSequence: () => sequence.current,
       onUnauthorized: expire,
       onState: (state) => { if (state !== "open") setLink(state); },
@@ -206,11 +209,14 @@ export function useWorkspace() {
         if (message.type === "ready") {
           highWater = message.latestSequence;
           setLink("open"); refresh();
+          transcripts.publish();
           void refreshDevices();
           if (sequence.current > message.latestSequence) sequence.current = message.latestSequence;
           for (const id of scope.current.mounted) connection.sendTerminal(deviceId, {
             type: "attach", sessionId: id, afterSequence: stream.renderedSequence(id),
           });
+        } else if (message.type === "transcript_changed" && message.deviceId === deviceId) {
+          transcripts.publish(message.sessionId);
         } else if (message.type === "terminal_output" && message.deviceId === deviceId) {
           stream.publish(message.sessionId, { sequence: message.sequence, frames: message.frames });
         } else if (message.type === "terminal_status" && message.deviceId === deviceId) {
@@ -243,7 +249,7 @@ export function useWorkspace() {
       connection.close(); runner.cancel(); stream.clear();
       if (socket.current === connection) socket.current = null;
     };
-  }, [user?.id, deviceId, socketVersion, expire, runner, stream]);
+  }, [user?.id, deviceId, socketVersion, expire, runner, stream, transcripts]);
 
   const attach = useCallback((id: string) => {
     const current = scope.current;
@@ -357,7 +363,7 @@ export function useWorkspace() {
 
   return { user, checking, authError, login, logout, mobileToken, redeemMobile, cancelMobile, devices, deviceId, setDeviceId: selectDevice,
     device: devices.find((item) => item.id === deviceId), workspace, activeId, mounted, states,
-    link, error, setError, starting, stream, attach, reopen, run, start, input, resize, end, pair,
+    link, error, setError, starting, stream, transcripts, attach, reopen, run, start, input, resize, end, pair,
     refresh: () => refreshRef.current(), reconnect: () => setSocketVersion((value) => value + 1) };
 }
 export type WorkspaceModel = ReturnType<typeof useWorkspace>;

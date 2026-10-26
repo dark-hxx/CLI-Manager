@@ -10,7 +10,8 @@ import { buildSshConnectionSpec } from "../../remote/api/ssh";
 import { projectWithWorktreeProviderOverrides } from "../api/terminalProject";
 import { resolveProjectStartupCommand } from "../../projects/api/projectStartupCommand";
 import { parseProjectEnvVars, getProviderSwitchAppType } from "../../providers/api/providerSwitching";
-import { fetchLatestProjectSessionDetail } from "../../history/index";
+import { getHistoryPathArgs } from "../../history/api/historyPathArgs";
+import type { TerminalTranscript } from "../../../shared/types/webBrowser";
 import { normalizeProjectPath } from "../api/terminalProject";
 import { terminalTranscriptPage } from "./webTerminalTranscript";
 import { openWindowsTerminal } from "../api/externalTerminal";
@@ -441,19 +442,24 @@ async function executeTerminalTranscript(payload: Payload) {
   const source = session.cliTool ?? getProviderSwitchAppType(project);
   if (source !== "claude" && source !== "codex")
     return { available: false, reason: "unsupported", messages: [], start: 0, total: 0 };
-  const detail = await fetchLatestProjectSessionDetail(rootPath, undefined, source, cliSessionId,
-    { forceCatalogRefresh: true, waitForCatalogRefresh: true, freshDetail: true });
-  // The helper can find an exact ID outside the cwd; never export it until cwd matches.
-  if (!detail || detail === "unchanged" || detail.source !== source
-    || detail.session_id !== cliSessionId
-    || normalizeProjectPath(detail.cwd ?? "") !== normalizeProjectPath(rootPath))
-    return terminalTranscriptPage(session, null);
+  const revision = optionalString(payload, "revision", 128);
+  let page: TerminalTranscript;
+  try {
+    page = await invoke<TerminalTranscript>("history_read_live_transcript", { request: {
+      ...(await getHistoryPathArgs()), source, cliSessionId, sessionId: session.id, cwd: rootPath,
+      before: payload.before ?? null, includeDetails: booleanValue(payload, "includeDetails"), revision: revision ?? null,
+    } });
+  } catch (error) {
+    if (String(error) === "session_file_not_found" || String(error) === "history_source_not_found")
+      page = terminalTranscriptPage(session, null);
+    else throw error;
+  }
   // Session may have been closed/rebound during I/O. Revalidate before publishing content.
   const current = await transcriptContext(payload);
   if (current.session.cliSessionId !== cliSessionId
     || (current.session.cliTool ?? getProviderSwitchAppType(current.project)) !== source
     || normalizeProjectPath(current.rootPath) !== normalizeProjectPath(rootPath)) return terminalTranscriptPage(current.session, null);
-  return boundedResult(terminalTranscriptPage(session, detail, payload.before as number | undefined, booleanValue(payload, "includeDetails")),
+  return boundedResult(page,
     "transcript_too_large", "transcript_too_large");
 }
 
