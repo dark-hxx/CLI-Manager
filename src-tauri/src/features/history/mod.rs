@@ -1,4 +1,14 @@
 mod diagnostics;
+mod live_transcript;
+mod live_transcript_projection;
+mod live_transcript_reader;
+#[tauri::command]
+pub async fn history_read_live_transcript(
+    app: tauri::AppHandle,
+    request: live_transcript::TranscriptRequest,
+) -> Result<live_transcript_reader::TranscriptPage, String> {
+    live_transcript::history_read_live_transcript(app, request).await
+}
 use diagnostics::{
     log_history_detail_oom_diagnostic,
     log_history_stats_oom_diagnostic,

@@ -699,3 +699,7 @@ invalidate_history_caches(); // only after commit
 ### Required verification
 
 Isolated temporary fixtures cover missing/existing parent, cross-date/cwd/nested subagents, normal forks/generic parent fields, other roots, duplicate UUIDs/cycles, bounded/mismatched/compatible headers, directory links, backup creation failure and Windows locked-parent rollback. Frontend tests cover real Store cleanup (including search-only descendants), readonly/snapshot preservation, batch preflight/coverage/partial failure and bilingual diagnostics. Human WSL/UI acceptance is separate from automated fixture tests.
+
+## Live Tap transcript isolation
+
+`history_read_live_transcript` is a separate read-only projection for an exact host-authorized Claude/Codex PTY binding. It reuses canonical `parse_message`, model/effort extraction and source/WSL discovery, validates source-root containment and exact transcript metadata cwd/CLI ID, and never substitutes a recent conversation. The host validates the project/Worktree/PTY tuple before and after I/O. Its bounded reader/revision/observation lease do not change `history_get_session`, general history statistics or catalog materialization. Older pages explicitly stream from the start with bounded retained memory. See web-service-contracts for byte, lease and compatibility limits.

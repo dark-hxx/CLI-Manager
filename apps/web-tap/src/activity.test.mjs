@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { groupTurns } from "./turns.ts";
+import { groupTurns, stableTurns, mergeTranscript } from "./turns.ts";
 import { translator, fill } from "./i18n.ts";
 import * as format from "./format.ts";
 import * as tools from "./tools.ts";
@@ -95,7 +95,7 @@ test("the process group does not auto-expand during live output or after complet
   const h = hookHarness(), t = translator("zh-CN");
   const { TurnView } = loadModule("Conversation.tsx", {
     react: h.react, "react-markdown": { default: "Markdown" }, "remark-gfm": {},
-    "./turns": { groupTurns }, "./format": format, "./i18n": { fill },
+    "./turns": { groupTurns, stableTurns, mergeTranscript }, "./format": format, "./i18n": { fill },
     "./ConversationCodeBlock": {}, "./ConversationActivity": { ConversationActivity: "Activity" },
     // TurnView 用到步驟摘要與搜尋比對；其餘新模組只在 Conversation 本身使用。
     "./tools": tools, "./chatFind": chatFind, "./ConversationStep": { ConversationStep: "Step" },

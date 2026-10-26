@@ -114,6 +114,8 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
       <div id={`chat-${id}`} className="tap-chat-panel" role="tabpanel" aria-labelledby={`chat-tab-${id}`} hidden={view !== "chat"}>
         {chatOpened && <Suspense fallback={<p className="tap-chat-empty" role="status">{t("loading")}</p>}>
           <Conversation sessionId={id} stream={model.stream} context={context} run={model.run} chatSize={defaults.chatSize}
+            scope={`${model.user?.id}:${model.deviceId}`} changes={model.transcripts}
+            incremental={model.device?.capabilities.includes("terminal.transcript.incremental") ?? false}
             active={active && view === "chat"} supported={supported} onTerminal={() => choose("terminal")} onReconnect={model.reconnect} t={t} />
         </Suspense>}
       </div>

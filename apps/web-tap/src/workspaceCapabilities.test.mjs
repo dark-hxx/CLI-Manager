@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createTranscriptSignals } from "./transcriptSignals.ts";
 import { test } from "node:test";
 import { deferred, hookHarness, loadModule } from "../tests/reactHarness.mjs";
 
@@ -10,6 +11,7 @@ class ApiError extends Error {
 async function workspaceFixture(deviceScope) {
   const h = hookHarness(), requests = [], sockets = [];
   const { useWorkspace } = loadModule("useWorkspace.ts", {
+    "./transcriptSignals": { createTranscriptSignals },
     react: h.react,
     "./operations": { createOperationRunner: () => ({ cancel() {}, publish() {}, run: async () => null }) },
     "./protocol": {

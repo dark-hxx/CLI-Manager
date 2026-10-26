@@ -177,6 +177,7 @@ export type BrowserEventPayload =
   | { type: "pairing.updated"; pairingId: string; status: string; deviceId: string };
 
 export type BrowserMessage =
+  | { type: "transcript_changed"; deviceId: string; sessionId: string }
   | { type: "heartbeat" }
   | { type: "ready"; latestSequence: number }
   | { type: "event"; sequence: number; occurredAt: number; payload: BrowserEventPayload }
@@ -237,6 +238,10 @@ export type TranscriptMessage = {
   partsTruncated?: boolean;
 };
 export type TerminalTranscript = {
+  /** Available only on incremental hosts; epoch changes after replacement or cache eviction. */
+  revision?: string;
+  epoch?: string;
+  unchanged?: boolean;
   available: boolean;
   reason?: "unbound" | "missing" | "unsupported";
   cliSessionId?: string;

@@ -102,6 +102,7 @@ struct Status {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
+    TranscriptChanged { session_id: String },
     Auth {
         token: String,
         client_version: String,
@@ -174,6 +175,7 @@ struct Response {
 
 #[derive(Default)]
 struct RuntimeState {
+    transcript_notifications: bool,
     running: bool,
     connected: bool,
     paired: bool,
@@ -467,6 +469,15 @@ impl DaemonState {
                     .drain(..)
                     .collect::<Vec<_>>();
                 Ok(Some(serde_json::to_value(commands).unwrap()))
+            }
+            Request::TranscriptChanged { session_id } => {
+                let supported = {
+                    let runtime = self.runtime.lock().map_err(|_| "web daemon state lock poisoned")?;
+                    runtime.connected && runtime.transcript_notifications
+                };
+                if !supported { return Ok(None); }
+                self.queue(DeviceToServerFrame::TranscriptChanged { session_id })?;
+                Ok(None)
             }
             Request::TerminalOutput {
                 session_id,
@@ -787,13 +798,14 @@ impl DaemonState {
         generation: u64,
     ) -> Result<(), String> {
         match frame {
-            ServerToDeviceFrame::HelloOk { paired, .. } => {
+            ServerToDeviceFrame::HelloOk { paired, capabilities, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
                     if self.generation.load(Ordering::SeqCst) != generation {
                         return Ok(());
                     }
                     runtime.connected = true;
                     runtime.paired = paired;
+                    runtime.transcript_notifications = capabilities.iter().any(|s| s == "terminal.transcript.changed");
                 }
             }
             ServerToDeviceFrame::PairingOffered { .. } => {}
@@ -1402,6 +1414,7 @@ fn default_capabilities() -> Vec<String> {
         "history.snapshot",
         "conversation",
         "terminal.transcript",
+        "terminal.transcript.incremental",
         "conversation.start",
         "conversation.prompt",
         "terminal.stream",

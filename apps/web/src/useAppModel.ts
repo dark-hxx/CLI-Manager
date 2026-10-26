@@ -477,6 +477,7 @@ export function useAppModel() {
           }
           return;
         }
+        if (message.type === "transcript_changed") return; // Tap-only invalidation, never terminal bytes.
         if (message.sequence <= sequenceRef.current) return;
         const payload = message.payload;
         if (payload.type === "device.updated") {

@@ -39,6 +39,8 @@ const MAX_TERMINAL_OUTPUT_BATCH_BYTES: usize = 512 * 1024;
 pub struct BrowserSocketQuery {
     #[serde(default)]
     after_sequence: i64,
+    #[serde(default)]
+    transcript_changes: bool,
 }
 
 pub async fn browser_socket(
@@ -69,6 +71,7 @@ pub async fn browser_socket(
             user.id,
             token_hash,
             query.after_sequence.max(0),
+            query.transcript_changes,
           ) => {},
         }
     }))
@@ -106,6 +109,7 @@ async fn handle_browser_socket(
     user_id: String,
     token_hash: String,
     after_sequence: i64,
+    transcript_changes: bool,
 ) {
     let (mut sender, mut receiver) = socket.split();
     let mut live = state.registry.subscribe_browser();
@@ -203,6 +207,7 @@ async fn handle_browser_socket(
                     let sequence = match &event.frame { BrowserSocketFrame::Event { sequence, .. } => Some(*sequence), _ => None };
                     if sequence.is_some_and(|value| value <= cursor) { continue; }
                     if !browser_frame_in_scope(&event.frame, scope.as_deref()) { continue; }
+                    if !transcript_changes && matches!(&event.frame, BrowserSocketFrame::TranscriptChanged { .. }) { continue; }
                     if state.storage.user_for_session(&token_hash).await.ok().flatten().is_none() { break; }
                     if !send_json(&mut sender, &event.frame).await {
                         break;
@@ -258,6 +263,7 @@ fn browser_frame_in_scope(frame: &BrowserSocketFrame, scope: Option<&str>) -> bo
     let BrowserSocketFrame::Event { payload, .. } = frame else {
         return match frame {
             BrowserSocketFrame::TerminalOutput { device_id, .. }
+            | BrowserSocketFrame::TranscriptChanged { device_id, .. }
             | BrowserSocketFrame::TerminalStatus { device_id, .. } => device_id == scope,
             _ => true,
         };
@@ -507,6 +513,7 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
         &ServerToDeviceFrame::HelloOk {
             paired: user_id.is_some(),
             device_token: None,
+            capabilities: vec!["terminal.transcript.changed".into()],
         },
     )
     .await
@@ -739,6 +746,14 @@ async fn handle_device_socket(mut socket: WebSocket, state: AppState) {
                                 if !send_device_error(&mut sender, "invalid_conversation_event", "conversation event was rejected").await { break; }
                             }
                         }
+                    }
+                    DeviceToServerFrame::TranscriptChanged { session_id } => {
+                        let Some(owner_id) = user_id.as_deref().filter(|_| paired) else { continue; };
+                        if session_id.is_empty() || session_id.len() > 128 || session_id.chars().any(char::is_control) { continue; }
+                        state.registry.broadcast_browser(crate::registry::BrowserBroadcast {
+                            user_id: owner_id.to_string(),
+                            frame: BrowserSocketFrame::TranscriptChanged { device_id: device_id.clone(), session_id },
+                        });
                     }
                     DeviceToServerFrame::TerminalOutput { session_id, sequence, frames } => {
                         let Some(owner_id) = user_id.as_deref() else { continue; };
@@ -1307,6 +1322,9 @@ mod tests {
         };
         assert!(browser_frame_in_scope(&terminal, Some("device-a")));
         assert!(!browser_frame_in_scope(&terminal, Some("device-b")));
+        let hint = BrowserSocketFrame::TranscriptChanged { device_id: "device-a".into(), session_id: "terminal-1".into() };
+        assert!(browser_frame_in_scope(&hint, Some("device-a")));
+        assert!(!browser_frame_in_scope(&hint, Some("device-b")));
     }
 
     #[test]

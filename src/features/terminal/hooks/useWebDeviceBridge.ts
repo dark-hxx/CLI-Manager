@@ -25,6 +25,7 @@ import { getCurrentLanguage, translateCurrent } from "../../../shared/i18n/index
 import { getHistoryPathArgsSync } from "../../history/api/historyPathArgs";
 import { batchWebTerminalFrames } from "../../../shared/lib/webTerminalFrames";
 import { startWebBridgePolling } from "../../../shared/lib/webBridgePolling";
+import { createWebOperationLanes } from "../../../shared/lib/webOperationLanes";
 import {
   webDeviceApi,
   type WebHistorySessionSummary,
@@ -530,12 +531,14 @@ async function executeOperation(operation: WebDeviceOperation) {
   }
 }
 
+const operationLanes = createWebOperationLanes(executeOperation, (error) => logWarn("Web operation lane failed", error));
+
 async function drainOperations() {
   if (drainingOperations) return;
   drainingOperations = true;
   try {
     const operations = await webDeviceApi.takeOperations();
-    for (const operation of operations) await executeOperation(operation);
+    operationLanes.enqueue(operations);
   } catch (caught) {
     logWarn("Failed to drain Web device operations", caught);
   } finally {

@@ -1,6 +1,7 @@
 import type { BrowserMessage, BrowserTerminalCommand } from "../types/webBrowser";
 
 export type BrowserSocketOptions = {
+  transcriptChanges?: boolean;
   afterSequence: () => number;
   onMessage: (message: Exclude<BrowserMessage, { type: "heartbeat" }>) => void;
   onState: (state: "connecting" | "open" | "closed") => void;
@@ -55,7 +56,7 @@ export function connectBrowserSocket(options: BrowserSocketOptions): BrowserSock
     clearTimers();
     options.onState("connecting");
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const current = new WebSocket(`${protocol}//${location.host}/ws/browser?afterSequence=${options.afterSequence()}`);
+    const current = new WebSocket(`${protocol}//${location.host}/ws/browser?afterSequence=${options.afterSequence()}${options.transcriptChanges ? "&transcriptChanges=true" : ""}`);
     socket = current;
     const active = () => !stopped && socket === current;
     let ready = false;
@@ -73,7 +74,8 @@ export function connectBrowserSocket(options: BrowserSocketOptions): BrowserSock
       } catch {
         return;
       }
-      if (!message || typeof message !== "object" || !["ready", "heartbeat", "event", "terminal_output", "terminal_status", "error"].includes(message.type)) return;
+      if (!message || typeof message !== "object" || !["ready", "heartbeat", "event", "terminal_output", "terminal_status", "transcript_changed", "error"].includes(message.type)) return;
+      if (message.type === "transcript_changed" && !options.transcriptChanges) return;
       if (message.type === "ready") {
         ready = true;
         if (connectTimer !== null) window.clearTimeout(connectTimer);
