@@ -45,3 +45,13 @@ GitNexus 工具本会话未暴露，按契约降级到 codebase-memory 与源码
 ## 发布与回滚
 
 沿用 1.4.4，先提交功能/测试/契约/记录，再仅构建 NSIS；不推送、不自动安装。无需数据迁移或新配置，旧主机和旧网页按能力协商保持兼容；整包回退到此前备份的 1.4.4 NSIS 即可回滚代码。真实 Safari 验收由用户安装后进行。
+
+## NSIS 实包结果
+
+- 源码提交：`4fc1e018db6d8595dbb1ec0c7714df012e478671`；工作区干净后执行 `npm run tauri:build:local -- --bundles nsis`，仅生成 1 个 NSIS 包，不生成 MSI。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.4_x64-setup.exe`，31,641,299 字节，2026-10-26 10:19:30 +08:00。
+- SHA256：`0C4176E8BEB8E489242F95C243650A2DE5270FEAF087BC662976E487966D05DC`。
+- 完整构建包含本轮 Rust 主程序及 3 个 helper；主程序 release 3m28s、helper 6m27s，非复用旧后端换壳。构建仅有既有 chunk 大小、标识后缀、STATIC_VCRUNTIME 弃用和 linker 信息警告。
+- 7-Zip 完整性测试及非安装式解包通过；19 个 Web/Tap 资源（含 15 个 Tap 文件）的相对路径和 SHA256 与本轮产物逐项一致，11 个 HTML/CSS/manifest 引用均存在。
+- 主程序及 3 个 helper 与 release 产物字节核对通过；主程序仅允许并验证 Tauri 的 `__TAURI_BUNDLE_TYPE_VAR_` 标记在安装包为 `NSS`、构建目录为 `UNK` 的 3 字节差异，其余完全一致。
+- 已核对包生成时间晚于本轮开始、SHA256 与备份旧包不同且构建源码提交不变。详细构建、完整性、解包日志及 JSON 指纹在本地 ignored `.codex/tap-transcript-*`，未安装或启动产物，等待真实 Safari 验收。

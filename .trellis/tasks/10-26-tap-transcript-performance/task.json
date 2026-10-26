@@ -15,12 +15,12 @@
   "branch": "fix/tap-transcript-performance",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "4fc1e018",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "用户已批准方案和版本 1.4.4；基线 ed788614；实施中，验证后先提交再打 NSIS，不推送、不安装。",
+  "notes": "1.4.4 NSIS 已完整构建并解包校验，等待用户 Safari 实机验收；源码 4fc1e018，基线 ed788614；未推送、未安装。SHA256 0C4176E8BEB8E489242F95C243650A2DE5270FEAF087BC662976E487966D05DC",
   "meta": {}
 }
