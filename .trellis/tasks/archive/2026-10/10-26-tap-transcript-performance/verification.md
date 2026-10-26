@@ -76,3 +76,8 @@ GitNexus 工具本会话未暴露，按契约降级到 codebase-memory 与源码
 - 7-Zip 完整性测试及非安装式解包通过；19 个 Web/Tap 文件（其中 Tap 15 个）的路径/哈希逐项匹配本轮产物，11 个 HTML/CSS/manifest 静态引用存在，经典 Web 4 个资源未变。
 - 新旧两个 NSIS 中的主程序和全部 3 个 helper 字节完全相同，证明复用 `4fc1e018` 后端；打包前后 release 原始 SHA256 均未变，仅新 Tap 资源替换。主程序构建目录/NSIS 之间仍仅有已验证的 NSS/UNK 3 字节标记差异。
 - 解包与详细指纹在 ignored `.codex/tap-viewport-nsis-*` 和 `.codex/tap-viewport-package-verification.json`。仅交付 NSIS，不生成 MSI；未安装、未启动用户应用、未推送。用户需安装后刷新网页，真实 Safari 验收仍未完成。
+
+
+## 用户验收与归档（2026-10-26）
+
+用户反馈“完成的不错，我看效果好像还可以”，本轮交付按既定范围验收通过。此前未由代理执行的 Safari 全场景/真实网络压力测试边界不变，不把用户反馈扩展为这些测试已完成。用户授权按老流程推送：先 fetch origin 核对最新主干（本地 master 与 origin/master 均为 `ed788614`，0/0，无新增远程提交），归档任务后合并并推送修复分支和 master；保留已验收安装包，不因仅文档/合并操作重复打包，最终远程状态以推送后的 refs 核验为准。
