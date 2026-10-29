@@ -19,8 +19,21 @@
 
 ## 发布与未覆盖项
 
-- 构建前提交修复，再复用 Cargo 缓存重建主程序/必要 helper，仅 NSIS。桌面资源嵌入 exe，本轮不是旧后端重新封装。安装包解包及指纹验证完成后补记结果。
+- 构建前提交修复，再复用 Cargo 缓存重建主程序/必要 helper，仅 NSIS。桌面资源嵌入 exe，本轮不是旧后端重新封装。
 - 不启动安装版/Tauri、不删除用户真实会话、不强杀 daemon、不安装或推送；实机 Windows/Codex、多窗口/WSL 以及手机 Safari 留给用户验收，不声称已验证。
 - 旧快照的原编码已不可恢复：只对明确快照暂停不安全鼠标跟踪，应用重新声明后正常工作；新快照保真。无法识别的旧 daemon 会话需要关闭并重新打开，不猜测 SGR，不全局禁用鼠标。
 - 未变更用户可见文案；无新增翻译。中英文界面实机切换未执行，相关既有文案及 24 小时格式未改。
 - 失败处理：修正 ES2020 不支持 Object.hasOwn；补齐旧 replay 测试 mock 的 sessions；Shift-hover 本来可发送报文，断言限定实际选择手势，不改变生产策略；已撤销与任务无关的 rustfmt 改动。
+
+## NSIS 实包验证
+
+- 代码先提交为 `93a158ca9bb0a30892fcc0becd3430a1dd5b172d`；构建使用已验证且指纹不变的桌面/Web/Tap dist，ignored 本地 override 仅跳过重复前端构建，保留完整 Rust/helper 编译和 bundle hook。不改 tracked 打包配置、不复用旧后端冒充修复。
+- 缓存 release 主构建 11m02s，helper 构建 10m58s，最终仅输出一个 NSIS；编译期间有 MSVC 创建导入库的 stdout 警告及已有 STATIC_VCRUNTIME 弃用提示，无构建失败。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.4_x64-setup.exe`。
+- 生成时间：2026-10-29 10:11:12 +08:00；31,635,108 字节。
+- SHA256：`FE878C50719B96AED210BC35AAFFF275DD7849A5F145EC4293B510E7250B854A`。
+- 7-Zip archive test 与解包成功；19 个 Web/Tap 文件（15 个 Tap）路径及 SHA256 全量一致，11 个静态引用全部存在，字体 `/tap/fonts/inconsolata-latin-wght-normal.woff2` 保留。
+- 主程序含本次桌面构建全部 447 个 JS 资源键，本次修复代码在 `assets/App-BqqVdbDW.js`；四个二进制与本轮 release 构建逐字节核对。主程序唯一允许差异为 Tauri 已验证的 NSS/UNK 三字节 bundle marker，主程序与 daemon 均非旧构建。
+- 旧包先备份并核对 SHA256。详细 manifest/二进制/源提交指纹：`.codex/history-mouse-package-verification.json`；构建日志：`.codex/history-mouse-nsis-build.log`。
+- 首次验证脚本误以为字体在 `tap/assets/fonts`，与源 manifest 不符；核对源 CSS、完整 manifest 及解包结果后改为实际 `tap/fonts` 精确文件断言，重跑全部验证通过。没有为此修改程序或降低文件/指纹校验。
+- 安装包验证时工作区干净且 HEAD 为上述代码提交；其后仅提交本验证记录与任务进度，不改变交付代码。未安装、未启动用户应用、未推送，等待用户验收。

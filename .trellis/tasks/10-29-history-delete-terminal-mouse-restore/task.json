@@ -15,12 +15,12 @@
   "branch": "fix/history-delete-terminal-mouse-restore",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "93a158ca9bb0a30892fcc0becd3430a1dd5b172d",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "实现与 NSIS 解包校验通过，等待用户实机验收；未安装、未推送。详见 verification.md。",
   "meta": {}
 }
