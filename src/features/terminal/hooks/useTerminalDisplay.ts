@@ -1,5 +1,6 @@
 import { useRef, type RefObject } from "react";
 import { createTerminalColorQueryFilter } from "../../../shared/lib/terminalColorQueryFilter";
+import { restoreKnownTerminalCheckpoint } from "../../../shared/lib/terminalSnapshot";
 import { canAnswerTerminalQueryFrame, claimTerminalQueryFrame, setTerminalQueryReplay } from "../../../shared/lib/terminalQueryPolicy";
 import type { IMarker, ITheme, Terminal } from "@xterm/xterm";
 import type { FitAddon } from "@xterm/addon-fit";
@@ -463,7 +464,10 @@ export function useTerminalDisplay({
     const queuePayload = (delivery: TerminalOutputDelivery, markSnapshotDirty: boolean) => {
       const payload = delivery.frame;
       const rawText = textDecoder.decode(payload.data, { stream: true });
-      const text = normalizeOutputRef.current(rawText, {
+      const snapshotText = payload.kind === "replay"
+        ? restoreKnownTerminalCheckpoint(rawText, useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.initialTerminalOutput)
+        : rawText;
+      const text = normalizeOutputRef.current(snapshotText, {
         applyOsc52: payload.kind !== "replay" && payload.kind !== "reset",
       });
       outputDiagnosticsRef?.current?.onFrame(payload, rawText, text);
@@ -517,7 +521,9 @@ export function useTerminalDisplay({
             terminal.resize(entry.cols, entry.rows);
           }
           const rawText = textDecoder.decode(entry.data, { stream: true });
-          const text = normalizeOutputRef.current(rawText, { applyOsc52: false });
+          const snapshotText = restoreKnownTerminalCheckpoint(rawText,
+            useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.initialTerminalOutput);
+          const text = normalizeOutputRef.current(snapshotText, { applyOsc52: false });
           outputDiagnosticsRef?.current?.onFrame(entry, rawText, text);
           if (!text) {
             terminalProcessManager.acknowledgeOutput(sessionId, entry.sequence, 0);

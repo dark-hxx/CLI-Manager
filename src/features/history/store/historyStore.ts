@@ -1134,7 +1134,10 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       focusedMessageIndex: null,
     });
     if (nextActiveKey && activeWasDeleted) {
-      await get().openSession(nextActiveKey);
+      // 删除已提交；下一条详情不是本次变更的一部分，慢索引或读取失败不能延长删除锁。
+      void get().openSession(nextActiveKey).catch((error) => {
+        logWarn("history.delete.nextSessionLoadFailed", { sessionKey: nextActiveKey, error: String(error) });
+      });
     }
     return [...removedSessionKeys];
   },

@@ -466,27 +466,37 @@ pub async fn history_get_session(
             grok_session_root.clone(),
         )
         .with_kimi_config_dir(kimi_config_dir.clone());
-        if catalog::is_dirty() {
-            let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
+        let catalog_dirty = catalog::is_dirty();
+        if catalog_dirty {
+            let refresh_app = app.clone();
+            let refresh_roots = roots.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = catalog::ensure_refresh(refresh_app, refresh_roots, false, false).await;
+            });
         }
-        match catalog::get_session_detail_from_v2(
-            &roots,
-            &file_path,
-            &source_normalized,
-            &project_key,
-        )
-        .await
-        {
-            Ok(Some(detail)) => {
-                log_history_detail_oom_diagnostic(
-                    "history_get_session_v2",
-                    &detail,
-                    started_at.elapsed().as_millis(),
-                );
-                return Ok(detail);
+        // A mutation dirties the shared catalog, not the requested transcript.
+        // Read that file directly instead of waiting for unrelated FTS replacement.
+        // OpenCode uses a database locator and retains its catalog/provider path.
+        if !catalog_dirty || source_normalized == "opencode" {
+            match catalog::get_session_detail_from_v2(
+                &roots,
+                &file_path,
+                &source_normalized,
+                &project_key,
+            )
+            .await
+            {
+                Ok(Some(detail)) => {
+                    log_history_detail_oom_diagnostic(
+                        "history_get_session_v2",
+                        &detail,
+                        started_at.elapsed().as_millis(),
+                    );
+                    return Ok(detail);
+                }
+                Ok(None) => {}
+                Err(err) => warn!("history v2 detail fallback: {err}"),
             }
-            Ok(None) => {}
-            Err(err) => warn!("history v2 detail fallback: {err}"),
         }
     }
     if source_normalized == "opencode" {
