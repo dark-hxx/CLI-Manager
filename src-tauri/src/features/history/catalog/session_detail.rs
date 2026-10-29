@@ -33,6 +33,11 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
     source: &str,
     project_key: &str,
 ) -> Result<Option<HistorySessionDetail>, String> {
+    // A dirty/mid-refresh catalog can still contain a deleted transcript.
+    // File sources must remain backed by the source; OpenCode is a DB locator.
+    if !source.eq_ignore_ascii_case("opencode") && !Path::new(file_path).is_file() {
+        return Ok(None);
+    }
     let codex_thread_names = if source.eq_ignore_ascii_case("codex") {
         let roots_for_names = roots.clone();
         Some(

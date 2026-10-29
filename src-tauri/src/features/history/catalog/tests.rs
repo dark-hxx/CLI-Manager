@@ -1346,6 +1346,10 @@ async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
         .join("detail-v2.jsonl");
     let file_path = file.to_string_lossy().to_string();
 
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "{}\n").unwrap();
+    let fingerprint = v2_fingerprint_value(session_file_fingerprint(&file));
+
     sqlx::query(
         "INSERT INTO history_source_instances(
             id, source_id, environment_kind, environment_key, storage_kind,
@@ -1370,10 +1374,11 @@ async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
             'claude-default', 'detail-v2', 'file', ?1,
             'proj', 'C:/work/proj', 'c:/work/proj', 'v2 detail', 10, 30,
             1, 10, 5, 3, 2, 0, 'claude-sonnet-4-5', 'claude-sonnet-4-5',
-            1, 'file-stat', 'fp', 1, 1, 'ok', 1, 1
+            1, 'file-stat', ?2, 1, 1, 'ok', 1, 1
          )",
     )
     .bind(&file_path)
+    .bind(&fingerprint)
     .execute(&mut conn)
     .await
     .unwrap();

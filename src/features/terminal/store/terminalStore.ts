@@ -1184,6 +1184,9 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
                 cliSessionId: ps.cliSessionId,
                 remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
                 remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
+                // Keep checkpoint identity for old-daemon compatibility, not for
+                // static display: pending attach restores the daemon replay only.
+                initialTerminalOutput: ps.initialTerminalOutput,
                 deferStartupUntilInitialOutput: false,
               };
               const unlisten = await terminalProcessManager.subscribeStatus(ps.id, (payload) => {

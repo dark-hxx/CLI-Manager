@@ -37,6 +37,7 @@
 - `appendResumeCliArgs` 在继承项目普通 CLI 参数前必须移除 `cli_args` 中已有的 `resume <id>`、`resume --no-alt-screen <id>`、`--resume <id>`、`--continue` 等会话选择片段；新命令中的目标 Session ID 只能出现一次，Provider 参数仍须保留并去重。
 - 持续保存：定时节流 10s(`SNAPSHOT_THROTTLE_MS`)，脏检测跳过无新输出的终端，单终端尾部限行 `SNAPSHOT_MAX_LINES=2000`，仅有真实 PTY 会话时启动定时器。正常退出且明确丢弃会话时，`flushTerminalSnapshotsNow()` 必须在 `TerminalProcessManager.closeAll()` 之前强制落盘最终画面。
 - 快照并发/生命期（1.4.3）：周期 flush 单飞；已有 flush 时的强制请求必须等待其后新一轮强制刷新，不允许只等旧画面。来源注册携带取消信号，卸载/同 ID 替换取消 xterm 写屏障；旧注销不能移除新来源，异步结果在上传和写 Store 前核验来源身份。上传失败或落盘失败标脏重试；保留完整 daemon checkpoint，禁止以本机恢复尾部替代。`scripts/terminalSnapshotPersistence.test.mjs` 执行真实模块的定时/强制/关闭/替换/失败序列回归。
+- 鼠标快照（1.4.4）：定时和卸载统一调用 `serializeTerminalSnapshot`，在 tracking 开启前设置真实 DEFAULT/SGR/SGR_PIXELS 编码，并在尾部保存完整开启/关闭状态；不得直接使用遗漏编码的 SerializeAddon 输出。旧快照编码不可猜测，只在明确 snapshot/checkpoint 边界暂停不安全跟踪，实时原始 legacy 鼠标模式不改写。daemon attach 保留已存快照身份但禁止静态贴屏；旧 daemon 仅精确匹配该快照才兼容，未知旧会话需要重开。输入/query 所有权、历史几何与 ACK 原始字符计数不变。
 - 启动问询（`mode=ask`）：有可恢复真实 PTY 会话 → 弹窗询问；无 → 静默进入不弹窗。拒绝 → `sessionStore.clear()` 只清工作区快照，**不碰 SQLite `session_meta`**，并 `TerminalProcessManager.closeAll()` 关闭无人认领的 daemon 会话。
 - 自动恢复（`mode=auto`）：有可恢复真实 PTY 会话 → 不弹窗，`init()` 直接调用 `restoreSessions`；无 → 静默进入。daemon 会话仍走 `restoreSessions` 内部 attach 优先，与后台续跑不冲突。
 - **★每进程只触发一次**：`App.tsx` 模块级 `sessionRestoreHandled` 守护——恢复弹窗/自动恢复只在 `init()` 里触发一次并立即置位。切换设置页等任何后续渲染都不得重新触发（历史教训：`735123d2` 拆功能的根因就是提示不受控、切设置页反复弹）。

@@ -9,6 +9,7 @@ import { installTerminalUnicode } from "../../../shared/lib/terminalUnicode";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { restoreTerminalSnapshot, serializeTerminalSnapshot } from "../../../shared/lib/terminalSnapshot";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { useShallow } from "zustand/shallow";
@@ -1073,7 +1074,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     baseDisposables.push(linkHoverIcon);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const serializeAfterWriteBarrier = (signal: AbortSignal) => serializeTerminalAfterWrite(
-      terminal, () => serializeAddon.serialize(), signal,
+      terminal, () => serializeTerminalSnapshot(terminal, serializeAddon), signal,
     );
     const unregisterSnapshotSource = registerTerminalSnapshotSource(
       sessionId,
@@ -1122,7 +1123,8 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     applyCodexCursorVisibility(terminal);
     scheduleFit(true);
     const sessionSnapshot = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
-    const initialTerminalOutput = sessionSnapshot?.initialTerminalOutput;
+    const initialTerminalOutput = useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)
+      ? undefined : sessionSnapshot?.initialTerminalOutput;
     const writeDeferredStartup = () => {
       if (!sessionSnapshot?.deferStartupUntilInitialOutput || !sessionSnapshot.startupCmd) return;
       terminalProcessManager.write(
@@ -1145,7 +1147,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         if (terminalRef.current !== terminal) return;
         snapshotBeforeUnmountRef.current = () => {
           try {
-            useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializeAddon.serialize());
+            useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializeTerminalSnapshot(terminal, serializeAddon));
           } catch (err) {
             logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
           }
@@ -1184,7 +1186,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         ) {
           terminal.resize(dimensions.cols, dimensions.rows);
         }
-        const restoredOutput = displayTransformOutputRef.current(initialTerminalOutput);
+        const restoredOutput = displayTransformOutputRef.current(restoreTerminalSnapshot(initialTerminalOutput));
         const restoredCursor = shouldHideCodexCursor(terminal) ? "\x1b[?25l" : "\x1b[?25h";
         terminal.write(`${restoredOutput}\x1b[?6l\x1b[r\x1b[0m${restoredCursor}\x1b[999B\r\n`, () => {
           if (terminalRef.current !== terminal) return;

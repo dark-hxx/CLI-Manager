@@ -39,6 +39,7 @@
 - First indexing is recent-first and partial results remain usable. A ready generation change reloads the list and current search.
 - Project filtering uses indexed normalized `cwd` plus Claude encoded project keys; it must not reopen every JSONL in the request path.
 - Editing/deleting/converting history marks the catalog dirty. Refresh replaces only changed files and removes missing files.
+- Foreground file-backed detail reads must not await a dirty catalog's full refresh. Schedule refresh in the background and validate/read the requested source directly; V2 cached detail must reject a missing source file even while catalog rows remain. OpenCode database locators retain their separate provider/catalog path.
 - The session-file directory cache is keyed by source and history roots with a 60-second TTL. A full scan (no source filter) replaces the `*` entry and drops every per-source entry for the same roots, so `validate_session_file_ref` accepts a file the refreshed catalog already returns (for example a new Claude session after `/clear`); entries for other roots are kept.
 - WSL history inventory continues to use `wsl.exe` discovery rather than native recursive UNC enumeration.
 

@@ -13,7 +13,7 @@ const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-terminal-replay-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
 // Bundle real pure helpers so their relative dependencies resolve in this temporary harness.
-for (const name of ["terminalQueryPolicy", "terminalColorQueryFilter"]) {
+for (const name of ["terminalQueryPolicy", "terminalColorQueryFilter", "terminalSnapshot"]) {
   await build({ entryPoints: [fileURLToPath(new URL(`../src/shared/lib/${name}.ts`, import.meta.url))], bundle: true, platform: "node", format: "esm", outfile: join(tempDir, `${name}.mjs`) });
 }
 
@@ -138,8 +138,9 @@ export const TERMINAL_FONT_SIZE_MIN = 8;
 export const useSettingsStore = { getState: () => ({ fontSize: 14, update: async () => {} }) };
 `);
 writeFileSync(join(tempDir, "terminalStore.mjs"), `
+export const savedSessions = [];
 export const useTerminalStore = {
-  getState: () => ({ recordPtyOutputActivity() {} }),
+  getState: () => ({ sessions: savedSessions, recordPtyOutputActivity() {} }),
 };
 `);
 writeFileSync(join(tempDir, "manager.mjs"), `
@@ -174,6 +175,7 @@ const transpiled = ts.transpileModule(source, {
 }).outputText
   .replace('from "../../../shared/lib/terminalQueryPolicy"', 'from "./terminalQueryPolicy.mjs"')
   .replace('from "../../../shared/lib/terminalColorQueryFilter"', 'from "./terminalColorQueryFilter.mjs"')
+  .replace('from "../../../shared/lib/terminalSnapshot"', 'from "./terminalSnapshot.mjs"')
   .replace('from "react"', 'from "./react.mjs"')
   .replace('from "@xterm/addon-webgl"', 'from "./webgl.mjs"')
   .replace('from "../lib/terminalVisibility"', 'from "./visibility.mjs"')
@@ -193,6 +195,7 @@ const { useTerminalDisplay } = await import(pathToFileURL(modulePath).href);
 const managerStub = await import(pathToFileURL(join(tempDir, "manager.mjs")).href);
 const resizeStub = await import(pathToFileURL(join(tempDir, "resize.mjs")).href);
 const visibilityStub = await import(pathToFileURL(join(tempDir, "visibility.mjs")).href);
+const terminalStoreStub = await import(pathToFileURL(join(tempDir, "terminalStore.mjs")).href);
 
 class FakeTerminal {
   // 初始化假终端缓冲区、回调队列和重排参数。
@@ -530,6 +533,47 @@ function delivery(frameValue, commits) {
 }
 
 // 验证初始回放适配当前容器后才释放缓存的实时输出。
+test("old known checkpoint normalization preserves ACK accounting and never changes the same live bytes", async () => {
+  managerStub.resetManager();
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const text = "saved screen\x1b[?1003h", commits = [];
+  terminalStoreStub.savedSessions.push({ id: "session-1", initialTerminalOutput: text });
+  const output = display.attachPtyOutput();
+  try {
+    await output.ready;
+    managerStub.emitOutput(delivery(frame(1, text, 80, 24, true), commits));
+    flushNextAnimationFrame();
+    assert.ok(events.includes(`write:${text}\x1b[?9;1000;1002;1003l`));
+    terminal.finishNextWrite();
+    assert.deepEqual(commits, [{ sequence: 1, charCount: text.length }]);
+    managerStub.emitOutput(delivery(frame(3, text, 80, 24), commits));
+    flushAnimationFrames();
+    assert.equal(events.filter(event => event.startsWith("write:")).at(-1), `write:${text}`);
+    terminal.finishNextWrite();
+    assert.equal(commits[1].charCount, text.length);
+  } finally {
+    output.dispose(); detachViewport(); terminalStoreStub.savedSessions.length = 0;
+  }
+});
+
+test("initial attach also normalizes the saved old-daemon checkpoint before releasing live frames", async () => {
+  managerStub.resetManager();
+  const { display, terminal, events, detachViewport } = createDisplay();
+  const text = "saved screen\x1b[?1003h";
+  terminalStoreStub.savedSessions.push({ id: "session-1", initialTerminalOutput: text });
+  const output = display.attachPtyOutput({ waitForReplay: true });
+  try {
+    await output.ready;
+    const ready = output.completeReplay([frame(1, text, 80, 24)]);
+    await Promise.resolve();
+    assert.ok(events.includes(`write:${text}\x1b[?9;1000;1002;1003l`));
+    terminal.finishNextWrite();
+    assert.equal(await ready, true);
+  } finally {
+    output.dispose(); detachViewport(); terminalStoreStub.savedSessions.length = 0;
+  }
+});
+
 test("initial replay fits the current container before releasing buffered live output", async () => {
   managerStub.resetManager();
   const { display, terminal, events, detachViewport } = createDisplay();

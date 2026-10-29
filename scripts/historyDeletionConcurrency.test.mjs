@@ -44,6 +44,78 @@ function bindExpression(expression, bindings) {
 }
 
 const actionSource = extract("src/features/history/store/historyStore.ts", "deleteSessions", ts.isPropertyAssignment);
+const singleActionSource = extract("src/features/history/store/historyStore.ts", "deleteSession", ts.isPropertyAssignment);
+
+// Exercise the actual source-delete -> metadata -> next-detail chain, not a fake delete action.
+function completedDeleteHarness(nextDetail) {
+  const h = harness(["a", "b", "c"]);
+  const sql = [], warnings = [];
+  Object.assign(h.state, {
+    metaMap: {}, generatedTitleMap: {}, searchHits: [],
+    activeSessionKey: "a", activeSession: h.state.sessions[0],
+    openSession: nextDetail,
+  });
+  h.state.deleteSession = bindExpression(singleActionSource, {
+    get: () => h.state, set: patch => Object.assign(h.state, patch),
+    invoke: async () => { h.calls.push("source-deleted"); return ["C:/fixture/a.jsonl"]; },
+    getHistoryPathArgs: async () => ({}),
+    getDb: async () => ({ execute: async statement => sql.push(statement) }),
+    deleteFavoriteSnapshot: async () => {}, hitSessionKey: hit => hit.sessionKey,
+    assertHistorySessionDeletable, historyDeletedSessionKeys: policy.historyDeletedSessionKeys,
+    logWarn: (name, data) => warnings.push({ name, data }),
+  });
+  return { ...h, sql, warnings };
+}
+
+test("completed source deletion closes confirmation and releases lock without waiting for next detail", async () => {
+  const detail = deferred();
+  const h = completedDeleteHarness(() => detail.promise);
+  const ui = confirmation(h, { type: "single", session: h.state.sessions[0] });
+  ui.confirm();
+  await ui.done;
+  assert.deepEqual(h.calls, ["source-deleted"]);
+  assert.equal(h.state.deletingSessions, false);
+  assert.equal(ui.currentIntent(), null);
+  assert.equal(ui.events[0].type, "success");
+  assert.equal(h.state.activeSessionKey, "b");
+  assert.ok(!h.state.sessions.some(row => row.sessionKey === "a"));
+  detail.resolve();
+});
+
+test("a failed next detail cannot turn a committed delete into an error or zero completed count", async () => {
+  const h = completedDeleteHarness(async () => { throw new Error("next_detail_failed"); });
+  const outcome = await h.action(["a"]);
+  await Promise.resolve();
+  assert.deepEqual(outcome, { deletedCount: 1, error: null });
+  assert.equal(h.state.deletingSessions, false);
+  assert.equal(h.warnings.length, 1);
+  assert.equal(h.warnings[0].name, "history.delete.nextSessionLoadFailed");
+  assert.equal(h.sql.length, 2);
+});
+
+test("deleting an inactive or last session does not request unrelated detail", async () => {
+  let opens = 0;
+  const h = completedDeleteHarness(async () => { opens++; });
+  h.state.activeSessionKey = "b";
+  assert.deepEqual(await h.action(["a"]), { deletedCount: 1, error: null });
+  assert.equal(opens, 0);
+  const last = completedDeleteHarness(async () => { opens++; });
+  last.state.sessions = last.state.sessions.slice(0, 1);
+  assert.deepEqual(await last.action(["a"]), { deletedCount: 1, error: null });
+  assert.equal(last.state.activeSessionKey, null);
+  assert.equal(opens, 0);
+});
+
+test("dirty foreground details bypass the catalog and schedule only a non-waiting background refresh", () => {
+  const source = read("src-tauri/src/features/history/mod.rs");
+  const command = source.slice(source.indexOf("pub async fn history_get_session("), source.indexOf("pub async fn history_delete_session("));
+  const detail = command.slice(0, command.indexOf("pub async fn ", 15));
+  assert.match(detail, /let catalog_dirty = catalog::is_dirty\(\)/);
+  assert.match(detail, /tauri::async_runtime::spawn\(async move/);
+  assert.match(detail, /ensure_refresh\(refresh_app, refresh_roots, false, false\)/);
+  assert.match(detail, /if !catalog_dirty \|\| source_normalized == "opencode"/);
+  assert.doesNotMatch(detail, /ensure_refresh\([^\n]*false, true/);
+});
 
 // promise 屏障精确控制第二条删除暂停点，不依赖计时器或真实磁盘速度。
 function deferred() {

@@ -7,6 +7,9 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
+#[path = "mouse_snapshot.rs"]
+mod mouse_snapshot;
+
 #[derive(Clone)]
 pub(super) struct ReplayFrame {
     pub(super) cols: u16,
@@ -105,6 +108,10 @@ impl SessionBuffer {
         self.checkpoint
             .iter()
             .cloned()
+            .map(|mut frame| {
+                mouse_snapshot::restore_legacy_mouse_snapshot(&mut frame.data);
+                frame
+            })
             .chain(self.live_frames())
             .collect()
     }
@@ -326,6 +333,39 @@ impl Drop for SessionBuffer {
     fn drop(&mut self) {
         if let Some(path) = self.spool_path.as_ref() {
             let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[cfg(test)]
+mod mouse_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn old_checkpoint_disables_unknown_mouse_but_never_rewrites_live_frames() {
+        let mut buffer = SessionBuffer::new();
+        buffer.accept_checkpoint(80, 24, 10, b"screen\x1b[?1003h".to_vec()).unwrap();
+        let live = b"\x1b[?1003h";
+        buffer.push_output(80, 24, 11, live);
+        let replay = buffer.replay_frames();
+        assert!(replay[0].data.ends_with(b"\x1b[?9;1000;1002;1003l"));
+        assert_eq!(replay[1].data, live);
+        assert_eq!(buffer.checkpoint.as_ref().unwrap().data, b"screen\x1b[?1003h");
+    }
+
+    #[test]
+    fn complete_encoding_and_disabled_snapshots_are_unchanged() {
+        for snapshot in [
+            b"screen\x1b[?1006h\x1b[?1003h".as_slice(),
+            b"screen\x1b[?1006;1016l\x1b[?1003h".as_slice(),
+            b"screen\x1b[?1016h\x1b[?1002h".as_slice(),
+            b"screen\x1b[?1003h\x1b[?1003l".as_slice(),
+            b"plain shell".as_slice(),
+            b"partial\x1b[?1003".as_slice(),
+        ] {
+            let mut buffer = SessionBuffer::new();
+            buffer.accept_checkpoint(80, 24, 1, snapshot.to_vec()).unwrap();
+            assert_eq!(buffer.replay_frames()[0].data, snapshot);
         }
     }
 }
