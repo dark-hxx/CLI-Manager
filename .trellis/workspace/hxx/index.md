@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 136
-- **Last Active**: 2026-10-16
+- **Total Sessions**: 137
+- **Last Active**: 2026-10-29
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~181 | Active |
+| `journal-3.md` | ~215 | Active |
 | `journal-2.md` | ~1975 | Archived |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 137 | 2026-10-29 | Issue 293: settings-first terminal newline (V1.4.5) | `3ba3d707` | `master` |
 | 136 | 2026-10-16 | 终端字素宽度与 Pi 滚动条验证（#285/#286） | `b77fc5e7` | `master` |
 | 135 | 2026-10-16 | PR #284 多行启动命令 P2 修复 | `900deab0` | `pr-284-review-fixes` |
 | 134 | 2026-10-16 | Pi Hook 运行结束边界修复验收与提交 | `3d323958` | `master` |

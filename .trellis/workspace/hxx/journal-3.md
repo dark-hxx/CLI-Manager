@@ -179,3 +179,37 @@ V1.4.4：隔离根 Pi 与子实例，按运行代际拦截重复和过期完成�
 ### Status
 
 [OK] **Completed**
+
+
+## Session 137: Issue 293: settings-first terminal newline (V1.4.5)
+
+**Date**: 2026-10-29
+**Task**: Issue 293: settings-first terminal newline (V1.4.5)
+**Branch**: `master`
+
+### Summary
+
+Implemented configured newline mapping under Kitty, keyboard/mouse checkpoint preservation including 2000-line tails, Web/Tap safety and configurable Ctrl+Home. Integrated remote master with explicit authorization. No app/services launched; exact OMP/ConPTY and UI acceptance remain pending, so task stays in_progress.
+
+### Main Changes
+
+- Preserve legacy Codex/Grok and template submission contracts; leave unrelated archived cc-plan deletion untouched.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3ba3d707` | (see git log) |
+
+### Testing
+
+- [OK] 151 terminal tests and 120 Tap tests pass; desktop/Web/Tap typechecks and normal/strict architecture checks pass.
+- [OK] GitNexus staged detect-changes falsely reports empty; reviewed actual staged diff and file impact results instead.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Manually validate all three configured newline chords, Enter once, IME, OMP version/keybindings, WSL/SSH and bilingual UI before closing #293.

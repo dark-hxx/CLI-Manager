@@ -116,8 +116,9 @@ No Rust change is expected; run targeted Cargo checks only if that scope changes
 - [x] User authorized fetching/merging remote master and commit/push after checks.
       Fast-forwarded four upstream commits to `12115cc3`; resolved the two snapshot
       call-site conflicts by composing serializers, preserving upstream fixes.
-- [ ] Commit and push the verified task paths only; exclude the unrelated archived
-      cc-plan.json deletion. Do not close #293 before human acceptance.
+- [x] Commit verified task paths only as `3ba3d707`; exclude the unrelated archived
+      cc-plan.json deletion. Push is authorized after session recording; do not
+      close #293 or archive acceptance as passed before human verification.
 
 ## Rollback Points
 

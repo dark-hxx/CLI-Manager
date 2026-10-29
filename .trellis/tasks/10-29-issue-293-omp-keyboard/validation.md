@@ -15,6 +15,10 @@ Both stash-apply conflicts were in snapshot call sites and were resolved by
 composing keyboard and upstream mouse serializers. Upstream checkpoint-identity,
 live daemon attach and replay changes remain intact.
 
+Implementation committed as `3ba3d707` (`Refs #293`, not a closing reference).
+Record the session without archiving the outstanding manual acceptance; pushing
+the verified work to origin/master is explicitly authorized by the user.
+
 ## Implemented Touchpoints
 
 | Touchpoint | Result |
