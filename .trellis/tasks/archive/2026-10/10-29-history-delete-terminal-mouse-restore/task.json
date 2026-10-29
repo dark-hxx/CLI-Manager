@@ -3,7 +3,7 @@
   "name": "history-delete-terminal-mouse-restore",
   "title": "历史删除卡住与终端鼠标协议恢复",
   "description": "解耦历史删除完成与下一条详情读取，避免 dirty 索引刷新锁住确认框；完整保存终端鼠标编码与跟踪状态，兼容可识别的旧快照。1.4.4，提交后 NSIS，不安装、不推送。",
-  "status": "in_progress",
+  "status": "completed",
   "dev_type": "fullstack",
   "scope": "terminal-history",
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "codex",
   "assignee": "codex",
   "createdAt": "2026-10-29",
-  "completedAt": null,
+  "completedAt": "2026-10-29",
   "branch": "fix/history-delete-terminal-mouse-restore",
   "base_branch": "master",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "实现与 NSIS 解包校验通过，等待用户实机验收；未安装、未推送。详见 verification.md。",
+  "notes": "2026-10-29 用户实测确认修复，批准归档并按既有流程合并及仅推送 origin/master；开发分支仅保留本地。代码与安装包验证见 verification.md。",
   "meta": {}
 }

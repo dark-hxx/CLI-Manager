@@ -37,3 +37,9 @@
 - 旧包先备份并核对 SHA256。详细 manifest/二进制/源提交指纹：`.codex/history-mouse-package-verification.json`；构建日志：`.codex/history-mouse-nsis-build.log`。
 - 首次验证脚本误以为字体在 `tap/assets/fonts`，与源 manifest 不符；核对源 CSS、完整 manifest 及解包结果后改为实际 `tap/fonts` 精确文件断言，重跑全部验证通过。没有为此修改程序或降低文件/指纹校验。
 - 安装包验证时工作区干净且 HEAD 为上述代码提交；其后仅提交本验证记录与任务进度，不改变交付代码。未安装、未启动用户应用、未推送，等待用户验收。
+
+## 用户验收与合并授权（2026-10-29）
+
+- 用户反馈“修复了”，同意按原流程推送仓库，并明确本地开发分支不用推送。
+- 本轮开始工作区干净，修复分支无上游；fetch 后本地 master 与 origin/master 均为 `e4b0c3d2`，领先/落后 0/0，无新增远程冲突。
+- 任务验收归档，仅补充验收记录；实现及已验证安装包不变。将修复合并到 master，并且只更新 `origin` 的 `refs/heads/master`，保留本地开发分支，不创建或更新其远程分支。
