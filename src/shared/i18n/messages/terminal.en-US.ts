@@ -66,6 +66,7 @@ export const en: Record<keyof typeof zh, string> = {
   "terminal.tab.close": "Close terminal {title}",
   "terminal.tab.scrollLeft": "Scroll terminal tabs left",
   "terminal.tab.scrollRight": "Scroll terminal tabs right",
+  "terminal.scrollToTop": "Jump to top",
   "terminal.scrollToBottom": "Jump to bottom",
   "terminal.tab.openList": "Open terminal tab list",
   "terminal.tab.list": "Terminal tab list",

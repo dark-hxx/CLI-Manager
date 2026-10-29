@@ -1,0 +1,4 @@
+{"file":".trellis/tasks/10-29-issue-293-omp-keyboard/design.md","reason":"Approved settings-first design and post-merge serialization composition"}
+{"file":".trellis/tasks/10-29-issue-293-omp-keyboard/research/findings.md","reason":"Root cause, discovery list, upstream evidence and GitNexus impact limitations"}
+{"file":".trellis/spec/frontend/terminal-text-submission-contracts.md","reason":"Preserve programmatic paste/submission and exact-session forwarding boundaries"}
+{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"Preserve persistence throttling, daemon attach and restoration contracts"}

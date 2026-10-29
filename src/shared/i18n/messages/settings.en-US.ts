@@ -209,7 +209,7 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.shortcuts.action.toggleSidebar": "Toggle Project Sidebar",
   "settings.shortcuts.action.toggleTerminalFullscreen": "Terminal Fullscreen",
   "settings.shortcuts.terminalKeys": "Terminal Keys",
-  "settings.shortcuts.terminalKeysDescription": "When pressed in the terminal, this combo sends a newline to the PTY. Plain Enter is unchanged.",
+  "settings.shortcuts.terminalKeysDescription": "The selected combo inserts a newline in the terminal, including apps using enhanced keyboard protocols. Plain Enter is unchanged.",
   "settings.shortcuts.osc52Clipboard": "Write OSC 52 to the host clipboard",
   "settings.shortcuts.osc52ClipboardDescription": "Intercept OSC 52 from remote or fullscreen TUIs and write the host clipboard. When off, sequences are still stripped, but the clipboard is left unchanged.",
   "settings.shortcuts.osc52ClipboardOn": "On",

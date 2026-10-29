@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { loadKeyboardModule, Terminal, SerializeAddon, write } from "./helpers/loadTerminalKeyboard.mjs";
+
+const { createTerminalKeyboardOptions, readTerminalKeyboardState } = loadKeyboardModule("terminalKeyboardProtocol");
+const { serializeTerminalWithKeyboardState, preserveTerminalKeyboardSnapshotPrefix } = loadKeyboardModule("terminalKeyboardSnapshot");
+const { serializeTerminalSnapshot } = loadKeyboardModule("terminalSnapshot");
 
 const source = readFileSync(new URL("../src/features/terminal/api/sessionSnapshotPersistence.ts", import.meta.url), "utf8");
 const ast = ts.createSourceFile("snapshots.ts", source, ts.ScriptTarget.Latest, true);
@@ -24,7 +29,7 @@ function harness(save = async () => {}) {
     updateSessionTerminalSnapshot(id, text) { updates.push({ id, text }); },
   };
   runInNewContext(compiled, {
-    exports, AbortController,
+    exports, AbortController, preserveTerminalKeyboardSnapshotPrefix,
     useTerminalStore: { getState: () => state },
     useSessionStore: { getState: () => ({ saveSessions: async rows => { saves.push(rows); await save(rows); } }) },
     logError: (...args) => errors.push(args),
@@ -56,6 +61,33 @@ test("full checkpoint and the existing 2000-line persisted tail remain unchanged
   assert.deepEqual(checkpoints, [full]);
   assert.equal(h.updates[0].text, full.split("\n").slice(-2000).join("\n"));
   assert.equal(h.saves.length, 1);
+});
+
+test("flush retains bounded keyboard stacks in persisted tails without trimming daemon checkpoints", async (t) => {
+  const h = harness(), checkpoints = [];
+  const options = { allowProposedApi: true, cols: 20, rows: 5, scrollback: 3000, ...createTerminalKeyboardOptions() };
+  const terminal = new Terminal(options), restored = new Terminal(options);
+  t.after(() => { terminal.dispose(); restored.dispose(); });
+  const addon = new SerializeAddon(); terminal.loadAddon(addon);
+  const pushes = Array.from({ length: 20 }, (_, i) => `\x1b[>${i + 1}u`).join("");
+  await write(terminal, "history\r\n".repeat(2200) + pushes + "\x1b[?1049h" + pushes + "overlay");
+  h.registerTerminalSnapshotSource("kitty", () => serializeTerminalWithKeyboardState(
+    terminal, () => serializeTerminalSnapshot(terminal, addon),
+  ), async text => checkpoints.push(text));
+  h.markTerminalSnapshotDirty("kitty");
+  await h.tick();
+  assert.equal(h.errors.length, 0);
+  assert.equal(checkpoints.length, 1);
+  assert.ok(checkpoints[0].length > h.updates[0].text.length);
+  assert.equal((h.updates[0].text.match(/\n/g) ?? []).length, 1999);
+  await write(restored, h.updates[0].text);
+  assert.deepEqual(readTerminalKeyboardState(restored), readTerminalKeyboardState(terminal));
+  assert.equal(readTerminalKeyboardState(restored).mainStack.length, 16);
+  assert.equal(readTerminalKeyboardState(restored).altStack.length, 16);
+  for (const control of ["\x1b[<8u", "\x1b[?47l", "\x1b[<16u", "\x1b[?47h", "\x1b[<16u"]) {
+    await write(terminal, control); await write(restored, control);
+    assert.deepEqual(readTerminalKeyboardState(restored), readTerminalKeyboardState(terminal));
+  }
 });
 
 test("slow serialization coalesces periodic ticks and preserves newly dirty output", async () => {

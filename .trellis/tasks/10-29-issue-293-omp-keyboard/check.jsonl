@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/terminal-keyboard-contracts.md","reason":"Settings-first mapping, native encoding, lifecycle, replay/mirror and trimmed snapshot regression contracts"}
+{"file":".trellis/spec/frontend/ai-architecture-contracts.md","reason":"Layer boundaries and standalone strict zero-debt architecture gate"}
+{"file":".trellis/tasks/10-29-issue-293-omp-keyboard/validation.md","reason":"Executed checks, remote integration and explicit live acceptance gaps"}

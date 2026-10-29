@@ -207,6 +207,7 @@ export type ShortcutAction =
   | "sessionHistory"
   | "copyAi"
   | "copyTerminalSelection"
+  | "scrollToTop"
   | "scrollToBottom"
   | "pageUp"
   | "pageDown"
@@ -266,6 +267,7 @@ const SHORTCUT_ACTIONS: readonly ShortcutAction[] = [
   "sessionHistory",
   "copyAi",
   "copyTerminalSelection",
+  "scrollToTop",
   "scrollToBottom",
   "pageUp",
   "pageDown",
@@ -327,6 +329,7 @@ export const DEFAULT_KEYBOARD_SHORTCUTS: KeyboardShortcutMap = {
   sessionHistory: "Ctrl+K",
   copyAi: "Alt+P",
   copyTerminalSelection: "Ctrl+Shift+C",
+  scrollToTop: "Ctrl+Home",
   scrollToBottom: "Ctrl+End",
   pageUp: "PageUp",
   pageDown: "PageDown",

@@ -5,13 +5,15 @@ import { Terminal as Xterm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
+import { createTerminalKeyboardOptions } from "../../../src/shared/lib/terminalKeyboardProtocol";
 import { installTerminalUnicode } from "../../../src/shared/lib/terminalUnicode";
 import { installTerminalQueryPolicy } from "../../../src/shared/lib/terminalQueryPolicy";
 import { createWebTerminalFrames, type RenderFrame } from "../../../src/shared/lib/webTerminalRenderQueue";
 import { createTerminalColorQueryFilter } from "../../../src/shared/lib/terminalColorQueryFilter";
 import type { TerminalStream } from "./protocol";
 import type { TerminalState } from "./useWorkspace";
-import { keyBytes, preparePaste, type Key, type Modifiers } from "./input";
+import { preparePaste, type Key, type Modifiers } from "./input";
+import { terminalKeyBytes } from "./terminalKeys";
 import { terminalWrites } from "./terminalWrites";
 import { readerLines } from "./format";
 import { nativeCommandPrefix } from "./completion";
@@ -64,7 +66,7 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
     command: (prefix) => Boolean(nativeCommandPrefix(prefix) && terminal.current && !broken.current
       && options.current.connected && options.current.active && options.current.onInput(prefix)),
     key: (key, modifiers) => Boolean(terminal.current && !broken.current && options.current.connected
-      && options.current.onInput(keyBytes(key, modifiers, terminal.current.modes.applicationCursorKeysMode))),
+      && options.current.onInput(terminalKeyBytes(terminal.current, key, modifiers))),
     message: async (text) => {
       const term = terminal.current;
       if (!term || broken.current || !options.current.connected || !options.current.active) return false;
@@ -130,6 +132,7 @@ export function Terminal({ ref, sessionId, stream, active, visible, connected, s
     let decoder = new TextDecoder();
     const colors = createTerminalColorQueryFilter();
     const term = new Xterm({
+      ...createTerminalKeyboardOptions(),
       allowProposedApi: true, scrollback: 5000, convertEol: false, cursorBlink: false, cursorStyle: "bar",
       fontFamily: DESKTOP_MONO, fontSize, fontWeightBold: 700, lineHeight: 1, minimumContrastRatio: 4.5,
       theme: { background: "#1c1b22", foreground: "#e4e4e7", cursor: "#c4b5fd", selectionBackground: "#a78bfa55" },

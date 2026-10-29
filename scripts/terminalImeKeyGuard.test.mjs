@@ -54,6 +54,10 @@ test("the xterm key handler vetoes the event before its composition finalizer", 
   assert.match(controllerSource, /import \{ shouldSwallowImeCompositionKeydown \} from "\.\.\/lib\/terminalImeKeyGuard";/);
   assert.match(
     controllerSource,
-    /terminal\.attachCustomKeyEventHandler\(\(e\) => \{\s*(?:\/\/[^\n]*\n\s*)*if \(shouldSwallowImeCompositionKeydown\(e, isComposingRef\.current\)\) return false;/,
+    /terminal\.attachCustomKeyEventHandler\(keyRouting\.wrap\([\s\S]*shouldSwallowImeCompositionKeydown\(e, isComposingRef\.current\)/,
   );
+  const routingSource = readFileSync(new URL("../src/shared/lib/terminalKeyRouting.ts", import.meta.url), "utf8");
+  const guardIndex = routingSource.indexOf("if (imeGuard(event))");
+  const heldIndex = routingSource.indexOf("let entry = held.get(id)");
+  assert.ok(guardIndex >= 0 && heldIndex > guardIndex);
 });

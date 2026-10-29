@@ -22,6 +22,13 @@
 
 ## [V1.4.5] - 2026-10-17
 
+### 终端换行设置与回顶快捷键（#293）
+
+- 终端启用 Kitty 键盘协议协商；设置中选择的 `Shift+Enter`、`Ctrl+Enter`、`Alt+Enter` 在增强协议下统一映射为 composer 的 `Shift+Enter` 换行意图，再由 xterm 原生编码，避免设置被协议绕过。保留 legacy LF、Codex/Grok `ESC + CR` 策略及未匹配组合键的既有规则。
+- 配对处理按住重复、松键、设置变化、失焦和 IME 候选确认；窗口与终端已消费的快捷键不再泄漏增强协议松键事件。普通 Enter 与程序化模板提交契约不变。
+- 快照与 checkpoint 保留两个缓冲区的 Kitty 标志及完整栈，持久化裁剪到末尾 2000 行时保留有界状态前缀，并兼容鼠标模式/编码恢复；Web/Tap 同步解析协商状态但不回复镜像查询，Web 复制/粘贴不泄漏松键事件，Tap 虚拟按键使用协商后的原生编码。Win32 input 能力本次未开启。
+- 新增可修改、可禁用的「跳转到顶部」快捷键，默认 `Ctrl+Home`；仅滚动普通缓冲区保留的终端历史，不向 PTY 发送输入，备用屏导航仍交给 TUI。保留 `Ctrl+End`、翻页及输入回到底部行为，中英文设置说明同步更新。
+
 ### Windows Explorer context-menu discovery
 
 - Explorer registration now writes both the plain shell-verb value and `MUIVerb`, broadcasts a shell-association refresh, and improves discovery of the CLI-Manager entry on Windows 11 while preserving the classic "Show more options" menu.

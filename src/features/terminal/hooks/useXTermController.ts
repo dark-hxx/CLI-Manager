@@ -5,6 +5,10 @@ import {
 import { Terminal, type IBufferRange, type ILink, type IViewportRange } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { canAnswerTerminalQuery, installTerminalQueryPolicy } from "../../../shared/lib/terminalQueryPolicy";
+import { createTerminalKeyboardOptions } from "../../../shared/lib/terminalKeyboardProtocol";
+import { serializeTerminalWithKeyboardState } from "../../../shared/lib/terminalKeyboardSnapshot";
+import { createTerminalKeyRouting, isTerminalNewlineComposition } from "../../../shared/lib/terminalKeyRouting";
+import { applyTerminalScrollShortcut } from "../../../shared/lib/terminalScrollShortcuts";
 import { installTerminalUnicode } from "../../../shared/lib/terminalUnicode";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -896,6 +900,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         .catch(() => showKind("missing"));
     };
     const terminal = new Terminal({
+      ...createTerminalKeyboardOptions(),
       ...createTerminalMouseInteractionOptions(),
       cols: 80,
       rows: 24,
@@ -1074,7 +1079,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     baseDisposables.push(linkHoverIcon);
     // 注册定时节流落盘的快照来源：让崩溃/强杀也能恢复到最近一次落盘的画面。
     const serializeAfterWriteBarrier = (signal: AbortSignal) => serializeTerminalAfterWrite(
-      terminal, () => serializeTerminalSnapshot(terminal, serializeAddon), signal,
+      terminal, () => serializeTerminalWithKeyboardState(terminal, () => serializeTerminalSnapshot(terminal, serializeAddon)), signal,
     );
     const unregisterSnapshotSource = registerTerminalSnapshotSource(
       sessionId,
@@ -1147,7 +1152,9 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         if (terminalRef.current !== terminal) return;
         snapshotBeforeUnmountRef.current = () => {
           try {
-            useTerminalStore.getState().updateSessionTerminalSnapshot(sessionId, serializeTerminalSnapshot(terminal, serializeAddon));
+            useTerminalStore.getState().updateSessionTerminalSnapshot(
+              sessionId, serializeTerminalWithKeyboardState(terminal, () => serializeTerminalSnapshot(terminal, serializeAddon)),
+            );
           } catch (err) {
             logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
           }
@@ -1257,10 +1264,24 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     };
     contextMenuTarget.addEventListener("contextmenu", onContextMenu);
 
-    terminal.attachCustomKeyEventHandler((e) => {
-      // 必须排在所有分支之前：返回 false 会阻止 xterm 的 CompositionHelper 提前提交原始拼音。
-      if (shouldSwallowImeCompositionKeydown(e, isComposingRef.current)) return false;
-
+    const keyRouting = createTerminalKeyRouting(terminal, (data, userInput, kind) => {
+      // Preserve legacy direct writes: LF through onData would replace selected input.
+      if (kind === "legacy") {
+        terminalProcessManager.write(sessionId, data).catch((err) => reportPtyWriteError("newline", err));
+      } else {
+        terminal.input(data, userInput);
+      }
+    });
+    const releaseMappedKeys = () => keyRouting.release();
+    terminal.textarea?.addEventListener("blur", releaseMappedKeys);
+    window.addEventListener("blur", releaseMappedKeys);
+    baseDisposables.push({ dispose: () => {
+      terminal.textarea?.removeEventListener("blur", releaseMappedKeys);
+      window.removeEventListener("blur", releaseMappedKeys);
+      keyRouting.dispose();
+    } });
+    // IME guard runs before held-key routing, preventing premature composition commits.
+    terminal.attachCustomKeyEventHandler(keyRouting.wrap((e) => {
       const isMacSelectAll = (
         osPlatformRef.current === "macos" ||
         (osPlatformRef.current === "unknown" && navigator.platform.toLowerCase().includes("mac"))
@@ -1331,7 +1352,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         if (newlineDecision.action === "write") {
           e.preventDefault();
           markAttentionInputHandled();
-          terminalProcessManager.write(sessionId, newlineDecision.data).catch((err) => reportPtyWriteError("newline", err));
+          keyRouting.newline(e, newlineDecision.data);
           return false;
         }
         if (newlineDecision.action === "swallow") {
@@ -1391,25 +1412,11 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
           return false;
         }
       }
-      if (e.type === "keydown" && terminal.buffer.active.type === "normal") {
-        const scrollShortcuts = useSettingsStore.getState().keyboardShortcuts;
-        const combo = eventToCombo(e);
-        if (scrollShortcuts.scrollToBottom.trim() && combo === scrollShortcuts.scrollToBottom) {
-          e.preventDefault();
-          terminal.scrollToBottom();
-          setIsScrolledAwayFromBottom(false);
-          return false;
-        }
-        if (scrollShortcuts.pageUp.trim() && combo === scrollShortcuts.pageUp) {
-          e.preventDefault();
-          terminal.scrollPages(-1);
-          return false;
-        }
-        if (scrollShortcuts.pageDown.trim() && combo === scrollShortcuts.pageDown) {
-          e.preventDefault();
-          terminal.scrollPages(1);
-          return false;
-        }
+      if (e.type === "keydown" && applyTerminalScrollShortcut(
+        terminal, eventToCombo(e), useSettingsStore.getState().keyboardShortcuts,
+      )) {
+        e.preventDefault();
+        return false;
       }
       if (e.type === "keydown" && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "v") {
         e.preventDefault();
@@ -1475,7 +1482,8 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         return false;
       }
       return true;
-    });
+    }, (e) => shouldSwallowImeCompositionKeydown(e, isComposingRef.current)
+      || isTerminalNewlineComposition(e, isComposingRef.current)));
 
     const maybeLogCodexImeDuplicate = (data: string) => {
       if (!isCodexSession()) return;
@@ -1617,6 +1625,8 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     return () => {
       detachPasteAndDrop();
       contextMenuTarget.removeEventListener("contextmenu", onContextMenu);
+      // Release while onData is still attached when a live PTY outlives its view.
+      keyRouting.release();
       disposeTerminalSubsystem(inputDisposables);
       disposeTerminalSubsystem(displayDisposables);
       cancelScheduledFit();

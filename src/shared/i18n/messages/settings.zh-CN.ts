@@ -207,7 +207,7 @@ export const zh = {
   "settings.shortcuts.action.toggleSidebar": "展开/收起项目侧边栏",
   "settings.shortcuts.action.toggleTerminalFullscreen": "终端全屏",
   "settings.shortcuts.terminalKeys": "终端键位",
-  "settings.shortcuts.terminalKeysDescription": "在终端中按下该组合键时，向 PTY 发送换行符 \\n。单按 Enter 行为不变。",
+  "settings.shortcuts.terminalKeysDescription": "所选组合键用于终端换行，也适用于支持增强键盘协议的应用。单按 Enter 行为不变。",
   "settings.shortcuts.osc52Clipboard": "OSC 52 写入本机剪贴板",
   "settings.shortcuts.osc52ClipboardDescription": "拦截远程或全屏 TUI 发出的 OSC 52，写入本机剪贴板。关闭后仍剥离序列，但不改剪贴板。",
   "settings.shortcuts.osc52ClipboardOn": "开启",

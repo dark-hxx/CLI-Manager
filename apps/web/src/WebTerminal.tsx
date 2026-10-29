@@ -3,6 +3,8 @@ import { applyTerminalDisplay } from "./terminalLayout";
 import { createTerminalInputFollow, revealTerminalCell } from "./terminalCursorView";
 import { translate, type TranslationKey } from "./i18n";
 import { installTerminalQueryPolicy } from "../../../src/shared/lib/terminalQueryPolicy";
+import { createTerminalKeyboardOptions } from "../../../src/shared/lib/terminalKeyboardProtocol";
+import { createTerminalKeyRouting } from "../../../src/shared/lib/terminalKeyRouting";
 import { installTerminalUnicode } from "../../../src/shared/lib/terminalUnicode";
 import { createTerminalColorQueryFilter } from "../../../src/shared/lib/terminalColorQueryFilter";
 import { Terminal } from "@xterm/xterm";
@@ -158,6 +160,7 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, de
     const container = containerRef.current;
     if (!container) return;
     const terminal = new Terminal({
+      ...createTerminalKeyboardOptions(),
       allowProposedApi: true,
       convertEol: false,
       cursorBlink: false,
@@ -174,12 +177,17 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, de
     });
     installTerminalUnicode(terminal);
     terminal.open(container);
-    terminal.attachCustomKeyEventHandler((event) => {
+    const keyRouting = createTerminalKeyRouting(terminal, (data, userInput) => terminal.input(data, userInput));
+    const releaseConsumedKeys = () => keyRouting.release();
+    terminal.textarea?.addEventListener("blur", releaseConsumedKeys);
+    window.addEventListener("blur", releaseConsumedKeys);
+    terminal.attachCustomKeyEventHandler(keyRouting.wrap((event) => {
       // Let the browser dispatch copy/paste; do not send clipboard shortcuts to the PTY.
+      // Pair the consumed press even if selection/modifiers change before keyup.
       if (isClipboardPasteShortcut(event)) return false;
       if (isClipboardCopyShortcut(event, terminal.hasSelection())) return false;
       return true;
-    });
+    }, () => false));
     // Desktop xterm owns protocol replies even in hidden tabs; Web is a mirror.
     const queryPolicy = installTerminalQueryPolicy(terminal, () => false);
     const colorQueries = createTerminalColorQueryFilter();
@@ -471,6 +479,9 @@ export function WebTerminal({ sessionId, active, status, stream, controlMode, de
       if (sizeFrame !== null) cancelAnimationFrame(sizeFrame);
       if (animationFrame !== null) cancelAnimationFrame(animationFrame);
       if (hiddenFlushTimer !== null) window.clearTimeout(hiddenFlushTimer);
+      terminal.textarea?.removeEventListener("blur", releaseConsumedKeys);
+      window.removeEventListener("blur", releaseConsumedKeys);
+      keyRouting.dispose();
       input.dispose();
       queryPolicy.dispose();
       cancelCursorShow();

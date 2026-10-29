@@ -65,6 +65,7 @@ export const zh = {
   "terminal.tab.close": "关闭终端 {title}",
   "terminal.tab.scrollLeft": "向左滚动终端标签",
   "terminal.tab.scrollRight": "向右滚动终端标签",
+  "terminal.scrollToTop": "跳转到顶部",
   "terminal.scrollToBottom": "跳转到底部",
   "terminal.tab.openList": "打开终端标签列表",
   "terminal.tab.list": "终端标签列表",

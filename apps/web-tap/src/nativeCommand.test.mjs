@@ -4,6 +4,10 @@ import { hookHarness, loadModule, nodes } from "../tests/reactHarness.mjs";
 import * as completion from "./completion.ts";
 import * as input from "./input.ts";
 import * as format from "./format.ts";
+import { loadKeyboardModule, loadSourceModule } from "../../../scripts/helpers/loadTerminalKeyboard.mjs";
+
+const keyboard = loadKeyboardModule("terminalKeyboardProtocol");
+const terminalKeys = loadSourceModule(new URL("./terminalKeys.ts", import.meta.url));
 
 function setup() {
   const h = hookHarness(), bytes = [], resize = [], ref = { current: null };
@@ -37,11 +41,13 @@ function setup() {
     "@xterm/addon-fit": { FitAddon: class { proposeDimensions() { return { cols: 120, rows: 40 }; } } },
     "@xterm/addon-web-links": { WebLinksAddon: class {} },
     "@xterm/xterm/css/xterm.css": {},
+    "../../../src/shared/lib/terminalKeyboardProtocol": keyboard,
     "../../../src/shared/lib/terminalUnicode": { installTerminalUnicode: noop },
     "../../../src/shared/lib/terminalQueryPolicy": { installTerminalQueryPolicy: disposable },
     "../../../src/shared/lib/webTerminalRenderQueue": { createWebTerminalFrames: () => ({ pending: () => false, accept: () => { throw Error("buffer full"); } }) },
     "../../../src/shared/lib/terminalColorQueryFilter": { createTerminalColorQueryFilter: () => ({}) },
     "./terminalWrites": { terminalWrites: { cancel: noop } }, "./completion": completion, "./input": input, "./format": format,
+    "./terminalKeys": terminalKeys,
     "./preferences": { PHONE_QUERY: "(max-width: 767px)" }, "./terminalViewport": viewport,
   }, {
     ...globals,

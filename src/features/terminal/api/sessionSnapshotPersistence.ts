@@ -1,6 +1,7 @@
 import { useTerminalStore } from "../state";
 import { useSessionStore } from "./sessionStore";
 import { logError } from "../../../shared/platform/logger";
+import { preserveTerminalKeyboardSnapshotPrefix } from "../../../shared/lib/terminalKeyboardSnapshot";
 import type { Terminal } from "@xterm/xterm";
 
 /**
@@ -83,7 +84,7 @@ function trimToTailLines(text: string, maxLines: number): string {
     if (text.charCodeAt(i) === 10 /* \n */) {
       count++;
       if (count >= maxLines) {
-        return text.slice(i + 1);
+        return preserveTerminalKeyboardSnapshotPrefix(text, text.slice(i + 1));
       }
     }
   }
