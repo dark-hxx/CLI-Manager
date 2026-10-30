@@ -1,0 +1,9 @@
+{"file": ".trellis/tasks/10-30-gpui-native-migration/research/gpui-ecosystem.md", "reason": "GPUI/WebView/许可证调研结论与待核实项"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/research/frontend-inventory.md", "reason": "前端功能清单与迁移分级"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/research/backend-coupling.md", "reason": "后端 Tauri 耦合面与抽核建议"}
+{"file": ".trellis/spec/backend/pty-daemon-contracts.md", "reason": "终端 daemon 协议契约，GPUI 客户端必须遵守"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "新需求场景矩阵"}
+{"file": ".trellis/spec/guides/tauri-user-file-security-checklist.md", "reason": "WebView 资源访问安全原则"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/research/perf-opportunities.md", "reason": "随迁移一并完成的性能优化候选（P1-P12）及归属"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/implement.md", "reason": "父任务实施总纲（门禁、子任务顺序、跨子任务契约）"}
+{"file": ".trellis/spec/backend/tauri-updater-contracts.md", "reason": "更新与发布契约"}

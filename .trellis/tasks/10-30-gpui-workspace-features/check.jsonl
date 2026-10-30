@@ -1,0 +1,15 @@
+{"file": ".trellis/tasks/10-30-gpui-native-migration/prd.md", "reason": "父任务需求与性能目标、场景矩阵"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/design.md", "reason": "父任务技术设计（决策、结构、子任务依赖）"}
+{"file": ".trellis/tasks/10-30-gpui-native-migration/research/perf-opportunities.md", "reason": "随迁移一并完成的性能优化候选（P1-P12）及归属"}
+{"file": ".trellis/tasks/10-30-gpui-workspace-features/design.md", "reason": "本子任务详细设计"}
+{"file": ".trellis/tasks/10-30-gpui-workspace-features/implement.md", "reason": "本子任务执行步骤与验证"}
+{"file": ".trellis/spec/backend/git-status-contracts.md", "reason": "相关后端契约"}
+{"file": ".trellis/spec/backend/history-index-contracts.md", "reason": "相关后端契约"}
+{"file": ".trellis/spec/backend/history-stats-contracts.md", "reason": "相关后端契约"}
+{"file": ".trellis/spec/backend/project-file-command-contracts.md", "reason": "相关后端契约"}
+{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "修复/新需求分诊闸机与场景维度清单"}
+{"file": ".trellis/spec/frontend/git-diff-viewer-contracts.md", "reason": "现有行为契约/检查清单，GPUI 实现需等价满足"}
+{"file": ".trellis/spec/frontend/git-changes-performance-contracts.md", "reason": "现有行为契约/检查清单，GPUI 实现需等价满足"}
+{"file": ".trellis/spec/frontend/history-session-contracts.md", "reason": "现有行为契约/检查清单，GPUI 实现需等价满足"}
+{"file": ".trellis/spec/frontend/file-explorer-batch-contracts.md", "reason": "现有行为契约/检查清单，GPUI 实现需等价满足"}
+{"file": ".trellis/spec/frontend/markdown-file-navigation-contracts.md", "reason": "现有行为契约/检查清单，GPUI 实现需等价满足"}
