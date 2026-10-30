@@ -27,9 +27,11 @@ const { createTerminalMouseInteractionOptions } = await import(
   pathToFileURL(modulePath).href
 );
 
-test("mouse-aware TUIs receive unmodified click and drag reports", () => {
+test("mouse-aware TUIs keep native reports and allow macOS Option selection", () => {
   assert.deepEqual(createTerminalMouseInteractionOptions(), {
     mouseEventsRequireAlt: false,
+    macOptionClickForcesSelection: true,
+    altClickMovesCursor: false,
   });
 });
 

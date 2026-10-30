@@ -2,6 +2,7 @@ import { Terminal } from "@xterm/xterm";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import "@xterm/xterm/css/xterm.css";
 import { restoreTerminalSnapshot, serializeTerminalSnapshot } from "../../src/shared/lib/terminalSnapshot";
+import { createTerminalMouseInteractionOptions } from "../../src/features/terminal/browser/TerminalMouseInteraction";
 
 const write = (terminal: Terminal, text: string) => new Promise<void>(done => terminal.write(text, done));
 let original: Terminal;
@@ -14,7 +15,10 @@ const encoding = (terminal: Terminal) => (terminal as unknown as {
 })._core.mouseStateService.activeEncoding;
 
 function create(id: string, collect: (text: string) => void) {
-  const terminal = new Terminal({ cols: 40, rows: 8, scrollback: 3000, fontSize: 15, allowProposedApi: true });
+  const terminal = new Terminal({
+    ...createTerminalMouseInteractionOptions(),
+    cols: 40, rows: 8, scrollback: 3000, fontSize: 15, allowProposedApi: true,
+  });
   const addon = new SerializeAddon();
   terminal.loadAddon(addon);
   terminal.open(document.getElementById(id)!);
@@ -24,7 +28,10 @@ function create(id: string, collect: (text: string) => void) {
 }
 
 const api = {
-  async setup(sequence: string, options: { legacy?: boolean; tail?: boolean; preexisting?: boolean } = {}) {
+  // Enter the alternate screen before painting, matching a fullscreen TUI.
+  async setup(sequence: string, options: {
+    legacy?: boolean; tail?: boolean; preexisting?: boolean; alternate?: boolean;
+  } = {}) {
     original?.dispose();
     restored?.dispose();
     document.getElementById("source")!.replaceChildren();
@@ -34,6 +41,7 @@ const api = {
     original = source.terminal;
     restored = target.terminal;
     if (options.tail) await write(original, "history row\r\n".repeat(2200));
+    if (options.alternate) await write(original, "\x1b[?1049h");
     await write(original, "selectable text for mouse test\r\nsecond row\r\n" + sequence);
     snapshot = options.legacy ? source.addon.serialize() : serializeTerminalSnapshot(original, source.addon);
     if (options.tail) snapshot = snapshot.split("\n").slice(-2000).join("\n");
@@ -46,8 +54,14 @@ const api = {
   clear() { originalReports = []; restoredReports = []; },
   state() {
     return {
-      original: { tracking: original.modes.mouseTrackingMode, encoding: encoding(original), reports: originalReports },
-      restored: { tracking: restored.modes.mouseTrackingMode, encoding: encoding(restored), reports: restoredReports },
+      original: {
+        tracking: original.modes.mouseTrackingMode, encoding: encoding(original), reports: originalReports,
+        selected: original.hasSelection(), text: original.getSelection(), buffer: original.buffer.active.type,
+      },
+      restored: {
+        tracking: restored.modes.mouseTrackingMode, encoding: encoding(restored), reports: restoredReports,
+        selected: restored.hasSelection(), text: restored.getSelection(), buffer: restored.buffer.active.type,
+      },
       snapshotHasEncoding: /\x1b\[\?1006/.test(snapshot),
       selected: restored.hasSelection(),
     };

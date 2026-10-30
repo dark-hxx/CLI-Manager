@@ -100,7 +100,7 @@ The negotiated daemon feature is `terminal_colors_v1`.
 - Query authorization is checked before queuing and again after the native clipboard read. A reply is sent only when its Base64 payload is at most `OSC52_MAX_BASE64_CHARS` (2,000,000); read and write actions share a 32-action bounded queue, dropping excess events.
 - When either corresponding setting is off, sequences are still stripped. Disabling writes prevents clipboard writes; disabling queries prevents query replies.
 - Query replies are allowed from React because they are clipboard host answers, not OSC 10/11 color replies.
-- `mouseEventsRequireAlt` is true so host selection survives mouseup unless the user holds Alt.
+- Clipboard OSC handling does not own mouse selection. Desktop `TerminalMouseInteraction` keeps `mouseEventsRequireAlt: false` for normal TUI mouse reports and enables `macOptionClickForcesSelection: true`; host text selection uses Shift on Windows/Linux or Option on macOS.
 
 ### 7. Wrong vs Correct
 

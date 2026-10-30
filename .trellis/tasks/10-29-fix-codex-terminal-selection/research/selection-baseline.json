@@ -1,0 +1,225 @@
+[
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": null,
+    "target": "source",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": null,
+    "target": "restored",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": "Shift",
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": "Shift",
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": "Alt",
+    "target": "source",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": false,
+    "modifier": "Alt",
+    "target": "restored",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": null,
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": null,
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": "Shift",
+    "target": "source",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": "Shift",
+    "target": "restored",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": "Alt",
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "Win32",
+    "tracking": true,
+    "modifier": "Alt",
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": null,
+    "target": "source",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": null,
+    "target": "restored",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": "Shift",
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": "Shift",
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": "Alt",
+    "target": "source",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": false,
+    "modifier": "Alt",
+    "target": "restored",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": null,
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": null,
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": "Shift",
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": "Shift",
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": "Alt",
+    "target": "source",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "tracking": true,
+    "modifier": "Alt",
+    "target": "restored",
+    "selected": false,
+    "text": "",
+    "reports": 7
+  },
+  {
+    "platform": "MacIntel",
+    "experiment": "macOptionClickForcesSelection=true",
+    "selected": true,
+    "text": "selectable text for",
+    "reports": 0
+  }
+]

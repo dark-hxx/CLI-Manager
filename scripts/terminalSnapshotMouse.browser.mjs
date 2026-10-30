@@ -19,7 +19,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   const errors = [];
   page.on("pageerror", error => errors.push(String(error)));
-  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/scripts/fixtures/terminalSnapshotMouse.html`);
+  const url = `http://127.0.0.1:${server.httpServer.address().port}/scripts/fixtures/terminalSnapshotMouse.html`;
+  await page.goto(url);
   await page.waitForFunction(() => window.mouseSnapshotTest);
   const setup = (sequence, options) => page.evaluate(([sequence, options]) => window.mouseSnapshotTest.setup(sequence, options), [sequence, options]);
   const state = () => page.evaluate(() => window.mouseSnapshotTest.state());
@@ -82,8 +83,103 @@ try {
   assert.equal(selected.selected, true);
   assert.deepEqual(selected.restored.reports, []);
   cases++;
+
+  // Platform must be set before xterm loads: the local browser, not the remote
+  // PTY OS, owns the modifier that overrides application mouse reporting.
+  for (const [platform, modifier] of [["MacIntel", "Alt"], ["Win32", "Shift"], ["Linux x86_64", "Shift"]]) {
+    const selectionPage = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    selectionPage.on("pageerror", error => errors.push(String(error)));
+    await selectionPage.addInitScript(value => {
+      Object.defineProperty(navigator, "platform", { get: () => value });
+    }, platform);
+    await selectionPage.goto(url);
+    await selectionPage.waitForFunction(() => window.mouseSnapshotTest);
+    const selectionState = () => selectionPage.evaluate(() => window.mouseSnapshotTest.state());
+    // Clear hover reports only after moving into the target. A forced selection
+    // must emit no bytes from mouse-down through mouse-up, even in ANY mode.
+    async function drag(id, key) {
+      const bounds = await selectionPage.locator(`#${id} .xterm-screen`).boundingBox();
+      if (key) await selectionPage.keyboard.down(key);
+      await selectionPage.mouse.move(bounds.x + 4, bounds.y + 8);
+      await selectionPage.evaluate(() => window.mouseSnapshotTest.clear());
+      await selectionPage.mouse.down();
+      await selectionPage.mouse.move(bounds.x + 160, bounds.y + 8, { steps: 5 });
+      await selectionPage.mouse.up();
+      if (key) await selectionPage.keyboard.up(key);
+    }
+    // A short Option gesture must not fall through to xterm's click-to-caret
+    // path and inject cursor-movement keys into the running CLI.
+    async function forcedClick(id, key, label) {
+      const bounds = await selectionPage.locator(`#${id} .xterm-screen`).boundingBox();
+      await selectionPage.keyboard.down(key);
+      await selectionPage.mouse.move(bounds.x + 100, bounds.y + 8);
+      await selectionPage.evaluate(() => window.mouseSnapshotTest.clear());
+      await selectionPage.mouse.click(bounds.x + 100, bounds.y + 8);
+      await selectionPage.keyboard.up(key);
+      const value = (await selectionState())[id === "source" ? "original" : "restored"];
+      assert.deepEqual(value.reports, [], `${label}: selection click must not inject cursor keys`);
+    }
+    // Check the renderer's visible highlight as well as its selection model;
+    // select() alone would bypass the broken user-mouse path entirely.
+    async function assertVisibleSelection(id, label) {
+      const value = (await selectionState())[id === "source" ? "original" : "restored"];
+      assert.equal(value.selected, true, label);
+      assert.equal(value.text, "selectable text for", label);
+      assert.deepEqual(value.reports, [], `${label}: local selection must not reach the PTY`);
+      await selectionPage.waitForFunction(target => {
+        return [...document.querySelectorAll(`#${target} .xterm-selection div`)].some(element => {
+          const box = element.getBoundingClientRect();
+          const color = getComputedStyle(element).backgroundColor;
+          return box.width > 0 && box.height > 0 && color !== "transparent" && color !== "rgba(0, 0, 0, 0)";
+        });
+      }, id);
+    }
+    for (const alternate of [false, true]) {
+      for (const [mode, track] of Object.entries(tracking)) for (const [encoding, encode] of Object.entries(encodings)) {
+        const label = `${platform}/${alternate ? "alternate" : "normal"}/${mode}/${encoding}`;
+        const before = await selectionPage.evaluate(([sequence, alternate]) => {
+          return window.mouseSnapshotTest.setup(sequence, { alternate, preexisting: true });
+        }, [track + encode, alternate]);
+        assert.equal(before.original.buffer, alternate ? "alternate" : "normal", label);
+        assert.equal(before.restored.buffer, before.original.buffer, label);
+        assert.equal(before.restored.tracking, mode, label);
+        assert.equal(before.restored.encoding, encoding, label);
+        const ordinaryReports = [];
+        for (const id of ["source", "restored"]) {
+          await drag(id);
+          const value = (await selectionState())[id === "source" ? "original" : "restored"];
+          if (mode === "none") {
+            await assertVisibleSelection(id, `${label}: ordinary shell selection`);
+          } else {
+            assert.equal(value.selected, false, `${label}: ordinary drag belongs to the TUI`);
+            assert.ok(value.reports.length > 0, `${label}: ordinary drag still reports`);
+          }
+          ordinaryReports.push(value.reports);
+        }
+        assert.deepEqual(ordinaryReports[0], ordinaryReports[1], `${label}: restored ordinary reports`);
+        if (mode !== "none") {
+          for (const id of ["source", "restored"]) {
+            await forcedClick(id, modifier, label);
+            await drag(id, modifier);
+            await assertVisibleSelection(id, `${label}: ${modifier} selection`);
+            if (mode !== "x10") {
+              await selectionPage.evaluate(() => window.mouseSnapshotTest.clear());
+              await selectionPage.mouse.wheel(0, 120);
+              await selectionPage.waitForFunction(target => {
+                const value = window.mouseSnapshotTest.state()[target === "source" ? "original" : "restored"];
+                return value.reports.length > 0;
+              }, id);
+            }
+          }
+        }
+        cases++;
+      }
+    }
+    await selectionPage.close();
+  }
   assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ passed: cases, coverage: "actual xterm mouse bytes, modes, reset, tail, legacy recovery, Shift selection" }));
+  console.log(JSON.stringify({ passed: cases,
+    coverage: "actual mouse bytes, modes, reset, tail, legacy, Win/Linux Shift and Mac Option visible selection, short clicks, normal/alternate, wheel" }));
 } finally {
   await browser?.close();
   if (server) {

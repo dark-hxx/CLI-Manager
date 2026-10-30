@@ -22,6 +22,11 @@
 
 ## [V1.4.5] - 2026-10-17
 
+### macOS 终端文本选择（2026-10-29）
+
+- 修复桌面终端在 Codex 等 TUI 开启鼠标上报后，macOS 无法通过 Option 拖动建立文本选区的问题；选中后可沿用 Cmd+C 或右键复制。本地和 SSH 终端共用修复，不修改 SSH Agent。
+- 保留普通 TUI 点击、拖动、滚轮及 Windows/Linux 的 Shift 拖选；未开启鼠标上报的 Shell 继续直接拖选。关闭不受支持的点击光标重定位，避免短 Option 手势向 CLI 注入方向键；补充真实 xterm 平台分支、普通/全屏备用缓冲区及快照恢复的选区高亮、文本和鼠标报告回归测试。
+
 ### 终端换行设置与回顶快捷键（#293）
 
 - 终端启用 Kitty 键盘协议协商；设置中选择的 `Shift+Enter`、`Ctrl+Enter`、`Alt+Enter` 在增强协议下统一映射为 composer 的 `Shift+Enter` 换行意图，再由 xterm 原生编码，避免设置被协议绕过。保留 legacy LF、Codex/Grok `ESC + CR` 策略及未匹配组合键的既有规则。

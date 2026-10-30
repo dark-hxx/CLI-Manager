@@ -25,6 +25,21 @@ stateful filter in the CLI's shared xterm output transform. Do not solve a
 display corruption by changing PTY wiring or silently changing the CLI's
 configuration unless the product requirement explicitly covers that behavior.
 
+## Terminal Mouse Selection
+
+- [ ] Distinguish inability to create an xterm selection from an invisible
+  highlight or a native clipboard failure before changing the copy path.
+- [ ] Test mouse reporting on/off, normal/alternate buffers and restored
+  terminals with real mouse gestures; programmatic selection skips routing.
+- [ ] Choose the selection modifier by the local browser platform, not the
+  SSH/WSL process OS. xterm's macOS override requires an explicit option;
+  a Windows Shift test does not prove macOS can select.
+- [ ] Preserve ordinary TUI mouse/wheel reports; do not disable tracking to
+  make text selection appear to work. Follow the mouse policy contract in
+  [Component Guidelines](../frontend/component-guidelines.md).
+- [ ] Label simulated platform branches as simulations, not native macOS
+  WebKit or system clipboard acceptance.
+
 ## Good / Bad Cases
 
 - **Good**: Windows/WSL Pi advisory, split across frames, is removed only in
