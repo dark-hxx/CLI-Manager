@@ -61,16 +61,8 @@ async fn normalized_mcp_survives_catalog_materialization() {
         .await
         .unwrap();
 
-    let detail = get_session_detail_from_v2_with_conn(
-        &mut conn,
-        &roots,
-        &file.to_string_lossy(),
-        "claude",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let detail = get_session_detail_from_v2_with_conn(&mut conn, &roots,
+        &file.to_string_lossy(), "claude", "proj").await.unwrap().unwrap();
     assert_eq!(detail.tool_events.len(), 1);
     assert_eq!(detail.tool_events[0].message_index, Some(1));
     assert_eq!(detail.usage.mcp_calls[0].name, "docs");
@@ -78,41 +70,17 @@ async fn normalized_mcp_survives_catalog_materialization() {
     assert!(detail.usage.builtin_calls.is_empty());
     sqlx::query("UPDATE history_tool_events SET source_extension_json = ?1")
         .bind(r#"{"kind":"inferred","parentCallId":"outer","sourcePosition":7}"#)
-        .execute(&mut conn)
-        .await
-        .unwrap();
-    let detail = get_session_detail_from_v2_with_conn(
-        &mut conn,
-        &roots,
-        &file.to_string_lossy(),
-        "claude",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+        .execute(&mut conn).await.unwrap();
+    let detail = get_session_detail_from_v2_with_conn(&mut conn, &roots,
+        &file.to_string_lossy(), "claude", "proj").await.unwrap().unwrap();
     assert!(detail.usage.mcp_calls.is_empty());
-    assert_eq!(
-        detail.tool_events[0]
-            .evidence
-            .as_ref()
-            .unwrap()
-            .parent_call_id
-            .as_deref(),
-        Some("outer")
-    );
+    assert_eq!(detail.tool_events[0].evidence.as_ref().unwrap().parent_call_id.as_deref(), Some("outer"));
 
     // The source has gone, but both catalog generations still hold the old rows.
     // A foreground read must not resurrect that session during background refresh.
     std::fs::remove_file(&file).unwrap();
     let deleted = get_session_detail_from_v2_with_conn(
-        &mut conn,
-        &roots,
-        &file.to_string_lossy(),
-        "claude",
-        "proj",
-    )
-    .await
-    .unwrap();
+        &mut conn, &roots, &file.to_string_lossy(), "claude", "proj",
+    ).await.unwrap();
     assert!(deleted.is_none());
 }

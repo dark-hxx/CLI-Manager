@@ -15,10 +15,8 @@ fn read_snapshot_id(path: &Path) -> Result<Option<String>, String> {
         return Err("legacy_handoff_record_invalid".into());
     }
     let value: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(path)
-            .map_err(|error| format!("read legacy handoff record failed: {error}"))?,
-    )
-    .map_err(|error| format!("parse legacy handoff record failed: {error}"))?;
+        &std::fs::read(path).map_err(|error| format!("read legacy handoff record failed: {error}"))?,
+    ).map_err(|error| format!("parse legacy handoff record failed: {error}"))?;
     if !value.is_object() {
         return Err("legacy_handoff_record_invalid".into());
     }
@@ -40,10 +38,7 @@ mod tests {
         assert_eq!(read_snapshot_id(&path).unwrap(), None);
         let raw = br#"{"providerSnapshotId":"snapshot-123","agent":"codex"}"#;
         std::fs::write(&path, raw).unwrap();
-        assert_eq!(
-            read_snapshot_id(&path).unwrap().as_deref(),
-            Some("snapshot-123")
-        );
+        assert_eq!(read_snapshot_id(&path).unwrap().as_deref(), Some("snapshot-123"));
         assert_eq!(std::fs::read(&path).unwrap(), raw);
         std::fs::write(&path, "{broken").unwrap();
         assert!(read_snapshot_id(&path).is_err());

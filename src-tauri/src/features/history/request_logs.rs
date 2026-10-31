@@ -603,8 +603,7 @@ async fn sync_request_logs_with_connection(
     let mut needs_sync = |path: String, fingerprint: SessionFileFingerprint| {
         scanned_files += 1;
         let changed = force
-            || sync_state
-                .get(&path)
+            || sync_state.get(&path)
                 .map(|state| !fingerprint_matches(*state, fingerprint))
                 .unwrap_or(true);
         current_paths.insert(path);
@@ -643,8 +642,7 @@ async fn sync_request_logs_with_connection(
         .collect();
     let changed_files = (changed_entries.len() + changed_opencode.len()) as u64;
     // Keep only one materialized document alive while writing changed files.
-    let changed_documents = changed_entries
-        .into_iter()
+    let changed_documents = changed_entries.into_iter()
         .map(document_from_entry)
         .chain(changed_opencode.into_iter().map(document_from_opencode));
     let mut written_rows = 0u64;

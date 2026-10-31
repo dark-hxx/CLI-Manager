@@ -15,9 +15,7 @@ const BROKER_LIFETIME: Duration = Duration::from_secs(30);
 const BROKER_POLL_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_BROKER_TOKEN_BYTES: usize = 128;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
-use cli_manager_core::ssh_askpass::{
-    is_password_prompt, prompt_kind, sanitize_terminal_prompt, terminal_fallback_enabled,
-};
+const MAX_TERMINAL_PROMPT_CHARS: usize = 1024;
 #[cfg(not(test))]
 const ASKPASS_DIAGNOSTIC_LOG_FILE: &str = "ssh-askpass.log";
 
@@ -80,6 +78,11 @@ pub fn run_helper_and_exit() -> ! {
         ),
     }
     std::process::exit(if result.is_ok() { 0 } else { 1 });
+}
+
+// 仅精确字符串 1 允许控制终端回退，缺失、其他真值写法或多余空白均视为禁用。
+fn terminal_fallback_enabled(value: Option<&str>) -> bool {
+    value == Some(ASKPASS_TTY_FALLBACK_ENABLED)
 }
 
 // 清理提示后仅为密码类请求尝试 broker，取不到时按开关决定读控制终端或报不可用。
@@ -166,6 +169,85 @@ where
         ),
     );
     Ok(())
+}
+
+// 按英文关键词区分 password、mfa 和 interactive，返回固定类别而不记录提示原文。
+fn prompt_kind(prompt: &str) -> &'static str {
+    if is_password_prompt(prompt) {
+        return "password";
+    }
+    let prompt = prompt.to_ascii_lowercase();
+    if [
+        "one-time",
+        "one time",
+        "otp",
+        "mfa",
+        "verification",
+        "authenticator",
+        "security code",
+        "passcode",
+        "pin",
+    ]
+    .iter()
+    .any(|marker| prompt.contains(marker))
+    {
+        "mfa"
+    } else {
+        "interactive"
+    }
+}
+
+// 先排除 MFA/OTP 等关键词，再识别 password/passphrase；这是文本启发式而非认证协议解析。
+fn is_password_prompt(prompt: &str) -> bool {
+    let prompt = prompt.to_ascii_lowercase();
+    if [
+        "one-time",
+        "one time",
+        "otp",
+        "mfa",
+        "verification",
+        "authenticator",
+        "security code",
+        "passcode",
+        "pin",
+    ]
+    .iter()
+    .any(|marker| prompt.contains(marker))
+    {
+        return false;
+    }
+    prompt.contains("password") || prompt.contains("passphrase")
+}
+
+// 统一 CR/CRLF 为换行并删除其他控制字符，最多保留 1024 个字符；不解析或删除完整 ANSI 序列文本。
+fn sanitize_terminal_prompt(prompt: &str) -> String {
+    let mut sanitized = String::new();
+    let mut chars = prompt.chars().peekable();
+    let mut written = 0;
+    while written < MAX_TERMINAL_PROMPT_CHARS {
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        match ch {
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                sanitized.push('\n');
+                written += 1;
+            }
+            '\n' => {
+                sanitized.push('\n');
+                written += 1;
+            }
+            value if !value.is_control() => {
+                sanitized.push(value);
+                written += 1;
+            }
+            _ => {}
+        }
+    }
+    sanitized
 }
 
 // 用环境中的地址/token 请求 broker，拒绝空或超长响应；连接无显式超时，读写超时设置失败被忽略。
@@ -458,9 +540,8 @@ mod tests {
     use super::{
         answer_prompt_with, is_password_prompt, prepare_with_password, read_bounded_line,
         sanitize_terminal_prompt, terminal_fallback_enabled, with_restore, ASKPASS_ADDR_ENV,
-        ASKPASS_TOKEN_ENV, MAX_BROKER_TOKEN_BYTES, MAX_RESPONSE_BYTES,
+        ASKPASS_TOKEN_ENV, MAX_BROKER_TOKEN_BYTES, MAX_RESPONSE_BYTES, MAX_TERMINAL_PROMPT_CHARS,
     };
-    use cli_manager_core::ssh_askpass::MAX_TERMINAL_PROMPT_CHARS;
     use std::cell::{Cell, RefCell};
     use std::io::{self, BufReader, Cursor, Read, Write};
     use std::net::{Shutdown, TcpStream};

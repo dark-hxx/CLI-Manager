@@ -6,10 +6,6 @@
 
 ## 2. Signatures
 
-- `cli_manager_core::clipboard_image`（可选 `clipboard-image` feature）：共享 `validate_dimensions` / `decode` / `encode_png` / `first_decodable`，不读取系统剪贴板或依赖 Tauri/GPUI。宿主负责候选格式、版本一致性和线程调度。
-- `save_png(data_root: &Path, png: &[u8]) -> Result<PathBuf, String>`：宿主只传共享编码器产生的 PNG 和自身解析的数据根。拒绝空值、超限与非 PNG 签名；目标固定为 `<data_root>/attachments`，拒绝最终目录的链接/重解析点，校验根归属，以同目录临时文件和不覆盖持久化处理并发名称冲突。不写项目目录。
-- GPUI `EntityInputHandler::paste` 按文件路径、图片快照、文字顺序分流。图片快照后台解码/编码，不重读系统剪贴板；错误不回退文字，目标 SessionHandle 及取消代次固定，待发送路径复用 shell/WSL 转换和括号粘贴。此入口不等同于 Alt+V 图片专用模式，后者的 CLI 能力模式和 SSH 上传仍需单独接线。
-
 - `clipboard_read_file_paths() -> Result<Vec<String>, String>`：Windows CF_HDROP / macOS public.file-url；其他平台保持原行为。
 - `clipboard_attach_image_files(app: AppHandle) -> Result<ClipboardImageAttachments, String>`：AppHandle 由 Tauri 注入；前端不传路径。
 - `file_attach_image_data(data_base64: String) -> Result<String, String>`：验证浏览器图片真实内容，返回受管 PNG 本机路径。
@@ -47,9 +43,6 @@
 - Bad：图片读取出错后静默改粘贴剪贴板文字；无条件信任 `.png`；去掉所有内存/像素限制。
 
 ## 6. Required Tests
-
-- `cargo test -p cli-manager-core --features clipboard-image clipboard_image`：共享编解码/回退、像素预算、受管目录、并发不覆盖与无效目标检查。
-- `cargo test -p cli-manager-desktop-gpui terminal::clipboard`：文件路径分流、损坏图片拒绝、BMP 快照到共享 PNG 附件、关闭会话取消；真实系统剪贴板仍单列验收。
 
 - `node --test scripts/terminalClipboardImage.test.mjs scripts/wslImagePaste.test.mjs scripts/webTerminalClipboard.test.mjs scripts/webTerminalImageBridge.test.mjs`
 - `cargo test --manifest-path src-tauri/Cargo.toml --lib clipboard_image`：真实 PNG/TIFF/DIB 编解码、损坏首选回退、空/错误区分、8K/40M、V5 alpha、20MiB/+1 边界。

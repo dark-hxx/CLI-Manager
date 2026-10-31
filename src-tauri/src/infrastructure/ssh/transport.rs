@@ -1,10 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub use cli_manager_core::ssh_shell::{
-    format_remote_home_path, posix_quote, validate_remote_home_path, SshRemoteHomePathError,
-};
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct SshTransportSpec {
@@ -45,6 +41,41 @@ pub struct SshTransportLaunch {
     pub env: HashMap<String, String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshRemoteHomePathError {
+    Invalid,
+    ParentTraversal,
+}
+
+// 仅接受绝对 POSIX 或 ~/ 简写，拒绝父目录段及指定扩展/控制字符；不访问远端文件系统。
+pub fn validate_remote_home_path(path: &str) -> Result<(), SshRemoteHomePathError> {
+    if path.contains(['\0', '\r', '\n', '\\', '$', '`'])
+        || !(path.starts_with('/') || path == "~" || path.starts_with("~/"))
+    {
+        return Err(SshRemoteHomePathError::Invalid);
+    }
+    if path.split('/').any(|part| part == "..") {
+        return Err(SshRemoteHomePathError::ParentTraversal);
+    }
+    Ok(())
+}
+
+// 将 ~ 前缀转为受引号保护的远端 HOME，其他路径单引号转义；调用方需先校验路径。
+pub fn format_remote_home_path(path: &str) -> String {
+    if path == "~" {
+        return "\"${HOME}\"".to_string();
+    }
+    if let Some(suffix) = path.strip_prefix("~/") {
+        return format!("\"${{HOME}}\"/{}", posix_quote(suffix));
+    }
+    posix_quote(path)
+}
+
+// 用 POSIX 单引号包装字符串，并通过退出/重进引号表达其中的单引号字符。
+pub fn posix_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
 impl SshTransportSpec {
     // 校验连接必填项、认证模式、时间参数、配置文件及单行/代理形态；不测试网络或凭据是否可用。
     pub fn validate(&self) -> Result<(), String> {
@@ -54,7 +85,7 @@ impl SshTransportSpec {
         if self.config_alias.trim().is_empty() && self.port == 0 {
             return Err("ssh_host_port_invalid".to_string());
         }
-        cli_manager_core::ssh_validation::validate_config_file(&self.config_file)?;
+        validate_config_file(&self.config_file)?;
         if self.connect_timeout_sec == 0 || self.connect_timeout_sec > 300 {
             return Err("ssh_connect_timeout_invalid".to_string());
         }
@@ -90,9 +121,9 @@ impl SshTransportSpec {
             &self.proxy_host,
             &self.proxy_command,
         ] {
-            cli_manager_core::ssh_validation::validate_single_line(value)?;
+            validate_single_line(value)?;
         }
-        if cli_manager_core::ssh_validation::contains_url_credentials(&self.proxy_command) {
+        if contains_url_credentials(&self.proxy_command) {
             return Err("ssh_proxy_credentials_forbidden".to_string());
         }
         crate::ssh_proxy::build_proxy_command(
@@ -106,11 +137,14 @@ impl SshTransportSpec {
 
     // 优先使用去空白的 Config alias，否则组成 user@host 或裸 host，不在此另行校验。
     pub fn target(&self) -> String {
-        cli_manager_core::ssh_transport_args::connection_target(
-            &self.config_alias,
-            &self.username,
-            &self.host,
-        )
+        if !self.config_alias.trim().is_empty() {
+            return self.config_alias.trim().to_string();
+        }
+        if self.username.trim().is_empty() {
+            self.host.trim().to_string()
+        } else {
+            format!("{}@{}", self.username.trim(), self.host.trim())
+        }
     }
 
     // 构造强制分配 PTY 的 ssh -tt 参数，远端命令由调用方提供；凭据模式会启动允许终端回退的 broker。
@@ -173,27 +207,80 @@ impl SshTransportSpec {
     // 追加配置、超时与 KeepAlive；无 alias/jump/显式配置的指定认证模式使用 -F none，其他模式保留默认配置。
     // 单次连接只尝试一次，有 alias 时不追加端口覆盖，交由 SSH Config 解析。
     fn append_connection_args(&self, args: &mut Vec<String>, one_shot: bool) {
-        cli_manager_core::ssh_transport_args::ConnectionOptions {
-            config_file: &self.config_file,
-            config_alias: &self.config_alias,
-            jump_target: &self.jump_target,
-            auth_mode: &self.auth_mode,
-            port: self.port,
-            connect_timeout_sec: self.connect_timeout_sec,
-            server_alive_interval_sec: self.server_alive_interval_sec,
-            server_alive_count_max: self.server_alive_count_max,
+        if !self.config_file.trim().is_empty() {
+            args.extend(["-F".to_string(), self.config_file.trim().to_string()]);
+        } else if self.config_alias.trim().is_empty()
+            && self.jump_target.trim().is_empty()
+            && matches!(
+                self.auth_mode.as_str(),
+                "identity_file" | "password_prompt" | "credential_ref" | "interactive"
+            )
+        {
+            // These modes fully describe authentication in CLI-Manager. Agent and ssh_config
+            // must retain the default Config for settings such as IdentityAgent and Host *.
+            args.extend(["-F".to_string(), "none".to_string()]);
         }
-        .append_args(args, one_shot);
+        args.extend([
+            "-o".to_string(),
+            format!("ConnectTimeout={}", self.connect_timeout_sec),
+            "-o".to_string(),
+            format!("ServerAliveInterval={}", self.server_alive_interval_sec),
+            "-o".to_string(),
+            format!("ServerAliveCountMax={}", self.server_alive_count_max),
+        ]);
+        if one_shot {
+            args.extend(["-o".to_string(), "ConnectionAttempts=1".to_string()]);
+        }
+        if self.config_alias.trim().is_empty() {
+            args.extend(["-p".to_string(), self.port.to_string()]);
+        }
     }
 
     // 按认证模式生成互不沿用的密钥/密码/交互选项；密码类单次请求最多一次提示，ssh_config 不额外覆盖。
     fn append_auth_args(&self, args: &mut Vec<String>, one_shot: bool) {
-        cli_manager_core::ssh_transport_args::append_auth_args(
-            args,
-            &self.auth_mode,
-            &self.identity_file,
-            one_shot,
-        );
+        if self.auth_mode == "identity_file" && !self.identity_file.trim().is_empty() {
+            args.extend(["-i".to_string(), self.identity_file.trim().to_string()]);
+        }
+        match self.auth_mode.as_str() {
+            "agent" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "identity_file" => args.extend([
+                "-o".to_string(),
+                "IdentitiesOnly=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=publickey".to_string(),
+            ]),
+            "password_prompt" | "credential_ref" => {
+                args.extend([
+                    "-o".to_string(),
+                    "PubkeyAuthentication=no".to_string(),
+                    "-o".to_string(),
+                    "PasswordAuthentication=yes".to_string(),
+                    "-o".to_string(),
+                    "KbdInteractiveAuthentication=yes".to_string(),
+                    "-o".to_string(),
+                    "PreferredAuthentications=password,keyboard-interactive".to_string(),
+                ]);
+                if one_shot {
+                    args.extend(["-o".to_string(), "NumberOfPasswordPrompts=1".to_string()]);
+                }
+            }
+            "interactive" => args.extend([
+                "-o".to_string(),
+                "PubkeyAuthentication=no".to_string(),
+                "-o".to_string(),
+                "PasswordAuthentication=no".to_string(),
+                "-o".to_string(),
+                "KbdInteractiveAuthentication=yes".to_string(),
+                "-o".to_string(),
+                "PreferredAuthentications=keyboard-interactive".to_string(),
+            ]),
+            _ => {}
+        }
     }
 
     // 显式代理命令优先于 jump host；只有代理为空才追加 -J，避免同时配置两条路由。
@@ -242,6 +329,42 @@ fn configure_askpass_terminal_fallback(
         crate::ssh_askpass::ASKPASS_TTY_FALLBACK_ENV.to_string(),
         value.to_string(),
     );
+}
+
+// 拒绝 NUL、CR、LF，允许空值和其他字符；不代替具体字段的语法校验。
+fn validate_single_line(value: &str) -> Result<(), String> {
+    if value.contains(['\0', '\r', '\n']) {
+        return Err("ssh_launch_argument_invalid".to_string());
+    }
+    Ok(())
+}
+
+// 空值表示沿用默认配置；非空值要求本机绝对文件路径，跟随符号链接但不检查文件内容或读取权限。
+fn validate_config_file(value: &str) -> Result<(), String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(());
+    }
+    if trimmed.contains(['\0', '\r', '\n']) || !std::path::Path::new(trimmed).is_absolute() {
+        return Err("ssh_config_file_invalid".to_string());
+    }
+    if !std::path::Path::new(trimmed).is_file() {
+        return Err("ssh_config_file_not_found".to_string());
+    }
+    Ok(())
+}
+
+// 对空白分隔 token 做启发式检测：URL authority 中的 userinfo 含冒号才视为凭据，不是完整 URL 解析器。
+fn contains_url_credentials(value: &str) -> bool {
+    value.split_whitespace().any(|token| {
+        let Some((_, remainder)) = token.split_once("://") else {
+            return false;
+        };
+        let authority = remainder.split('/').next().unwrap_or(remainder);
+        authority
+            .split_once('@')
+            .is_some_and(|(userinfo, _)| userinfo.contains(':'))
+    })
 }
 
 #[cfg(test)]

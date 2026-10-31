@@ -8,7 +8,8 @@ use materialize::{
 };
 pub(crate) use materialize::{
     is_toml_secret_key, materialize_claude, materialize_codex_auth, materialize_codex_config,
-    materialize_grok_global_config, project_codex_model, remove_provider_home_state,
+    materialize_grok_global_config,
+    project_codex_model, remove_provider_home_state,
 };
 
 use super::home::{self, HomeIdentity, HomeSelectInput, ProviderHomeState};
@@ -1943,6 +1944,6 @@ pub(crate) async fn recover_pending() -> Result<RecoveryReport, String> {
 }
 
 #[cfg(test)]
-mod home_state_tests;
-#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod home_state_tests;

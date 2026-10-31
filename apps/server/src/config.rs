@@ -69,43 +69,28 @@ impl Config {
     /// Client-provided forwarding headers never establish transport trust.
     pub fn validate_network(&mut self) -> Result<(), String> {
         if let Some(origin) = self.allowed_origin.as_mut() {
-            let uri: axum::http::Uri = origin
-                .trim()
-                .parse()
+            let uri: axum::http::Uri = origin.trim().parse()
                 .map_err(|_| "invalid Web browser origin".to_string())?;
             let scheme = uri.scheme_str().unwrap_or("");
-            let authority = uri
-                .authority()
-                .ok_or("Web browser origin requires a host")?;
-            if !matches!(scheme, "http" | "https")
-                || authority.as_str().contains('@')
-                || uri.query().is_some()
-                || !matches!(uri.path(), "" | "/")
-            {
+            let authority = uri.authority().ok_or("Web browser origin requires a host")?;
+            if !matches!(scheme, "http" | "https") || authority.as_str().contains('@')
+                || uri.query().is_some() || !matches!(uri.path(), "" | "/") {
                 return Err("Web browser origin must be an HTTP(S) origin without credentials, path or query".into());
             }
             let host = authority.host().trim_matches(['[', ']']);
             let loopback = host.eq_ignore_ascii_case("localhost")
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback());
+                || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
             if scheme == "http" && !loopback && !self.trusted_network {
-                return Err(
-                    "HTTP browser access outside loopback requires trusted network mode".into(),
-                );
+                return Err("HTTP browser access outside loopback requires trusted network mode".into());
             }
             self.cookie_secure = scheme == "https";
             *origin = format!("{scheme}://{authority}");
         }
         if !self.bind.ip().is_loopback() && self.allowed_origin.is_none() {
-            return Err(
-                "An exact Web browser origin is required when listening outside loopback".into(),
-            );
+            return Err("An exact Web browser origin is required when listening outside loopback".into());
         }
         if !self.bind.ip().is_loopback() && !self.cookie_secure && !self.trusted_network {
-            return Err(
-                "Listening outside loopback requires HTTPS or explicit trusted network mode".into(),
-            );
+            return Err("Listening outside loopback requires HTTPS or explicit trusted network mode".into());
         }
         Ok(())
     }
@@ -314,12 +299,8 @@ mod tests {
 
     #[test]
     fn trusted_http_requires_explicit_opt_in_and_exact_origin() {
-        for origin in [
-            "http://192.168.1.5:9090",
-            "http://100.95.251.17:9090",
-            "http://cli.internal:9090",
-            "http://[fd00::5]:9090",
-        ] {
+        for origin in ["http://192.168.1.5:9090", "http://100.95.251.17:9090",
+            "http://cli.internal:9090", "http://[fd00::5]:9090"] {
             let mut config = Config::test("unused.db".into());
             config.bind = "0.0.0.0:9090".parse().unwrap();
             config.allowed_origin = Some(origin.into());
@@ -342,23 +323,15 @@ mod tests {
         config.allowed_origin = Some("https://cli.example.com/".into());
         config.validate_network().unwrap();
         assert!(config.cookie_secure);
-        assert_eq!(
-            config.allowed_origin.as_deref(),
-            Some("https://cli.example.com")
-        );
+        assert_eq!(config.allowed_origin.as_deref(), Some("https://cli.example.com"));
         assert!(config.allows_browser_origin("https://cli.example.com", Some("127.0.0.1:9090")));
         assert!(!config.allows_browser_origin("http://cli.example.com", Some("cli.example.com")));
     }
 
     #[test]
     fn origin_rejects_credentials_paths_and_non_http_schemes() {
-        for origin in [
-            "https://user:password@cli.example.com",
-            "https://cli.example.com/app",
-            "https://cli.example.com/?q=1",
-            "*",
-            "ws://cli.example.com",
-        ] {
+        for origin in ["https://user:password@cli.example.com", "https://cli.example.com/app",
+            "https://cli.example.com/?q=1", "*", "ws://cli.example.com"] {
             let mut config = Config::test("unused.db".into());
             config.allowed_origin = Some(origin.into());
             assert!(config.validate_network().is_err(), "{origin}");

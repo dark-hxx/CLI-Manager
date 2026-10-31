@@ -1,6 +1,0 @@
-{"file":".trellis/tasks/10-30-gpui-native-migration/prd.md","reason":"审查 Provider 交付是否保持父目标与全局验收范围一致。"}
-{"file":".trellis/tasks/10-30-gpui-settings-panels/design.md","reason":"按源 UI 设计审查 Provider 管理、密钥、路由与导入能力覆盖情况。"}
-{"file":".trellis/tasks/10-30-gpui-core-extraction/design.md","reason":"审查 service/db/core 边界与 Tauri 兼容契约。"}
-{"file":".trellis/spec/backend/core-crate-contracts.md","reason":"核对中立服务和 Repository 的实现契约及例外。"}
-{"file":".trellis/spec/backend/pty-daemon-contracts.md","reason":"核对 daemon routing 能力、事件及新旧客户端兼容。"}
-{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"检查跨环境、Home、daemon、窗口焦点与生命周期场景覆盖。"}

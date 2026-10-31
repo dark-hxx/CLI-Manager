@@ -510,20 +510,14 @@ impl WebDeviceManager {
         generation: u64,
     ) -> Result<(), String> {
         match frame {
-            ServerToDeviceFrame::HelloOk {
-                paired,
-                capabilities,
-                ..
-            } => {
+            ServerToDeviceFrame::HelloOk { paired, capabilities, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
                     if self.generation.load(Ordering::SeqCst) != generation {
                         return Ok(());
                     }
                     runtime.connected = true;
                     runtime.paired = paired;
-                    runtime.transcript_notifications = capabilities
-                        .iter()
-                        .any(|s| s == "terminal.transcript.changed");
+                    runtime.transcript_notifications = capabilities.iter().any(|s| s == "terminal.transcript.changed");
                 }
                 self.emit_status(app);
             }
@@ -1534,26 +1528,14 @@ pub async fn web_device_terminal_status(
 pub(crate) fn publish_transcript_change(app: &AppHandle, session_id: &str) -> Result<(), String> {
     let manager = app.state::<WebDeviceManager>();
     let (running, supported) = {
-        let runtime = manager
-            .runtime
-            .lock()
-            .map_err(|_| "web device state lock poisoned")?;
-        (
-            runtime.running,
-            runtime.connected && runtime.transcript_notifications,
-        )
+        let runtime = manager.runtime.lock().map_err(|_| "web device state lock poisoned")?;
+        (runtime.running, runtime.connected && runtime.transcript_notifications)
     };
     if running {
-        if !supported {
-            return Ok(());
-        }
-        return manager.queue(DeviceToServerFrame::TranscriptChanged {
-            session_id: session_id.into(),
-        });
+        if !supported { return Ok(()); }
+        return manager.queue(DeviceToServerFrame::TranscriptChanged { session_id: session_id.into() });
     }
-    daemon_call::<()>(crate::web_daemon::Request::TranscriptChanged {
-        session_id: session_id.into(),
-    })
+    daemon_call::<()>(crate::web_daemon::Request::TranscriptChanged { session_id: session_id.into() })
 }
 
 pub(crate) fn web_device_terminal_status_blocking(

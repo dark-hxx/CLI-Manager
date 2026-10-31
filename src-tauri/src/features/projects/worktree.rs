@@ -855,266 +855,225 @@ fn merge_worktree_internal(
     let mut journal = conflicts::main_recovery::Journal::begin(&repo)
         .map_err(conflicts::main_recovery::message)?;
     let result = (|| {
-        let mut output = String::new();
-        let mut stash_reference = None;
-        let main_is_dirty = if allow_dirty {
-            let status = run_git_checked(&project_path, ["status", "--porcelain"])?;
-            !status.trim().is_empty()
-        } else {
-            false
-        };
+    let mut output = String::new();
+    let mut stash_reference = None;
+    let main_is_dirty = if allow_dirty {
+        let status = run_git_checked(&project_path, ["status", "--porcelain"])?;
+        !status.trim().is_empty()
+    } else {
+        false
+    };
 
-        if allow_dirty && main_is_dirty {
-            journal
-                .phase("stashing", None)
-                .map_err(conflicts::main_recovery::message)?;
-            let stash_message = format!("{FORCE_MERGE_STASH_MESSAGE_PREFIX}: {worktree_branch}");
-            let stash_output = run_git_raw(
-                &project_path,
-                [
-                    "stash",
-                    "push",
-                    "--include-untracked",
-                    "--message",
-                    stash_message.as_str(),
-                ],
-            )
-            .map_err(|error| format_force_merge_error("force_merge_stash_failed", &error, None))?;
-            if !stash_output.success {
-                return Err(format_force_merge_error(
-                    "force_merge_stash_failed",
-                    &stash_output.combined(),
-                    None,
-                ));
-            }
-            append_output_line(&mut output, &stash_output.combined());
-
-            let stash_oid = run_git_checked(&project_path, ["rev-parse", "--verify", "refs/stash"])
-                .map(|value| value.trim().to_string())
-                .map_err(|error| {
-                    format_force_merge_error("force_merge_stash_reference_failed", &error, None)
-                })?;
-            if stash_oid.is_empty() {
-                return Err(format_force_merge_error(
-                    "force_merge_stash_reference_failed",
-                    "empty stash reference",
-                    None,
-                ));
-            }
-            stash_reference = Some(stash_oid);
-            journal
-                .phase("stashed", stash_reference.as_deref())
-                .map_err(conflicts::main_recovery::message)?;
-
-            let status_after_stash = run_git_checked(&project_path, ["status", "--porcelain"])
-                .map_err(|error| {
-                    format_force_merge_error(
-                        "force_merge_stash_incomplete",
-                        &error,
-                        stash_reference.as_deref(),
-                    )
-                })?;
-            if !status_after_stash.trim().is_empty() {
-                return Err(format_force_merge_error(
-                    "force_merge_stash_incomplete",
-                    &status_after_stash,
-                    stash_reference.as_deref(),
-                ));
-            }
-        }
-
-        if current_branch != base_branch {
-            journal
-                .phase("checking_out_base", None)
-                .map_err(conflicts::main_recovery::message)?;
-            match run_git_checked(&project_path, ["checkout", base_branch]) {
-                Ok(checkout_output) => {
-                    if allow_dirty {
-                        append_output_line(&mut output, &checkout_output);
-                    }
-                }
-                Err(checkout_error) if allow_dirty => {
-                    conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
-                    return Err(restore_force_merge_after_failure(
-                        &project_path,
-                        &mut output,
-                        "force_merge_checkout_failed",
-                        &checkout_error,
-                        stash_reference.as_deref(),
-                    ));
-                }
-                Err(checkout_error) => return Err(checkout_error),
-            }
-        }
-
-        journal
-            .phase("merging", None)
-            .map_err(conflicts::main_recovery::message)?;
-        let merge_output = match run_git_raw(
+    if allow_dirty && main_is_dirty {
+        journal.phase("stashing", None).map_err(conflicts::main_recovery::message)?;
+        let stash_message = format!("{FORCE_MERGE_STASH_MESSAGE_PREFIX}: {worktree_branch}");
+        let stash_output = run_git_raw(
             &project_path,
-            ["merge", "--no-ff", "--no-edit", worktree_branch],
-        ) {
-            Ok(output) => output,
-            Err(error) if allow_dirty => {
+            [
+                "stash",
+                "push",
+                "--include-untracked",
+                "--message",
+                stash_message.as_str(),
+            ],
+        )
+        .map_err(|error| format_force_merge_error("force_merge_stash_failed", &error, None))?;
+        if !stash_output.success {
+            return Err(format_force_merge_error(
+                "force_merge_stash_failed",
+                &stash_output.combined(),
+                None,
+            ));
+        }
+        append_output_line(&mut output, &stash_output.combined());
+
+        let stash_oid = run_git_checked(&project_path, ["rev-parse", "--verify", "refs/stash"])
+            .map(|value| value.trim().to_string())
+            .map_err(|error| {
+                format_force_merge_error("force_merge_stash_reference_failed", &error, None)
+            })?;
+        if stash_oid.is_empty() {
+            return Err(format_force_merge_error(
+                "force_merge_stash_reference_failed",
+                "empty stash reference",
+                None,
+            ));
+        }
+        stash_reference = Some(stash_oid);
+        journal.phase("stashed", stash_reference.as_deref()).map_err(conflicts::main_recovery::message)?;
+
+        let status_after_stash = run_git_checked(&project_path, ["status", "--porcelain"])
+            .map_err(|error| {
+                format_force_merge_error(
+                    "force_merge_stash_incomplete",
+                    &error,
+                    stash_reference.as_deref(),
+                )
+            })?;
+        if !status_after_stash.trim().is_empty() {
+            return Err(format_force_merge_error(
+                "force_merge_stash_incomplete",
+                &status_after_stash,
+                stash_reference.as_deref(),
+            ));
+        }
+    }
+
+    if current_branch != base_branch {
+        journal.phase("checking_out_base", None).map_err(conflicts::main_recovery::message)?;
+        match run_git_checked(&project_path, ["checkout", base_branch]) {
+            Ok(checkout_output) => {
+                if allow_dirty {
+                    append_output_line(&mut output, &checkout_output);
+                }
+            }
+            Err(checkout_error) if allow_dirty => {
                 conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
                 return Err(restore_force_merge_after_failure(
                     &project_path,
                     &mut output,
-                    "force_merge_failed",
-                    &error,
+                    "force_merge_checkout_failed",
+                    &checkout_error,
                     stash_reference.as_deref(),
                 ));
             }
-            Err(error) => return Err(error),
-        };
-        let merge_detail = merge_output.combined();
-        append_output_line(&mut output, &merge_detail);
-
-        if merge_output.success {
-            journal
-                .phase("merged", None)
-                .map_err(conflicts::main_recovery::message)?;
-            if let Some(stash_reference) = stash_reference.as_deref() {
-                journal
-                    .phase("restoring_stash", Some(stash_reference))
-                    .map_err(conflicts::main_recovery::message)?;
-                let (stash_restored, restore_conflicts, restore_output) =
-                    restore_force_merge_stash(&project_path, stash_reference).map_err(|error| {
-                        format_force_merge_error(
-                            "force_merge_restore_failed",
-                            &error,
-                            Some(stash_reference),
-                        )
-                    })?;
-                append_output_line(&mut output, &restore_output);
-                return Ok(build_merge_result(
-                    true,
-                    output,
-                    Vec::new(),
-                    false,
-                    None,
-                    true,
-                    stash_restored,
-                    Some(stash_reference.to_string()),
-                    restore_conflicts,
-                ));
-            }
-
-            return Ok(build_merge_result(
-                true,
-                if allow_dirty { output } else { merge_detail },
-                Vec::new(),
-                false,
-                None,
-                false,
-                false,
-                None,
-                Vec::new(),
-            ));
+            Err(checkout_error) => return Err(checkout_error),
         }
+    }
 
-        let files = conflict_files(&project_path);
-        if !allow_dirty {
-            if repo.path().join("MERGE_HEAD").exists() {
-                journal
-                    .phase("aborting", None)
-                    .map_err(conflicts::main_recovery::message)?;
-                let abort = run_git_raw(&project_path, ["merge", "--abort"])
-                    .map_err(|e| format!("merge_abort_failed: {e}"))?;
-                if !abort.success {
-                    return Err(format!("merge_abort_failed: {}", abort.combined()));
-                }
-            }
+    journal.phase("merging", None).map_err(conflicts::main_recovery::message)?;
+    let merge_output = match run_git_raw(
+        &project_path,
+        ["merge", "--no-ff", "--no-edit", worktree_branch],
+    ) {
+        Ok(output) => output,
+        Err(error) if allow_dirty => {
             conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
-            if !files.is_empty() {
-                return Ok(build_merge_result(
-                    false,
-                    format!("merge_conflict: {merge_detail}"),
-                    files,
-                    false,
-                    None,
-                    false,
-                    false,
-                    None,
-                    Vec::new(),
-                ));
-            }
-
-            let snippet: String = merge_detail.chars().take(300).collect();
-            return Err(format!("merge_failed: {snippet}"));
-        }
-
-        journal
-            .phase("aborting", None)
-            .map_err(conflicts::main_recovery::message)?;
-        let abort_output = run_git_raw(&project_path, ["merge", "--abort"]).map_err(|error| {
-            format_force_merge_error(
-                "force_merge_abort_failed",
+            return Err(restore_force_merge_after_failure(
+                &project_path,
+                &mut output,
+                "force_merge_failed",
                 &error,
                 stash_reference.as_deref(),
-            )
-        })?;
-        let abort_detail = abort_output.combined();
-        append_output_line(&mut output, &abort_detail);
-        if !abort_output.success {
-            return Err(format_force_merge_error(
-                "force_merge_abort_failed",
-                &abort_detail,
-                stash_reference.as_deref(),
+            ));
+        }
+        Err(error) => return Err(error),
+    };
+    let merge_detail = merge_output.combined();
+    append_output_line(&mut output, &merge_detail);
+
+    if merge_output.success {
+        journal.phase("merged", None).map_err(conflicts::main_recovery::message)?;
+        if let Some(stash_reference) = stash_reference.as_deref() {
+            journal.phase("restoring_stash", Some(stash_reference)).map_err(conflicts::main_recovery::message)?;
+            let (stash_restored, restore_conflicts, restore_output) =
+                restore_force_merge_stash(&project_path, stash_reference).map_err(|error| {
+                    format_force_merge_error(
+                        "force_merge_restore_failed",
+                        &error,
+                        Some(stash_reference),
+                    )
+                })?;
+            append_output_line(&mut output, &restore_output);
+            return Ok(build_merge_result(
+                true,
+                output,
+                Vec::new(),
+                false,
+                None,
+                true,
+                stash_restored,
+                Some(stash_reference.to_string()),
+                restore_conflicts,
             ));
         }
 
-        conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
-        journal
-            .phase("aborted", None)
-            .map_err(conflicts::main_recovery::message)?;
-        let Some(stash_reference) = stash_reference.as_deref() else {
-            if !files.is_empty() {
-                return Ok(build_merge_result(
-                    false,
-                    output,
-                    files,
-                    false,
-                    None,
-                    false,
-                    false,
-                    None,
-                    Vec::new(),
-                ));
-            }
-            return Err(format_force_merge_error(
-                "force_merge_failed",
-                &merge_detail,
-                None,
-            ));
-        };
+        return Ok(build_merge_result(
+            true,
+            if allow_dirty { output } else { merge_detail },
+            Vec::new(),
+            false,
+            None,
+            false,
+            false,
+            None,
+            Vec::new(),
+        ));
+    }
 
-        journal
-            .phase("restoring_stash", Some(stash_reference))
-            .map_err(conflicts::main_recovery::message)?;
-        match restore_force_merge_stash(&project_path, stash_reference) {
-            Ok((stash_restored, restore_conflicts, restore_output)) => {
-                append_output_line(&mut output, &restore_output);
-                if !stash_restored && !restore_conflicts.is_empty() {
-                    return Ok(build_merge_result(
-                        false,
-                        output,
-                        files,
-                        false,
-                        None,
-                        true,
-                        false,
-                        Some(stash_reference.to_string()),
-                        restore_conflicts,
-                    ));
-                }
-                if files.is_empty() {
-                    return Err(format_force_merge_error(
-                        "force_merge_failed",
-                        &merge_detail,
-                        Some(stash_reference),
-                    ));
-                }
+    let files = conflict_files(&project_path);
+    if !allow_dirty {
+        if repo.path().join("MERGE_HEAD").exists() {
+            journal.phase("aborting", None).map_err(conflicts::main_recovery::message)?;
+            let abort = run_git_raw(&project_path, ["merge", "--abort"])
+                .map_err(|e| format!("merge_abort_failed: {e}"))?;
+            if !abort.success { return Err(format!("merge_abort_failed: {}", abort.combined())); }
+        }
+        conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
+        if !files.is_empty() {
+            return Ok(build_merge_result(
+                false,
+                format!("merge_conflict: {merge_detail}"),
+                files,
+                false,
+                None,
+                false,
+                false,
+                None,
+                Vec::new(),
+            ));
+        }
+
+        let snippet: String = merge_detail.chars().take(300).collect();
+        return Err(format!("merge_failed: {snippet}"));
+    }
+
+    journal.phase("aborting", None).map_err(conflicts::main_recovery::message)?;
+    let abort_output = run_git_raw(&project_path, ["merge", "--abort"]).map_err(|error| {
+        format_force_merge_error(
+            "force_merge_abort_failed",
+            &error,
+            stash_reference.as_deref(),
+        )
+    })?;
+    let abort_detail = abort_output.combined();
+    append_output_line(&mut output, &abort_detail);
+    if !abort_output.success {
+        return Err(format_force_merge_error(
+            "force_merge_abort_failed",
+            &abort_detail,
+            stash_reference.as_deref(),
+        ));
+    }
+
+    conflicts::main_recovery::restore_branch(&project_path, &current_branch)?;
+    journal.phase("aborted", None).map_err(conflicts::main_recovery::message)?;
+    let Some(stash_reference) = stash_reference.as_deref() else {
+        if !files.is_empty() {
+            return Ok(build_merge_result(
+                false,
+                output,
+                files,
+                false,
+                None,
+                false,
+                false,
+                None,
+                Vec::new(),
+            ));
+        }
+        return Err(format_force_merge_error(
+            "force_merge_failed",
+            &merge_detail,
+            None,
+        ));
+    };
+
+    journal.phase("restoring_stash", Some(stash_reference)).map_err(conflicts::main_recovery::message)?;
+    match restore_force_merge_stash(&project_path, stash_reference) {
+        Ok((stash_restored, restore_conflicts, restore_output)) => {
+            append_output_line(&mut output, &restore_output);
+            if !stash_restored && !restore_conflicts.is_empty() {
                 return Ok(build_merge_result(
                     false,
                     output,
@@ -1122,39 +1081,48 @@ fn merge_worktree_internal(
                     false,
                     None,
                     true,
-                    stash_restored,
+                    false,
                     Some(stash_reference.to_string()),
                     restore_conflicts,
                 ));
             }
-            Err(restore_error) => {
-                let detail = format!("{merge_detail}; {restore_error}");
+            if files.is_empty() {
                 return Err(format_force_merge_error(
-                    "force_merge_restore_failed",
-                    &detail,
+                    "force_merge_failed",
+                    &merge_detail,
                     Some(stash_reference),
                 ));
             }
+            return Ok(build_merge_result(
+                false,
+                output,
+                files,
+                false,
+                None,
+                true,
+                stash_restored,
+                Some(stash_reference.to_string()),
+                restore_conflicts,
+            ));
         }
+        Err(restore_error) => {
+            let detail = format!("{merge_detail}; {restore_error}");
+            return Err(format_force_merge_error(
+                "force_merge_restore_failed",
+                &detail,
+                Some(stash_reference),
+            ));
+        }
+    }
     })();
     let merged = result.as_ref().is_ok_and(|value| value.merged);
-    let restored = result.as_ref().map_or(true, |value| {
-        (!value.stash_created || value.stash_restored)
-            && value.stash_restore_conflict_files.is_empty()
-    });
+    let restored = result.as_ref().map_or(true, |value|
+        (!value.stash_created || value.stash_restored) && value.stash_restore_conflict_files.is_empty());
     if let Err(recovery) = journal.finish(&repo, merged, restored) {
         // 保留旧 restore_conflict 返回结构，但磁盘日志继续阻止危险写入。
-        if result
-            .as_ref()
-            .is_ok_and(|value| !value.stash_restore_conflict_files.is_empty())
-        {
-            return result;
-        }
+        if result.as_ref().is_ok_and(|value| !value.stash_restore_conflict_files.is_empty()) { return result; }
         let detail = result.as_ref().err().cloned().unwrap_or_default();
-        return Err(format!(
-            "{}; {detail}",
-            conflicts::main_recovery::message(recovery)
-        ));
+        return Err(format!("{}; {detail}", conflicts::main_recovery::message(recovery)));
     }
     result
 }
@@ -1304,13 +1272,10 @@ pub async fn git_worktree_remove(
             return Err("worktree_path_not_absolute".to_string());
         }
         // 固定主仓库→工作树锁顺序；路径缺失也不能绕过私有 git-dir 恢复日志。
-        let _worktree_operation =
-            conflicts::cleanup_guard::lock_registered(&main_repo, &target_path)?;
+        let _worktree_operation = conflicts::cleanup_guard::lock_registered(&main_repo, &target_path)?;
         match worktree_registration(&project_path, &target_path, &branch)? {
             WorktreeRegistration::Matched => {
-                if _worktree_operation.is_none() {
-                    return Err("worktree_identity_changed".into());
-                }
+                if _worktree_operation.is_none() { return Err("worktree_identity_changed".into()); }
             }
             WorktreeRegistration::Mismatched => {
                 return Err("worktree_branch_mismatch".to_string());
@@ -1341,10 +1306,7 @@ pub async fn git_worktree_remove(
                 Err(err) => return Err(err),
             }
         } else {
-            output.push_str(&run_git_worktree_remove_with_retry(
-                &project_path,
-                target_arg.as_str(),
-            )?);
+            output.push_str(&run_git_worktree_remove_with_retry(&project_path, target_arg.as_str())?);
         }
 
         if delete_branch {

@@ -10,25 +10,24 @@ use std::collections::{BTreeMap, HashMap};
 use crate::ssh_launch::SshLaunchPlan;
 
 /// 单帧最大字节数（含换行前的 JSON 文本）。超限视为非法帧，断连。
-pub use cli_manager_core::pty_frame::MAX_FRAME_BYTES;
+pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 pub const CONTROL_PROTOCOL_VERSION: u16 = 3;
-pub use cli_manager_core::pty_frame::{
-    decode_binary_terminal_frame, encode_binary_terminal_frame, BINARY_KIND_CHECKPOINT,
-    BINARY_KIND_INPUT, BINARY_KIND_OUTPUT, BINARY_KIND_REPLAY, BINARY_KIND_REPLAY_RESET,
-    BINARY_PROTOCOL_VERSION,
-};
+pub const BINARY_PROTOCOL_VERSION: u8 = 1;
+pub const BINARY_KIND_OUTPUT: u8 = 1;
+pub const BINARY_KIND_REPLAY: u8 = 2;
+pub const BINARY_KIND_INPUT: u8 = 3;
+pub const BINARY_KIND_CHECKPOINT: u8 = 4;
+pub const BINARY_KIND_REPLAY_RESET: u8 = 5;
+const BINARY_HEADER_BYTES: usize = 20;
 
 pub const FEATURE_WS_BINARY_OUTPUT: &str = "ws_binary_output_v1";
 pub const FEATURE_WS_BINARY_INPUT: &str = "ws_binary_input_v1";
-pub const FEATURE_WS_NATIVE_CLIENT: &str = "ws_native_client_v1";
-pub const FEATURE_WS_ACK_BYTES: &str = "ws_ack_bytes_v1";
 pub const FEATURE_CHECKPOINT_REPLAY: &str = "checkpoint_replay_v1";
 pub const FEATURE_PIXEL_RESIZE: &str = "pixel_resize_v1";
 pub const FEATURE_PROCESS_TRAITS: &str = "process_traits_v1";
 pub const FEATURE_TERMINAL_COLORS: &str = "terminal_colors_v1";
 pub const FEATURE_SSH_AGENT_RPC: &str = "ssh_agent_rpc_v1";
 pub const FEATURE_LOCAL_ROUTING_V1: &str = "local_routing_v1";
-pub const FEATURE_SESSION_STATUS_PUSH: &str = "session_status_push_v1";
 pub const ROUTING_ERROR_FEATURE_NOT_SUPPORTED: &str = "routing_feature_not_supported";
 pub const ROUTING_ERROR_PROTOCOL_UNSUPPORTED: &str = "routing_protocol_unsupported";
 pub const ROUTING_ERROR_SERVICE_UNAVAILABLE: &str = "routing_service_unavailable";
@@ -38,15 +37,12 @@ pub fn supported_features() -> Vec<String> {
     [
         FEATURE_WS_BINARY_OUTPUT,
         FEATURE_WS_BINARY_INPUT,
-        FEATURE_WS_NATIVE_CLIENT,
-        FEATURE_WS_ACK_BYTES,
         FEATURE_CHECKPOINT_REPLAY,
         FEATURE_PIXEL_RESIZE,
         FEATURE_PROCESS_TRAITS,
         FEATURE_TERMINAL_COLORS,
         FEATURE_SSH_AGENT_RPC,
         FEATURE_LOCAL_ROUTING_V1,
-        FEATURE_SESSION_STATUS_PUSH,
     ]
     .into_iter()
     .map(str::to_string)
@@ -61,8 +57,6 @@ pub enum ClientFrame {
     Auth {
         token: String,
         client_version: String,
-        #[serde(default)]
-        client_features: Vec<String>,
     },
     Ping {
         id: u64,
@@ -99,8 +93,6 @@ pub enum ClientFrame {
         session_id: String,
         sequence: u64,
         char_count: usize,
-        #[serde(default)]
-        byte_count: Option<usize>,
     },
     Resize {
         id: u64,
@@ -523,11 +515,6 @@ pub enum DaemonFrame {
         session_id: String,
         exit_code: Option<i32>,
     },
-    SessionStatus {
-        session_id: String,
-        status: String,
-        exit_code: Option<i32>,
-    },
     /// 主动推送：CLI hook 上报（daemon 稳定端口收到后转发；无客户端时缓存补发）。
     HookReport {
         payload: serde_json::Value,
@@ -547,6 +534,16 @@ pub enum DaemonFrame {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BinaryTerminalFrame {
+    pub kind: u8,
+    pub session_id: String,
+    pub sequence: u64,
+    pub cols: u16,
+    pub rows: u16,
+    pub data: Vec<u8>,
+}
+
 #[derive(Debug, PartialEq)]
 pub enum ProtocolError {
     /// JSON 解析失败或超长帧：非法帧，调用方应断连。
@@ -561,6 +558,95 @@ pub fn encode_frame<T: Serialize>(frame: &T) -> String {
     let mut line = serde_json::to_string(frame).expect("frame serialization cannot fail");
     line.push('\n');
     line
+}
+
+/// WebSocket 二进制终端帧：version/kind/sessionLen/sequence/cols/rows/dataLen + payload。
+// 校验种类、字段长度和总帧上限后写入大端头部，再原样拼接会话 ID 与负载字节。
+pub fn encode_binary_terminal_frame(
+    kind: u8,
+    session_id: &str,
+    sequence: u64,
+    cols: u16,
+    rows: u16,
+    data: &[u8],
+) -> Result<Vec<u8>, String> {
+    if !matches!(
+        kind,
+        BINARY_KIND_OUTPUT
+            | BINARY_KIND_REPLAY
+            | BINARY_KIND_INPUT
+            | BINARY_KIND_CHECKPOINT
+            | BINARY_KIND_REPLAY_RESET
+    ) {
+        return Err("invalid binary frame kind".to_string());
+    }
+    let session_bytes = session_id.as_bytes();
+    let session_len = u16::try_from(session_bytes.len())
+        .map_err(|_| "session id too long for binary frame".to_string())?;
+    let data_len = u32::try_from(data.len())
+        .map_err(|_| "terminal payload too large for binary frame".to_string())?;
+    if BINARY_HEADER_BYTES + session_bytes.len() + data.len() > MAX_FRAME_BYTES {
+        return Err("binary frame too large".to_string());
+    }
+
+    let mut frame = Vec::with_capacity(BINARY_HEADER_BYTES + session_bytes.len() + data.len());
+    frame.push(BINARY_PROTOCOL_VERSION);
+    frame.push(kind);
+    frame.extend_from_slice(&session_len.to_be_bytes());
+    frame.extend_from_slice(&sequence.to_be_bytes());
+    frame.extend_from_slice(&cols.to_be_bytes());
+    frame.extend_from_slice(&rows.to_be_bytes());
+    frame.extend_from_slice(&data_len.to_be_bytes());
+    frame.extend_from_slice(session_bytes);
+    frame.extend_from_slice(data);
+    Ok(frame)
+}
+
+// 仅接受客户端输入/检查点帧，校验版本、精确长度和 ID 的 UTF-8；负载保持原始字节。
+pub fn decode_binary_terminal_frame(frame: &[u8]) -> Result<BinaryTerminalFrame, String> {
+    if frame.len() < BINARY_HEADER_BYTES {
+        return Err("binary frame too short".to_string());
+    }
+    if frame[0] != BINARY_PROTOCOL_VERSION {
+        return Err("unsupported binary protocol version".to_string());
+    }
+    let kind = frame[1];
+    if !matches!(kind, BINARY_KIND_INPUT | BINARY_KIND_CHECKPOINT) {
+        return Err("unsupported client binary frame kind".to_string());
+    }
+    let session_len = u16::from_be_bytes([frame[2], frame[3]]) as usize;
+    let sequence = u64::from_be_bytes(
+        frame[4..12]
+            .try_into()
+            .map_err(|_| "invalid binary sequence".to_string())?,
+    );
+    let cols = u16::from_be_bytes([frame[12], frame[13]]);
+    let rows = u16::from_be_bytes([frame[14], frame[15]]);
+    let data_len = u32::from_be_bytes(
+        frame[16..20]
+            .try_into()
+            .map_err(|_| "invalid binary data length".to_string())?,
+    ) as usize;
+    let expected = BINARY_HEADER_BYTES
+        .checked_add(session_len)
+        .and_then(|value| value.checked_add(data_len))
+        .ok_or_else(|| "binary frame length overflow".to_string())?;
+    if expected != frame.len() || expected > MAX_FRAME_BYTES {
+        return Err("invalid binary frame length".to_string());
+    }
+    let session_start = BINARY_HEADER_BYTES;
+    let data_start = session_start + session_len;
+    let session_id = std::str::from_utf8(&frame[session_start..data_start])
+        .map_err(|_| "binary session id is not utf-8".to_string())?
+        .to_string();
+    Ok(BinaryTerminalFrame {
+        kind,
+        session_id,
+        sequence,
+        cols,
+        rows,
+        data: frame[data_start..].to_vec(),
+    })
 }
 
 // 仅提取字符串类型的 type 字段；缺失或其他 JSON 类型均返回 None。
@@ -627,7 +713,6 @@ const DAEMON_FRAME_TYPES: &[&str] = &[
     "attached",
     "output",
     "exit",
-    "session_status",
     "hook_report",
     "ssh_agent_hook_gap",
     "checkpoint_accepted",
@@ -741,22 +826,6 @@ mod tests {
         };
         let decoded = decode_daemon_frame(encode_frame(&frame).trim_end()).unwrap();
         assert_eq!(decoded, frame);
-    }
-
-    #[test]
-    fn session_status_push_roundtrip_and_capability() {
-        assert!(supported_features()
-            .iter()
-            .any(|feature| feature == FEATURE_SESSION_STATUS_PUSH));
-        let frame = DaemonFrame::SessionStatus {
-            session_id: "session-1".into(),
-            status: "exited".into(),
-            exit_code: Some(0),
-        };
-        assert_eq!(
-            decode_daemon_frame(encode_frame(&frame).trim_end()).unwrap(),
-            frame
-        );
     }
 
     #[test]

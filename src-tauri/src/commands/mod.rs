@@ -1,5 +1,7 @@
 #[path = "../features/agents/commands.rs"]
 pub mod agent_capabilities;
+#[path = "../features/extensions/commands.rs"]
+pub mod extensions;
 #[path = "../features/app-data/commands.rs"]
 pub mod app_data;
 #[path = "../features/terminal/background.rs"]
@@ -10,12 +12,8 @@ pub mod ccusage;
 pub mod command_suggestion;
 #[path = "../features/app-data/repair/mod.rs"]
 pub mod db_repair;
-#[path = "../features/deepseek/commands.rs"]
-pub mod deepseek;
 #[path = "../features/desktop-pet/commands.rs"]
 pub mod desktop_pet;
-#[path = "../features/extensions/commands.rs"]
-pub mod extensions;
 #[path = "../features/system/fonts.rs"]
 pub mod fonts;
 #[path = "../features/files/commands.rs"]
@@ -60,6 +58,8 @@ pub mod provider;
 pub mod routing;
 #[path = "../features/terminal/shell_commands.rs"]
 pub mod shell;
+#[path = "../features/deepseek/commands.rs"]
+pub mod deepseek;
 #[path = "../features/remote/ssh/mod.rs"]
 pub mod ssh;
 #[path = "../features/remote/config.rs"]

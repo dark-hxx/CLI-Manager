@@ -53,6 +53,8 @@ pub mod codex_app_server_proxy;
 #[path = "features/statusline/codex.rs"]
 pub mod codex_statusline;
 mod commands;
+#[path = "features/open_terminal.rs"]
+mod open_terminal;
 #[path = "infrastructure/process/conpty_sideload.rs"]
 mod conpty_sideload;
 #[path = "infrastructure/diagnostics/crash_reporter.rs"]
@@ -63,8 +65,6 @@ pub(crate) mod credential_store;
 pub(crate) mod extensions;
 #[path = "infrastructure/storage/legacy_remote_state.rs"]
 pub(crate) mod legacy_remote_state;
-#[path = "features/open_terminal.rs"]
-mod open_terminal;
 #[path = "infrastructure/storage/repo_operation.rs"]
 pub(crate) mod repo_operation;
 // daemon 二进制（src/bin/cli-manager-daemon.rs）经 lib 复用以下模块，
@@ -112,7 +112,8 @@ pub mod statusline;
 pub mod statusline_profiles;
 #[path = "features/sync/service/mod.rs"]
 mod sync;
-pub(crate) use cli_manager_core::text_encoding;
+#[path = "shared/text_encoding.rs"]
+mod text_encoding;
 #[path = "features/notifications/service/mod.rs"]
 mod third_party_notification;
 #[path = "features/stats/usage.rs"]
@@ -124,7 +125,8 @@ mod web_device_outbox;
 #[path = "infrastructure/webdav/mod.rs"]
 mod webdav;
 #[cfg(target_os = "windows")]
-pub(crate) use cli_manager_core::windows_command_line;
+#[path = "shared/windows_command_line.rs"]
+mod windows_command_line;
 #[path = "infrastructure/process/wsl.rs"]
 mod wsl;
 

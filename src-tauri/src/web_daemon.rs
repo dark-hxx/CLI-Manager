@@ -25,7 +25,8 @@ use tungstenite::stream::MaybeTlsStream;
 use tungstenite::{Error as WsError, Message, WebSocket};
 use uuid::Uuid;
 
-pub(crate) use cli_manager_core::device_urls;
+#[path = "infrastructure/web/device_urls.rs"]
+mod device_urls;
 pub(crate) use device_urls::{normalize_device_url, normalize_public_url};
 
 const PROFILE_FILE_NAME: &str = "web-device.json";
@@ -101,9 +102,7 @@ struct Status {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Request {
-    TranscriptChanged {
-        session_id: String,
-    },
+    TranscriptChanged { session_id: String },
     Auth {
         token: String,
         client_version: String,
@@ -473,15 +472,10 @@ impl DaemonState {
             }
             Request::TranscriptChanged { session_id } => {
                 let supported = {
-                    let runtime = self
-                        .runtime
-                        .lock()
-                        .map_err(|_| "web daemon state lock poisoned")?;
+                    let runtime = self.runtime.lock().map_err(|_| "web daemon state lock poisoned")?;
                     runtime.connected && runtime.transcript_notifications
                 };
-                if !supported {
-                    return Ok(None);
-                }
+                if !supported { return Ok(None); }
                 self.queue(DeviceToServerFrame::TranscriptChanged { session_id })?;
                 Ok(None)
             }
@@ -804,20 +798,14 @@ impl DaemonState {
         generation: u64,
     ) -> Result<(), String> {
         match frame {
-            ServerToDeviceFrame::HelloOk {
-                paired,
-                capabilities,
-                ..
-            } => {
+            ServerToDeviceFrame::HelloOk { paired, capabilities, .. } => {
                 if let Ok(mut runtime) = self.runtime.lock() {
                     if self.generation.load(Ordering::SeqCst) != generation {
                         return Ok(());
                     }
                     runtime.connected = true;
                     runtime.paired = paired;
-                    runtime.transcript_notifications = capabilities
-                        .iter()
-                        .any(|s| s == "terminal.transcript.changed");
+                    runtime.transcript_notifications = capabilities.iter().any(|s| s == "terminal.transcript.changed");
                 }
             }
             ServerToDeviceFrame::PairingOffered { .. } => {}

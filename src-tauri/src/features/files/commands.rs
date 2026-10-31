@@ -14,15 +14,17 @@ use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
 use crate::text_encoding::{decode_text, encode_text};
 
+#[path = "commands/path_guards.rs"]
+mod path_guards;
 #[path = "commands/clipboard_files.rs"]
 mod clipboard_files;
-#[path = "commands/clipboard_image.rs"]
-mod clipboard_image;
 #[cfg(target_os = "windows")]
 #[path = "commands/clipboard_shell.rs"]
 mod clipboard_shell;
-#[path = "commands/path_guards.rs"]
-mod path_guards;
+#[path = "commands/clipboard_image.rs"]
+mod clipboard_image;
+#[path = "commands/clipboard_dib.rs"]
+mod clipboard_dib;
 use clipboard_files::read_clipboard_file_paths;
 #[path = "commands/clipboard_import.rs"]
 pub mod clipboard_import;
@@ -131,9 +133,7 @@ pub async fn clipboard_read_file_paths() -> Result<Vec<String>, String> {
 /// so a compromised renderer cannot turn this into an arbitrary file reader.
 #[tauri::command]
 // 从原生剪贴板取得图片文件并转换为应用 PNG 附件，不接受前端文件路径。
-pub async fn clipboard_attach_image_files(
-    app: AppHandle,
-) -> Result<ClipboardImageAttachments, String> {
+pub async fn clipboard_attach_image_files(app: AppHandle) -> Result<ClipboardImageAttachments, String> {
     tokio::task::spawn_blocking(move || attach_clipboard_image_files(&app))
         .await
         .map_err(|err| err.to_string())?
@@ -145,23 +145,17 @@ pub async fn file_attach_image_data(data_base64: String) -> Result<String, Strin
         if data_base64.len() > clipboard_image::MAX_BYTES.div_ceil(3) * 4 {
             return Err("clipboard_image_too_large".into());
         }
-        let bytes = general_purpose::STANDARD
-            .decode(data_base64)
-            .map_err(|_| "clipboard_image_unsupported")?;
-        if bytes.len() > clipboard_image::MAX_BYTES {
-            return Err("clipboard_image_too_large".into());
-        }
-        save_terminal_image(clipboard_image::encode_png(clipboard_image::decode(
-            &bytes, false,
-        )?)?)
-    })
-    .await
-    .map_err(|err| err.to_string())?
+        let bytes = general_purpose::STANDARD.decode(data_base64).map_err(|_| "clipboard_image_unsupported")?;
+        if bytes.len() > clipboard_image::MAX_BYTES { return Err("clipboard_image_too_large".into()); }
+        save_terminal_image(clipboard_image::encode_png(clipboard_image::decode(&bytes, false)?)?)
+    }).await.map_err(|err| err.to_string())?
 }
 
 // 只接收通过标准化的 PNG，保存到现有受管附件目录供本机/WSL 或 SSH 上传使用。
 fn save_terminal_image(png: Vec<u8>) -> Result<String, String> {
-    let target = cli_manager_core::clipboard_image::save_png(&cli_manager_data_dir()?, &png)?;
+    let directory = ensure_attachment_dir(&cli_manager_data_dir()?)?;
+    let target = unique_attachment_target(&directory, "clipboard-image.png")?;
+    fs::write(&target, png).map_err(|_| "write_file_failed")?;
     Ok(target.to_string_lossy().into_owned())
 }
 // 处理剪贴板中的前八个文件，收集生成附件及首个拒绝原因。
@@ -216,14 +210,10 @@ fn convert_clipboard_image_file(source: &Path, attachments_dir: &Path) -> Result
 
     use std::io::Read;
     let mut bytes = Vec::new();
-    fs::File::open(source)
-        .map_err(|_| "clipboard_image_unavailable")?
-        .take(clipboard_image::MAX_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
+    fs::File::open(source).map_err(|_| "clipboard_image_unavailable")?
+        .take(clipboard_image::MAX_BYTES as u64 + 1).read_to_end(&mut bytes)
         .map_err(|_| "clipboard_image_unavailable")?;
-    if bytes.len() > clipboard_image::MAX_BYTES {
-        return Err("clipboard_image_too_large".into());
-    }
+    if bytes.len() > clipboard_image::MAX_BYTES { return Err("clipboard_image_too_large".into()); }
     let encoded = clipboard_image::encode_png(clipboard_image::decode(&bytes, false)?)?;
 
     let target = unique_attachment_target(attachments_dir, "clipboard-image.png")?;

@@ -1042,48 +1042,27 @@ fn validate_workspace_snapshot(
 ) -> Result<(), String> {
     if let Some(terminals) = &snapshot.terminals {
         let mut ids = std::collections::HashSet::new();
-        if terminals.len() > 2_000
-            || terminals.iter().any(|terminal| {
-                !is_opaque_id(&terminal.session_id)
-                    || !is_opaque_id(&terminal.project_id)
-                    || !ids.insert(&terminal.session_id)
-                    || terminal.title.len() > 512
-                    || terminal
-                        .worktree_id
-                        .as_ref()
-                        .is_some_and(|id| !is_opaque_id(id))
-            })
-        {
+        if terminals.len() > 2_000 || terminals.iter().any(|terminal| {
+            !is_opaque_id(&terminal.session_id) || !is_opaque_id(&terminal.project_id)
+                || !ids.insert(&terminal.session_id)
+                || terminal.title.len() > 512
+                || terminal.worktree_id.as_ref().is_some_and(|id| !is_opaque_id(id))
+        }) {
             return Err("invalid workspace terminals".to_string());
         }
     }
     let mut subagent_ids = std::collections::HashSet::new();
-    let parent_ids: std::collections::HashSet<_> = snapshot
-        .terminals
-        .iter()
-        .flatten()
-        .map(|terminal| terminal.session_id.as_str())
-        .collect();
+    let parent_ids: std::collections::HashSet<_> = snapshot.terminals.iter().flatten().map(|terminal| terminal.session_id.as_str()).collect();
     if snapshot.subagents.len() > 64
-        || snapshot
-            .subagents
-            .iter()
-            .map(|agent| agent.content.len())
-            .sum::<usize>()
-            > 128 * 1024
+        || snapshot.subagents.iter().map(|agent| agent.content.len()).sum::<usize>() > 128 * 1024
         || snapshot.subagents.iter().any(|agent| {
-            agent.session_id.is_empty()
-                || agent.session_id.len() > 512
+            agent.session_id.is_empty() || agent.session_id.len() > 512
                 || !subagent_ids.insert(agent.session_id.as_str())
                 || !parent_ids.contains(agent.parent_session_id.as_str())
                 || agent.title.len() > 512
                 || agent.content.len() > 32 * 1024
-                || !matches!(
-                    agent.source_kind.as_str(),
-                    "pending" | "child-jsonl" | "parent-jsonl" | "lifecycle-only"
-                )
-        })
-    {
+                || !matches!(agent.source_kind.as_str(), "pending" | "child-jsonl" | "parent-jsonl" | "lifecycle-only")
+        }) {
         return Err("invalid workspace subagents".to_string());
     }
     if snapshot.groups.len() > 2_000
@@ -1204,12 +1183,8 @@ fn validate_browser_origin(state: &AppState, headers: &HeaderMap) -> Result<(), 
         .get(header::ORIGIN)
         .and_then(|value| value.to_str().ok())
         .ok_or_else(|| AppError::forbidden("origin_required", "Origin header is required"))?;
-    if state.config.allows_browser_origin(
-        origin,
-        headers
-            .get(header::HOST)
-            .and_then(|value| value.to_str().ok()),
-    ) {
+    if state.config.allows_browser_origin(origin, headers
+        .get(header::HOST).and_then(|value| value.to_str().ok())) {
         return Ok(());
     }
     Err(AppError::forbidden(
@@ -1347,10 +1322,7 @@ mod tests {
         };
         assert!(browser_frame_in_scope(&terminal, Some("device-a")));
         assert!(!browser_frame_in_scope(&terminal, Some("device-b")));
-        let hint = BrowserSocketFrame::TranscriptChanged {
-            device_id: "device-a".into(),
-            session_id: "terminal-1".into(),
-        };
+        let hint = BrowserSocketFrame::TranscriptChanged { device_id: "device-a".into(), session_id: "terminal-1".into() };
         assert!(browser_frame_in_scope(&hint, Some("device-a")));
         assert!(!browser_frame_in_scope(&hint, Some("device-b")));
     }
@@ -1459,29 +1431,17 @@ mod tests {
     }
     #[test]
     fn subagent_snapshot_validates_parent_uniqueness_and_content_limits() {
-        use cli_manager_web_protocol::{
-            WorkspaceSnapshot, WorkspaceSubagentSummary, WorkspaceTerminalSummary,
-        };
+        use cli_manager_web_protocol::{WorkspaceSnapshot, WorkspaceTerminalSummary, WorkspaceSubagentSummary};
         let mut snapshot = WorkspaceSnapshot {
             subagents: vec![WorkspaceSubagentSummary {
-                session_id: "parent::agent::child".into(),
-                parent_session_id: "parent".into(),
-                title: "Child".into(),
-                source_kind: "child-jsonl".into(),
-                ended: false,
-                content: "actual transcript".into(),
-                truncated: false,
+                session_id: "parent::agent::child".into(), parent_session_id: "parent".into(),
+                title: "Child".into(), source_kind: "child-jsonl".into(), ended: false,
+                content: "actual transcript".into(), truncated: false,
             }],
             terminals: Some(vec![WorkspaceTerminalSummary {
-                session_id: "parent".into(),
-                project_id: "project".into(),
-                worktree_id: None,
-                title: "Parent".into(),
+                session_id: "parent".into(), project_id: "project".into(), worktree_id: None, title: "Parent".into(),
             }]),
-            groups: vec![],
-            projects: vec![],
-            worktrees: vec![],
-            updated_at: 1,
+            groups: vec![], projects: vec![], worktrees: vec![], updated_at: 1,
         };
         assert!(validate_workspace_snapshot(&snapshot).is_ok());
         snapshot.subagents[0].parent_session_id = "missing".into();
@@ -1494,12 +1454,8 @@ mod tests {
         assert!(validate_workspace_snapshot(&snapshot).is_err());
         snapshot.subagents[0].content = "x".repeat(32 * 1024);
         let agent = snapshot.subagents[0].clone();
-        snapshot.subagents = (0..5)
-            .map(|index| WorkspaceSubagentSummary {
-                session_id: format!("child-{index}"),
-                ..agent.clone()
-            })
-            .collect();
+        snapshot.subagents = (0..5).map(|index| WorkspaceSubagentSummary { session_id: format!("child-{index}"), ..agent.clone() }).collect();
         assert!(validate_workspace_snapshot(&snapshot).is_err());
     }
+
 }

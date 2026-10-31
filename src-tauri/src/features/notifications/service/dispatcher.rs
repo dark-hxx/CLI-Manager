@@ -149,10 +149,8 @@ fn goal_notification_key(job: &HookNotificationJob) -> Option<String> {
         return None;
     }
     let status = parse_wire_status(job.goal_status.as_deref())?;
-    if matches!(
-        status,
-        CodexGoalStatus::None | CodexGoalStatus::Active | CodexGoalStatus::Unknown
-    ) {
+    if matches!(status, CodexGoalStatus::None | CodexGoalStatus::Active | CodexGoalStatus::Unknown)
+    {
         return None;
     }
     let identity = job
@@ -596,11 +594,7 @@ mod tests {
     #[test]
     // 验证 Codex goal 尚未完成或状态不明时，第三方完成通知不会误发。
     fn codex_goal_stop_requires_a_terminal_status_for_notification() {
-        for status in [
-            None,
-            Some("active".to_string()),
-            Some("unknown".to_string()),
-        ] {
+        for status in [None, Some("active".to_string()), Some("unknown".to_string())] {
             assert!(message_from_job(HookNotificationJob {
                 source: "codex".to_string(),
                 event: "Stop".to_string(),

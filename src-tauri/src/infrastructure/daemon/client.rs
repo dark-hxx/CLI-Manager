@@ -122,7 +122,6 @@ impl DaemonClient {
                 encode_frame(&ClientFrame::Auth {
                     token: info.token.clone(),
                     client_version: env!("CARGO_PKG_VERSION").to_string(),
-                    client_features: Vec::new(),
                 })
                 .as_bytes(),
             )
@@ -230,20 +229,6 @@ impl DaemonClient {
                         "sessionId": session_id,
                         "status": "exited",
                         "exit_code": exit_code,
-                    }),
-                );
-            }
-            DaemonFrame::SessionStatus {
-                session_id,
-                status,
-                exit_code,
-            } => {
-                let _ = app_handle.emit(
-                    &format!("pty-session-status-{session_id}"),
-                    serde_json::json!({
-                        "sessionId": session_id,
-                        "status": status,
-                        "exitCode": exit_code,
                     }),
                 );
             }

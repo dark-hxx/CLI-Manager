@@ -572,9 +572,7 @@ request_max_retries = 8
         let actual: toml::Value = toml::from_str(&scoped.profile_text).unwrap();
         let mut expected: toml::Value =
             toml::from_str(settings["config"].as_str().unwrap()).unwrap();
-        let provider = expected["model_providers"]["custom"]
-            .as_table_mut()
-            .unwrap();
+        let provider = expected["model_providers"]["custom"].as_table_mut().unwrap();
         provider.insert("name".to_string(), "CLI-Manager".into());
         provider.insert("env_key".to_string(), "CLI_MANAGER_PROVIDER_KEY".into());
         assert_eq!(actual, expected);
@@ -590,10 +588,7 @@ request_max_retries = 8
             "config": "model_reasoning_effort='max'\nservice_tier='fast'\n[tui]\nstatus_line=['total-input-tokens']\ntheme='theme'\n",
         });
         let runtime = parse_runtime_config("provider", &settings.to_string()).unwrap();
-        let profile = runtime
-            .profile
-            .with_env_key("CLI_MANAGER_PROVIDER_KEY")
-            .unwrap();
+        let profile = runtime.profile.with_env_key("CLI_MANAGER_PROVIDER_KEY").unwrap();
         let actual: toml::Value = toml::from_str(&profile.profile_text).unwrap();
         assert!(actual["tui"].get("status_line").is_none());
         assert_eq!(actual["tui"]["theme"].as_str(), Some("theme"));
@@ -642,14 +637,8 @@ request_max_retries = 8
 
         assert_eq!(runtime.base_url, "https://config.example.com");
         assert_eq!(runtime.model.as_deref(), Some("gpt-config"));
-        let document = runtime
-            .profile
-            .profile_text
-            .parse::<toml_edit::DocumentMut>()
-            .unwrap();
-        let env_key = document["model_providers"][&runtime.profile.model_provider]["env_key"]
-            .as_str()
-            .unwrap();
+        let document = runtime.profile.profile_text.parse::<toml_edit::DocumentMut>().unwrap();
+        let env_key = document["model_providers"][&runtime.profile.model_provider]["env_key"].as_str().unwrap();
         assert!(env_key.starts_with("CLI_MANAGER_CODEX_PROVIDER_"));
         assert_eq!(runtime.profile.model_provider, "cloud");
         assert!(runtime

@@ -391,8 +391,7 @@ fn history_stats_reprices_cached_usage_events_with_current_model_prices() {
                 mcp_calls: HashMap::new(),
                 skill_calls: HashMap::new(),
                 builtin_calls: HashMap::new(),
-            }
-            .into(),
+            }.into(),
         },
     };
     let bounds = StatsTimeBounds {

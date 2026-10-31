@@ -9,8 +9,6 @@ description = "Shared Claude and Codex remote history protocol and parser"
 chrono = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-notify = "6"
-tokio = { version = "1", features = ["sync"] }
 
 [dev-dependencies]
 tempfile = "3"

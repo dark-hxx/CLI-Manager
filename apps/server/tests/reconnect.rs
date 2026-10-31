@@ -387,37 +387,12 @@ async fn workspace_only_push_preserves_history_and_broadcasts_current_transcript
     let config = test_config();
     let storage = Storage::open(&config.database_path).await.unwrap();
     storage.ensure_single_user("admin", "unused").await.unwrap();
-    let user = storage
-        .find_user_by_username("admin")
-        .await
-        .unwrap()
-        .unwrap();
-    storage
-        .create_browser_session(&auth::hash_secret("workspace-test"), &user.id, i64::MAX)
-        .await
-        .unwrap();
-    storage
-        .upsert_device_hello(
-            "workspace-device",
-            "test",
-            "windows",
-            "test",
-            &[],
-            None,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap();
-    sqlx::query(
-        "UPDATE devices SET user_id = ?1, device_token_hash = ?2 WHERE id = 'workspace-device'",
-    )
-    .bind(&user.id)
-    .bind(auth::hash_secret("workspace-token"))
-    .execute(storage.pool())
-    .await
-    .unwrap();
+    let user = storage.find_user_by_username("admin").await.unwrap().unwrap();
+    storage.create_browser_session(&auth::hash_secret("workspace-test"), &user.id, i64::MAX).await.unwrap();
+    storage.upsert_device_hello("workspace-device", "test", "windows", "test", &[], None, None, None, None).await.unwrap();
+    sqlx::query("UPDATE devices SET user_id = ?1, device_token_hash = ?2 WHERE id = 'workspace-device'")
+        .bind(&user.id).bind(auth::hash_secret("workspace-token"))
+        .execute(storage.pool()).await.unwrap();
     let (stop, server) = start(config.clone()).await;
     let bind = config.bind;
     tokio::task::spawn_blocking(move || {
@@ -459,30 +434,14 @@ async fn workspace_only_push_preserves_history_and_broadcasts_current_transcript
         assert_eq!(event["payload"]["workspace"]["subagents"][0]["content"], "live child transcript");
         assert_eq!(event["payload"]["workspace"]["projects"][0]["cwd"], "private-path");
     }).await.unwrap();
-    let history = storage
-        .list_history(&user.id, Some("workspace-device"), 50, 0)
-        .await
-        .unwrap();
+    let history = storage.list_history(&user.id, Some("workspace-device"), 50, 0).await.unwrap();
     assert_eq!(history.len(), 1);
     assert_eq!(history[0].session_id, "history");
-    assert_eq!(
-        storage
-            .workspace_snapshot("workspace-device")
-            .await
-            .unwrap()
-            .unwrap()
-            .subagents[0]
-            .content,
-        "live child transcript"
-    );
+    assert_eq!(storage.workspace_snapshot("workspace-device").await.unwrap().unwrap().subagents[0].content, "live child transcript");
     stop.send(()).unwrap();
     server.await.unwrap().unwrap();
     storage.pool().close().await;
-    for file in [
-        config.database_path.clone(),
-        config.database_path.with_extension("db-wal"),
-        config.database_path.with_extension("db-shm"),
-    ] {
+    for file in [config.database_path.clone(), config.database_path.with_extension("db-wal"), config.database_path.with_extension("db-shm")] {
         let _ = std::fs::remove_file(file);
     }
 }

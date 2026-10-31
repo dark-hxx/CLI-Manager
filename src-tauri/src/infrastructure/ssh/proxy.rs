@@ -1,8 +1,10 @@
 use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, Shutdown, TcpStream, ToSocketAddrs};
 use std::process;
 use std::thread;
 use std::time::Duration;
+
+const MAX_HTTP_HEADER_BYTES: usize = 16 * 1024;
 
 // 仅按第一个子命令识别 SSH 代理 helper，不读取可能从父进程继承的 AskPass 环境。
 pub fn is_helper_request(args: &[String]) -> bool {
@@ -17,32 +19,57 @@ pub fn build_proxy_command(
     proxy_port: u16,
     legacy_command: &str,
 ) -> Result<String, String> {
-    let executable = match proxy_type.trim() {
-        "http" | "socks5" => {
-            Some(std::env::current_exe().map_err(|_| "ssh_proxy_helper_unavailable".to_string())?)
+    match proxy_type.trim() {
+        "" if !legacy_command.trim().is_empty() => Ok(legacy_command.trim().to_string()),
+        "" | "none" => Ok(String::new()),
+        "proxy_command" => {
+            if legacy_command.trim().is_empty() {
+                Err("ssh_proxy_command_required".to_string())
+            } else {
+                Ok(legacy_command.trim().to_string())
+            }
         }
-        _ => None,
-    };
-    let executable = executable.as_deref().map(std::path::Path::to_string_lossy);
-    cli_manager_core::proxy_protocol::build_proxy_command(
-        proxy_type,
-        proxy_host,
-        proxy_port,
-        legacy_command,
-        executable.as_deref(),
-    )
+        proxy_kind @ ("http" | "socks5") => {
+            let host = proxy_host.trim();
+            if host.contains('@') {
+                return Err("ssh_proxy_credentials_forbidden".to_string());
+            }
+            if host.is_empty()
+                || proxy_port == 0
+                || !host.chars().all(|ch| {
+                    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_' | ':' | '%')
+                })
+            {
+                return Err("ssh_proxy_address_invalid".to_string());
+            }
+            let executable =
+                std::env::current_exe().map_err(|_| "ssh_proxy_helper_unavailable".to_string())?;
+            let executable = executable.to_string_lossy();
+            if executable.contains('"') {
+                return Err("ssh_proxy_helper_unavailable".to_string());
+            }
+            Ok(format!(
+                "\"{executable}\" __ssh_proxy --type {proxy_kind} --proxy-host {host} --proxy-port {proxy_port} --target-host %h --target-port %p"
+            ))
+        }
+        _ => Err("ssh_proxy_type_invalid".to_string()),
+    }
 }
 
 // 解析代理与目标参数后运行隧道，成功退出 0，失败向 stderr 写错误并退出 1。
 pub fn run_helper_and_exit(args: &[String]) -> ! {
     let result = (|| {
-        let parsed = cli_manager_core::ssh_proxy_args::ProxyArgs::parse(args)?;
+        let proxy_type = arg_value(args, "--type").ok_or("ssh_proxy_type_invalid")?;
+        let proxy_host = arg_value(args, "--proxy-host").ok_or("ssh_proxy_address_invalid")?;
+        let proxy_port = parse_port(args, "--proxy-port")?;
+        let target_host = arg_value(args, "--target-host").ok_or("ssh_proxy_target_invalid")?;
+        let target_port = parse_port(args, "--target-port")?;
         run_proxy(
-            parsed.proxy_type,
-            parsed.proxy_host,
-            parsed.proxy_port,
-            parsed.target_host,
-            parsed.target_port,
+            &proxy_type,
+            &proxy_host,
+            proxy_port,
+            &target_host,
+            target_port,
         )
     })();
 
@@ -55,6 +82,22 @@ pub fn run_helper_and_exit(args: &[String]) -> ! {
     }
 }
 
+// 借用首次匹配选项的后项；未检查后项是否是另一选项，缺值返回 None。
+fn arg_value<'a>(args: &'a [String], key: &str) -> Option<&'a str> {
+    args.iter()
+        .position(|arg| arg == key)
+        .and_then(|index| args.get(index + 1))
+        .map(String::as_str)
+}
+
+// 将选项值解析为非零 u16 端口；缺失、格式错误和零值统一报告地址无效。
+fn parse_port(args: &[String], key: &str) -> Result<u16, String> {
+    arg_value(args, key)
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .ok_or_else(|| "ssh_proxy_address_invalid".to_string())
+}
+
 // 以 30 秒单次 socket 超时连接并握手，再把隧道与 stdin/stdout 双向桥接。
 fn run_proxy(
     proxy_type: &str,
@@ -64,12 +107,7 @@ fn run_proxy(
     target_port: u16,
 ) -> Result<(), String> {
     let mut stream = connect_proxy_socket(proxy_host, proxy_port, Duration::from_secs(30))?;
-    let initial_remote_bytes = cli_manager_core::proxy_protocol::handshake_proxy(
-        &mut stream,
-        proxy_type,
-        target_host,
-        target_port,
-    )?;
+    let initial_remote_bytes = handshake_proxy(&mut stream, proxy_type, target_host, target_port)?;
     bridge_stdio(stream, &initial_remote_bytes)
 }
 
@@ -83,12 +121,7 @@ pub fn probe_proxy(
     timeout: Duration,
 ) -> Result<(), String> {
     let mut stream = connect_proxy_socket(proxy_host, proxy_port, timeout)?;
-    cli_manager_core::proxy_protocol::handshake_proxy(
-        &mut stream,
-        proxy_type,
-        target_host,
-        target_port,
-    )?;
+    handshake_proxy(&mut stream, proxy_type, target_host, target_port)?;
     Ok(())
 }
 
@@ -125,6 +158,139 @@ fn connect_proxy_socket(
             .map(|error| error.to_string())
             .unwrap_or_else(|| "no resolved address".to_string())
     ))
+}
+
+// 按协议执行握手；HTTP 返回已读到的隧道前缀，SOCKS5 只消费精确握手长度并返回空前缀。
+fn handshake_proxy(
+    stream: &mut TcpStream,
+    proxy_type: &str,
+    target_host: &str,
+    target_port: u16,
+) -> Result<Vec<u8>, String> {
+    match proxy_type {
+        "http" => connect_http(stream, target_host, target_port),
+        "socks5" => {
+            connect_socks5(stream, target_host, target_port)?;
+            Ok(Vec::new())
+        }
+        _ => Err("ssh_proxy_type_invalid".to_string()),
+    }
+}
+
+// 发送 CONNECT 并读取到响应头结束，要求状态码 200，返回同批读取中剩余的隧道字节。
+// 16 KiB 上限在查找头结束前检查，包含同批首段负载；目标字符串的可信边界由上游负责。
+fn connect_http(
+    stream: &mut TcpStream,
+    target_host: &str,
+    target_port: u16,
+) -> Result<Vec<u8>, String> {
+    let authority = format_authority(target_host, target_port);
+    let request = format!(
+        "CONNECT {authority} HTTP/1.1\r\nHost: {authority}\r\nProxy-Connection: Keep-Alive\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+    stream
+        .flush()
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+
+    let mut response = Vec::new();
+    let mut chunk = [0_u8; 1024];
+    let header_end = loop {
+        let read = stream
+            .read(&mut chunk)
+            .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+        if read == 0 {
+            return Err("proxy_handshake_closed".to_string());
+        }
+        response.extend_from_slice(&chunk[..read]);
+        if response.len() > MAX_HTTP_HEADER_BYTES {
+            return Err("proxy_response_too_large".to_string());
+        }
+        if let Some(index) = find_header_end(&response) {
+            break index;
+        }
+    };
+
+    let header = String::from_utf8_lossy(&response[..header_end]);
+    let status = header.lines().next().unwrap_or_default();
+    if !status
+        .split_whitespace()
+        .nth(1)
+        .is_some_and(|code| code == "200")
+    {
+        return Err(format!("proxy_http_connect_rejected: {status}"));
+    }
+    Ok(response[header_end..].to_vec())
+}
+
+// 协商无认证 SOCKS5，按 IP 或域名编码目标，校验成功响应并消费绑定地址及端口，不保留其值。
+fn connect_socks5(
+    stream: &mut TcpStream,
+    target_host: &str,
+    target_port: u16,
+) -> Result<(), String> {
+    stream
+        .write_all(&[0x05, 0x01, 0x00])
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+    let mut method = [0_u8; 2];
+    stream
+        .read_exact(&mut method)
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+    if method != [0x05, 0x00] {
+        return Err("proxy_socks5_auth_unsupported".to_string());
+    }
+
+    let mut request = vec![0x05, 0x01, 0x00];
+    match target_host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(address)) => {
+            request.push(0x01);
+            request.extend_from_slice(&address.octets());
+        }
+        Ok(IpAddr::V6(address)) => {
+            request.push(0x04);
+            request.extend_from_slice(&address.octets());
+        }
+        Err(_) => {
+            let host = target_host.as_bytes();
+            if host.is_empty() || host.len() > u8::MAX as usize {
+                return Err("ssh_proxy_target_invalid".to_string());
+            }
+            request.push(0x03);
+            request.push(host.len() as u8);
+            request.extend_from_slice(host);
+        }
+    }
+    request.extend_from_slice(&target_port.to_be_bytes());
+    stream
+        .write_all(&request)
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+
+    let mut header = [0_u8; 4];
+    stream
+        .read_exact(&mut header)
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+    if header[0] != 0x05 || header[1] != 0x00 {
+        return Err(format!("proxy_socks5_connect_rejected: {}", header[1]));
+    }
+    let address_len = match header[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => {
+            let mut length = [0_u8; 1];
+            stream
+                .read_exact(&mut length)
+                .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+            length[0] as usize
+        }
+        _ => return Err("proxy_socks5_response_invalid".to_string()),
+    };
+    let mut ignored = vec![0_u8; address_len + 2];
+    stream
+        .read_exact(&mut ignored)
+        .map_err(|error| format!("proxy_handshake_failed: {error}"))?;
+    Ok(())
 }
 
 // 后台复制 stdin 到隧道并半关闭写端；前台先输出握手余留字节，再逐块 flush 远端数据。
@@ -172,6 +338,23 @@ fn copy_with_flush(reader: &mut impl Read, writer: &mut impl Write) -> io::Resul
             Err(error) => return Err(error),
         }
     }
+}
+
+// 为含冒号且未以左方括号开头的主机补方括号再附端口；不验证它是否为合法 IPv6。
+fn format_authority(host: &str, port: u16) -> String {
+    if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+// 返回首个 CRLFCRLF 之后的字节偏移，便于分离 HTTP 头与已读隧道负载。
+fn find_header_end(value: &[u8]) -> Option<usize> {
+    value
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
 }
 
 #[cfg(test)]

@@ -34,7 +34,6 @@ data/
 
 # Tauri
 src-tauri/target/
-spikes/gpui-poc/target/
 src-tauri/ssh-agent/target/
 src-tauri/history-core/target/
 src-tauri/history-core/Cargo.lock

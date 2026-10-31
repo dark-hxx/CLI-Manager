@@ -1,3 +1,4 @@
+use super::*;
 use super::conversion::{append_jsonl_line, delete_session_tree_with_backup_root};
 use super::index_cache::{apply_grok_summary_metadata, build_session_computation};
 use super::opencode::{delete_opencode_session_from_database, open_opencode_database};
@@ -6,32 +7,25 @@ use super::roots::parse_codex_thread_name_index;
 use super::route_usage::route_record_matches_fact;
 use super::scan_state::{RemoteHistoryDetailCache, REMOTE_HISTORY_DETAIL_CACHE_MAX};
 use super::scope::resolve_session_file_ref;
-use super::source_files::{
-    delete_grok_session_tree_with_backup_root, grok_project_key_from_linux_path,
-    looks_like_grok_linux_updates,
-};
+use super::source_files::{delete_grok_session_tree_with_backup_root, grok_project_key_from_linux_path, looks_like_grok_linux_updates};
 use super::source_metadata::cursor_metadata_from_databases;
 use super::stats::history_stats_project_paths_cache_key;
 use super::time::hour_of_day_utc;
-use super::wsl_discovery::{
-    claude_project_key_from_wsl_linux_path, parse_wsl_find_session_file_line,
-};
-use super::*;
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::{Connection, SqliteConnection};
+use super::wsl_discovery::{claude_project_key_from_wsl_linux_path, parse_wsl_find_session_file_line};
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
+use sqlx::{Connection, SqliteConnection};
+use sqlx::sqlite::SqliteConnectOptions;
 use tempfile::TempDir;
 mod fixtures;
 use fixtures::*;
-mod codex_deletion;
 mod conversion;
 mod deletion;
+mod codex_deletion;
 mod grok;
 mod kimi_source;
-mod live_transcript;
 mod opencode;
 mod other_sources;
 mod remote;
@@ -39,6 +33,7 @@ mod scope_paths;
 mod session_file_cache;
 mod session_pipeline;
 mod transcript_activity;
+mod live_transcript;
 mod usage_stats;
 
 mod tool_observations;

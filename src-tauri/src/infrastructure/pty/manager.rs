@@ -673,8 +673,7 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
                 e
             })?
         };
-        let host_cwd = if cfg!(target_os = "windows") && shell_key == "wsl" && ssh_launch.is_none()
-        {
+        let host_cwd = if cfg!(target_os = "windows") && shell_key == "wsl" && ssh_launch.is_none() {
             let (wsl_args, host_cwd) = super::wsl_launch::resolve_wsl_launch(cwd)?;
             super::wsl_launch::validate_wsl_directory(&wsl_args)?;
             args.extend(wsl_args);
@@ -708,7 +707,11 @@ PS0='\e]133;C\a${PS0:0:$((__cli_manager_ran=1,0))}'
         let spawned = platform::spawn(PtyLaunchOptions {
             exe: exe.clone(),
             args: args.clone(),
-            cwd: if ssh_launch.is_some() { None } else { host_cwd },
+            cwd: if ssh_launch.is_some() {
+                None
+            } else {
+                host_cwd
+            },
             env: launch_env,
             cols: 80,
             rows: 24,

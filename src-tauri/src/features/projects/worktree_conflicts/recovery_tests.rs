@@ -1,43 +1,20 @@
-use super::{
-    file_io,
-    main_recovery::{self, Journal},
-};
+use super::{main_recovery::{self, Journal}, file_io};
 use git2::Repository;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::{fs, path::{Path, PathBuf}, process::Command};
 
-struct Fixture {
-    root: PathBuf,
-    main: PathBuf,
-    worktree: PathBuf,
-}
+struct Fixture { root: PathBuf, main: PathBuf, worktree: PathBuf }
 impl Drop for Fixture {
     /// 测试目录全部来自本例 UUID；不触碰开发仓库。
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
-    }
+    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.root); }
 }
 
 /// 测试命令禁用用户和系统 Git 配置，显式配置本地身份及 hooks。
 fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .current_dir(root)
-        .args(args)
+    let output = Command::new("git").current_dir(root).args(args)
         .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env(
-            "GIT_CONFIG_GLOBAL",
-            if cfg!(windows) { "NUL" } else { "/dev/null" },
-        )
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+        .env("GIT_CONFIG_GLOBAL", if cfg!(windows) { "NUL" } else { "/dev/null" })
+        .output().unwrap();
+    assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
     String::from_utf8(output.stdout).unwrap().trim().into()
 }
 
@@ -49,33 +26,14 @@ impl Fixture {
         let worktree = root.join("task");
         fs::create_dir_all(&main).unwrap();
         git(&main, &["init", "-b", "main"]);
-        for (key, value) in [
-            ("user.name", "Fixture"),
-            ("user.email", "test@example.invalid"),
-            ("core.autocrlf", "false"),
-            ("core.hooksPath", "disabled-hooks"),
-            ("commit.gpgsign", "false"),
-        ] {
-            git(&main, &["config", key, value]);
-        }
+        for (key, value) in [("user.name", "Fixture"), ("user.email", "test@example.invalid"),
+            ("core.autocrlf", "false"), ("core.hooksPath", "disabled-hooks"),
+            ("commit.gpgsign", "false")] { git(&main, &["config", key, value]); }
         fs::write(main.join("file.txt"), b"ancestor\n").unwrap();
         git(&main, &["add", "file.txt"]);
         git(&main, &["commit", "-m", "initial"]);
-        git(
-            &main,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "wt/task",
-                worktree.to_str().unwrap(),
-            ],
-        );
-        Self {
-            root,
-            main,
-            worktree,
-        }
+        git(&main, &["worktree", "add", "-b", "wt/task", worktree.to_str().unwrap()]);
+        Self { root, main, worktree }
     }
 
     /// 让两侧对同一行产生确定性的真实 Git 冲突。
@@ -106,10 +64,7 @@ fn restart_recheck_accepts_exact_dirty_baseline() {
     assert!(status.blocked && status.can_confirm);
     let next = main_recovery::recheck(&reopened, status.state_token.as_deref(), false).unwrap();
     assert!(!next.blocked);
-    assert_eq!(
-        fs::read(fixture.main.join("file.txt")).unwrap(),
-        b"unstaged\n"
-    );
+    assert_eq!(fs::read(fixture.main.join("file.txt")).unwrap(), b"unstaged\n");
     assert_eq!(git(&fixture.main, &["show", ":file.txt"]), "staged");
     assert!(crate::repo_operation::begin_ordinary_write(&reopened).is_ok());
 }
@@ -125,30 +80,11 @@ fn manual_confirmation_rejects_stale_state_and_preserves_files() {
     let error = main_recovery::recheck(&repo, initial.state_token.as_deref(), true).unwrap_err();
     assert_eq!(error.code, "stale");
     let current = main_recovery::probe(&repo).unwrap();
-    assert!(
-        main_recovery::recheck(&repo, current.state_token.as_deref(), false)
-            .unwrap()
-            .blocked
-    );
-    assert!(
-        !main_recovery::recheck(&repo, current.state_token.as_deref(), true)
-            .unwrap()
-            .blocked
-    );
-    assert_eq!(
-        fs::read(fixture.main.join("file.txt")).unwrap(),
-        b"manual\n"
-    );
-    let audits: Vec<_> = fs::read_dir(repo.path())
-        .unwrap()
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| {
-            entry
-                .file_name()
-                .to_string_lossy()
-                .starts_with("cli-manager-recovery-audit-")
-        })
-        .collect();
+    assert!(main_recovery::recheck(&repo, current.state_token.as_deref(), false).unwrap().blocked);
+    assert!(!main_recovery::recheck(&repo, current.state_token.as_deref(), true).unwrap().blocked);
+    assert_eq!(fs::read(fixture.main.join("file.txt")).unwrap(), b"manual\n");
+    let audits: Vec<_> = fs::read_dir(repo.path()).unwrap().filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_name().to_string_lossy().starts_with("cli-manager-recovery-audit-")).collect();
     assert_eq!(audits.len(), 1);
     let audit: serde_json::Value = file_io::read_json(&audits[0].path()).unwrap();
     assert_eq!(audit["manualConfirmation"], true);
@@ -159,31 +95,15 @@ fn manual_confirmation_rejects_stale_state_and_preserves_files() {
 fn corrupt_journal_and_foreign_operation_fail_closed() {
     let fixture = Fixture::new();
     let repo = Repository::open(&fixture.main).unwrap();
-    fs::write(
-        repo.path().join("cli-manager-main-recovery.json"),
-        b"broken",
-    )
-    .unwrap();
+    fs::write(repo.path().join("cli-manager-main-recovery.json"), b"broken").unwrap();
     let status = main_recovery::probe(&repo).unwrap();
     assert_eq!(status.reason.as_deref(), Some("recovery_journal_corrupt"));
-    assert!(
-        main_recovery::recheck(&repo, status.state_token.as_deref(), false)
-            .unwrap()
-            .blocked
-    );
-    fs::write(
-        repo.path().join("MERGE_HEAD"),
-        git(&fixture.main, &["rev-parse", "HEAD"]),
-    )
-    .unwrap();
+    assert!(main_recovery::recheck(&repo, status.state_token.as_deref(), false).unwrap().blocked);
+    fs::write(repo.path().join("MERGE_HEAD"), git(&fixture.main, &["rev-parse", "HEAD"])).unwrap();
     let blocked = main_recovery::recheck(&repo, status.state_token.as_deref(), true).unwrap();
     assert!(blocked.blocked && !blocked.can_confirm);
     fs::remove_file(repo.path().join("MERGE_HEAD")).unwrap();
-    assert!(
-        !main_recovery::recheck(&repo, status.state_token.as_deref(), true)
-            .unwrap()
-            .blocked
-    );
+    assert!(!main_recovery::recheck(&repo, status.state_token.as_deref(), true).unwrap().blocked);
 }
 
 /// 普通合并失败返回冲突前，必须完成 abort 并回到进入操作时的分支。
@@ -192,13 +112,7 @@ fn normal_conflict_returns_to_original_branch_without_merge_state() {
     let fixture = Fixture::new();
     fixture.conflict();
     git(&fixture.main, &["checkout", "-b", "side"]);
-    let result = super::super::merge_worktree_internal(
-        fixture.main.to_str().unwrap(),
-        "wt/task",
-        "main",
-        false,
-    )
-    .unwrap();
+    let result = super::super::merge_worktree_internal(fixture.main.to_str().unwrap(), "wt/task", "main", false).unwrap();
     assert!(!result.merged);
     assert!(!result.conflict_files.is_empty());
     assert_eq!(git(&fixture.main, &["branch", "--show-current"]), "side");
@@ -218,30 +132,14 @@ fn forced_conflict_restores_original_dirty_branch_and_keeps_stash() {
     git(&fixture.main, &["add", "keep.txt"]);
     fs::write(fixture.main.join("keep.txt"), b"unstaged\n").unwrap();
     fs::write(fixture.main.join("untracked.txt"), b"keep\n").unwrap();
-    let result = super::super::merge_worktree_internal(
-        fixture.main.to_str().unwrap(),
-        "wt/task",
-        "main",
-        true,
-    )
-    .unwrap();
+    let result = super::super::merge_worktree_internal(fixture.main.to_str().unwrap(), "wt/task", "main", true).unwrap();
     assert!(!result.merged && result.stash_restored);
     assert_eq!(git(&fixture.main, &["branch", "--show-current"]), "side");
     assert_eq!(git(&fixture.main, &["show", ":keep.txt"]), "staged");
-    assert_eq!(
-        fs::read(fixture.main.join("keep.txt")).unwrap(),
-        b"unstaged\n"
-    );
-    assert_eq!(
-        fs::read(fixture.main.join("untracked.txt")).unwrap(),
-        b"keep\n"
-    );
+    assert_eq!(fs::read(fixture.main.join("keep.txt")).unwrap(), b"unstaged\n");
+    assert_eq!(fs::read(fixture.main.join("untracked.txt")).unwrap(), b"keep\n");
     assert!(!git(&fixture.main, &["rev-parse", "refs/stash"]).is_empty());
-    assert!(
-        !main_recovery::probe(&Repository::open(&fixture.main).unwrap())
-            .unwrap()
-            .blocked
-    );
+    assert!(!main_recovery::probe(&Repository::open(&fixture.main).unwrap()).unwrap().blocked);
 }
 
 /// 工作目录被外部移走后，仍从 Git 登记保护未完成会话与外部锁。
@@ -249,30 +147,15 @@ fn forced_conflict_restores_original_dirty_branch_and_keeps_stash() {
 fn missing_directory_cannot_bypass_registered_recovery_or_git_locks() {
     let fixture = Fixture::new();
     let repo = Repository::open(&fixture.main).unwrap();
-    let private = Repository::open(&fixture.worktree)
-        .unwrap()
-        .path()
-        .to_path_buf();
+    let private = Repository::open(&fixture.worktree).unwrap().path().to_path_buf();
     fs::rename(&fixture.worktree, fixture.root.join("moved")).unwrap();
-    for marker in [
-        "cli-manager-conflict-active.json",
-        "MERGE_HEAD",
-        "index.lock",
-        "HEAD.lock",
-    ] {
+    for marker in ["cli-manager-conflict-active.json", "MERGE_HEAD", "index.lock", "HEAD.lock"] {
         fs::write(private.join(marker), b"preserve").unwrap();
-        assert!(
-            super::cleanup_guard::lock_registered(&repo, &fixture.worktree).is_err(),
-            "{marker}"
-        );
+        assert!(super::cleanup_guard::lock_registered(&repo, &fixture.worktree).is_err(), "{marker}");
         assert_eq!(fs::read(private.join(marker)).unwrap(), b"preserve");
         fs::remove_file(private.join(marker)).unwrap();
     }
-    assert!(
-        super::cleanup_guard::lock_registered(&repo, &fixture.worktree)
-            .unwrap()
-            .is_some()
-    );
+    assert!(super::cleanup_guard::lock_registered(&repo, &fixture.worktree).unwrap().is_some());
 }
 
 /// 同一 Repository 长期存活时必须读取 CLI 写入后的真实 index。
@@ -283,21 +166,8 @@ fn recovery_confirmation_detects_external_index_changes() {
     Journal::begin(&repo).unwrap();
     let before = main_recovery::probe(&repo).unwrap();
     let blob = git(&fixture.main, &["hash-object", "-w", "--stdin"]);
-    git(
-        &fixture.main,
-        &[
-            "update-index",
-            "--add",
-            "--cacheinfo",
-            &format!("100644,{blob},index-only.txt"),
-        ],
-    );
-    assert_eq!(
-        main_recovery::recheck(&repo, before.state_token.as_deref(), true)
-            .unwrap_err()
-            .code,
-        "stale"
-    );
+    git(&fixture.main, &["update-index", "--add", "--cacheinfo", &format!("100644,{blob},index-only.txt")]);
+    assert_eq!(main_recovery::recheck(&repo, before.state_token.as_deref(), true).unwrap_err().code, "stale");
     assert!(repo.path().join("cli-manager-main-recovery.json").exists());
 }
 
@@ -306,22 +176,12 @@ fn recovery_confirmation_detects_external_index_changes() {
 fn targeted_cleanup_preserves_other_missing_worktree_recovery() {
     let fixture = Fixture::new();
     let other = fixture.root.join("other");
-    git(
-        &fixture.main,
-        &["worktree", "add", "-b", "wt/other", other.to_str().unwrap()],
-    );
+    git(&fixture.main, &["worktree", "add", "-b", "wt/other", other.to_str().unwrap()]);
     let other_private = Repository::open(&other).unwrap().path().to_path_buf();
-    fs::write(
-        other_private.join("cli-manager-conflict-active.json"),
-        b"keep",
-    )
-    .unwrap();
+    fs::write(other_private.join("cli-manager-conflict-active.json"), b"keep").unwrap();
     fs::rename(&other, fixture.root.join("other-moved")).unwrap();
     fs::rename(&fixture.worktree, fixture.root.join("task-moved")).unwrap();
     super::super::cleanup_registered_stale_worktree_path(&fixture.main, &fixture.worktree).unwrap();
-    assert_eq!(
-        fs::read(other_private.join("cli-manager-conflict-active.json")).unwrap(),
-        b"keep"
-    );
+    assert_eq!(fs::read(other_private.join("cli-manager-conflict-active.json")).unwrap(), b"keep");
     assert!(git(&fixture.main, &["worktree", "list", "--porcelain"]).contains("wt/other"));
 }

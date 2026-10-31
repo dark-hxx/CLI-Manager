@@ -2,31 +2,6 @@
 
 > Issue #123 Phase 2。把 PTY 宿主从主进程抽为独立守护进程 `cli-manager-daemon`：UI 是客户端，应用真退出后任务继续跑，重启 attach 回放。前置 Phase 1（`background-task-continuation-contracts.md`）已上线。**本契约经用户确认后方可实施。**
 
-## Scenario: Push Session Terminal State
-
-### 1. Scope / Trigger
-
-- Trigger: daemon 会话退出或失败后，需要让原生 attach 客户端结束恢复流程并获得明确终态。
-
-### 2. Signatures
-
-```text
-FEATURE_SESSION_STATUS_PUSH = "session_status_push_v1"
-SessionStatus { session_id, status, exit_code? }
-```
-
-### 3. Contracts
-
-- `CONTROL_PROTOCOL_VERSION` 保持 `3`；声明 `session_status_push_v1` 的客户端在已 attach 会话终态变化时收到 `type: "session_status"` 主动帧。
-- 旧客户端不声明该能力，daemon 不发送 `session_status`，继续接收兼容的 `exit` 帧。
-- 状态推送只发送给目标会话的已 attach 客户端；attach barrier 尚未完成时进入该客户端的暂存队列，保持回放后再发送。
-- `status` 使用 daemon 的进程状态字符串，`exit_code` 可为空；状态推送不携带命令输出或凭据。
-
-### 4. Validation
-
-- 协议帧白名单接受 `session_status`，能力列表包含 `session_status_push_v1`。
-- PTY 退出路径推送兼容 `exit` 与能力过滤后的 `session_status`；GPUI 当前会话收到 `exited`/`error`/`failed` 后终止无限重连。
-
 ## Scenario: Reserve the Local Routing Control Plane
 
 ### 1. Scope / Trigger
@@ -125,12 +100,11 @@ WebView -> Tauri routing command -> validate + persist provider DB
 - Discovery: `{ port, wsPort, hookPort, token, pid, version }`。
 - Control frames: JSON `auth/ping/list/create/write/ack/resize/close/close_all/attach/detach/reconcile/status`。
 - Binary frame header: `version:u8, kind:u8, sessionLen:u16, sequence:u64, cols:u16, rows:u16, dataLen:u32`（big-endian），后接 UTF-8 session id 与原始 PTY bytes。
-- `ack`: `{ session_id, sequence, char_count, byte_count? }`；默认 `char_count` 使用 UTF-16 code units，与 xterm/JavaScript string length 一致。声明并协商 `ws_ack_bytes_v1` 后使用 `byte_count` 做同一会话流控，旧客户端继续走 UTF-16。
+- `ack`: `{ session_id, sequence, char_count }`；`char_count` 使用 UTF-16 code units，与 xterm/JavaScript string length 一致。
 
 ### 3. Contracts
 
 - WebSocket 仅绑定 `127.0.0.1`，路径固定 `/pty`；Origin 仅允许 Tauri localhost 与本地 dev origin；首帧 token 鉴权。
-- 原生 GPUI 客户端可省略 Origin，daemon 以 `ws_native_client_v1` 声明支持；任何已提供的 Origin（包括空值、null、重复值）仍按浏览器精确白名单检查，不能因原生支持而跳过 token 首帧鉴权。
 - Output/replay 必须使用 binary frame；Tauri command 仅用于 endpoint bootstrap 和 provider/hook 环境准备，真正的 create/write/resize/close 由同一 WebSocket 客户端执行。
 - daemon 输出最多合并 5ms；客户端未确认字符达到 `100000` 后只暂停该客户端该会话的实时投递，PTY reader/输出 worker 继续把帧写入 SessionBuffer/spool；降到 `5000` 以下后按 sequence 补发保留的实际输出帧；ACK 只能前进，重复/倒序 ACK 不得重复扣减。
 - daemon 每个客户端使用独立 writer queue；`clients` 全局锁内只更新订阅/ACK 状态和入队，禁止执行 TCP/WebSocket IO，慢客户端只能通过自身未确认字符触发该会话背压。

@@ -316,9 +316,7 @@ pub struct OperationView {
     rename_all_fields = "camelCase"
 )]
 pub enum DeviceToServerFrame {
-    TranscriptChanged {
-        session_id: String,
-    },
+    TranscriptChanged { session_id: String },
     TerminalOutput {
         session_id: String,
         sequence: u64,
@@ -467,10 +465,7 @@ pub enum BrowserEventPayload {
     rename_all_fields = "camelCase"
 )]
 pub enum BrowserSocketFrame {
-    TranscriptChanged {
-        device_id: String,
-        session_id: String,
-    },
+    TranscriptChanged { device_id: String, session_id: String },
     Heartbeat,
     TerminalOutput {
         device_id: String,
@@ -622,10 +617,7 @@ mod tests {
         };
         let value = serde_json::to_value(&attach).unwrap();
         assert_eq!(value["afterSequence"], 42);
-        assert_eq!(
-            serde_json::from_value::<TerminalCommand>(value).unwrap(),
-            attach
-        );
+        assert_eq!(serde_json::from_value::<TerminalCommand>(value).unwrap(), attach);
         let legacy = serde_json::json!({"type": "attach", "sessionId": "terminal-1"});
         assert_eq!(
             serde_json::from_value::<TerminalCommand>(legacy).unwrap(),
@@ -640,10 +632,7 @@ mod tests {
         };
         let value = serde_json::to_value(&close).unwrap();
         assert_eq!(value["type"], "close");
-        assert_eq!(
-            serde_json::from_value::<TerminalCommand>(value).unwrap(),
-            close
-        );
+        assert_eq!(serde_json::from_value::<TerminalCommand>(value).unwrap(), close);
 
         let output = BrowserSocketFrame::TerminalOutput {
             device_id: "device-1".into(),
@@ -672,25 +661,10 @@ mod tests {
         let mut legacy = value["frames"][0].clone();
         legacy.as_object_mut().unwrap().remove("sequenceEnd");
         legacy.as_object_mut().unwrap().remove("sequenceStart");
-        assert_eq!(
-            serde_json::from_value::<TerminalOutputFrame>(legacy.clone())
-                .unwrap()
-                .sequence_start,
-            None
-        );
-        assert_eq!(
-            serde_json::from_value::<TerminalOutputFrame>(legacy.clone())
-                .unwrap()
-                .sequence_end,
-            None
-        );
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy.clone()).unwrap().sequence_start, None);
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy.clone()).unwrap().sequence_end, None);
         legacy["sequenceEnd"] = serde_json::json!(false);
-        assert_eq!(
-            serde_json::from_value::<TerminalOutputFrame>(legacy)
-                .unwrap()
-                .sequence_end,
-            Some(false)
-        );
+        assert_eq!(serde_json::from_value::<TerminalOutputFrame>(legacy).unwrap().sequence_end, Some(false));
         assert_eq!(
             serde_json::from_value::<BrowserSocketFrame>(value).unwrap(),
             output
@@ -707,10 +681,7 @@ mod tests {
         let value = serde_json::to_value(&status).unwrap();
         assert_eq!(value["cols"], 120);
         assert_eq!(value["rows"], 32);
-        assert_eq!(
-            serde_json::from_value::<DeviceToServerFrame>(value).unwrap(),
-            status
-        );
+        assert_eq!(serde_json::from_value::<DeviceToServerFrame>(value).unwrap(), status);
         let legacy = serde_json::json!({
             "type": "terminal_status",
             "sessionId": "terminal-1",
@@ -726,26 +697,12 @@ mod tests {
 
     #[test]
     fn transcript_notification_negotiation_is_optional_and_contains_no_content() {
-        let old: ServerToDeviceFrame = serde_json::from_value(
-            serde_json::json!({"type":"hello_ok","paired":true,"deviceToken":null}),
-        )
-        .unwrap();
-        assert!(
-            matches!(old, ServerToDeviceFrame::HelloOk { capabilities, .. } if capabilities.is_empty())
-        );
-        let frame = BrowserSocketFrame::TranscriptChanged {
-            device_id: "host".into(),
-            session_id: "pty".into(),
-        };
+        let old: ServerToDeviceFrame = serde_json::from_value(serde_json::json!({"type":"hello_ok","paired":true,"deviceToken":null})).unwrap();
+        assert!(matches!(old, ServerToDeviceFrame::HelloOk { capabilities, .. } if capabilities.is_empty()));
+        let frame = BrowserSocketFrame::TranscriptChanged { device_id: "host".into(), session_id: "pty".into() };
         let value = serde_json::to_value(&frame).unwrap();
-        assert_eq!(
-            value,
-            serde_json::json!({"type":"transcript_changed","deviceId":"host","sessionId":"pty"})
-        );
-        assert_eq!(
-            serde_json::from_value::<BrowserSocketFrame>(value).unwrap(),
-            frame
-        );
+        assert_eq!(value, serde_json::json!({"type":"transcript_changed","deviceId":"host","sessionId":"pty"}));
+        assert_eq!(serde_json::from_value::<BrowserSocketFrame>(value).unwrap(), frame);
     }
 
     #[test]
@@ -829,12 +786,7 @@ mod tests {
             "sessions": []
         });
         let frame: DeviceToServerFrame = serde_json::from_value(legacy).unwrap();
-        let DeviceToServerFrame::HistorySnapshot {
-            workspace,
-            workspace_only,
-            ..
-        } = frame
-        else {
+        let DeviceToServerFrame::HistorySnapshot { workspace, workspace_only, .. } = frame else {
             panic!("expected history snapshot");
         };
         assert!(workspace.is_none());
@@ -846,7 +798,7 @@ mod tests {
             sessions: vec![],
             workspace: Some(WorkspaceSnapshot {
                 subagents: vec![],
-                terminals: None,
+            terminals: None,
                 groups: vec![],
                 projects: vec![WorkspaceProjectSummary {
                     id: "project-1".to_string(),
@@ -866,13 +818,8 @@ mod tests {
         assert!(value["workspace"]["projects"][0].get("cwd").is_none());
         assert_eq!(value["workspace"]["updatedAt"], 7);
         assert_eq!(value["workspaceOnly"], false);
-        let workspace: WorkspaceSnapshot =
-            serde_json::from_value(value["workspace"].clone()).unwrap();
-        let event = serde_json::to_value(BrowserEventPayload::WorkspaceUpdated {
-            device_id: "device-1".into(),
-            workspace,
-        })
-        .unwrap();
+        let workspace: WorkspaceSnapshot = serde_json::from_value(value["workspace"].clone()).unwrap();
+        let event = serde_json::to_value(BrowserEventPayload::WorkspaceUpdated { device_id: "device-1".into(), workspace }).unwrap();
         assert_eq!(event["type"], "workspace.updated");
         assert_eq!(event["deviceId"], "device-1");
     }

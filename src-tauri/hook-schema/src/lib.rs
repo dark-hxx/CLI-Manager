@@ -383,10 +383,7 @@ mod tests {
             &json!({ "tool_name": "request_user_input_async" }),
         )
         .unwrap();
-        assert_eq!(
-            async_normalized.tool_name.as_deref(),
-            Some("request_user_input_async")
-        );
+        assert_eq!(async_normalized.tool_name.as_deref(), Some("request_user_input_async"));
     }
 
     #[test]

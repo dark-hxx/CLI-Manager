@@ -623,23 +623,9 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
         }
     }
     if request.kind == "terminal.attach_image" {
-        let data = payload
-            .get("dataBase64")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                AppError::bad_request("invalid_operation_payload", "dataBase64 is required")
-            })?;
-        if data.len() > 240_000
-            || payload
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .is_none_or(|value| value.is_empty())
-        {
-            return Err(AppError::bad_request(
-                "invalid_operation_payload",
-                "invalid image upload payload",
-            ));
+        let data = payload.get("dataBase64").and_then(Value::as_str).filter(|value| !value.is_empty()).ok_or_else(|| AppError::bad_request("invalid_operation_payload", "dataBase64 is required"))?;
+        if data.len() > 240_000 || payload.get("sessionId").and_then(Value::as_str).is_none_or(|value| value.is_empty()) {
+            return Err(AppError::bad_request("invalid_operation_payload", "invalid image upload payload"));
         }
     }
 
@@ -675,23 +661,9 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
         }
     }
     if request.kind == "terminal.attach_image" {
-        let data = payload
-            .get("dataBase64")
-            .and_then(Value::as_str)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                AppError::bad_request("invalid_operation_payload", "dataBase64 is required")
-            })?;
-        if data.len() > 240_000
-            || payload
-                .get("sessionId")
-                .and_then(Value::as_str)
-                .is_none_or(|value| value.is_empty())
-        {
-            return Err(AppError::bad_request(
-                "invalid_operation_payload",
-                "invalid image upload payload",
-            ));
+        let data = payload.get("dataBase64").and_then(Value::as_str).filter(|value| !value.is_empty()).ok_or_else(|| AppError::bad_request("invalid_operation_payload", "dataBase64 is required"))?;
+        if data.len() > 240_000 || payload.get("sessionId").and_then(Value::as_str).is_none_or(|value| value.is_empty()) {
+            return Err(AppError::bad_request("invalid_operation_payload", "invalid image upload payload"));
         }
     }
 
@@ -983,27 +955,17 @@ mod tests {
 
     #[test]
     fn git_history_reads_are_enabled_without_weakening_write_confirmation() {
-        for kind in [
-            "git.repositories",
-            "git.history",
-            "git.commit_detail",
-            "git.commit_diff",
-        ] {
+        for kind in ["git.repositories", "git.history", "git.commit_detail", "git.commit_diff"] {
             assert!(validate_operation_request(&request(
                 kind,
                 serde_json::json!({ "projectId": "p", "repository": "nested" }),
-            ))
-            .is_ok());
+            )).is_ok());
             assert_eq!(operation_capability(kind), "git.management");
             assert!(!operation_requires_confirmation(kind));
         }
         for kind in ["git.fetch", "git.commit", "git.push", "git.discard"] {
             assert!(operation_requires_confirmation(kind));
-            assert!(validate_operation_request(&request(
-                kind,
-                serde_json::json!({ "projectId": "p" })
-            ))
-            .is_err());
+            assert!(validate_operation_request(&request(kind, serde_json::json!({ "projectId": "p" }))).is_err());
         }
     }
 }

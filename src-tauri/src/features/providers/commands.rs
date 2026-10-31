@@ -388,7 +388,8 @@ pub fn provider_scope_release_snapshot(snapshot_id: String) -> Result<(), String
 #[tauri::command]
 // 快照回收前补入活动交接快照 ID，排序去重后交给服务；读取活动交接失败时不执行回收。
 pub fn provider_scope_gc_snapshots(mut active_snapshot_ids: Vec<String>) -> Result<(), String> {
-    if let Some(snapshot_id) = crate::legacy_remote_state::retained_provider_snapshot_id()? {
+    if let Some(snapshot_id) = crate::legacy_remote_state::retained_provider_snapshot_id()?
+    {
         active_snapshot_ids.push(snapshot_id);
     }
     active_snapshot_ids.extend(crate::commands::web_conversation::active_provider_snapshot_ids());

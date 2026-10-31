@@ -59,7 +59,6 @@ fn blocked_attach_allows_ping_and_healthy_attach_on_same_connection() {
             encode_frame(&ClientFrame::Auth {
                 token: "token".into(),
                 client_version: "test".into(),
-                client_features: Vec::new(),
             })
             .as_bytes(),
         )
