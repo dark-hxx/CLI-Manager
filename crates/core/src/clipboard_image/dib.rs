@@ -1,5 +1,5 @@
 //! 为 packed DIB 补齐显式像素偏移，避开解码器对 V4/V5 内嵌位掩码重复跳过的问题。
-use super::clipboard_image::validate_dimensions;
+use super::validate_dimensions;
 
 // 只接受已知 DIB 头，所有偏移和调色板长度先检查再构造 BMP 文件头。
 pub(super) fn to_bmp(dib: &[u8]) -> Result<Vec<u8>, String> {

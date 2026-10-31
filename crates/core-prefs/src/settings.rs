@@ -50,7 +50,7 @@ mod tests {
         let expected: Value =
             serde_json::from_str(include_str!("../fixtures/settings-defaults.json")).unwrap();
         assert_eq!(serde_json::to_value(Settings::default()).unwrap(), expected);
-        assert_eq!(Settings::default().values().len(), 125);
+        assert_eq!(Settings::default().values().len(), 127);
     }
 
     #[test]

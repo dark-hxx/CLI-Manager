@@ -1,5 +1,6 @@
 use serde::{de::DeserializeOwned, Serialize};
 pub mod settings;
+pub mod terminal;
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};

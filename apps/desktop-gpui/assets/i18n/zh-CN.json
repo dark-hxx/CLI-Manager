@@ -1,4 +1,26 @@
 {
+  "shell.terminal.fontFamily": "终端字体族（多个回退字体以逗号分隔）",
+  "shell.terminal.applyFont": "应用终端字体",
+  "shell.terminal.fontSize": "字号",
+  "shell.terminal.lineHeight": "行高",
+  "shell.terminal.scrollback": "滚动历史行数",
+  "shell.terminal.decrease": "减小",
+  "shell.terminal.increase": "增大",
+  "shell.terminal.useDefaultHistory": "使用默认历史上限（9000 行）",
+  "shell.terminal.useCustomHistory": "启用自定义历史上限",
+  "shell.terminal.cursorStyle": "光标样式",
+  "shell.terminal.cursorBar": "竖线",
+  "shell.terminal.cursorBlock": "方块",
+  "shell.terminal.cursorUnderline": "下划线",
+  "shell.terminal.saving": "正在保存终端偏好…",
+  "shell.terminal.saveFailed": "终端偏好保存失败，保留当前生效值。",
+  "shell.terminal.invalidFont": "请输入不含控制字符的非空字体列表（最多 1024 字节）。",
+  "terminal.image.failed": "无法准备剪贴板图片附件，未改为粘贴文字。",
+  "terminal.image.invalid": "剪贴板图片损坏或格式不支持，未改为粘贴文字。",
+  "terminal.image.tooLarge": "剪贴板图片超过附件大小或 4000 万像素限制。",
+  "terminal.drop.invalid": "未插入文件路径：路径包含不支持的控制字符或 shell 展开语法。",
+  "terminal.drop.unsupported": "未插入文件路径：不支持当前 shell 或路径映射。WSL 网络路径需与会话发行版一致；SSH 需先上传文件。",
+  "terminal.drop.unavailable": "无法确认文件路径插入：终端会话不可用或请求超时。",
   "aiReplay.action.backToCurrent": "返回当前",
   "aiReplay.action.fork": "Fork",
   "aiReplay.action.forkRunning": "Fork 中",
@@ -5005,6 +5027,11 @@
   "shell.command.toggleLanguage": "切换界面语言",
   "shell.command.toggleTheme": "切换应用主题",
   "shell.command.closePane": "关闭当前 Pane",
+  "shell.command.backgroundSessions": "后台会话",
+  "shell.background.title": "后台会话",
+  "shell.background.empty": "暂无后台会话",
+  "shell.background.attach": "打开会话",
+  "shell.background.end": "结束会话",
   "shell.settings.title": "GPUI 设置",
   "shell.settings.restoreEnabled": "启动时恢复终端",
   "shell.settings.restoreMode": "恢复模式",
@@ -5108,5 +5135,8 @@
   ,"git.conflict.ours": "当前分支"
   ,"git.conflict.theirs": "传入变更"
   ,"git.conflict.merged": "合并结果"
-  ,"git.conflict.resolve": "解决并暂存"
+  ,"git.conflict.resolve": "解决并暂存",
+  "shell.titlebar.minimize": "最小化",
+  "shell.titlebar.maximize": "最大化/还原",
+  "shell.titlebar.close": "关闭"
 }

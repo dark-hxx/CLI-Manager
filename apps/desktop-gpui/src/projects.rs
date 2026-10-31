@@ -91,12 +91,15 @@ pub async fn load_request_log_filtered(
     project_key: String,
     source: crate::history::SourceFilter,
     time_filter: crate::history::TimeFilter,
-) -> Result<(
-    cli_manager_core_db::projects::RequestLogSummary,
-    Vec<cli_manager_core_db::projects::RequestLogBreakdown>,
-    Vec<cli_manager_core_db::projects::RequestLogEntry>,
-    cli_manager_core_db::projects::ProjectEfficiency,
-), String> {
+) -> Result<
+    (
+        cli_manager_core_db::projects::RequestLogSummary,
+        Vec<cli_manager_core_db::projects::RequestLogBreakdown>,
+        Vec<cli_manager_core_db::projects::RequestLogEntry>,
+        cli_manager_core_db::projects::ProjectEfficiency,
+    ),
+    String,
+> {
     let repo = ProjectRepo::open_read_only(path)
         .await
         .map_err(|error| error.to_string())?;

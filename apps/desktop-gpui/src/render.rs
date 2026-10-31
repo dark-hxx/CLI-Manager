@@ -3,7 +3,7 @@ use super::*;
 impl Render for DesktopShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_preview_airspace(window);
-        self.sync_terminal_size(window);
+        self.sync_terminal_size(window, cx);
         let palette = self.palette();
         let file_tree_entity = cx.entity();
         let history_entity = file_tree_entity.clone();
@@ -74,6 +74,7 @@ impl Render for DesktopShell {
             self.message("sidebar.projects"),
             self.message("settings.tabs.terminal.label"),
             self.message("git.view.history"),
+            self.message("shell.background.title"),
             self.message("sidebar.stats"),
             self.message("sidebar.extensions"),
             self.message("sidebar.settings"),
@@ -191,7 +192,7 @@ impl Render for DesktopShell {
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         };
-        let terminal_previews = self.terminal_pane_previews();
+        let terminal_previews = self.terminal_pane_previews(cx);
         let mut terminal_lines = terminal_previews.into_iter().collect::<HashMap<_, _>>();
         let pane_sessions = self
             .workspace_sessions
@@ -458,6 +459,9 @@ impl Render for DesktopShell {
                         .children(session_tabs),
                 )
             })
+            .children(self.terminal_input_error.map(|key| {
+                div().px(px(8.)).py(px(4.)).child(self.message(key))
+            }))
             .child(pane_layout);
         let content = if self.command_palette_open {
             let commands = self.filtered_command_items();
@@ -529,6 +533,8 @@ impl Render for DesktopShell {
                 .border(px(1.))
                 .border_color(rgb(palette.selected))
                 .child(self.message("shell.settings.title"))
+                .child(div().id("terminal-settings-scroll").max_h(px(window.bounds().size.height.as_f32() * 0.4))
+                    .overflow_y_scroll().child(self.terminal_settings_view(window, cx)))
                 .child(
                     div()
                         .id("settings-restore-enabled")
@@ -638,7 +644,77 @@ impl Render for DesktopShell {
                         }),
                     ),
                 )
+        } else if self.background_open {
+            let sessions = self
+                .background_sessions
+                .visible(self.background_include_finished)
+                .cloned()
+                .collect::<Vec<_>>();
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(10.))
+                .w(px(640.))
+                .p(px(18.))
+                .bg(rgb(palette.surface))
+                .border(px(1.))
+                .border_color(rgb(palette.selected))
+                .child(self.message("shell.background.title"))
+                .when(sessions.is_empty(), |element| {
+                    element.child(self.message("shell.background.empty"))
+                })
+                .children(sessions.into_iter().map(|session| {
+                    let session_id = session.session_id.clone();
+                    let attach_id = session_id.clone();
+                    let close_id = session_id.clone();
+                    div()
+                        .id(gpui::ElementId::Name(
+                            format!("background-session-{session_id}").into(),
+                        ))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .p(px(8.))
+                        .bg(rgb(palette.raised))
+                        .child(format!(
+                            "{} · {} · {}",
+                            session_id,
+                            session.cwd.unwrap_or_default(),
+                            session.task_status.unwrap_or_default()
+                        ))
+                        .child(
+                            div()
+                                .id(gpui::ElementId::Name(
+                                    format!("background-attach-{attach_id}").into(),
+                                ))
+                                .px(px(8.))
+                                .py(px(4.))
+                                .bg(rgb(palette.selected))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.attach_background_session(&attach_id, cx);
+                                    cx.notify();
+                                }))
+                                .child(self.message("shell.background.attach")),
+                        )
+                        .child(
+                            div()
+                                .id(gpui::ElementId::Name(
+                                    format!("background-end-{close_id}").into(),
+                                ))
+                                .px(px(8.))
+                                .py(px(4.))
+                                .bg(rgb(palette.selected))
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.close_background_session(&close_id);
+                                    cx.notify();
+                                }))
+                                .child(self.message("shell.background.end")),
+                        )
+                }))
         } else if self.extensions_open {
+            let extension_rename_editor = self.stats.rename_editor(window, cx);
             stats::extension_view(
                 &self.stats.extensions,
                 self.message("extensions.title"),
@@ -705,7 +781,7 @@ impl Render for DesktopShell {
                         cx.notify();
                     });
                 },
-                &self.stats.extension_rename_editor,
+                &extension_rename_editor,
                 palette.surface,
                 palette.raised,
                 palette.text,
@@ -715,17 +791,16 @@ impl Render for DesktopShell {
             let stats_time_entity = file_tree_entity.clone();
             let stats_project_entity = file_tree_entity.clone();
             let project_filters = match &self.projects {
-                ProjectLoad::Ready(loaded) => std::iter::once((
-                    self.message("shell.stats.projectAll"),
-                    None,
-                ))
-                .chain(loaded.snapshot.projects.iter().map(|project| {
-                    (
-                        project.name.clone(),
-                        Some(loaded.snapshot.project_path(project).to_owned()),
-                    )
-                }))
-                .collect::<Vec<_>>(),
+                ProjectLoad::Ready(loaded) => {
+                    std::iter::once((self.message("shell.stats.projectAll"), None))
+                        .chain(loaded.snapshot.projects.iter().map(|project| {
+                            (
+                                project.name.clone(),
+                                Some(loaded.snapshot.project_path(project).to_owned()),
+                            )
+                        }))
+                        .collect::<Vec<_>>()
+                }
                 _ => vec![(self.message("shell.stats.projectAll"), None)],
             };
             let stats_history = if self.stats.history_rows.is_empty() {
@@ -776,14 +851,32 @@ impl Render for DesktopShell {
                     });
                 },
                 [
-                    (self.message("shell.stats.filterAll"), history::SourceFilter::All),
-                    (self.message("shell.stats.filterClaude"), history::SourceFilter::Claude),
-                    (self.message("shell.stats.filterCodex"), history::SourceFilter::Codex),
+                    (
+                        self.message("shell.stats.filterAll"),
+                        history::SourceFilter::All,
+                    ),
+                    (
+                        self.message("shell.stats.filterClaude"),
+                        history::SourceFilter::Claude,
+                    ),
+                    (
+                        self.message("shell.stats.filterCodex"),
+                        history::SourceFilter::Codex,
+                    ),
                 ],
                 [
-                    (self.message("shell.stats.rangeAll"), history::TimeFilter::All),
-                    (self.message("shell.stats.range7"), history::TimeFilter::Recent7),
-                    (self.message("shell.stats.range30"), history::TimeFilter::Recent30),
+                    (
+                        self.message("shell.stats.rangeAll"),
+                        history::TimeFilter::All,
+                    ),
+                    (
+                        self.message("shell.stats.range7"),
+                        history::TimeFilter::Recent7,
+                    ),
+                    (
+                        self.message("shell.stats.range30"),
+                        history::TimeFilter::Recent30,
+                    ),
                 ],
                 move |filter, _window, app| {
                     let _ = stats_entity.update(app, |this, cx| {
@@ -1475,7 +1568,43 @@ impl Render for DesktopShell {
                                 cx.notify();
                             }))
                             .child(self.message("shell.theme.toggle")),
-                    ),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .id("window-minimize")
+                            .px(px(10.))
+                            .py(px(6.))
+                            .cursor_pointer()
+                            .aria_label(self.message("shell.titlebar.minimize"))
+                            .on_click(|_, window, _| window.minimize_window())
+                            .child("—"),
+                    )
+                    .child(
+                        div()
+                            .id("window-maximize")
+                            .px(px(10.))
+                            .py(px(6.))
+                            .cursor_pointer()
+                            .aria_label(self.message("shell.titlebar.maximize"))
+                            .on_click(|_, window, _| window.zoom_window())
+                            .child("□"),
+                    )
+                    .child(
+                        div()
+                            .id("window-close")
+                            .px(px(10.))
+                            .py(px(6.))
+                            .cursor_pointer()
+                            .aria_label(self.message("shell.titlebar.close"))
+                            .on_click(|_, window, _| window.remove_window())
+                            .child("×"),
+                    )
+                    .on_mouse_down(MouseButton::Left, |event, window, _| {
+                        if event.click_count == 1 {
+                            window.start_window_move();
+                        }
+                    }),
             )
             .child(
                 div()
@@ -1500,19 +1629,22 @@ impl Render for DesktopShell {
                                     .items_center()
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        if index == 5 {
+                                        if index == 6 {
                                             this.toggle_settings();
-                                        } else if index == 2 {
-                                            this.open_history(cx);
                                         } else if index == 3 {
-                                            this.open_stats(cx);
+                                            this.open_history(cx);
+                                        } else if index == 2 {
+                                            this.open_background_sessions();
                                         } else if index == 4 {
+                                            this.open_stats(cx);
+                                        } else if index == 5 {
                                             this.open_extensions(cx);
                                         } else {
                                             this.settings_open = false;
                                             this.stats_open = false;
                                             this.extensions_open = false;
                                             this.history_open = false;
+                                            this.background_open = false;
                                             this.history.stop_watcher();
                                         }
                                         cx.notify();

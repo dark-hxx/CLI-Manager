@@ -5,6 +5,8 @@
   "lightThemePalette": "apple-mono",
   "darkThemePalette": "terminal-green",
   "fontSize": 14,
+  "terminalLineHeight": 1,
+  "terminalCursorStyle": "bar",
   "terminalScrollbackCustomEnabled": false,
   "terminalScrollbackRows": 9000,
   "fontFamily": "Cascadia Code, Consolas, monospace",

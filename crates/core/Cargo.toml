@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "AGPL-3.0-or-later"
 
+[features]
+clipboard-image = ["dep:image"]
+
 [dependencies]
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "ico", "jpeg", "png", "tiff", "webp"], optional = true }
 chardetng = "1.0.0"
 encoding_rs = "0.8.35"
 log = "0.4"

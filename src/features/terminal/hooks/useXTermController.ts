@@ -25,6 +25,7 @@ import { backgroundAssetUrl } from "../../../shared/platform/assetUrl";
 import { useI18n } from "../../../shared/i18n/index";
 import { normalizeTerminalFontFamily } from "../api/terminalFontFamily";
 import { canUseTerminalImageAddonWasm } from "../lib/terminalImageAddonSupport";
+import { applyTerminalAppearance, terminalAppearanceOptions } from "../lib/terminalAppearance";
 import {
   findTerminalFileLinks, findTerminalRelativeFileLinks, normalizeTerminalRelativePath,
   terminalStringRangeToBufferColumns, type TerminalFileLinkMatch,
@@ -117,6 +118,8 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
   const piTerminalCompatibilityRef = useRef<PiTerminalCompatibility | null>(null);
   const terminalScrollbackCustomEnabled = useSettingsStore((s) => s.terminalScrollbackCustomEnabled);
   const terminalScrollbackRows = useSettingsStore((s) => s.terminalScrollbackRows);
+  const terminalLineHeight = useSettingsStore((s) => s.terminalLineHeight);
+  const terminalCursorStyle = useSettingsStore((s) => s.terminalCursorStyle);
   const updateSettings = useSettingsStore((s) => s.update);
   const effectiveTerminalScrollbackRows = terminalScrollbackCustomEnabled
     ? terminalScrollbackRows
@@ -686,7 +689,9 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
       terminal.options.fontWeightBold = "bold";
     }
     const rendererChanged = syncWebglRenderer(terminal, baseTheme);
-    const sizeChanged = terminal.options.fontSize !== fontSize || terminal.options.fontFamily !== effectiveFontFamily;
+    const appearanceSizeChanged = applyTerminalAppearance(terminal, terminalLineHeight, terminalCursorStyle);
+    const sizeChanged = terminal.options.fontSize !== fontSize || terminal.options.fontFamily !== effectiveFontFamily
+      || appearanceSizeChanged;
     if (sizeChanged || weightChanged) {
       terminal.options.fontSize = fontSize;
       terminal.options.fontFamily = effectiveFontFamily;
@@ -701,7 +706,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
       tuiColorSync.normalize(terminal);
       tuiColorSync.schedule(terminal);
     }
-  }, [fontSize, effectiveFontFamily, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, terminalTextColor, terminalTuiUserColor, terminalTuiAssistantColor, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen, tuiColorSync]);
+  }, [fontSize, effectiveFontFamily, terminalLineHeight, terminalCursorStyle, effectiveTerminalScrollbackRows, resolvedTheme, terminalThemeName, terminalTextColor, terminalTuiUserColor, terminalTuiAssistantColor, lightThemePalette, darkThemePalette, isTransparent, background.overlayDarken, lowMemoryMode, disableHardwareAcceleration, linuxGraphicsDisableWebgl, searchOpen, tuiColorSync]);
 
   useLayoutEffect(() => {
     let restoreFrame: number | null = null;
@@ -905,7 +910,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
       cols: 80,
       rows: 24,
       cursorBlink: false,
-      cursorStyle: "bar",
+      ...terminalAppearanceOptions(terminalLineHeight, terminalCursorStyle),
       cursorWidth: 1,
       fontSize,
       fontFamily: effectiveFontFamily,

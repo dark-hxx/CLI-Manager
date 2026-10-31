@@ -41,7 +41,11 @@ async fn lists_all_extension_kinds_in_global_order_without_exposing_definition_j
     assert_eq!(
         items
             .iter()
-            .map(|item| (item.kind.as_str(), item.item_id.as_str(), item.name.as_str()))
+            .map(|item| (
+                item.kind.as_str(),
+                item.item_id.as_str(),
+                item.name.as_str()
+            ))
             .collect::<Vec<_>>(),
         vec![
             ("skill-installation", "install-1", "codex · wsl"),
@@ -51,7 +55,9 @@ async fn lists_all_extension_kinds_in_global_order_without_exposing_definition_j
     );
     assert!(items.iter().all(|item| !item.name.contains("secret")));
     assert!(items[1].enabled_for("claude"));
-    assert!(items.iter().all(|item| item.status == "managed" || item.status == "owned"));
+    assert!(items
+        .iter()
+        .all(|item| item.status == "managed" || item.status == "owned"));
     pool.close().await;
 }
 
@@ -113,9 +119,14 @@ async fn reports_external_modified_before_owned_and_unowned_installations() {
 #[tokio::test]
 async fn empty_database_returns_empty_and_malformed_mcp_json_does_not_break_listing() {
     let directory = tempfile::tempdir().unwrap();
-    let pool = DbPool::open(directory.path().join("empty.db")).await.unwrap();
+    let pool = DbPool::open(directory.path().join("empty.db"))
+        .await
+        .unwrap();
     run_migrations(pool.writer()).await.unwrap();
-    assert!(list_extension_overview(pool.reader()).await.unwrap().is_empty());
+    assert!(list_extension_overview(pool.reader())
+        .await
+        .unwrap()
+        .is_empty());
 
     sqlx::query(
         "INSERT INTO extension_mcp_resources
@@ -207,14 +218,9 @@ async fn toggles_one_cli_without_replacing_other_canonical_fields_or_secrets() {
     .unwrap();
     pool.close().await;
 
-    cli_manager_core_db::extensions::set_mcp_enabled(
-        &path,
-        "mcp-1".into(),
-        "codex".into(),
-        false,
-    )
-    .await
-    .unwrap();
+    cli_manager_core_db::extensions::set_mcp_enabled(&path, "mcp-1".into(), "codex".into(), false)
+        .await
+        .unwrap();
     let verify = DbPool::open(&path).await.unwrap();
     let json: String = sqlx::query_scalar(
         "SELECT definition_json FROM extension_mcp_resources WHERE resource_id = 'mcp-1'",
@@ -291,9 +297,11 @@ async fn rejects_invalid_switch_data_without_mutation_and_never_creates_missing_
     verify.close().await;
 
     let missing = directory.path().join("missing.db");
-    assert!(cli_manager_core_db::extensions::delete_mcp_resource(&missing, "x".into())
-        .await
-        .is_err());
+    assert!(
+        cli_manager_core_db::extensions::delete_mcp_resource(&missing, "x".into())
+            .await
+            .is_err()
+    );
     assert!(cli_manager_core_db::extensions::set_mcp_enabled(
         &missing,
         "x".into(),
@@ -322,9 +330,13 @@ async fn renames_mcp_in_both_projection_columns_and_canonical_json() {
     .await
     .unwrap();
     pool.close().await;
-    cli_manager_core_db::extensions::rename_mcp_resource(&path, "mcp-1".into(), " New name ".into())
-        .await
-        .unwrap();
+    cli_manager_core_db::extensions::rename_mcp_resource(
+        &path,
+        "mcp-1".into(),
+        " New name ".into(),
+    )
+    .await
+    .unwrap();
     let verify = DbPool::open(&path).await.unwrap();
     let (name, json, revision): (String, String, i64) = sqlx::query_as(
         "SELECT name, definition_json, revision FROM extension_mcp_resources WHERE resource_id = 'mcp-1'",

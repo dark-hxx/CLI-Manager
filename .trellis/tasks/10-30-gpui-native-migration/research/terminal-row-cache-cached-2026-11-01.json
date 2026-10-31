@@ -1,0 +1,672 @@
+{
+  "measured_date": "2026-11-01",
+  "mode": "cached",
+  "exit_code": 0,
+  "build_profile": "debug",
+  "command": "cli-manager-gpui.exe --terminal-cache-benchmark [--terminal-cache-uncached]",
+  "run_order": [
+    "cached",
+    "uncached"
+  ],
+  "cache_counters_include_warmup": true,
+  "limitations": [
+    "synthetic window; no live PTY",
+    "frame callbacks are not presentation timestamps",
+    "single sequential pair; no statistical speedup claim",
+    "retained bytes estimate excludes allocator/map overhead"
+  ],
+  "reports": [
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 720,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13286,
+        "p95_us": 14194,
+        "max_us": 14684
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 785,
+        "p95_us": 852,
+        "max_us": 1026
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 2,
+        "p95_us": 18,
+        "max_us": 65
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 31,
+        "max_us": 56
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 720,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13242,
+        "p95_us": 14034,
+        "max_us": 14134
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 794,
+        "p95_us": 1183,
+        "max_us": 1299
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 2,
+        "p95_us": 16,
+        "max_us": 28
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 29,
+        "max_us": 40
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 660,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13312,
+        "p95_us": 14042,
+        "max_us": 14113
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 875,
+        "p95_us": 1085,
+        "max_us": 1272
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 2,
+        "p95_us": 165,
+        "max_us": 264
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 33,
+        "max_us": 100
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1440,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13309,
+        "p95_us": 14126,
+        "max_us": 14537
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1180,
+        "p95_us": 1517,
+        "max_us": 1583
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 2,
+        "p95_us": 3,
+        "max_us": 21
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 23,
+        "max_us": 43
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1440,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13275,
+        "p95_us": 14133,
+        "max_us": 14345
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1219,
+        "p95_us": 1520,
+        "max_us": 1627
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 2,
+        "p95_us": 4,
+        "max_us": 64
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 24,
+        "max_us": 65
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1320,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13310,
+        "p95_us": 14186,
+        "max_us": 14759
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1282,
+        "p95_us": 1596,
+        "max_us": 1683
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 1,
+        "p95_us": 58,
+        "max_us": 233
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 25,
+        "max_us": 93
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2880,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13302,
+        "p95_us": 13938,
+        "max_us": 14063
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2005,
+        "p95_us": 2334,
+        "max_us": 2685
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 1,
+        "p95_us": 3,
+        "max_us": 21
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 25,
+        "max_us": 107
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2880,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13319,
+        "p95_us": 14002,
+        "max_us": 14085
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2019,
+        "p95_us": 2257,
+        "max_us": 2531
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 2,
+        "p95_us": 3,
+        "max_us": 22
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 18,
+        "max_us": 40
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2640,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13274,
+        "p95_us": 14002,
+        "max_us": 14878
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2207,
+        "p95_us": 2609,
+        "max_us": 3397
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 1,
+        "p95_us": 43,
+        "max_us": 215
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 20,
+        "max_us": 43
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5760,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13331,
+        "p95_us": 14101,
+        "max_us": 14430
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 3737,
+        "p95_us": 4214,
+        "max_us": 4272
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 3,
+        "max_us": 28
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 19,
+        "max_us": 104
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5760,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13281,
+        "p95_us": 14164,
+        "max_us": 14322
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 3843,
+        "p95_us": 4127,
+        "max_us": 4479
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 4,
+        "max_us": 34
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 20,
+        "max_us": 47
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5280,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13355,
+        "p95_us": 14076,
+        "max_us": 14631
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 4062,
+        "p95_us": 4535,
+        "max_us": 5183
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 1,
+        "p95_us": 40,
+        "max_us": 185
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 18,
+        "p95_us": 21,
+        "max_us": 72
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "appearance_changes",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5034,
+      "observed_reuse_ratio": 0.8739583333333333,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13381,
+        "p95_us": 15266,
+        "max_us": 16340
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 3991,
+        "p95_us": 4223,
+        "max_us": 4562
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 94,
+        "max_us": 295
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 19,
+        "max_us": 658
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    }
+  ],
+  "row_preparation_cache": [
+    {
+      "panes": 1,
+      "workload": "shared_static",
+      "enabled": true,
+      "hits": 804,
+      "misses": 12,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 12,
+      "estimated_retained_bytes": 45661
+    },
+    {
+      "panes": 1,
+      "workload": "unique_static",
+      "enabled": true,
+      "hits": 804,
+      "misses": 12,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 12,
+      "estimated_retained_bytes": 45661
+    },
+    {
+      "panes": 1,
+      "workload": "scrolling",
+      "enabled": true,
+      "hits": 737,
+      "misses": 79,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 79,
+      "estimated_retained_bytes": 276832
+    },
+    {
+      "panes": 2,
+      "workload": "shared_static",
+      "enabled": true,
+      "hits": 1620,
+      "misses": 12,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 12,
+      "estimated_retained_bytes": 45661
+    },
+    {
+      "panes": 2,
+      "workload": "unique_static",
+      "enabled": true,
+      "hits": 1609,
+      "misses": 23,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 23,
+      "estimated_retained_bytes": 87868
+    },
+    {
+      "panes": 2,
+      "workload": "scrolling",
+      "enabled": true,
+      "hits": 1475,
+      "misses": 157,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 157,
+      "estimated_retained_bytes": 550210
+    },
+    {
+      "panes": 4,
+      "workload": "shared_static",
+      "enabled": true,
+      "hits": 3252,
+      "misses": 12,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 12,
+      "estimated_retained_bytes": 45661
+    },
+    {
+      "panes": 4,
+      "workload": "unique_static",
+      "enabled": true,
+      "hits": 3219,
+      "misses": 45,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 45,
+      "estimated_retained_bytes": 172282
+    },
+    {
+      "panes": 4,
+      "workload": "scrolling",
+      "enabled": true,
+      "hits": 2951,
+      "misses": 313,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 313,
+      "estimated_retained_bytes": 1096966
+    },
+    {
+      "panes": 8,
+      "workload": "shared_static",
+      "enabled": true,
+      "hits": 6516,
+      "misses": 12,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 12,
+      "estimated_retained_bytes": 45661
+    },
+    {
+      "panes": 8,
+      "workload": "unique_static",
+      "enabled": true,
+      "hits": 6439,
+      "misses": 89,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 89,
+      "estimated_retained_bytes": 341110
+    },
+    {
+      "panes": 8,
+      "workload": "scrolling",
+      "enabled": true,
+      "hits": 5903,
+      "misses": 625,
+      "evictions": 113,
+      "bypasses": 0,
+      "entries": 512,
+      "estimated_retained_bytes": 1769470
+    },
+    {
+      "panes": 8,
+      "workload": "appearance_changes",
+      "enabled": true,
+      "hits": 6303,
+      "misses": 225,
+      "evictions": 0,
+      "bypasses": 0,
+      "entries": 225,
+      "estimated_retained_bytes": 868110
+    }
+  ]
+}

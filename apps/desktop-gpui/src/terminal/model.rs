@@ -82,7 +82,11 @@ impl TerminalModel {
         &mut self,
         selection: Option<((usize, usize), (usize, usize))>,
         query: &str,
-    ) -> Vec<gpui::StyledText> {
+        settings: &cli_manager_core_prefs::terminal::TerminalPreferences,
+        cell_size: (f32, f32),
+        cache: &mut super::row_cache::RowPreparationCache,
+    ) -> Vec<gpui::AnyElement> {
+        self.configure_preferences(settings);
         let frame = self.snapshot();
         let urls = cli_manager_term_engine::search::find_urls(&self.rendered_rows);
         let search = cli_manager_term_engine::search::find_matches(&self.rendered_rows, query);
@@ -92,7 +96,23 @@ impl TerminalModel {
             selection,
             &urls,
             &search,
+            settings,
+            cell_size,
+            cache,
         )
+    }
+
+    pub(crate) fn configure_preferences(
+        &mut self,
+        settings: &cli_manager_core_prefs::terminal::TerminalPreferences,
+    ) {
+        if self.engine.configure(
+            settings.effective_scrollback(),
+            super::appearance::cursor_shape(settings),
+        ) == Ok(true)
+        {
+            self.revision = self.revision.wrapping_add(1);
+        }
     }
 
     pub fn selected_text(&mut self, selection: ((usize, usize), (usize, usize))) -> String {

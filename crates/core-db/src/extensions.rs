@@ -205,7 +205,10 @@ fn now_ms() -> i64 {
 }
 
 /// 删除受管 MCP canonical 记录；不会触碰任何 CLI 原生配置文件。
-pub async fn delete_mcp_resource(path: impl AsRef<Path>, resource_id: String) -> Result<(), String> {
+pub async fn delete_mcp_resource(
+    path: impl AsRef<Path>,
+    resource_id: String,
+) -> Result<(), String> {
     let path = path.as_ref();
     if !path.try_exists().map_err(|error| error.to_string())? {
         return Err("extensions_database_missing".into());

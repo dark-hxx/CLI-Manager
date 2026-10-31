@@ -1,4 +1,26 @@
 {
+  "shell.terminal.fontFamily": "Terminal font family (comma-separated fallbacks)",
+  "shell.terminal.applyFont": "Apply terminal font",
+  "shell.terminal.fontSize": "Font size",
+  "shell.terminal.lineHeight": "Line height",
+  "shell.terminal.scrollback": "Scrollback rows",
+  "shell.terminal.decrease": "Decrease",
+  "shell.terminal.increase": "Increase",
+  "shell.terminal.useDefaultHistory": "Use default history (9000 rows)",
+  "shell.terminal.useCustomHistory": "Enable custom history limit",
+  "shell.terminal.cursorStyle": "Cursor style",
+  "shell.terminal.cursorBar": "Bar",
+  "shell.terminal.cursorBlock": "Block",
+  "shell.terminal.cursorUnderline": "Underline",
+  "shell.terminal.saving": "Saving terminal preferences…",
+  "shell.terminal.saveFailed": "Unable to save terminal preferences. The current values remain unchanged.",
+  "shell.terminal.invalidFont": "Enter a non-empty font family list without control characters (maximum 1024 bytes).",
+  "terminal.image.failed": "Unable to prepare the clipboard image attachment. No text fallback was pasted.",
+  "terminal.image.invalid": "The clipboard image is damaged or uses an unsupported format. No text fallback was pasted.",
+  "terminal.image.tooLarge": "The clipboard image exceeds the attachment size or 40-megapixel limit.",
+  "terminal.drop.invalid": "File paths were not inserted: a path contains unsupported control characters or shell expansion syntax.",
+  "terminal.drop.unsupported": "File paths were not inserted: the shell or path mapping is unsupported. WSL network paths require a matching session distribution; SSH requires a file upload.",
+  "terminal.drop.unavailable": "Unable to confirm file path insertion: the terminal session is unavailable or the request timed out.",
   "aiReplay.action.backToCurrent": "Back to Current",
   "aiReplay.action.fork": "Fork",
   "aiReplay.action.forkRunning": "Forking",
@@ -5005,6 +5027,11 @@
   "shell.command.toggleLanguage": "Toggle interface language",
   "shell.command.toggleTheme": "Toggle application theme",
   "shell.command.closePane": "Close active pane",
+  "shell.command.backgroundSessions": "Background sessions",
+  "shell.background.title": "Background sessions",
+  "shell.background.empty": "No background sessions",
+  "shell.background.attach": "Open session",
+  "shell.background.end": "End session",
   "shell.settings.title": "GPUI Settings",
   "shell.settings.restoreEnabled": "Restore terminal workspaces on startup",
   "shell.settings.restoreMode": "Restore mode",
@@ -5108,5 +5135,8 @@
   ,"git.conflict.ours": "Current branch"
   ,"git.conflict.theirs": "Incoming change"
   ,"git.conflict.merged": "Merged result"
-  ,"git.conflict.resolve": "Resolve and stage"
+  ,"git.conflict.resolve": "Resolve and stage",
+  "shell.titlebar.minimize": "Minimize",
+  "shell.titlebar.maximize": "Maximize/restore",
+  "shell.titlebar.close": "Close"
 }

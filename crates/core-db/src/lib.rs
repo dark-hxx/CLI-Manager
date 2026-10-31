@@ -1,9 +1,9 @@
+pub mod extensions;
 pub mod history;
 pub mod migrations;
 pub mod pool;
 pub mod projects;
 pub mod provider;
-pub mod extensions;
 use sqlx::migrate::{Migration as SqlxMigration, MigrationType, Migrator};
 use sqlx::SqlitePool;
 use std::borrow::Cow;

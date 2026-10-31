@@ -4,10 +4,10 @@
 
 | # | 功能域 | GPUI 当前状态 | 证据/入口 | 下一步 |
 |---:|---|---|---|---|
-| 1 | 根壳、标题栏、关闭行为、退出遮罩 | 部分完成 | `apps/desktop-gpui/src/main.rs`、`exit.rs`；GPUI 测试覆盖退出决策 | 完整标题栏、退出/后台真实窗口矩阵 |
-| 2 | 设置 | 部分完成 | `settings_host.rs`、偏好持久化与语言/主题测试 | 补齐设置面板和全部字段对齐 |
+| 1 | 根壳、标题栏、关闭行为、退出遮罩 | 部分完成 | `apps/desktop-gpui/src/main.rs`、`render.rs`、`exit.rs`、`shell_controls.rs`、`ime.rs`；透明标题栏、自绘拖动区和窗口控制已接，GPUI 测试覆盖退出决策 | Windows Snap、双击/跨屏及退出/后台真实窗口矩阵 |
+| 2 | 设置 | 部分完成 | `settings_host.rs`、`terminal_settings.rs`、共用 `TerminalPreferences`；终端字体/字号/行高/历史/光标持久化与热更新已接线，Tauri 消费同键；偏好、引擎与语言/主题测试 | 终端设置双壳真实窗口/双语验收，补齐其他面板和全部字段对齐 |
 | 3 | 项目树、分组、拖拽、Worktree、冲突解决 | 部分完成 | `projects`、`workspace/worktree.rs`、`workspace/conflicts`；真实临时 Git 测试 | 拖拽树和完整冲突人工矩阵 |
-| 4 | 终端、分屏、Workspan、回放、后台任务 | 部分完成 | `terminal`、`workspace/pane_tree.rs`、`term-engine`；模型和状态测试 | 生产 daemon bootstrap、真实 attach、完整回放/后台任务 |
+| 4 | 终端、分屏、Workspan、回放、后台任务 | 部分完成 | `terminal`、`workspace/pane_tree.rs`、`background_sessions.rs`；daemon bootstrap、后台列表与 attach、外部路径拖放和 core 图片快照粘贴已接线；共享行准备 LRU 与 1/2/4/8 Pane 原生缓存对照基准已落地 | 完整回放、Workspan、Alt+V/SSH 图片上传、真实 PTY/呈现/缓存失效及系统剪贴板验收 |
 | 5 | 文件树、编辑 | 已接入核心路径 | `files.rs`、文件 watcher、EditorState；文件操作/标签/保存测试 | 完整编辑器交互和 5,000 文件真实窗口性能 |
 | 6 | Markdown、HTML、PDF 预览 | 已接入代码路径，平台验收未完成 | `crates/preview`、`preview_host.rs`；Windows PoC 截图和生命周期证据 | 六状态 × 三类型矩阵、焦点/DPI/Airspace/IME |
 | 7 | Git 状态、暂存、提交、引用、Diff | 已接入核心路径 | `git.rs`、增量 watcher、git2 元数据、tree-sitter 高亮测试 | 5,000 文件真实窗口刷新 ≤200ms |
@@ -18,7 +18,7 @@
 | 12 | 同步（WebDAV） | 未完成 | GPUI 无同步面板和操作入口 | 接入同步配置、状态和操作 |
 | 13 | SSH、远程 | 未完成 | 基础设施存在，GPUI 无远程入口 | 迁移远程连接配置和会话操作 |
 | 14 | 提示词、模板 | 未完成 | GPUI 无三级作用域模板完整入口 | 迁移模板列表、编辑和作用域行为 |
-| 15 | 命令面板、快捷键、Workspan 栏 | 部分完成 | `keymap.rs`、命令面板和 Preview IPC 快捷键 | 完整动作注册、配置和 Workspan UI |
+| 15 | 命令面板、快捷键、Workspan 栏 | 部分完成 | `keymap.rs`、`shell_controls.rs`、命令面板和 Preview IPC 快捷键 | 完整动作注册、配置和 Workspan UI |
 | 16 | 桌宠 | 未完成 | GPUI 无第二窗口桌宠实现 | 实现同进程第二窗口与生命周期 |
 | 17 | Web 服务设置、设备 Operation | 部分完成 | web-daemon 保留，GPUI 无完整设置/设备操作面板 | 接入原生设置与设备 Operation |
 | 18 | 托盘、单实例、更新、通知、Explorer 右键 | 未完成 | 现有 Tauri/安装器能力未迁移到 GPUI | 实现桌面集成与安装包路径 |

@@ -81,6 +81,16 @@ this transport foundation is not yet a complete replacement for PtyHostSocket.
 - Windows registry and process creation.
 - UI events, paths, clipboard and native dialogs.
 
+## Clipboard Image Codec
+
+`cli-manager-core` exposes `clipboard_image` only with the optional `clipboard-image`
+feature. It owns bounded image decoding (including packed DIB), PNG normalization,
+candidate fallback and managed PNG persistence with an explicit host-provided data root.
+It has no Tauri/GPUI or native clipboard API dependency. Windows/macOS clipboard locks,
+format enumeration and revision checks remain in host adapters; GPUI supplies its captured
+clipboard image bytes. Image work must run off the UI thread. See
+`terminal-clipboard-image-contracts.md` for budgets, persistence and cancellation contracts.
+
 ## Preferences
 
 `cli-manager-core-prefs::PrefsStore` accepts an explicit host-provided root directory.
@@ -99,7 +109,16 @@ Domain-specific validation and production host wiring remain outstanding.
 Run `node scripts/export-settings-defaults.mjs` after changing frontend defaults and
 `node scripts/export-settings-defaults.mjs --check` during verification. The generator
 statically interprets literal constants and local imports and refuses unknown expression
-types instead of executing frontend code. The generated defaults currently contain 125 keys.
+types instead of executing frontend code. The generated defaults currently contain 127 keys.
+
+`terminal::TerminalPreferences` maps the shared `fontFamily`, `fontSize`,
+`terminalScrollbackCustomEnabled`, `terminalScrollbackRows`, `terminalLineHeight` and
+`terminalCursorStyle` keys without removing unknown settings. Font size is 8–32px,
+line height is 1–2, custom history is 1000–50000 rows (disabled means 9000), and cursor
+style is bar/block/underline. Missing or invalid scalar values use bounded compatible
+defaults. Hosts update only these fields through PrefsStore; they must retain runtime
+values and show an error if persistence fails. Shrinking history discards the oldest
+rows; it must not restart the PTY or reset the parser, screen, keyboard or OSC52 policy.
 
 Any new core API crossing one of these boundaries must accept an explicit host adapter or
 callback instead of importing Tauri or creating platform processes/sockets.

@@ -388,6 +388,8 @@ export interface Settings {
   lightThemePalette: LightThemePalette;
   darkThemePalette: DarkThemePalette;
   fontSize: number;
+  terminalLineHeight: number;
+  terminalCursorStyle: "bar" | "block" | "underline";
   terminalScrollbackCustomEnabled: boolean;
   terminalScrollbackRows: number;
   fontFamily: string;
@@ -548,6 +550,8 @@ const DEFAULTS: Settings = {
   lightThemePalette: "apple-mono",
   darkThemePalette: "terminal-green",
   fontSize: TERMINAL_FONT_SIZE_DEFAULT,
+  terminalLineHeight: 1,
+  terminalCursorStyle: "bar",
   terminalScrollbackCustomEnabled: false,
   terminalScrollbackRows: TERMINAL_SCROLLBACK_ROWS_DEFAULT,
   fontFamily: "Cascadia Code, Consolas, monospace",
@@ -1471,6 +1475,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       TERMINAL_SCROLLBACK_ROWS_MAX,
       DEFAULTS.terminalScrollbackRows
     );
+    entries.terminalLineHeight = clampNumber(entries.terminalLineHeight, 1, 2, DEFAULTS.terminalLineHeight);
+    entries.terminalCursorStyle = entries.terminalCursorStyle === "block" || entries.terminalCursorStyle === "underline"
+      ? entries.terminalCursorStyle : "bar";
     entries.terminalScrollbackCustomEnabled =
       typeof entries.terminalScrollbackCustomEnabled === "boolean"
         ? entries.terminalScrollbackCustomEnabled

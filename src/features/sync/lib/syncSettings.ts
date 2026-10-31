@@ -10,6 +10,8 @@ export const SETTING_BACKUP_POLICY = {
   lightThemePalette: "preferences",
   darkThemePalette: "preferences",
   fontSize: "preferences",
+  terminalLineHeight: "preferences",
+  terminalCursorStyle: "preferences",
   terminalScrollbackCustomEnabled: "excluded",
   terminalScrollbackRows: "excluded",
   fontFamily: "preferences",

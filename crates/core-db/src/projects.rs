@@ -337,7 +337,8 @@ impl ProjectRepo {
         &self,
         project_key: &str,
     ) -> Result<RequestLogSummary, sqlx::Error> {
-        self.request_log_summary_filtered(Some(project_key), None, None).await
+        self.request_log_summary_filtered(Some(project_key), None, None)
+            .await
     }
 
     pub async fn request_log_summary_filtered(
@@ -346,21 +347,19 @@ impl ProjectRepo {
         source: Option<&str>,
         since_ms: Option<i64>,
     ) -> Result<RequestLogSummary, sqlx::Error> {
-        sqlx::query_as(
-            concat!(
-                "SELECT COUNT(*) AS request_count, ",
-                "COALESCE(SUM(input_tokens), 0) AS input_tokens, ",
-                "COALESCE(SUM(output_tokens), 0) AS output_tokens, ",
-                "COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, ",
-                "COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens ",
-                "FROM request_logs WHERE (?1 IS NULL OR (",
-                "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') LIKE ",
-                "replace(?1, char(92), '/') || '/%')) ",
-                "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3)"
-            ),
-        )
+        sqlx::query_as(concat!(
+            "SELECT COUNT(*) AS request_count, ",
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, ",
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens, ",
+            "COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens, ",
+            "COALESCE(SUM(cache_creation_tokens), 0) AS cache_creation_tokens ",
+            "FROM request_logs WHERE (?1 IS NULL OR (",
+            "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') LIKE ",
+            "replace(?1, char(92), '/') || '/%')) ",
+            "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3)"
+        ))
         .bind(project_key)
         .bind(source)
         .bind(since_ms)
@@ -372,7 +371,8 @@ impl ProjectRepo {
         &self,
         project_key: &str,
     ) -> Result<Vec<RequestLogBreakdown>, sqlx::Error> {
-        self.request_log_breakdown_filtered(Some(project_key), None, None).await
+        self.request_log_breakdown_filtered(Some(project_key), None, None)
+            .await
     }
 
     pub async fn request_log_breakdown_filtered(
@@ -381,21 +381,19 @@ impl ProjectRepo {
         source: Option<&str>,
         since_ms: Option<i64>,
     ) -> Result<Vec<RequestLogBreakdown>, sqlx::Error> {
-        sqlx::query_as(
-            concat!(
-                "SELECT source, COALESCE(model, '') AS model, ",
-                "COUNT(*) AS request_count, ",
-                "COALESCE(SUM(input_tokens), 0) AS input_tokens, ",
-                "COALESCE(SUM(output_tokens), 0) AS output_tokens ",
-                "FROM request_logs WHERE (?1 IS NULL OR (",
-                "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') LIKE ",
-                "replace(?1, char(92), '/') || '/%')) ",
-                "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3) ",
-                "GROUP BY source, model ORDER BY request_count DESC, source, model LIMIT 12"
-            ),
-        )
+        sqlx::query_as(concat!(
+            "SELECT source, COALESCE(model, '') AS model, ",
+            "COUNT(*) AS request_count, ",
+            "COALESCE(SUM(input_tokens), 0) AS input_tokens, ",
+            "COALESCE(SUM(output_tokens), 0) AS output_tokens ",
+            "FROM request_logs WHERE (?1 IS NULL OR (",
+            "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') LIKE ",
+            "replace(?1, char(92), '/') || '/%')) ",
+            "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3) ",
+            "GROUP BY source, model ORDER BY request_count DESC, source, model LIMIT 12"
+        ))
         .bind(project_key)
         .bind(source)
         .bind(since_ms)
@@ -407,7 +405,8 @@ impl ProjectRepo {
         &self,
         project_key: &str,
     ) -> Result<Vec<RequestLogEntry>, sqlx::Error> {
-        self.request_log_entries_filtered(Some(project_key), None, None).await
+        self.request_log_entries_filtered(Some(project_key), None, None)
+            .await
     }
 
     pub async fn request_log_entries_filtered(
@@ -416,19 +415,17 @@ impl ProjectRepo {
         source: Option<&str>,
         since_ms: Option<i64>,
     ) -> Result<Vec<RequestLogEntry>, sqlx::Error> {
-        sqlx::query_as(
-            concat!(
-                "SELECT source, session_id, model, input_tokens, output_tokens, ",
-                "cache_read_tokens, cache_creation_tokens, timestamp_ms ",
-                "FROM request_logs WHERE (?1 IS NULL OR (",
-                "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
-                "OR replace(file_path, char(92), '/') LIKE ",
-                "replace(?1, char(92), '/') || '/%')) ",
-                "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3) ",
-                "ORDER BY timestamp_ms DESC LIMIT 50"
-            ),
-        )
+        sqlx::query_as(concat!(
+            "SELECT source, session_id, model, input_tokens, output_tokens, ",
+            "cache_read_tokens, cache_creation_tokens, timestamp_ms ",
+            "FROM request_logs WHERE (?1 IS NULL OR (",
+            "replace(project_key, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') = replace(?1, char(92), '/') ",
+            "OR replace(file_path, char(92), '/') LIKE ",
+            "replace(?1, char(92), '/') || '/%')) ",
+            "AND (?2 IS NULL OR source = ?2) AND (?3 IS NULL OR timestamp_ms >= ?3) ",
+            "ORDER BY timestamp_ms DESC LIMIT 50"
+        ))
         .bind(project_key)
         .bind(source)
         .bind(since_ms)
@@ -440,7 +437,8 @@ impl ProjectRepo {
         &self,
         project_key: &str,
     ) -> Result<ProjectEfficiency, sqlx::Error> {
-        self.project_efficiency_filtered(Some(project_key), None, None).await
+        self.project_efficiency_filtered(Some(project_key), None, None)
+            .await
     }
 
     pub async fn project_efficiency_filtered(

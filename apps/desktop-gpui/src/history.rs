@@ -875,8 +875,8 @@ fn parse_row(
     let cwd = detail.summary.cwd.as_deref().map(normalize_text);
     let project_match = scope_path.is_none()
         || cwd
-        .as_deref()
-        .is_some_and(|cwd| same_or_child(cwd, project_key))
+            .as_deref()
+            .is_some_and(|cwd| same_or_child(cwd, project_key))
         || (source == "claude"
             && path
                 .parent()
@@ -1425,13 +1425,8 @@ mod tests {
 "#,
         )
         .unwrap();
-        let (row, detail) = parse_row(
-            "claude",
-            &path,
-            Some(Path::new("c:/project")),
-            "c:/project",
-        )
-        .unwrap();
+        let (row, detail) =
+            parse_row("claude", &path, Some(Path::new("c:/project")), "c:/project").unwrap();
         assert_eq!(row.session_id, "session-1");
         let detail = detail.unwrap();
         assert_eq!(detail.messages.len(), 2);

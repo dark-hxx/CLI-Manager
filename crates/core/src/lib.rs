@@ -1,5 +1,7 @@
 pub mod agent_launcher;
 pub mod circuit;
+#[cfg(feature = "clipboard-image")]
+pub mod clipboard_image;
 pub mod data_paths;
 pub mod device_urls;
 pub mod discovery;

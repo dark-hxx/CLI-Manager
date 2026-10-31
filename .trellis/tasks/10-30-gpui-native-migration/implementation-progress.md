@@ -1,5 +1,8 @@
 # 实施记录（2026-10-31）
 
+- 阶段 0 S0.1：保留 `extension_rename_editor` 的 `Option<Entity<EditorState>>` 懒创建语义；`render` 通过 `StatsState::rename_editor` 取得必需实体，与 `extension_view` 契约一致。GitNexus 影响为 1 个直接调用者、LOW；`cargo check -p cli-manager-desktop-gpui` 通过，扩展 SQLite 集成测试 8 项通过，严格架构检查 1560 个源文件且 0 超限。`detect-changes --scope all` 报告 2 条渲染流程、MEDIUM 风险，均为 `render` 所在流程。
+- 阶段 0 S0.2：按范围将窗口关闭回调迁入现有 `exit.rs`，`main.rs` 保留创建 shell、安装关闭处理器和窗口 Root 的流程。退出决策及 daemon/session 清理顺序不变；`cargo check -p cli-manager-desktop-gpui` 通过，退出策略定向测试 5 项通过，严格架构检查 1560 个源文件且 0 超限，GitNexus 变更检测 0 条受影响流程、LOW。当前 `main.rs` 为 1935 行，尚未满足该任务 ≤1700 行验收；本批仅完成用户指定的关闭回调迁移。
+
 - Windows 独立 WebView PoC 已完成真实窗口冒烟：child WebView 创建约 399.804ms，Markdown/HTML/PDF 三路协议导航、隐藏/恢复、逻辑到物理 bounds 更新和三张窗口截图均成功，PDF.js 页面截图可见。证据记录于 `research/windows-webview-smoke-2026-10-31.md`；该结果不覆盖产品 GPUI 窗口的焦点、DPI、Airspace、IME 和后代进程回收，因此 PreviewHost 总体验收仍未闭环。
 - 修复 Windows `PreviewLifecycle.ps1` 调用不存在的 `GetWindowRect` 方法，改用已公开的 DPI 感知矩形接口；生命周期验证工具现在具备执行缩放、最小化恢复和后代进程回收检查的前置条件。
 - Windows PreviewLifecycle 真实验证通过：窗口缩放与恢复保持 `983 × 822`，最小化/恢复成功；观察到 9 个 WebView2/conhost 后代进程，GUI 退出后 253ms 内全部退出且 10 秒窗口内无残留。跨显示器 DPI、焦点、Airspace 和产品壳六状态矩阵仍未闭环，原始证据见 `research/windows-webview-lifecycle-2026-10-31.md`。
@@ -426,3 +429,134 @@
 - 扩展开关边界补强：概览只读取 `enabledByCli` JSON 片段；损坏对象/未知 CLI 拒绝事务且 revision 不变。`DbPool::open_existing` 禁止写入链隐式创建缺失数据库，SQLite 回归覆盖删除/切换缺库均不建文件；异步刷新保留列表操作控件并校验代次。
 - MCP 名称编辑接入：GPUI 通过原生编辑器保存单字段草稿；core-db 在事务内同步更新列表列与 canonical `name`、递增 revision，并保留秘密与 CLI 开关。定向 SQLite 回归覆盖对应字段完整性。
 - 名称编辑边界覆盖空白/超长输入、损坏 canonical JSON 及原值/revision 保持；编辑态锁定同一 MCP 的其他写操作。名称编辑未扩展为完整 transport/secret 表单，复杂编辑契约继续待迁移。
+
+## 本批实施（2026-10-31，GPUI 壳入口拆分）
+
+- S0.1 已完成：修复 MCP 名称编辑器可选实体传参错误，并保留 StatsState 懒创建语义。
+- S0.2 已完成：关闭回调迁入 `exit.rs`，命令面板与运行设置迁入 `shell_controls.rs`，IME 输入处理迁入 `ime.rs`；`main.rs` 为 1700 行。
+- 串行验证：`cargo check -p cli-manager-desktop-gpui` 通过；`cargo test -p cli-manager-desktop-gpui -j 2` 共 110 项通过；`npm run check:architecture -- --strict` 为 1562 个源文件、0 个超限；`git diff --check` 通过。
+- GitNexus `detect-changes --scope all` 完成，报告 6 个文件、12 个符号变更，2 条受影响渲染流程，风险等级 medium；未发现退出流程新增影响。
+
+## 阶段 0 收口验证（2026-11-01）
+
+- S0.3 GPUI 定向回归：`cargo test -p cli-manager-desktop-gpui -j 2` 共 110 项通过；`npx tsc --noEmit` 通过；严格架构检查为 1562 个源文件、0 个超限；`git diff --check` 通过。
+- S0.4 GitNexus 已重建成功：54,797 个节点、129,842 条边、1,148 条流程；因环境未安装 FTS 扩展，全文检索仍不可用，但图索引已更新。
+- S0.5 已同步：父 `implement.md` 指向 `implementation-plan-v2.md`，`functional-alignment.md` 更新壳入口拆分和命令面板模块入口。
+- `cargo test --workspace -j 1` 已串行完成：1560 项通过、11 项忽略、4 项失败。失败均为当前改动之外的既有测试：`commands::deepseek::tests::bridge_cache_publication_is_complete_and_shared_without_tab_state`、`commands::hook_settings::tests::codex_hook_trusted_hash_matches_codex_canonical_format`、`device_identity::tests::file_uri_decodes_escaped_path`、`extensions::skill_deployment::tests::auto_deployment_uses_real_temporary_directory`；失败原因分别为 DeepSeek patch、Codex hook hash、file URI 解析和临时目录部署清理。首次失败还出现过 target 制品冲突/Windows `R6016`，清理后单线程运行排除了并发制品损坏因素。
+
+## S1.1 daemon bootstrap（2026-11-01）
+
+- GPUI 终端发现逻辑统一调用 `daemon_bootstrap::endpoint_or_start`；最初实现含跨环境回退，已在下方 S1.1 环境隔离根因修复中移除。
+- 发现失效 PID 时删除残留 discovery；discovery 缺失时按显式环境变量、同目录 `cli-manager-daemon(.exe)`、主程序 `__daemon` 的顺序后台启动。
+- 使用 2 秒全局冷却防止多个终端 Pane 并发重复拉起；启动过程丢弃标准输入输出错误流，Windows 使用隐藏控制台标志，连接退避仍由既有 `attach_with_reconnect` 负责。
+- `cargo check -p cli-manager-desktop-gpui` 通过；`cargo test -p cli-manager-desktop-gpui daemon_bootstrap -j 1` 通过（1 项）。全仓 `cargo fmt --check` 仍受既有未格式化文件影响，新增 bootstrap 文件已单独通过 rustfmt 检查。
+- 真实无 Tauri 运行时的独立启动矩阵（sidecar、显式环境变量、旧 PID 清理）仍待手测。
+## S1.2 persisted service reconciliation（2026-11-01）
+
+- 新增 `routing_bootstrap`：GPUI 在 daemon 控制连接成功后读取共用 `providers.db` 的 `routing.service.v1` 与 `routing.takeovers.v1`，通过 TCP NDJSON 控制帧查询路由状态。
+- 持久化开关与 daemon 状态不一致时，按 Tauri `reconcile_persisted_service` 的 Start/Stop/None 顺序处理；启动成功回写 `actualPort`，WSL mirrored/gateway 接管地址按持久化记录合并且去重。
+- 对账使用独立短连接，不影响 WebSocket 终端连接；数据库缺失、daemon 能力缺失或控制失败只记录错误，终端仍可继续 attach/reconnect。
+- 新增运行状态判定和监听地址回归测试；`cargo test -p cli-manager-desktop-gpui routing_bootstrap -j 1` 通过（2 项），`cargo check -p cli-manager-desktop-gpui` 通过。
+- 阶段 S1.3：新增 daemon 事件驱动后台会话监视器，首次列表快照后 attach 存活会话订阅 session_status；GPUI 后台面板支持中英文入口、打开会话与结束请求，打开时按后台 cwd 映射项目并复用终端 attach。
+- S1.4：后台会话 monitor 增加事件触发诊断对账和 60 秒可见兜底；新增 pty-client reconcile 请求，daemon 仅返回摘要并保护后台会话。定向单测覆盖事件即时触发、60 秒阈值与不可见窗口禁用兜底。
+- S1.6：GPUI 窗口使用透明标题栏，新增自绘拖动区及最小化、最大化/还原、关闭控制，按钮提供双语无障碍标签；Windows Snap Layouts、双击还原和跨屏拖动尚未手测。
+
+## S1.7 窗口激活低功耗刷新（2026-11-01）
+
+- 修正窗口激活订阅：使用 Window::is_window_active() 设置低功耗状态，失焦时降低后台刷新频率，激活时恢复高频刷新。
+- 新增低功耗策略纯函数测试，覆盖激活与失焦两种状态，避免重复事件通过取反造成状态漂移。
+
+## S1.8 启动阶段计时与首帧屏障（2026-11-01）
+
+- 场景检查：项目快照先完成/首帧先完成、窗口提前关闭、没有数据库、自动恢复触发 daemon、后台连接失败；项目快照仍异步读取，恢复等待首帧 oneshot，窗口销毁会丢弃发送端并取消恢复。
+- 发现清单：后台会话 monitor 原本在窗口构造闭包内启动，项目快照完成可能在首帧前触发自动恢复；预览回收也在构造期间安装。现使用 GPUI `on_next_frame` 首帧回调启动监视和回收，恢复等待同一帧屏障。退出守卫仍同步安装，防止启动期间关窗绕过清理。
+- 新增 `[gpui-startup]` 日志：runtime-ready、application-start、components-ready、preferences、project-snapshot、root-created、first-frame-rendered、post-frame-services、project-restore-start。elapsed_ms 为该阶段指定起点的经过时间，duration_ms 为操作耗时；项目恢复的起点是项目读取开始。
+- Windows debug `cargo run -p cli-manager-desktop-gpui -- --smoke` 实测：runtime 0ms、application 172ms、components 180ms、偏好 1ms、root 395ms、项目快照 11ms、首帧回调 415ms、后台服务 416ms；项目恢复在首帧回调后执行。此数据不是 release 冷启动或 GPU 实际呈现时间。
+- smoke 退出码 0；daemon WebSocket handshake failed 仍出现，未将独立 daemon 启动矩阵标记为完成。S1.7 仅修复激活状态判定，10 分钟唤醒记录等剩余验收尚未完成。
+- GitNexus 对 main 的 upstream 为 UNKNOWN；对 DesktopShell::new 报 CRITICAL（8 个直接、390 个累计、151 条流程），含跨语言同名 new 的可疑关联，保留风险记录。后续以编译、GPUI 完整回归和实际窗口启动顺序作为补充证据，不视为图分析已排除风险。
+- 验证：GPUI 编译通过、117 项完整测试通过；生产冷启动与完整首帧前工作量审计仍待进行，S1.8 保持部分完成。
+
+## S1.1 discovery 环境隔离根因修复（2026-11-01）
+
+- 根因陈述：GPUI bootstrap 在 debug discovery 缺失时跨环境读取安装版记录，实际命中不含 `ws_native_client_v1` 的 1.4.3 daemon，原生无 Origin 握手被旧服务端拒绝；修复位于 discovery 选择边界，不改变客户端 Origin 或削弱服务端鉴权。
+- 发现清单：`daemon_bootstrap::endpoint_or_start` 与新增 `recorded_endpoint` 已修复；`terminal::discover_endpoint` 和 `background_sessions::run_monitor` 均复用此入口，无需分别修补；`pty-client::Client::connect` 的首帧 token/能力验证保持不变；Tauri `connect_or_spawn` 和 `pty-daemon-contracts.md` 已确认要求 dev/安装版隔离，服务端现有原生 Origin 规则无需改动。
+- 场景：两个构建环境互不回退；仅另一环境存在时返回缺失并走本环境 bootstrap；本环境 PID 失效仅删除本环境记录；损坏 JSON 保留并返回错误；本环境旧能力实例保留记录并明确报升级错误。焦点、分屏、WSL、Worktree 和 Hook 不改变 discovery 环境选择，连接消费者继续使用相同入口。
+- 移除旧测试中对 `endpoint_or_start` 的真实 spawn 调用，改为临时目录内验证 discovery，不让单测依赖同目录可执行文件或误拉进程。4 项定向测试通过，GPUI 全量共 120 项通过。
+- Windows 真实验证：复制当前 debug GPUI 与 sidecar 到独立临时目录并放置 `portable.flag`，无 Tauri 主程序；GPUI `--smoke` 在首帧后成功拉起 sidecar，生成独立 `data/daemon.dev.json`，未产生安装版 discovery。随后以原生无 Origin WebSocket 探针验证 token 鉴权、list、CMD PTY create/attach/write、二进制输出和 close；关闭后 list 无 alive 会话，测试 daemon 已按测试进程句柄清理。
+- 首次用隐藏窗口执行 smoke 未产生首帧回调，未启动后台服务；可见 smoke 验证通过。该观察保留为隐藏启动/托盘场景的后续验收项，不据此宣称桌面集成完成。
+- `cargo build -p cli-manager-desktop-gpui`、120 项 GPUI 测试、严格架构检查（1565 源文件、0 超限）及 `git diff --check` 通过。GitNexus impact 未索引新增 bootstrap，返回 UNKNOWN；按契约及两个实际消费者补查，没有将 UNKNOWN 当作低风险。
+
+## S1.9 终端字体度量全局懒加载（2026-11-01）
+
+- 发现清单：`render::DesktopShell::render` 每次调用 `sync_terminal_size`，后者此前在无会话时也解析 Consolas 并重复调用 ch_advance/ascent/descent；`terminal::render` 使用相同字体描述构建 TextRun。已确认锁定版本 GPUI 的 `TextSystem::resolve_font` 本身缓存字体解析，不再另建 FontId 缓存。
+- 新增 `terminal/fonts.rs`：通过 GPUI App Global 持有度量缓存，按完整 Font 描述（包括字重、样式、fallback）与逻辑字号区分，跨 Pane/窗口复用；容量 64、插入顺序淘汰。只缓存逻辑像素度量，不缓存窗口物理像素/DPI 尺寸；Pane 网格与 PTY resize 仍按各自 bounds 计算。
+- 懒加载入口：没有终端会话时直接跳过度量；首次终端请求才创建全局缓存并调用 GPUI 度量接口。缺失字体继续由 GPUI 既有 fallback 处理，保留原先安全宽高下限。每次实际测量记录 `[gpui-fonts] phase=measure-cell`，缓存命中不测量或打印。
+- 场景覆盖：八个 Pane 同字体只调用一次提供方；字体族、字号与字重使用不同项；容量超限释放最老项；空工作区不初始化。纯缓存测试不依赖系统安装字体，真实窗口 smoke 验证初始化时序。
+- Windows 独立临时 portable 空工作区 smoke：首帧回调约 409ms，退出码 0，日志中没有 `[gpui-fonts]`；故意未放置 sidecar，daemon 缺失不阻塞窗口退出。此证据只证明应用级终端度量未初始化，不能证明平台文字系统内部完全没有枚举。
+- `cargo test -p cli-manager-desktop-gpui -j 1`：123 项通过；`cargo build -p cli-manager-desktop-gpui` 通过；严格架构检查：1566 源文件、0 超限。没有新增用户可见文案。
+- GitNexus `sync_terminal_size` upstream 报 CRITICAL（1 个直接、376 个累计、150 条流程），直接渲染链已核对；间接结果包含跨语言 render 同名关联，保留风险。render 文件新位置未解析，impact 返回 UNKNOWN，已用实际调用点补查。
+- S1.9 保持部分完成：`system/fonts.rs` 与 statusline 字体目录扫描的整合、运行时全量枚举审计仍待实施；本次缓存也不等同于 S1.12 的共享字形与行 shaping 缓存。S1.11 的字体/行高/scrollback/光标设置尚未接线。
+
+## S1.10 终端外部路径拖放（2026-11-01，部分完成）
+
+- 发现清单：Pane 仅注册内部 String 会话拖放；新增 ExternalPaths 类型处理器，与已有处理器并存。新增 `terminal_input.rs` 负责目标 Pane 激活、焦点和错误呈现，`terminal/path_drop.rs` 负责 daemon 元数据读取、路径引用和目标会话写入，没有扩展 IPC 契约。
+- 场景枚举：窗口失焦、非活动 Pane、深分屏、Worktree 和后台重新接入均以实际落点 sessionId 查询启动 shell/cwd；等待期间切换 Pane 不改变目标。绑定捕获的 SessionHandle 和取消代次，关闭会话取消等待，旧代次结果不影响同 ID 新会话。空列表忽略；多个路径全部格式化成功后才写入一次，按目标当前 input_mode 编码括号粘贴，不追加回车，不自动执行。
+- 路径：PowerShell 单引号转义、CMD 双引号与展开字符拒绝、WSL 默认 `/mnt/<drive>` 映射、Git Bash 盘符映射；WSL UNC 仅在 cwd 确认相同发行版时转换。未知或跨发行版、普通网络共享到 WSL、SSH 本地路径、未知 shell、控制字符与非 UTF-8 路径明确拒绝。WSL 自定义 automount 与用户进入嵌套 shell 后的动态检测仍不在本批实现范围。
+- 错误使用中英文资源键并随当前界面语言呈现；连接/超时错误措辞保留结果不确定性，不自动重试写入。请求总预算 5 秒，异步期间不阻塞 UI。
+- 7 项定向测试通过：多文件/Unicode/空格/单引号、WSL shell 字符转义、发行版隔离、CMD 展开与控制字符、SSH/未知 shell/批次原子格式化、已关闭目标取消；Windows PowerShell 子进程真实解析路径并核对 JSON 参数，证明 `$HOME`、反引号及 shell 标点未展开。这是参数解析实测，不等同于 GUI 拖放手测。
+- `cargo test -p cli-manager-desktop-gpui -j 1`：130 项通过；构建通过，保留既有 dead_code 警告；严格架构检查 1568 个源文件、0 超限；`git diff --check` 通过，仅换行符提示。当前 WSL `--list --quiet` 返回非零与安装帮助，未取得可运行发行版，未安装或修改系统。
+- GitNexus pane_element：1 个直接、801 个累计、163 条流程，CRITICAL；构造入口 new：8 个直接、820 个累计、163 条流程，CRITICAL。结果包含跨语言同名 render/new 关联，保留风险；新位置 render 返回 UNKNOWN，已核对实际 Render 实现及唯一模块入口。diff 分析报告 44 个符号、24 个文件、2 条 Pane 边界鼠标流程、MEDIUM；新增未索引模块不由该结果完整覆盖，不据此抵消修改前风险。
+- S1.10 保持部分完成：剪贴板图片实现仍位于 Tauri `features/files/commands/clipboard_image*`，尚未抽取到 core；图片粘贴、PowerShell/WSL GUI 拖放及双语界面实际切换验收待完成。整体迁移继续进行。
+
+## S1.10 图片标准化共享与 GPUI 粘贴接线（2026-11-01）
+
+- 上一批已推进外部路径拖放，本批继续图片链路。根因/发现：GPUI 的 EntityInputHandler 只调用 `ClipboardItem::text()`，图片条目被忽略，多个 ExternalPaths 还会被 GPUI 的 text 回退直接拼接。Tauri 编解码实现夹在宿主命令目录，无法由 GPUI 复用。
+- 抽取可选 `cli-manager-core/clipboard-image` feature：共享尺寸检查、PNG/TIFF 等解码、DIB 修复、PNG 编码及候选格式回退；保留原有 40M 像素、原生表示预算和 20 MiB 输出限制。core 不依赖 Tauri/GPUI，也不读取系统剪贴板。Windows/macOS 平台读取仍在 Tauri 宿主适配层，保留锁重试、序号检查和格式回退顺序；Linux 插件读取仍在原适配层。
+- 新增共享 save_png：只接收宿主核心编码器产生的 PNG 和宿主解析的数据根，固定写入 attachments，检查最终目录链接/重解析点和根归属，以同目录临时文件 + persist_noclobber 避免多个 Pane/双壳同时保存时覆盖已有文件。Tauri 位图落盘与 GPUI 图片快照共用此入口；通用 file_attach_data 和复制文件转换原契约不变。
+- GPUI 新增 terminal/clipboard.rs，按“文件路径 → 图片条目 → 文字”分流。文件路径转到落点路径处理器；图片消费 GPUI 已捕获的原始编码快照，在 Tokio blocking 线程解码/编码并写入共享附件目录，再复用目标 SessionHandle 的 shell/WSL 引用和括号粘贴，不追加回车。不会因异步过程中用户复制新内容而重读成另一张图，也不把损坏图片静默替换为同条目的文字。
+- 场景：无终端忽略；空条目忽略；普通文字继续原来的输入模式编码；路径多文件不会无分隔拼接；混合路径/图片/文字明确按优先级；图片非 UTF 内容由实际解码确认，不信任 format 字段；超限、损坏、目录不可写和目标连接不可用显示双语错误。关闭会话后取消后续发送，后台编码完成发现取消时删除自己生成的附件；等待期间切换 Pane 不改变目标代次。
+- 自动化：core 共 59 项通过（含共享图像 8 项 Windows 适用测试）；GPUI 共 135 项通过，新增 5 项覆盖路径分流、混合优先级、坏图片、真实 BMP 快照转 PNG 并核对像素、已取消会话；Tauri clipboard_image 定向 3 项通过（含 20 MiB/+1、BMP 文件标准化）；4 个既有剪贴板脚本共 13 项通过；npx tsc --noEmit 通过。既有编解码测试迁入 core，文件读取边界测试保留 Tauri，未以复制测试实现制造通过数。
+- 图分析：被抽取的 decode/encode_png/validate_dimensions/first_decodable/to_bmp、原生 read、save_terminal_image 与 GPUI paste 等均因旧索引未解析返回 UNKNOWN；按终端图片契约和全部 clipboard_image/clipboard_dib 消费者补查后迁移，不将 UNKNOWN 当安全。diff 报 47 个符号、34 个文件、2 条 Pane 边界流程、MEDIUM；新模块尚未索引，图结果不证明无其他影响。
+- 尚未验收：真实系统剪贴板（含 Snipaste、损坏优先格式回退）、中英文界面实际切换、PowerShell/WSL 窗口拖放；macOS/Linux 本机编译与系统操作；Alt+V 图片专用入口/CLI 能力模式、SSH 上传和 GPUI 附件保留期清理仍需后续接线。S1.10 与整体迁移继续保持部分完成，不以本批自动化替代手测门禁。
+- 收尾验证：GPUI debug 构建通过（保留 7 条既有 dead_code 警告）；core 关闭默认 feature 的独立 cargo check 通过，图片依赖按 feature 引入；严格架构检查 1572 个源文件、0 超限；git diff --check 通过，仅已有换行符提示。Tauri 定向测试最终复跑 3 项通过，保留既有原子操作 deprecated 警告，未修改无关代码。
+
+### 2026-11-01：S1.11 终端设置接线（部分完成，平台操作待验收）
+
+- 发现与分层：GPUI 字体/字号和终端历史配置先前固定于渲染/引擎初始化，现有设置页没有完整消费共用偏好。设置的归一化与落盘属于 core-prefs/宿主，终端历史和默认光标属于 term-engine，字体度量、文字样式和网格重算属于 GPUI；不在渲染末端用另一套默认值掩盖上游契约。
+- 触点清单：新增 core-prefs/terminal.rs（强类型读取、范围校验、领域键写回）；settingsStore 与生成 defaults fixture（127 键）；同步备份 preferences 分类；Tauri terminalAppearance/useXTermController（构造/热更新、行高变化 refit）；term-engine configure（原地更新配置）；GPUI preferences/main/model/render/appearance/terminal_settings（加载、字体栈、光标几何、异步保存与热更新）；双语资源及 core 契约。原生剪贴板、daemon 协议和数据库迁移本批不变。
+- 共用契约：沿用 fontFamily/fontSize/terminalScrollbackCustomEnabled/terminalScrollbackRows，新增 terminalLineHeight 与 terminalCursorStyle。字号 8–32、行高 1–2、自定义历史 1000–50000，关闭自定义时 9000；光标 bar/block/underline。数值以 f64 保存，回归明确断言 JSON 行高 1.4，不写入 f32 扩展误差；未知设置字段保留。
+- GPUI 使用可键盘操作的设置按钮、懒创建字体编辑器和双语错误。保存期间禁用变更，成功才更新所有现有 SessionHandle 的引擎、字体度量与 PTY 网格，并清选择拖动状态；失败保留旧配置。无终端也可保存，新建终端在渲染入口消费同一偏好。历史增减以当前实际生效值为基准，不暴露关闭状态下隐藏的旧值。
+- 引擎原地 set_options，不重建 Term/PTY，不重置半截 ANSI 解析、当前屏幕、键盘模式或 OSC52 设置；应用 DECSCUSR 覆盖保留，reset 后恢复新的默认光标。缩小历史覆盖备用屏激活时的非活动主屏。字体栈按引号/逗号解析，GPUI 系统回退与字体度量共用描述/字号；beam/underline 使用像素几何，block 保留反色，滚动历史或隐藏光标不绘制叠层。
+- 场景覆盖：默认/非法偏好、自定义切换与上限、未知字段与双壳原始键往返、多个 Pane 热更新、保存失败/并发按钮禁用、无终端懒加载、应用光标覆盖与 reset、备用屏/缩小历史、半截控制序列跨配置保留。实际焦点/分屏/跨 DPI、语言切换及双壳窗口读取同值仍须手测；不把模型测试等同这些平台操作。
+- 风险：既有 GitNexus 对 main new、sync_terminal_size、terminal_pane_previews/pane_element 报 CRITICAL（根壳约 801–820 个传递符号、163 条流程），useSettingsStore 报 CRITICAL（62 个直接、1053 个传递、164 条流程且 enrichment partial），已在改前提示；useXTermController 为 LOW。若干新增或旧索引未解析符号为 UNKNOWN，按源码、入口和契约补查，不作为无影响结论。当前全量未提交 diff 曾报 65 符号、45 文件、821 个影响、CRITICAL，包含此前迁移批次；新增模块尚未索引，图结果不是完整覆盖保证。
+- 自动化：term-engine 16 项通过；core-prefs 9 项通过；GPUI 137 项通过；外观/defaultTheme 脚本 3 项通过；npx tsc --noEmit 通过；defaults --check 确认 127 键。最终 f64 修改后复跑 core-prefs 9 项及 GPUI 串行 137 项全部通过，debug 构建通过，保留 7 条既有 dead_code 警告；严格架构检查 1577 个源文件、0 超限；git diff --check 通过。
+- 原生异常证据：一次默认并发 GPUI 全测未到汇总便发生 0xc0000005；Windows Application Event 1000 指向 MozartBreathCore.dll、偏移 00000000001ebb96。随后串行与默认并发各 137 项通过，最终 f64 复跑串行再通过。保留 %TEMP%/cli-gpui-terminal-settings-final.log、-serial.log、-parallel-retry.log 和 cli-gpui-terminal-settings-f64-tests.log，不宣称偶发异常根因已解决，也未改动/停用系统组件。
+- 启动回归：复制 debug exe 至隔离 %TEMP%/cli-gpui-settings-smoke-03b7d839d84645c9b67f53304503682d，portable.flag + --smoke 正常退出（0），首帧 433ms，首帧后服务同为 433ms。无 sidecar 的隔离环境明确报 daemon executable not found，未连接或修改用户安装版 daemon；本测试没有终端，不替代 S1.11 即时设置或 S1.10 剪贴板/拖放验收。
+- 结论：S1.11 产品路径已接线、自动化通过，真实设置操作及双壳读取同值证据缺失，继续标记部分完成；整体 GPUI 迁移仍进行中。
+
+### 2026-11-01：S1.12 缓存链路前置审计（未验收）
+
+- 审计锁定 gpui-pre 0.3.10 的 StyledText、WindowTextSystem、LineLayoutCache 和 Window::paint_glyph：现有业务渲染已进入框架当前/前一帧行缓存，同窗 Pane 共用 glyph atlas，不能重复建设无界缓存或以 FontMetricsCache 测试冒充 shaping 命中证据。
+- 记录字体库代次、跨 DPI 栅格键、跨窗口 GPU 资源和隐藏恢复边界；区分应用每帧文字/runs 构造与框架 shaping 热点。后续先做实际布局复用诊断和 1/2/4/8 Pane 帧时间，再决定有界行准备缓存。
+- 新增 `research/terminal-text-cache-audit-2026-11-01.md`；本小批没有修改产品代码、没有运行 8 分屏性能测量，S1.12 不标记完成。
+
+### 2026-11-01：S1.12 原生缓存诊断与 13 组合成基准（部分完成）
+
+- 上轮完成 S1.11 验证/记录和缓存审计，属于可验证进展；本轮继续实施诊断。分支仍无 upstream，仅只读检查，未同步或提交。
+- 改前 impact：styled_lines 未索引为 UNKNOWN，main 无解析调用者为 UNKNOWN；源码确认前者由 TerminalModel/terminal_pane_previews 调用，后者为 Cargo 二进制入口，不把零调用当安全。抽取行准备后产品仍用 StyledText 与原光标叠层。
+- 新增 terminal/cache_benchmark.rs、cache_metrics.rs 和 --terminal-cache-benchmark：服务/偏好初始化前分流，独立原生窗口复用 term-engine 与生产行准备，测量真实布局对象 Weak 身份复用。跟踪不持有强引用，4096 项有界；异常/缺样本返回非零。
+- 场景覆盖 1/2/4/8 Pane × 静态共用/独立/滚动，加 8 Pane 字号/行高/选择/搜索变化，共 13 组；含颜色、粗斜体、CJK 和组合字符。无用户项目/偏好写入/daemon/PTY 创建；正常产品路径不新增诊断定时刷新。
+- 实跑每组 warmup 8 帧 + 采样 60 帧，退出 0。8 Pane 静态对象复用均 100%，滚动 91.67%，外观变化 87.40%，errors 全 0。回调 p95 13.89–15.76ms、准备 CPU p95 4.34–4.83ms；不是 GPU 呈现或真实终端 60fps 证据。完整 JSON 与边界已写 research。
+- 5 项新增测试通过，GPUI 全 142 项串行通过；debug 构建保留 7 条既有 dead_code；严格架构 1579 源文件零超限，diff 检查通过。CHANGELOG 和功能清单同步。
+- 仍待真实 PTY/完整壳的帧呈现、glyph atlas 命中率、跨 DPI/窗口、字体代次、resize/备用屏/隐藏恢复，持久 shaping LRU 的失效设计与热点验证；S1.12 部分完成，整体目标 active。
+
+### 2026-11-01：S1.12 有界行准备 LRU 接入与性能对照（部分完成）
+
+- 前轮原生基准及测试/文档有实质进展；本轮检查 authoritative worktree 后继续。分支无上游，未同步/提交。impact 对 terminal_pane_previews 报 CRITICAL（1 直接、801 传递、163 流程），已改前提示；styled_lines/prepared_lines 未索引，render 未找到为 UNKNOWN，按实际 Render→预览→model→行准备调用链补查，不作为零影响结论。
+- 发现：每 Pane 每次渲染重新构造所有行文字/runs，即使框架 shaping 已命中。新增 row_cache.rs，在首个终端渲染时懒创建应用级共享缓存，模型渲染传同一实例；产品仍用 StyledText，未持久保存平台字体/GPU/shaping 对象，不绕开框架字库/DPI失效。该交付是行准备缓存，不替代计划中的完整 shaping 生命周期验收。
+- 精确键覆盖可见 Cell 内容/颜色/flags/组合字、字体描述与fallback、调色板、行内选择/URL/搜索/方块光标。行号不进入键，可复用滚动行；bar/underline 几何、字号/行高每帧重算。快速指纹只定位，碰撞后逐项验证。上限 512 项和 8 MiB 估算载荷，LRU 淘汰，超大行绕过，避免保留完整历史。
+- 定向风险场景已覆盖：8 Pane 共用/独立/滚动、字号/行高/字体/调色板、选择/搜索/逆向边界、CJK/组合字、备用屏恢复、resize 和隐藏光标；跨 DPI/多窗口与真实字库/隐藏恢复仍待平台验收。契约写入 gpui-terminal-cache-contracts.md。
+- 首轮逐字段散列使准备耗时回归，保留证据后优化指纹，不以命中率掩盖回归。最终同一 exe 的 cached/uncached 各 13 组退出 0；8 Pane 准备 p95 分别为 4.214/4.251、4.127/4.218、4.535/4.688、4.223/4.653ms。单次配对不能宣称普遍显著加速；原始 JSON 和范围说明写 research。
+- 最终 GPUI 148 项串行通过，新增 6 项验证精确命中、碰撞、LRU/字节预算、超大绕过及渲染一致性；debug 构建通过（7 条既有 dead_code），严格架构 1580 源文件零超限，diff 检查通过。CHANGELOG/功能清单同步。
+- 原生环境异常：一次 cargo.exe 在编译输出前 c0000005，事件 1000 模块 unknown、输出日志为空，确认进程结束后重试通过；不混同此前测试进程 MozartBreathCore.dll 事件，不认定已解决。
+- S1.12 继续部分完成：真实 PTY/完整壳呈现、跨 DPI/窗口/字库代次、隐藏恢复和完整 shaping 生命周期仍缺证据；整体迁移保持 active。

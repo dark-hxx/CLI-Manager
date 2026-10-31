@@ -204,6 +204,15 @@ impl Client {
     pub async fn list(&self) -> Result<Value, String> {
         self.request(json!({"type":"list"})).await
     }
+    pub async fn reconcile(&self, active_session_ids: &[String]) -> Result<Value, String> {
+        let response = self
+            .request(json!({"type":"reconcile", "active_session_ids": active_session_ids}))
+            .await?;
+        response
+            .get("summary")
+            .cloned()
+            .ok_or_else(|| "daemon reconcile response missing summary".to_owned())
+    }
 
     pub async fn create(
         &self,

@@ -9,6 +9,47 @@ fn engine() -> Engine {
     Engine::new(Size::new(12, 3).unwrap(), 100, EventProxy::new(|_| {})).unwrap()
 }
 
+#[test]
+fn configuration_updates_history_and_cursor_without_resetting_parser_or_content() {
+    let mut model = engine();
+    model.advance(b"keep\x1b[3");
+    assert!(model.configure(2, CursorShape::Beam).unwrap());
+    model.advance(b"1m red");
+    let frame = model.snapshot();
+    assert_eq!(line(&frame, 0), "keep red");
+    assert_eq!(frame.rows[0].1[5].fg, Color::Named(NamedColor::Red));
+    assert_eq!(frame.cursor.shape, CursorShape::Beam);
+    assert!(!model.configure(2, CursorShape::Beam).unwrap());
+    assert_eq!(
+        model.configure(100_001, CursorShape::Block),
+        Err("scrollback limit exceeded")
+    );
+    for _ in 0..20 {
+        model.advance(b"\r\nnext");
+    }
+    assert_eq!(model.term.grid().history_size(), 2);
+    model.reset(Size::new(12, 3).unwrap());
+    assert_eq!(model.snapshot().cursor.shape, CursorShape::Beam);
+}
+
+#[test]
+fn configuration_respects_application_cursor_overrides_and_inactive_history() {
+    let mut model = engine();
+    for _ in 0..15 {
+        model.advance(b"row\r\n");
+    }
+    model.advance(b"\x1b[4 q");
+    model.configure(10, CursorShape::Beam).unwrap();
+    assert_eq!(model.snapshot().cursor.shape, CursorShape::Underline);
+    model.advance(b"\x1b[0 q");
+    assert_eq!(model.snapshot().cursor.shape, CursorShape::Beam);
+    model.advance(b"\x1b[?1049hALT");
+    model.configure(1, CursorShape::Block).unwrap();
+    model.advance(b"\x1b[?1049l");
+    assert_eq!(model.term.grid().history_size(), 1);
+    assert_eq!(model.snapshot().cursor.shape, CursorShape::Block);
+}
+
 fn line(snapshot: &FrameSnapshot, row: usize) -> String {
     snapshot
         .rows

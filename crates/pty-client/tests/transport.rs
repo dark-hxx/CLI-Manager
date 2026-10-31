@@ -478,3 +478,57 @@ async fn unanswered_heartbeat_terminates_connection() {
     assert!(matches!(event, Some(Event::Disconnected)));
     server.await.unwrap();
 }
+
+#[tokio::test]
+async fn reconcile_submits_active_sessions_and_returns_diagnostic_summary() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let mut socket = accept_async(stream).await.unwrap();
+        socket.next().await.unwrap().unwrap();
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "auth_ok",
+                    "protocol_version": 3,
+                    "binary_protocol_version": 1,
+                    "features": ["session_status_push_v1", "ws_native_client_v1", "ws_binary_output_v1"]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let request: Value =
+            serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap()).unwrap();
+        assert_eq!(request["type"], "reconcile");
+        assert_eq!(request["active_session_ids"], json!(["visible-1"]));
+        socket
+            .send(Message::Text(
+                json!({
+                    "type": "reconciled",
+                    "id": request["id"],
+                    "summary": {
+                        "active_count": 1,
+                        "tracked_count": 2,
+                        "marked_missing": 0,
+                        "protected_count": 2,
+                        "cleaned_count": 0,
+                        "skipped_empty_active_list": false
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+    });
+    let (client, _events) =
+        Client::connect(Endpoint::new(port, "token".into()).unwrap(), options())
+            .await
+            .unwrap();
+    let summary = client.reconcile(&["visible-1".to_owned()]).await.unwrap();
+    assert_eq!(summary["cleaned_count"], 0);
+    server.await.unwrap();
+}

@@ -1,4 +1,8 @@
 mod model;
+pub(crate) mod appearance;
+pub(crate) mod clipboard;
+pub(crate) mod fonts;
+pub(crate) mod path_drop;
 pub mod render;
 
 pub use model::TerminalModel;
@@ -281,6 +285,14 @@ impl AttachCancellation {
 
 /// Creates or probes a project session before attaching. The stable session ID
 /// makes a lost create response recoverable without launching a second PTY.
+pub async fn attach_existing_session(
+    model: Arc<Mutex<TerminalModel>>,
+    cancellation: Arc<AttachCancellation>,
+    connection: Arc<TerminalConnection>,
+) -> Result<(), String> {
+    attach_with_reconnect(model, None, cancellation, connection).await
+}
+
 pub async fn attach_project_from_environment(
     model: Arc<Mutex<TerminalModel>>,
     cwd: String,
@@ -361,6 +373,9 @@ async fn attach_once(
     connection: Arc<TerminalConnection>,
 ) -> Result<(), String> {
     let (client, mut events) = Client::connect(endpoint, ConnectionOptions::default()).await?;
+    if let Err(error) = crate::routing_bootstrap::reconcile_persisted_service().await {
+        eprintln!("GPUI persisted routing reconciliation skipped: {error}");
+    }
     connection.set(client.clone());
     let _connection_lease = ConnectionLease {
         connection: connection.clone(),
@@ -529,13 +544,12 @@ fn endpoint_from_environment_or_discovery() -> Result<Endpoint, String> {
     }
     let database = crate::paths::database_path()?;
     let root = database.parent().ok_or("daemon data root unavailable")?;
-    Endpoint::from_discovery_path(&root.join("daemon.json"))?
-        .or(Endpoint::from_discovery_path(
-            &root.join("daemon.dev.json"),
-        )?)
-        .ok_or_else(|| "daemon endpoint is not configured".into())
+    crate::daemon_bootstrap::endpoint_or_start(root)
 }
 
 pub fn model(session_id: String) -> Result<Arc<Mutex<TerminalModel>>, String> {
     Ok(Arc::new(Mutex::new(TerminalModel::new(session_id)?)))
 }
+pub(crate) mod cache_benchmark;
+mod cache_metrics;
+pub(crate) mod row_cache;

@@ -209,7 +209,9 @@ async fn reads_shared_history_alias_and_starred_metadata() {
 #[tokio::test]
 async fn aggregates_request_logs_for_project_without_writing() {
     let directory = tempfile::tempdir().unwrap();
-    let pool = DbPool::open(directory.path().join("request-logs.db")).await.unwrap();
+    let pool = DbPool::open(directory.path().join("request-logs.db"))
+        .await
+        .unwrap();
     run_migrations(pool.writer()).await.unwrap();
     sqlx::query(
         "INSERT INTO request_logs (request_id, source, project_key, session_id, file_path, event_key, event_index, timestamp_ms, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens, created_at_ms, updated_at_ms) VALUES \
@@ -256,7 +258,13 @@ async fn aggregates_request_logs_for_project_without_writing() {
         .request_log_breakdown_filtered(None, None, None)
         .await
         .unwrap();
-    assert_eq!(all_breakdown.iter().map(|item| item.request_count).sum::<i64>(), 4);
+    assert_eq!(
+        all_breakdown
+            .iter()
+            .map(|item| item.request_count)
+            .sum::<i64>(),
+        4
+    );
     pool.close().await;
 }
 

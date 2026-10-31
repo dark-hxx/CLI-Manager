@@ -2,48 +2,47 @@ use cli_manager_term_engine::input::{
     encode as encode_key, encode_mouse, InputMode, Key, Modifiers,
     MouseButton as TerminalMouseButton, MouseEvent, MouseEventKind, MouseInputMode,
 };
-use exit::{ExitAction, ExitBehavior, ExitCoordinator};
+use exit::ExitBehavior;
 use gpui::{
     div, prelude::*, px, rgb, size, App, Bounds, ClipboardItem, Context, DragMoveEvent,
-    ElementInputHandler, EntityInputHandler, FocusHandle, MouseButton, MouseDownEvent,
-    MouseMoveEvent, MouseUpEvent, Pixels, Point, ScrollDelta, ScrollEvent, TextInputConfiguration,
-    UTF16Selection, Window, WindowBounds, WindowOptions,
+    ElementInputHandler, FocusHandle, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, ScrollDelta, ScrollEvent, TitlebarOptions, Window, WindowBounds, WindowOptions,
 };
 use gpui_component::{
     input::{Editor, EditorState},
     Root,
 };
-use std::{
-    collections::HashMap,
-    ops::Range,
-    path::PathBuf,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc, time::Instant};
+mod background_sessions;
+mod daemon_bootstrap;
 mod drag_preview;
 mod exit;
 mod files;
 mod git;
 mod history;
 mod i18n;
+mod ime;
 mod keymap;
+mod overlay;
 mod paths;
 mod preferences;
 mod preview;
 mod preview_host;
-mod overlay;
 mod projects;
 mod render;
+mod routing_bootstrap;
 mod settings_host;
+mod shell_controls;
 mod stats;
 mod terminal;
+mod terminal_input;
+mod terminal_settings;
 mod workspace;
 use projects::ProjectLoad;
 const ZH: &str = include_str!("../assets/i18n/zh-CN.json");
 const EN: &str = include_str!("../assets/i18n/en-US.json");
 struct DesktopShell {
+    terminal_settings: terminal_settings::TerminalSettingsState,
     messages: std::collections::HashMap<String, String>,
     language: preferences::InterfaceLanguage,
     theme: preferences::AppTheme,
@@ -84,6 +83,7 @@ struct DesktopShell {
     _runtime: Arc<tokio::runtime::Runtime>,
     sessions: terminal::SessionRegistry,
     terminal_size: Option<(u16, u16)>,
+    terminal_input_error: Option<&'static str>,
     terminal_sizes: HashMap<String, (u16, u16)>,
     terminal_cell_size: (f32, f32),
     pane_bounds: HashMap<String, Bounds<Pixels>>,
@@ -98,6 +98,7 @@ struct DesktopShell {
     command_palette_query: String,
     command_palette_selected: usize,
     settings_open: bool,
+    background_open: bool,
     stats_open: bool,
     extensions_open: bool,
     stats: stats::StatsState,
@@ -118,6 +119,8 @@ struct DesktopShell {
     exit_override: Option<ExitBehavior>,
     exit_behavior: ExitBehavior,
     background_include_finished: bool,
+    background_sessions: background_sessions::BackgroundSessionStore,
+    background_monitor: Option<background_sessions::MonitorHandle>,
     preview_controller: cli_manager_preview::PreviewController,
     preview_assets: cli_manager_preview::protocol::AssetRegistry,
     preview_webview: Option<cli_manager_preview::platform::native::NativeWebView>,
@@ -155,6 +158,10 @@ impl ThemePalette {
         text: 0x1b2430,
     };
 }
+fn should_use_low_power_mode(window_active: bool) -> bool {
+    !window_active
+}
+
 impl DesktopShell {
     fn new(
         language_override: Option<&str>,
@@ -163,16 +170,33 @@ impl DesktopShell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let shell_started = Instant::now();
         let startup_preferences = preferences::load(database.as_deref());
+        eprintln!(
+            "[gpui-startup] phase=preferences duration_ms={}",
+            shell_started.elapsed().as_millis()
+        );
         let language = match language_override {
             Some("en-US") => preferences::InterfaceLanguage::EnUs,
             Some("zh-TW") => preferences::InterfaceLanguage::ZhTw,
             _ => startup_preferences.language,
         };
         let projects = {
+            let project_started = Instant::now();
+            let (frame_ready, frame_received) = tokio::sync::oneshot::channel();
+            window.on_next_frame(move |_, _| {
+                let _ = frame_ready.send(());
+            });
             let task = runtime.spawn(projects::load_current(database.clone()));
             cx.spawn(async move |this, cx| {
                 let result = task.await;
+                eprintln!(
+                    "[gpui-startup] phase=project-snapshot duration_ms={}",
+                    project_started.elapsed().as_millis()
+                );
+                if frame_received.await.is_err() {
+                    return;
+                }
                 let _ = this.update(cx, |this, cx| {
                     this.projects = match result {
                         Ok(Ok(snapshot)) => ProjectLoad::Ready(snapshot),
@@ -190,6 +214,10 @@ impl DesktopShell {
                             .collect::<Vec<_>>(),
                         _ => Vec::new(),
                     };
+                    eprintln!(
+                        "[gpui-startup] phase=project-restore-start elapsed_ms={}",
+                        project_started.elapsed().as_millis()
+                    );
                     this.maybe_restore_on_startup(project_ids, cx);
                     cx.notify();
                 });
@@ -270,6 +298,7 @@ impl DesktopShell {
         .detach();
         Self {
             language,
+            terminal_settings: terminal_settings::TerminalSettingsState::new(startup_preferences.terminal),
             theme: startup_preferences.theme,
             keymap: startup_preferences.keymap,
             file_tree: files::FileTreeState::Empty,
@@ -317,6 +346,7 @@ impl DesktopShell {
             _runtime: runtime.clone(),
             sessions: terminal::SessionRegistry::new(),
             terminal_size: None,
+            terminal_input_error: None,
             terminal_sizes: HashMap::new(),
             terminal_cell_size: (8.0, 16.0),
             pane_bounds: HashMap::new(),
@@ -331,6 +361,7 @@ impl DesktopShell {
             command_palette_query: String::new(),
             command_palette_selected: 0,
             settings_open: false,
+            background_open: false,
             stats_open: false,
             extensions_open: false,
             stats: Default::default(),
@@ -351,6 +382,8 @@ impl DesktopShell {
             exit_override: None,
             exit_behavior: startup_preferences.exit_behavior,
             background_include_finished: startup_preferences.background_include_finished,
+            background_sessions: background_sessions::BackgroundSessionStore::default(),
+            background_monitor: None,
             preview_controller: cli_manager_preview::PreviewController::new(
                 cli_manager_preview::probe::Probe::from_environment(),
                 cli_manager_preview::PreviewHost::default(),
@@ -365,8 +398,133 @@ impl DesktopShell {
             preview_display_subscription: None,
         }
     }
+    fn open_background_sessions(&mut self) {
+        self.background_open = true;
+        self.settings_open = false;
+        self.stats_open = false;
+        self.extensions_open = false;
+        self.history_open = false;
+        self.history.stop_watcher();
+        if let Some(monitor) = &self.background_monitor {
+            let _ = monitor.reconcile(self.sessions.session_ids(), true);
+        }
+    }
 
+    fn attach_background_session(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        if self.sessions.set_active(session_id) {
+            if let Some(workspace) = self.workspace_sessions.as_mut() {
+                workspace.set_active_session(session_id);
+            }
+            self.background_open = false;
+            self.terminal_size = None;
+            if let Some(monitor) = &self.background_monitor {
+                let _ = monitor.reconcile(self.sessions.session_ids(), false);
+            }
+            return;
+        }
+        let Some(metadata) = self.background_sessions.get(session_id).cloned() else {
+            return;
+        };
+        let Some(cwd) = metadata.cwd.clone() else {
+            eprintln!("GPUI background session has no cwd: {session_id}");
+            return;
+        };
+        let Some(project_id) = self.project_id_for_path(&cwd) else {
+            eprintln!("GPUI background session cwd is outside configured projects: {cwd}");
+            return;
+        };
+        if self.selected_project.as_deref() != Some(project_id.as_str())
+            || self.workspace_sessions.is_none()
+        {
+            self.open_project_terminal_with_restore(&project_id, false, cx);
+        }
+        let Some(workspace) = self.workspace_sessions.as_mut() else {
+            return;
+        };
+        if workspace.set_active_session(session_id) {
+            self.sessions.set_active(session_id);
+            self.background_open = false;
+            return;
+        }
+        let pane_id = workspace.panes().next_pane_id();
+        workspace.split_active(
+            session_id.to_owned(),
+            workspace::pane_tree::SplitDirection::Right,
+            workspace::session::SessionKind::RealPty,
+        );
+        let Ok(model) = terminal::model(session_id.to_owned()) else {
+            let _ = workspace.close_active();
+            return;
+        };
+        let cancellation = Arc::new(terminal::AttachCancellation::new());
+        let connection = Arc::new(terminal::TerminalConnection::new());
+        let _ = self._runtime.spawn(terminal::attach_existing_session(
+            model.clone(),
+            cancellation.clone(),
+            connection.clone(),
+        ));
+        self.sessions.insert(
+            session_id.to_owned(),
+            terminal::SessionHandle::new(model, cancellation, connection),
+        );
+        let _ = workspace.set_active_pane(pane_id);
+        self.persist_workspace_snapshot();
+        self.background_open = false;
+        self.terminal_size = None;
+        if let Some(monitor) = &self.background_monitor {
+            let _ = monitor.reconcile(self.sessions.session_ids(), false);
+        }
+    }
+
+    fn project_id_for_path(&self, cwd: &str) -> Option<String> {
+        let path = std::path::Path::new(cwd);
+        let ProjectLoad::Ready(loaded) = &self.projects else {
+            return None;
+        };
+        loaded.snapshot.projects.iter().find_map(|project| {
+            let project_path = std::path::Path::new(loaded.snapshot.project_path(project));
+            path.starts_with(project_path).then(|| project.id.clone())
+        })
+    }
+    fn start_background_monitor(&mut self, cx: &mut Context<Self>) {
+        if self.background_monitor.is_some() {
+            return;
+        }
+        let (handle, mut events) = background_sessions::spawn_monitor(&self._runtime);
+        let _ = handle.reconcile(self.sessions.session_ids(), false);
+        self.background_monitor = Some(handle);
+        cx.spawn(async move |this, cx| {
+            while let Some(event) = events.recv().await {
+                let _ = this.update(cx, |shell, cx| {
+                    match event {
+                        background_sessions::MonitorEvent::Snapshot(listing) => {
+                            if let Err(error) =
+                                shell.background_sessions.replace_from_listing(&listing)
+                            {
+                                eprintln!("GPUI background session listing ignored: {error}");
+                            }
+                        }
+                        background_sessions::MonitorEvent::Status(status) => {
+                            shell.background_sessions.apply_status(&status);
+                        }
+                        background_sessions::MonitorEvent::Error(error) => {
+                            eprintln!("GPUI background session monitor: {error}");
+                        }
+                    }
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    fn close_background_session(&self, session_id: &str) {
+        if let Some(monitor) = &self.background_monitor {
+            let _ = monitor.close(session_id.to_owned());
+        }
+    }
     fn toggle_settings(&mut self) {
+        self.background_open = false;
         self.settings_open = !self.settings_open;
         if self.settings_open {
             self.command_palette_open = false;
@@ -383,11 +541,9 @@ impl DesktopShell {
             .filter(|path| path.is_dir())
             .unwrap_or_else(|| PathBuf::from(main_path))
     }
-
     fn session_namespace(&self, project_id: &str) -> String {
         workspace::worktree::session_namespace(project_id, self.active_worktree_path.as_deref())
     }
-
     fn select_worktree(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         let Some(project_id) = self.selected_project.clone() else {
             return;
@@ -454,135 +610,6 @@ impl DesktopShell {
             });
         })
         .detach();
-    }
-    fn toggle_restore_enabled(&mut self) {
-        self.restore_enabled = !self.restore_enabled;
-        self.persist_runtime_settings();
-    }
-    fn toggle_restore_mode(&mut self) {
-        self.restore_mode = match self.restore_mode {
-            preferences::RestoreMode::Ask => preferences::RestoreMode::Auto,
-            preferences::RestoreMode::Auto => preferences::RestoreMode::Ask,
-        };
-        self.persist_runtime_settings();
-    }
-    fn cycle_exit_behavior(&mut self) {
-        self.exit_behavior = match self.exit_behavior {
-            ExitBehavior::Ask => ExitBehavior::Background,
-            ExitBehavior::Background => ExitBehavior::Minimize,
-            ExitBehavior::Minimize => ExitBehavior::Discard,
-            ExitBehavior::Discard => ExitBehavior::Ask,
-        };
-        self.persist_runtime_settings();
-    }
-    fn toggle_background_include_finished(&mut self) {
-        self.background_include_finished = !self.background_include_finished;
-        self.persist_runtime_settings();
-    }
-    fn toggle_command_palette(&mut self) {
-        self.command_palette_open = !self.command_palette_open;
-        self.command_palette_selected = 0;
-        if !self.command_palette_open {
-            self.command_palette_query.clear();
-        }
-    }
-    fn command_items(&self) -> Vec<(String, String)> {
-        let mut commands = vec![
-            (
-                self.message("shell.command.toggleLanguage"),
-                "language".to_owned(),
-            ),
-            (
-                self.message("shell.command.toggleTheme"),
-                "theme".to_owned(),
-            ),
-            (
-                self.message("shell.command.closePane"),
-                "close-pane".to_owned(),
-            ),
-            (
-                self.message("shell.history.sourceAll"),
-                "history-source:all".to_owned(),
-            ),
-            (
-                self.message("shell.history.sourceClaude"),
-                "history-source:claude".to_owned(),
-            ),
-            (
-                self.message("shell.history.sourceCodex"),
-                "history-source:codex".to_owned(),
-            ),
-        ];
-        if let ProjectLoad::Ready(loaded) = &self.projects {
-            commands.extend(
-                loaded
-                    .snapshot
-                    .projects
-                    .iter()
-                    .map(|project| (project.name.clone(), format!("project:{}", project.id))),
-            );
-        }
-        commands
-    }
-    fn filtered_command_items(&self) -> Vec<(String, String)> {
-        let query = self.command_palette_query.to_ascii_lowercase();
-        self.command_items()
-            .into_iter()
-            .filter(|(label, _)| query.is_empty() || label.to_ascii_lowercase().contains(&query))
-            .collect()
-    }
-    fn move_command_selection(&mut self, delta: isize) {
-        let count = self.filtered_command_items().len();
-        if count == 0 {
-            self.command_palette_selected = 0;
-            return;
-        }
-        self.command_palette_selected =
-            (self.command_palette_selected as isize + delta).rem_euclid(count as isize) as usize;
-    }
-    fn run_selected_command(&mut self, cx: &mut Context<Self>) {
-        let commands = self.filtered_command_items();
-        if let Some((_, command)) = commands.get(self.command_palette_selected) {
-            self.run_command(command, cx);
-        }
-    }
-    fn run_command(&mut self, command: &str, cx: &mut Context<Self>) {
-        match command {
-            "language" => self.toggle_language(),
-            "theme" => self.toggle_theme(),
-            "close-pane" => self.close_active_terminal(),
-            "history-source:all" => {
-                self.history.set_source(history::SourceFilter::All);
-                self.open_history(cx);
-            }
-            "history-source:claude" => {
-                self.history.set_source(history::SourceFilter::Claude);
-                self.open_history(cx);
-            }
-            "history-source:codex" => {
-                self.history.set_source(history::SourceFilter::Codex);
-                self.open_history(cx);
-            }
-            _ if command.starts_with("project:") => {
-                let project_id = &command[8..];
-                let has_snapshot = self.restore_enabled
-                    && workspace::persistence::load(project_id)
-                        .ok()
-                        .flatten()
-                        .is_some();
-                self.selected_project = Some(project_id.to_owned());
-                self.open_project_terminal_with_restore(project_id, has_snapshot, cx);
-            }
-            _ => {}
-        }
-        self.command_palette_open = false;
-        self.command_palette_query.clear();
-    }
-    fn palette(&self) -> ThemePalette {
-        match self.theme {
-            preferences::AppTheme::Dark => ThemePalette::DARK,
-            preferences::AppTheme::Light => ThemePalette::LIGHT,
-        }
     }
     fn maybe_restore_on_startup(&mut self, project_ids: Vec<String>, cx: &mut Context<Self>) {
         if self.restore_handled || self.selected_project.is_some() {
@@ -935,7 +962,9 @@ impl DesktopShell {
             preferences::InterfaceLanguage::EnUs => self.message("shell.language.toSimplified"),
         }
     }
-    fn terminal_pane_previews(&mut self) -> Vec<(String, Vec<gpui::StyledText>)> {
+    fn terminal_pane_previews(&mut self, cx: &mut Context<Self>) -> Vec<(String, Vec<gpui::AnyElement>)> {
+        let cache = terminal::row_cache::shared(cx);
+        let mut cache = cache.borrow_mut();
         let active = self.sessions.active_session_id().map(str::to_owned);
         let session_ids = self
             .workspace_sessions
@@ -966,7 +995,7 @@ impl DesktopShell {
                     .flatten();
                 Some((
                     session_id,
-                    model.styled_lines(selection, &self.terminal_search_query),
+                    model.styled_lines(selection, &self.terminal_search_query, &self.terminal_settings.value, self.terminal_cell_size, &mut cache),
                 ))
             })
             .collect()
@@ -1070,21 +1099,15 @@ impl DesktopShell {
             let _ = client.write_bytes(&session, &data).await;
         });
     }
-    fn sync_terminal_size(&mut self, window: &Window) {
+    fn sync_terminal_size(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.sessions.len() == 0 {
+            return;
+        }
         let bounds = window.bounds();
-        let descriptor = gpui::font("Consolas");
-        let text_system = window.text_system();
-        let font_id = text_system.resolve_font(&descriptor);
-        let font_size = px(16.0);
-        let cell_width = text_system
-            .ch_advance(font_id, font_size)
-            .map(|value| value.as_f32())
-            .unwrap_or(8.0)
-            .max(1.0);
-        let cell_height = (text_system.ascent(font_id, font_size)
-            + text_system.descent(font_id, font_size))
-        .as_f32()
-        .max(1.0);
+        let settings = &self.terminal_settings.value;
+        let (cell_width, natural_height) = terminal::fonts::cell_metrics(
+            terminal::appearance::font_descriptor(settings), px(settings.font_size as f32), window, cx);
+        let cell_height = natural_height * settings.line_height as f32;
         self.terminal_cell_size = (cell_width, cell_height);
         let pane_sizes = self
             .pane_bounds
@@ -1534,7 +1557,7 @@ impl DesktopShell {
     }
     fn pane_element(
         node: &workspace::pane_tree::PaneNode,
-        lines: &mut HashMap<String, Vec<gpui::StyledText>>,
+        lines: &mut HashMap<String, Vec<gpui::AnyElement>>,
         pane_sessions: &HashMap<u64, String>,
         active_session_id: Option<&str>,
         drop_preview: Option<&(String, workspace::pane_tree::DropZone)>,
@@ -1556,6 +1579,7 @@ impl DesktopShell {
                 let pane_session_id = session_id.clone();
                 let callback_session_id = session_id.clone();
                 let drop_target_session = session_id.clone();
+                let file_drop_session = session_id.clone();
                 let preview_zone = drop_preview
                     .and_then(|(target, zone)| (target == &session_id).then_some(*zone));
                 let pane_lines = lines.remove(&session_id).unwrap_or_default();
@@ -1624,6 +1648,9 @@ impl DesktopShell {
                         this.drop_preview = None;
                         cx.notify();
                     }))
+                    .on_drop(cx.listener(move |this, paths: &gpui::ExternalPaths, window, cx| {
+                        this.drop_terminal_paths(&file_drop_session, paths.paths(), window, cx);
+                    }))
                     .children(
                         pane_lines
                             .into_iter()
@@ -1679,109 +1706,6 @@ impl DesktopShell {
                 container.into_any_element()
             }
         }
-    }
-}
-impl EntityInputHandler for DesktopShell {
-    fn text_for_range(
-        &mut self,
-        _range: Range<usize>,
-        adjusted_range: &mut Option<Range<usize>>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<String> {
-        *adjusted_range = Some(0..self.ime_marked_text.encode_utf16().count());
-        Some(self.ime_marked_text.clone())
-    }
-    fn selected_text_range(
-        &mut self,
-        _ignore_disabled_input: bool,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<UTF16Selection> {
-        let length = self.ime_marked_text.encode_utf16().count();
-        Some(UTF16Selection {
-            range: length..length,
-            reversed: false,
-        })
-    }
-    fn marked_text_range(
-        &self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Range<usize>> {
-        (!self.ime_marked_text.is_empty()).then(|| 0..self.ime_marked_text.encode_utf16().count())
-    }
-    fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        self.ime_marked_text.clear();
-        cx.notify();
-    }
-    fn replace_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        text: &str,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.ime_marked_text.clear();
-        self.send_terminal_bytes(text.as_bytes().to_vec());
-        cx.notify();
-    }
-    fn replace_and_mark_text_in_range(
-        &mut self,
-        _range: Option<Range<usize>>,
-        new_text: &str,
-        _new_selected_range: Option<Range<usize>>,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.ime_marked_text.clear();
-        self.ime_marked_text.push_str(new_text);
-        cx.notify();
-    }
-    fn bounds_for_range(
-        &mut self,
-        _range_utf16: Range<usize>,
-        element_bounds: Bounds<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<Bounds<Pixels>> {
-        Some(element_bounds)
-    }
-    fn character_index_for_point(
-        &mut self,
-        _point: Point<Pixels>,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<usize> {
-        Some(self.ime_marked_text.encode_utf16().count())
-    }
-    fn text_length_utf16(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> Option<usize> {
-        Some(self.ime_marked_text.encode_utf16().count())
-    }
-    fn text_input_configuration(
-        &mut self,
-        _window: &mut Window,
-        _cx: &mut Context<Self>,
-    ) -> TextInputConfiguration {
-        TextInputConfiguration::default()
-    }
-    fn paste(&mut self, item: ClipboardItem, _window: &mut Window, _cx: &mut Context<Self>) {
-        let Some(text) = item.text() else {
-            return;
-        };
-        let mode = self
-            .sessions
-            .active()
-            .and_then(|handle| handle.model.lock().ok().map(|model| model.input_mode()))
-            .unwrap_or_default();
-        self.send_terminal_bytes(cli_manager_term_engine::input::encode_paste(
-            text.as_bytes(),
-            mode,
-        ));
     }
 }
 fn load_messages(
@@ -1841,9 +1765,17 @@ fn terminal_grid_size_for_pane(
     )
 }
 fn main() {
+    let startup_started = Instant::now();
     let smoke = std::env::args().any(|arg| arg == "--smoke");
     if std::env::args().any(|arg| arg == "--check") {
         println!("cli-manager-gpui: shell contract compiled");
+        return;
+    }
+    if std::env::args().any(|arg| arg == "--terminal-cache-benchmark") {
+        if let Err(error) = terminal::cache_benchmark::run() {
+            eprintln!("GPUI terminal cache benchmark: {error}");
+            std::process::exit(1);
+        }
         return;
     }
     let language_override = std::env::var("CLI_MANAGER_LANG").ok();
@@ -1859,12 +1791,29 @@ fn main() {
             .build()
             .expect("create GPUI services runtime"),
     );
+    eprintln!(
+        "[gpui-startup] phase=runtime-ready elapsed_ms={}",
+        startup_started.elapsed().as_millis()
+    );
     gpui_platform::application().run(move |cx: &mut App| {
+        eprintln!(
+            "[gpui-startup] phase=application-start elapsed_ms={}",
+            startup_started.elapsed().as_millis()
+        );
         gpui_component::init(cx);
+        eprintln!(
+            "[gpui-startup] phase=components-ready elapsed_ms={}",
+            startup_started.elapsed().as_millis()
+        );
         let bounds = Bounds::centered(None, size(px(1100.), px(720.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("CLI-Manager".into()),
+                    appears_transparent: true,
+                    traffic_light_position: None,
+                }),
                 ..Default::default()
             },
             move |window, cx| {
@@ -1894,8 +1843,8 @@ fn main() {
                     let display = cx.observe_window_display(window, |shell, window, _| {
                         shell.sync_preview_bounds(window);
                     });
-                    let activation = cx.observe_window_activation(window, |shell, _window, cx| {
-                        shell.low_power = !shell.low_power;
+                    let activation = cx.observe_window_activation(window, |shell, window, cx| {
+                        shell.low_power = should_use_low_power_mode(window.is_window_active());
                         cx.notify();
                     });
                     (activation, bounds, visibility, display)
@@ -1906,70 +1855,30 @@ fn main() {
                     shell.preview_visibility_subscription = Some(preview_visibility_subscription);
                     shell.preview_display_subscription = Some(preview_display_subscription);
                 });
-                shell.update(cx, |shell, cx| shell.start_preview_reaper(window, cx));
-                let shell_handle = shell.downgrade();
-                let closing = Arc::new(AtomicBool::new(false));
-                let cleanup_runtime = runtime.clone();
-                window.on_window_should_close(cx, move |_, app| {
-                    if closing.load(Ordering::Acquire) {
-                        return false;
-                    }
-                    let (clients, action) = shell_handle
-                        .update(app, |shell, _| {
-                            shell.flush_workspace_snapshot();
-                            let clients = shell.sessions.clients();
-                            let has_running_tasks =
-                                shell.workspace_sessions.as_ref().is_some_and(|workspace| {
-                                    workspace.has_exit_tasks(shell.background_include_finished)
-                                });
-                            let behavior =
-                                shell.exit_override.take().unwrap_or(shell.exit_behavior);
-                            let action = ExitCoordinator::new(!clients.is_empty())
-                                .decide(behavior, has_running_tasks);
-                            if action == ExitAction::Confirm {
-                                shell.exit_prompt = true;
-                            }
-                            (clients, action)
-                        })
-                        .ok()
-                        .unwrap_or_else(|| (Vec::new(), ExitAction::CloseAllAndExit));
-                    if action == ExitAction::Confirm {
-                        return false;
-                    }
-                    if clients.is_empty() {
-                        return true;
-                    }
-                    if closing
-                        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-                        .is_err()
-                    {
-                        return false;
-                    }
-                    let task = cleanup_runtime.spawn(async move {
-                        let control = clients.first().cloned();
-                        for client in &clients {
-                            if action == ExitAction::CloseAllAndExit {
-                                let _ = client.close_all().await;
-                            } else {
-                                let _ = client.detach().await;
-                            }
-                        }
-                        if action == ExitAction::CloseAllAndExit {
-                            if let Some(client) = control {
-                                let _ = client.shutdown_if_idle().await;
-                            }
-                        }
-                    });
-                    let async_app = app.to_async();
-                    async_app
-                        .spawn(async move |cx| {
-                            let _ = task.await;
-                            cx.update(|cx| cx.quit());
-                        })
-                        .detach();
-                    false
+                shell.update(cx, |shell, cx| {
+                    shell.install_close_handler(window, cx, runtime.clone());
                 });
-                cx.new(|cx| Root::new(shell, window, cx))
+                let deferred_shell = shell.clone();
+                window.on_next_frame(move |window, cx| {
+                    eprintln!(
+                        "[gpui-startup] phase=first-frame-rendered elapsed_ms={}",
+                        startup_started.elapsed().as_millis()
+                    );
+                    deferred_shell.update(cx, |shell, cx| {
+                        shell.start_preview_reaper(window, cx);
+                        shell.start_background_monitor(cx);
+                    });
+                    eprintln!(
+                        "[gpui-startup] phase=post-frame-services elapsed_ms={}",
+                        startup_started.elapsed().as_millis()
+                    );
+                });
+                let root = cx.new(|cx| Root::new(shell, window, cx));
+                eprintln!(
+                    "[gpui-startup] phase=root-created elapsed_ms={}",
+                    startup_started.elapsed().as_millis()
+                );
+                root
             },
         )
         .expect("open GPUI desktop shell");

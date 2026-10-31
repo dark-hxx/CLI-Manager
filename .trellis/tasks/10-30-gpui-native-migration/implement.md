@@ -1,5 +1,7 @@
 # 实施计划（父任务）
 
+> 后续阶段执行顺序以同目录 `implementation-plan-v2.md` 为准；本文件保留里程碑、门禁与子任务索引。
+
 > 父任务只负责编排、跨子任务验收与最终集成评审，本身不改代码。每个子任务目录下都有 `prd.md` / `design.md` / `implement.md`，按各自 `implement.md` 执行。
 > 已确认约束（见 design §0）：`gpui-pre 0.3`、GPU 原生渲染、界面单进程（保留 PTY daemon 与 web-daemon）、仅预览（Markdown 文件 / HTML / PDF）按需嵌入系统 WebView。
 > 通用前置（每个子任务、每个提交批次都适用）：

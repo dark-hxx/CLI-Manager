@@ -117,6 +117,26 @@ impl Engine {
         self.parser.advance(&mut self.term, bytes);
     }
 
+    pub fn configure(
+        &mut self,
+        scrollback: usize,
+        cursor: CursorShape,
+    ) -> Result<bool, &'static str> {
+        if scrollback > 100_000 {
+            return Err("scrollback limit exceeded");
+        }
+        if self.config.scrolling_history == scrollback
+            && self.config.default_cursor_style.shape == cursor
+        {
+            return Ok(false);
+        }
+        self.config.scrolling_history = scrollback;
+        self.config.default_cursor_style.shape = cursor;
+        self.config.default_cursor_style.blinking = false;
+        self.term.set_options(self.config.clone());
+        Ok(true)
+    }
+
     pub fn resize(&mut self, size: Size) {
         if size != self.size {
             self.term.resize(size);

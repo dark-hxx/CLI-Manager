@@ -1,10 +1,11 @@
+use super::row_cache::{PreparedText, RowDecorations, RowPreparationCache};
 use cli_manager_term_engine::search::TextSpan;
 use cli_manager_term_engine::{
     Cell, CellFlags, Color, Colors, CursorShape, FrameSnapshot, NamedColor, Rgb,
 };
 use gpui::{
-    font, px, rgba, FontStyle, FontWeight, Hsla, StrikethroughStyle, StyledText, TextRun,
-    UnderlineStyle,
+    div, prelude::*, px, rgba, FontStyle, FontWeight, Hsla, StrikethroughStyle, StyledText,
+    TextRun, UnderlineStyle,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,51 +26,178 @@ pub fn styled_lines(
     selection: Option<((usize, usize), (usize, usize))>,
     urls: &[TextSpan],
     search: &[TextSpan],
-) -> Vec<StyledText> {
+    settings: &cli_manager_core_prefs::terminal::TerminalPreferences,
+    cell_size: (f32, f32),
+    cache: &mut RowPreparationCache,
+) -> Vec<gpui::AnyElement> {
+    prepared_lines(
+        rows,
+        frame,
+        selection,
+        urls,
+        search,
+        settings,
+        cell_size,
+        Some(cache),
+    )
+    .into_iter()
+    .map(|line| {
+        div()
+            .relative()
+            .h(px(cell_size.1))
+            .text_size(px(settings.font_size as f32))
+            .line_height(px(cell_size.1))
+            .child(StyledText::new(line.text).with_runs(line.runs))
+            .children(line.cursor.map(|(left, top, width, height)| {
+                div()
+                    .absolute()
+                    .left(px(left))
+                    .top(px(top))
+                    .w(px(width))
+                    .h(px(height))
+                    .bg(hsla(resolve_color(
+                        Color::Named(NamedColor::Foreground),
+                        &frame.colors,
+                        false,
+                    )))
+            }))
+            .into_any_element()
+    })
+    .collect()
+}
+
+pub(super) struct PreparedLine {
+    pub(super) text: gpui::SharedString,
+    pub(super) runs: Vec<TextRun>,
+    pub(super) cursor: Option<(f32, f32, f32, f32)>,
+}
+
+pub(super) fn prepared_lines(
+    rows: &[Vec<Cell>],
+    frame: &FrameSnapshot,
+    selection: Option<((usize, usize), (usize, usize))>,
+    urls: &[TextSpan],
+    search: &[TextSpan],
+    settings: &cli_manager_core_prefs::terminal::TerminalPreferences,
+    cell_size: (f32, f32),
+    mut cache: Option<&mut RowPreparationCache>,
+) -> Vec<PreparedLine> {
+    let descriptor = super::appearance::font_descriptor(settings);
+    let context = cache
+        .as_mut()
+        .map(|cache| cache.context(&frame.colors, descriptor.clone()));
     rows.iter()
         .take(frame.size.rows())
         .enumerate()
         .map(|(row, cells)| {
-            let mut text = String::new();
-            let mut runs = Vec::new();
-            let mut current: Option<(RunStyle, usize)> = None;
-            for (column, cell) in cells.iter().enumerate() {
-                if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                let style = style_for(
-                    cell,
-                    &frame.colors,
-                    !matches!(frame.cursor.shape, CursorShape::Hidden)
-                        && frame.cursor.point.line.0 >= 0
-                        && frame.cursor.point.line.0 as usize == row
-                        && frame.cursor.point.column.0 as usize == column,
-                    selection_contains(selection, row, column),
-                    span_contains(urls, row, column),
-                    span_contains(search, row, column),
-                );
-                let start = text.len();
-                text.push(cell.c);
-                if let Some(chars) = cell.zerowidth() {
-                    text.extend(chars.iter().copied());
-                }
-                match current {
-                    Some((previous, run_start)) if previous == style => {
-                        current = Some((previous, run_start));
+            let prepare = || {
+                let mut text = String::new();
+                let mut runs = Vec::new();
+                let mut current: Option<(RunStyle, usize)> = None;
+                for (column, cell) in cells.iter().enumerate() {
+                    if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                        continue;
                     }
-                    Some((previous, run_start)) => {
-                        runs.push(text_run(start - run_start, previous));
-                        current = Some((style, start));
+                    let style = style_for(
+                        cell,
+                        &frame.colors,
+                        matches!(
+                            frame.cursor.shape,
+                            CursorShape::Block | CursorShape::HollowBlock
+                        ) && frame.cursor.point.line.0 >= 0
+                            && frame.cursor.point.line.0 as usize == row
+                            && frame.cursor.point.column.0 as usize == column,
+                        selection_contains(selection, row, column),
+                        span_contains(urls, row, column),
+                        span_contains(search, row, column),
+                    );
+                    let start = text.len();
+                    text.push(cell.c);
+                    if let Some(chars) = cell.zerowidth() {
+                        text.extend(chars.iter().copied());
                     }
-                    None => current = Some((style, start)),
+                    match current {
+                        Some((previous, run_start)) if previous == style => {
+                            current = Some((previous, run_start));
+                        }
+                        Some((previous, run_start)) => {
+                            runs.push(text_run(start - run_start, previous, &descriptor));
+                            current = Some((style, start));
+                        }
+                        None => current = Some((style, start)),
+                    }
                 }
+                if let Some((style, run_start)) = current {
+                    runs.push(text_run(text.len() - run_start, style, &descriptor));
+                }
+                PreparedText {
+                    text: text.into(),
+                    runs,
+                }
+            };
+            let text = match (&mut cache, &context) {
+                (Some(cache), Some(context)) => {
+                    let decorations =
+                        row_decorations(row, cells.len(), frame, selection, urls, search);
+                    cache.get_or_prepare(cells, context, decorations, prepare)
+                }
+                _ => prepare(),
+            };
+            PreparedLine {
+                text: text.text,
+                runs: text.runs,
+                cursor: cursor_rectangle(frame, row, cell_size),
             }
-            if let Some((style, run_start)) = current {
-                runs.push(text_run(text.len() - run_start, style));
-            }
-            StyledText::new(text).with_runs(runs)
         })
         .collect()
+}
+
+fn row_decorations(
+    row: usize,
+    columns: usize,
+    frame: &FrameSnapshot,
+    selection: Option<((usize, usize), (usize, usize))>,
+    urls: &[TextSpan],
+    search: &[TextSpan],
+) -> RowDecorations {
+    let ranges = |spans: &[TextSpan]| {
+        spans
+            .iter()
+            .filter(|span| span.row == row)
+            .map(|span| span.start_column.min(columns)..span.end_column.min(columns))
+            .collect()
+    };
+    let selection = selection.and_then(|(start, end)| {
+        let (start, end) = if start <= end {
+            (start, end)
+        } else {
+            (end, start)
+        };
+        if row < start.0 || row > end.0 {
+            return None;
+        }
+        let left = if row == start.0 {
+            start.1.min(columns)
+        } else {
+            0
+        };
+        let right = if row == end.0 {
+            end.1.saturating_add(1).min(columns)
+        } else {
+            columns
+        };
+        Some(left..right)
+    });
+    RowDecorations {
+        cursor: (matches!(
+            frame.cursor.shape,
+            CursorShape::Block | CursorShape::HollowBlock
+        ) && frame.cursor.point.line.0 == row as i32)
+            .then_some(frame.cursor.point.column.0),
+        selection,
+        urls: ranges(urls),
+        search: ranges(search),
+    }
 }
 
 fn style_for(
@@ -134,6 +262,158 @@ fn style_for(
     }
 }
 
+fn cursor_rectangle(
+    frame: &FrameSnapshot,
+    row: usize,
+    cell: (f32, f32),
+) -> Option<(f32, f32, f32, f32)> {
+    if frame.display_offset != 0
+        || frame.cursor.point.line.0 != row as i32
+        || frame.cursor.point.column.0 >= frame.size.columns()
+    {
+        return None;
+    }
+    let left = frame.cursor.point.column.0 as f32 * cell.0;
+    match frame.cursor.shape {
+        CursorShape::Beam => Some((left, 0., 2f32.min(cell.0), cell.1)),
+        CursorShape::Underline => Some((left, (cell.1 - 2.).max(0.), cell.0, 2f32.min(cell.1))),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+    use cli_manager_term_engine::{Engine, EventProxy, Size};
+
+    #[test]
+    fn cached_rows_match_uncached_across_decorations_palette_and_geometry_changes() {
+        let mut cache = RowPreparationCache::default();
+        let mut engine =
+            Engine::new(Size::new(24, 3).unwrap(), 100, EventProxy::new(|_| {})).unwrap();
+        engine.advance("\x1b[31m中文 e\u{301}\x1b[0m hello\r\nhttps://a.test".as_bytes());
+        let mut settings = cli_manager_core_prefs::terminal::TerminalPreferences::default();
+        let frame = engine.snapshot();
+        let mut rows = vec![Vec::new(); 3];
+        for (row, cells) in &frame.rows {
+            rows[*row] = cells.clone();
+        }
+        let urls = cli_manager_term_engine::search::find_urls(&rows);
+        let matches = cli_manager_term_engine::search::find_matches(&rows, "hello");
+        for step in 0..12 {
+            if step == 4 {
+                settings.font_family = "Other Mono, Consolas".into();
+            }
+            if step == 6 {
+                settings.font_size = 20.;
+                settings.line_height = 1.4;
+            }
+            engine
+                .configure(
+                    100,
+                    if step % 2 == 0 {
+                        CursorShape::Block
+                    } else {
+                        CursorShape::Beam
+                    },
+                )
+                .unwrap();
+            if step == 8 {
+                engine.advance(b"\x1b]10;#123456\x07");
+            }
+            let frame = engine.snapshot();
+            let selection = (step % 3 == 0).then_some(((1, 6), (0, 1)));
+            let search = if step % 2 == 0 { &matches[..] } else { &[] };
+            let cell = if step >= 6 { (11., 28.) } else { (8., 16.) };
+            let cached = prepared_lines(
+                &rows,
+                &frame,
+                selection,
+                &urls,
+                search,
+                &settings,
+                cell,
+                Some(&mut cache),
+            );
+            let expected = prepared_lines(
+                &rows, &frame, selection, &urls, search, &settings, cell, None,
+            );
+            for (cached, expected) in cached.iter().zip(&expected) {
+                assert_eq!(cached.text, expected.text);
+                assert_eq!(cached.runs, expected.runs);
+                assert_eq!(cached.cursor, expected.cursor);
+            }
+        }
+        assert!(cache.stats().hits > 0);
+        assert!(cache.stats().misses > 3);
+    }
+
+    #[test]
+    fn bar_and_underline_have_distinct_geometry_and_hidden_cursor_has_none() {
+        let mut engine =
+            Engine::new(Size::new(10, 3).unwrap(), 100, EventProxy::new(|_| {})).unwrap();
+        engine.configure(100, CursorShape::Beam).unwrap();
+        engine.advance(b"abc");
+        assert_eq!(
+            cursor_rectangle(&engine.snapshot(), 0, (8., 18.)),
+            Some((24., 0., 2., 18.))
+        );
+        engine.configure(100, CursorShape::Underline).unwrap();
+        assert_eq!(
+            cursor_rectangle(&engine.snapshot(), 0, (8., 18.)),
+            Some((24., 16., 8., 2.))
+        );
+        engine.advance(b"\x1b[?25l");
+        assert!(cursor_rectangle(&engine.snapshot(), 0, (8., 18.)).is_none());
+    }
+
+    #[test]
+    fn row_cache_matches_fresh_output_after_alternate_screen_resize_and_scroll() {
+        let mut cache = RowPreparationCache::default();
+        let mut engine =
+            Engine::new(Size::new(12, 3).unwrap(), 100, EventProxy::new(|_| {})).unwrap();
+        let settings = cli_manager_core_prefs::terminal::TerminalPreferences::default();
+        let mut rows = vec![Vec::new(); 3];
+        for sequence in [
+            "line one\r\nline two\r\nline three\r\nfour",
+            "\x1b[?1049h中 e\u{301}",
+            "\x1b[?1049l",
+            "\x1b[?25l",
+            "\x1b[2Jnew",
+            "\x1b[?25h",
+        ] {
+            engine.advance(sequence.as_bytes());
+            if sequence == "\x1b[?25l" {
+                engine.resize(Size::new(8, 4).unwrap());
+            }
+            let frame = engine.snapshot();
+            if frame.full || rows.len() != frame.size.rows() {
+                rows = vec![Vec::new(); frame.size.rows()];
+            }
+            for (row, cells) in &frame.rows {
+                rows[*row] = cells.clone();
+            }
+            let cached = prepared_lines(
+                &rows,
+                &frame,
+                None,
+                &[],
+                &[],
+                &settings,
+                (8., 16.),
+                Some(&mut cache),
+            );
+            let fresh = prepared_lines(&rows, &frame, None, &[], &[], &settings, (8., 16.), None);
+            assert_eq!(cached.len(), fresh.len());
+            for (cached, fresh) in cached.iter().zip(&fresh) {
+                assert_eq!(cached.text, fresh.text);
+                assert_eq!(cached.runs, fresh.runs);
+                assert_eq!(cached.cursor, fresh.cursor);
+            }
+        }
+    }
+}
+
 fn span_contains(spans: &[TextSpan], row: usize, column: usize) -> bool {
     spans
         .iter()
@@ -156,9 +436,9 @@ fn selection_contains(
     (row, column) >= start && (row, column) <= end
 }
 
-fn text_run(len: usize, style: RunStyle) -> TextRun {
+fn text_run(len: usize, style: RunStyle, descriptor: &gpui::Font) -> TextRun {
     let foreground = hsla(style.foreground);
-    let mut font = font("Consolas");
+    let mut font = descriptor.clone();
     font.weight = if style.bold {
         FontWeight::BOLD
     } else {

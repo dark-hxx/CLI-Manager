@@ -14,8 +14,6 @@ use crate::file_watcher::FileWatcherBridge;
 use crate::shell_resolver::silent_command;
 use crate::text_encoding::{decode_text, encode_text};
 
-#[path = "commands/clipboard_dib.rs"]
-mod clipboard_dib;
 #[path = "commands/clipboard_files.rs"]
 mod clipboard_files;
 #[path = "commands/clipboard_image.rs"]
@@ -163,9 +161,7 @@ pub async fn file_attach_image_data(data_base64: String) -> Result<String, Strin
 
 // 只接收通过标准化的 PNG，保存到现有受管附件目录供本机/WSL 或 SSH 上传使用。
 fn save_terminal_image(png: Vec<u8>) -> Result<String, String> {
-    let directory = ensure_attachment_dir(&cli_manager_data_dir()?)?;
-    let target = unique_attachment_target(&directory, "clipboard-image.png")?;
-    fs::write(&target, png).map_err(|_| "write_file_failed")?;
+    let target = cli_manager_core::clipboard_image::save_png(&cli_manager_data_dir()?, &png)?;
     Ok(target.to_string_lossy().into_owned())
 }
 // 处理剪贴板中的前八个文件，收集生成附件及首个拒绝原因。

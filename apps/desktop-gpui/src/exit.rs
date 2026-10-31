@@ -1,5 +1,13 @@
 //! UI-free exit policy decisions for the GPUI window and future tray/dialog code.
 
+use crate::DesktopShell;
+use gpui::{Context, Window};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tokio::runtime::Runtime;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExitBehavior {
     Ask,
@@ -42,6 +50,76 @@ impl ExitCoordinator {
 impl Default for ExitBehavior {
     fn default() -> Self {
         Self::Ask
+    }
+}
+
+impl DesktopShell {
+    pub(crate) fn install_close_handler(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        runtime: Arc<Runtime>,
+    ) {
+        let shell_handle = cx.entity().downgrade();
+        let closing = Arc::new(AtomicBool::new(false));
+        window.on_window_should_close(cx, move |_, app| {
+            if closing.load(Ordering::Acquire) {
+                return false;
+            }
+            let (clients, action) = shell_handle
+                .update(app, |shell, _| {
+                    shell.flush_workspace_snapshot();
+                    let clients = shell.sessions.clients();
+                    let has_running_tasks =
+                        shell.workspace_sessions.as_ref().is_some_and(|workspace| {
+                            workspace.has_exit_tasks(shell.background_include_finished)
+                        });
+                    let behavior = shell.exit_override.take().unwrap_or(shell.exit_behavior);
+                    let action = ExitCoordinator::new(!clients.is_empty())
+                        .decide(behavior, has_running_tasks);
+                    if action == ExitAction::Confirm {
+                        shell.exit_prompt = true;
+                    }
+                    (clients, action)
+                })
+                .ok()
+                .unwrap_or_else(|| (Vec::new(), ExitAction::CloseAllAndExit));
+            if action == ExitAction::Confirm {
+                return false;
+            }
+            if clients.is_empty() {
+                return true;
+            }
+            if closing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+            {
+                return false;
+            }
+            let task = runtime.spawn(async move {
+                let control = clients.first().cloned();
+                for client in &clients {
+                    if action == ExitAction::CloseAllAndExit {
+                        let _ = client.close_all().await;
+                    } else {
+                        let _ = client.detach().await;
+                    }
+                }
+                if action == ExitAction::CloseAllAndExit {
+                    if let Some(client) = control {
+                        let _ = client.shutdown_if_idle().await;
+                    }
+                }
+            });
+            let async_app = app.to_async();
+            async_app
+                .spawn(async move |cx| {
+                    let _ = task.await;
+                    cx.update(|cx| cx.quit());
+                })
+                .detach();
+            false
+        });
     }
 }
 

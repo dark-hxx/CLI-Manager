@@ -32,8 +32,9 @@ impl InterfaceLanguage {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StartupPreferences {
+    pub terminal: cli_manager_core_prefs::terminal::TerminalPreferences,
     pub language: InterfaceLanguage,
     pub theme: AppTheme,
     pub restore_enabled: bool,
@@ -46,6 +47,7 @@ pub struct StartupPreferences {
 impl Default for StartupPreferences {
     fn default() -> Self {
         Self {
+            terminal: Default::default(),
             language: InterfaceLanguage::ZhCn,
             theme: AppTheme::Light,
             restore_enabled: true,
@@ -111,6 +113,7 @@ pub fn load(database: Option<&Path>) -> StartupPreferences {
         .unwrap_or(false);
     let keymap = Keymap::from_settings(settings.get("keyboardShortcuts"));
     StartupPreferences {
+        terminal: cli_manager_core_prefs::terminal::TerminalPreferences::from_settings(&settings),
         language,
         theme,
         restore_enabled,
@@ -210,6 +213,7 @@ mod tests {
             load(Some(&directory.path().join("data.db"))),
             StartupPreferences {
                 language: InterfaceLanguage::ZhCn,
+                terminal: Default::default(),
                 theme: AppTheme::Light,
                 restore_enabled: false,
                 restore_mode: RestoreMode::Ask,

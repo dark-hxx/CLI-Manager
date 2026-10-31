@@ -7,11 +7,9 @@ impl DesktopShell {
         };
         let runtime = self._runtime.clone();
         let history_scope = self.stats.project_filter.clone();
-        let history_task = runtime.spawn_blocking(move || {
-            match history_scope {
-                Some(path) => crate::history::load_for_project(std::path::PathBuf::from(path)),
-                None => crate::history::load_for_all_projects(),
-            }
+        let history_task = runtime.spawn_blocking(move || match history_scope {
+            Some(path) => crate::history::load_for_project(std::path::PathBuf::from(path)),
+            None => crate::history::load_for_all_projects(),
         });
         let task = runtime.spawn(crate::projects::load_request_log_filtered(
             database,
@@ -38,12 +36,14 @@ impl DesktopShell {
     }
 
     pub(crate) fn open_history(&mut self, cx: &mut gpui::Context<Self>) {
+        self.background_open = false;
         self.stats_open = false;
         self.extensions_open = false;
         crate::history::open(self, cx);
     }
 
     pub(crate) fn open_extensions(&mut self, cx: &mut gpui::Context<Self>) {
+        self.background_open = false;
         self.stats.extension_load_generation = self.stats.extension_load_generation.wrapping_add(1);
         let generation = self.stats.extension_load_generation;
         self.extensions_open = true;
@@ -347,6 +347,7 @@ impl DesktopShell {
     }
 
     pub(crate) fn open_stats(&mut self, cx: &mut gpui::Context<Self>) {
+        self.background_open = false;
         self.stats_open = true;
         self.extensions_open = false;
         self.stats.source_filter = crate::history::SourceFilter::All;

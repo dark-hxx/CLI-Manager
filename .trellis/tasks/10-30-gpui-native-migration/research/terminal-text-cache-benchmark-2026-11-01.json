@@ -1,0 +1,525 @@
+{
+  "measured_date": "2026-11-01",
+  "command": "cli-manager-gpui.exe --terminal-cache-benchmark",
+  "exit_code": 0,
+  "build_profile": "debug",
+  "host_os": "Microsoft Windows 11 专业版 10.0.22631",
+  "reported_adapters": [
+    "GameViewer Virtual Display Adapter",
+    "OrayIddDriver Device",
+    "NVIDIA GeForce GTX 960",
+    "AMD Radeon(TM) Graphics"
+  ],
+  "active_adapter_verified": false,
+  "warmup_frames_per_case": 8,
+  "source_revision": "5bbf3bcd + uncommitted migration changes",
+  "reports": [
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 720,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13247,
+        "p95_us": 14133,
+        "max_us": 14416
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 831,
+        "p95_us": 944,
+        "max_us": 1339
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 2,
+        "p95_us": 21,
+        "max_us": 110
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 34,
+        "max_us": 51
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 720,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13313,
+        "p95_us": 14035,
+        "max_us": 14232
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 828,
+        "p95_us": 1029,
+        "max_us": 1426
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 2,
+        "p95_us": 19,
+        "max_us": 51
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 32,
+        "max_us": 59
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 1,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 720,
+      "layout_object_reuses": 660,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13317,
+        "p95_us": 14481,
+        "max_us": 14685
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 852,
+        "p95_us": 1349,
+        "max_us": 1517
+      },
+      "shape_text_call_cpu": {
+        "samples": 720,
+        "p50_us": 1,
+        "p95_us": 169,
+        "max_us": 259
+      },
+      "line_paint_call_cpu": {
+        "samples": 720,
+        "p50_us": 16,
+        "p95_us": 34,
+        "max_us": 135
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1440,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13402,
+        "p95_us": 14109,
+        "max_us": 14198
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1253,
+        "p95_us": 1608,
+        "max_us": 2389
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 2,
+        "p95_us": 5,
+        "max_us": 73
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 30,
+        "max_us": 54
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1440,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13311,
+        "p95_us": 14077,
+        "max_us": 14378
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1234,
+        "p95_us": 1462,
+        "max_us": 1651
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 2,
+        "p95_us": 3,
+        "max_us": 105
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 22,
+        "max_us": 37
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 2,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 1440,
+      "layout_object_reuses": 1320,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13362,
+        "p95_us": 13963,
+        "max_us": 14164
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 1281,
+        "p95_us": 1545,
+        "max_us": 1634
+      },
+      "shape_text_call_cpu": {
+        "samples": 1440,
+        "p50_us": 1,
+        "p95_us": 58,
+        "max_us": 196
+      },
+      "line_paint_call_cpu": {
+        "samples": 1440,
+        "p50_us": 16,
+        "p95_us": 22,
+        "max_us": 44
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2880,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13302,
+        "p95_us": 14047,
+        "max_us": 14638
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2150,
+        "p95_us": 2391,
+        "max_us": 2588
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 1,
+        "p95_us": 3,
+        "max_us": 59
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 19,
+        "max_us": 54
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2880,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13328,
+        "p95_us": 14015,
+        "max_us": 14611
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2135,
+        "p95_us": 2285,
+        "max_us": 2562
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 2,
+        "p95_us": 4,
+        "max_us": 64
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 19,
+        "max_us": 144
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 4,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 2880,
+      "layout_object_reuses": 2640,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13282,
+        "p95_us": 14252,
+        "max_us": 14947
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 2227,
+        "p95_us": 2727,
+        "max_us": 3558
+      },
+      "shape_text_call_cpu": {
+        "samples": 2880,
+        "p50_us": 1,
+        "p95_us": 43,
+        "max_us": 285
+      },
+      "line_paint_call_cpu": {
+        "samples": 2880,
+        "p50_us": 17,
+        "p95_us": 22,
+        "max_us": 100
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "shared_static",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5760,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13311,
+        "p95_us": 14104,
+        "max_us": 14341
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 3978,
+        "p95_us": 4341,
+        "max_us": 4489
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 1,
+        "p95_us": 2,
+        "max_us": 25
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 19,
+        "max_us": 41
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "unique_static",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5760,
+      "observed_reuse_ratio": 1.0,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13315,
+        "p95_us": 14038,
+        "max_us": 14576
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 3974,
+        "p95_us": 4700,
+        "max_us": 6990
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 4,
+        "max_us": 46
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 23,
+        "max_us": 66
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "scrolling",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5280,
+      "observed_reuse_ratio": 0.9166666666666666,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13341,
+        "p95_us": 13890,
+        "max_us": 14142
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 4265,
+        "p95_us": 4825,
+        "max_us": 5885
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 41,
+        "max_us": 257
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 18,
+        "p95_us": 20,
+        "max_us": 93
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    },
+    {
+      "schema_version": 1,
+      "scope": "synthetic_native_terminal_cache",
+      "panes": 8,
+      "workload": "appearance_changes",
+      "frames": 60,
+      "layout_observations": 5760,
+      "layout_object_reuses": 5034,
+      "observed_reuse_ratio": 0.8739583333333333,
+      "tracking_evictions": 0,
+      "errors": 0,
+      "frame_callback_intervals": {
+        "samples": 59,
+        "p50_us": 13289,
+        "p95_us": 15758,
+        "max_us": 18164
+      },
+      "frame_preparation_cpu": {
+        "samples": 60,
+        "p50_us": 4129,
+        "p95_us": 4607,
+        "max_us": 5585
+      },
+      "shape_text_call_cpu": {
+        "samples": 5760,
+        "p50_us": 2,
+        "p95_us": 95,
+        "max_us": 309
+      },
+      "line_paint_call_cpu": {
+        "samples": 5760,
+        "p50_us": 17,
+        "p95_us": 20,
+        "max_us": 736
+      },
+      "presentation_verified": false,
+      "live_pty": false,
+      "glyph_atlas_hit_rate_measured": false
+    }
+  ]
+}

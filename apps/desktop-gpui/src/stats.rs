@@ -30,7 +30,11 @@ impl StatsState {
     ) -> Entity<EditorState> {
         self.extension_rename_editor
             .get_or_insert_with(|| {
-                cx.new(|cx| EditorState::new(window, cx).language("plaintext").default_value(""))
+                cx.new(|cx| {
+                    EditorState::new(window, cx)
+                        .language("plaintext")
+                        .default_value("")
+                })
             })
             .clone()
     }
@@ -58,9 +62,7 @@ pub(crate) fn extension_view(
     on_delete: impl Fn(String, &mut gpui::Window, &mut gpui::App) + Clone + 'static,
     on_confirm_delete: impl Fn(String, &mut gpui::Window, &mut gpui::App) + Clone + 'static,
     on_cancel_delete: impl Fn(&mut gpui::Window, &mut gpui::App) + Clone + 'static,
-    on_toggle_cli: impl Fn(String, String, bool, &mut gpui::Window, &mut gpui::App)
-        + Clone
-        + 'static,
+    on_toggle_cli: impl Fn(String, String, bool, &mut gpui::Window, &mut gpui::App) + Clone + 'static,
     rename_draft: Option<&(String, String)>,
     rename_error: Option<&str>,
     rename_label: String,
@@ -76,176 +78,181 @@ pub(crate) fn extension_view(
     let body = if items.is_empty() && !loading && error.is_none() {
         div().child(empty)
     } else {
-        div().flex().flex_col().gap(px(6.)).children(items.iter().map(|item| {
-            let kind = match item.kind.as_str() {
-                "mcp" => mcp_label.clone(),
-                "skill" => skill_label.clone(),
-                "skill-installation" => installation_label.clone(),
-                _ => item.kind.clone(),
-            };
-            let status = match item.status.as_str() {
-                "managed" => managed_label.clone(),
-                "owned" => owned_label.clone(),
-                "externalModified" => external_modified_label.clone(),
-                "unowned" => unowned_label.clone(),
-                _ => item.status.clone(),
-            };
-            let confirm_id = item.item_id.clone();
-            let delete_id = item.item_id.clone();
-            let item_id = item.item_id.clone();
-            let on_delete = on_delete.clone();
-            let on_confirm_delete = on_confirm_delete.clone();
-            let on_cancel_delete = on_cancel_delete.clone();
-            let on_rename = on_rename.clone();
-            let on_save_rename = on_save_rename.clone();
-            let on_cancel_rename = on_cancel_rename.clone();
-            let is_pending = pending_delete == Some(item.item_id.as_str());
-            let row_is_renaming = rename_draft.is_some_and(|(id, _)| id == &item.item_id);
-            let rename_controls = if item.kind == "mcp" && row_is_renaming {
-                let (id, _) = rename_draft.expect("checked above");
-                let id = id.clone();
-                let cancel_label = cancel_label.clone();
-                let save_label = save_label.clone();
-                let rename_editor = rename_editor.clone();
-                let on_save_enter = on_save_rename.clone();
-                div()
-                    .flex()
-                    .gap(px(5.))
-                    .child(Editor::new(&rename_editor).h(px(36.)))
-                    .child(
-                        div()
-                            .id(gpui::ElementId::Name(format!("extension-rename-save-{id}").into()))
-                            .cursor_pointer()
-                            .on_click({
-                                let id = id.clone();
-                                let on_save_enter = on_save_enter.clone();
-                                move |_, window, app| on_save_enter(id.clone(), window, app)
-                            })
-                            .child(save_label),
-                    )
-                    .child(
-                        div()
-                            .id(gpui::ElementId::Name(
-                                format!("extension-rename-cancel-{id}").into(),
-                            ))
-                            .cursor_pointer()
-                            .on_click(move |_, window, app| on_cancel_rename(window, app))
-                            .child(cancel_label),
-                    )
-            } else if item.kind == "mcp" {
-                let id = item.item_id.clone();
-                let name = item.name.clone();
-                let rename_label = rename_label.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(6.))
+            .children(items.iter().map(|item| {
+                let kind = match item.kind.as_str() {
+                    "mcp" => mcp_label.clone(),
+                    "skill" => skill_label.clone(),
+                    "skill-installation" => installation_label.clone(),
+                    _ => item.kind.clone(),
+                };
+                let status = match item.status.as_str() {
+                    "managed" => managed_label.clone(),
+                    "owned" => owned_label.clone(),
+                    "externalModified" => external_modified_label.clone(),
+                    "unowned" => unowned_label.clone(),
+                    _ => item.status.clone(),
+                };
+                let confirm_id = item.item_id.clone();
+                let delete_id = item.item_id.clone();
+                let item_id = item.item_id.clone();
+                let on_delete = on_delete.clone();
+                let on_confirm_delete = on_confirm_delete.clone();
+                let on_cancel_delete = on_cancel_delete.clone();
                 let on_rename = on_rename.clone();
-                div().child(
-                    div()
-                        .id(gpui::ElementId::Name(format!("extension-rename-{id}").into()))
-                        .cursor_pointer()
-                        .on_click(move |_, window, app| {
-                            on_rename(id.clone(), name.clone(), window, app)
-                        })
-                        .child(rename_label),
-                )
-            } else {
-                div()
-            };
-            let actions = if item.kind == "mcp" {
-                let toggle_buttons = ["claude", "codex", "grok"]
-                    .into_iter()
-                    .zip(cli_labels.iter().cloned())
-                    .map(|(cli, label)| {
-                        let on_toggle_cli = on_toggle_cli.clone();
-                        let resource_id = item.item_id.clone();
-                        let enabled = item.enabled_for(cli);
-                        div()
-                            .id(gpui::ElementId::Name(
-                                format!("extension-toggle-{cli}-{}", item.item_id).into(),
-                            ))
-                            .cursor_pointer()
-                            .child(format!("{} {}", label, if enabled { "✓" } else { "○" }))
-                            .on_click(move |_, window, app| {
-                                on_toggle_cli(
-                                    resource_id.clone(),
-                                    cli.to_string(),
-                                    !enabled,
-                                    window,
-                                    app,
-                                )
-                            })
-                    })
-                    .collect::<Vec<_>>();
-                if is_pending {
-                    let confirm_label = confirm_delete_label.clone();
+                let on_save_rename = on_save_rename.clone();
+                let on_cancel_rename = on_cancel_rename.clone();
+                let is_pending = pending_delete == Some(item.item_id.as_str());
+                let row_is_renaming = rename_draft.is_some_and(|(id, _)| id == &item.item_id);
+                let rename_controls = if item.kind == "mcp" && row_is_renaming {
+                    let (id, _) = rename_draft.expect("checked above");
+                    let id = id.clone();
                     let cancel_label = cancel_label.clone();
+                    let save_label = save_label.clone();
+                    let rename_editor = rename_editor.clone();
+                    let on_save_enter = on_save_rename.clone();
                     div()
                         .flex()
-                        .gap(px(6.))
-                        .child(
-                            div().flex().gap(px(6.)).children(toggle_buttons),
-                        )
+                        .gap(px(5.))
+                        .child(Editor::new(&rename_editor).h(px(36.)))
                         .child(
                             div()
                                 .id(gpui::ElementId::Name(
-                                    format!("extension-confirm-{confirm_id}").into(),
+                                    format!("extension-rename-save-{id}").into(),
                                 ))
                                 .cursor_pointer()
-                                .on_click(move |_, window, app| {
-                                    on_confirm_delete(confirm_id.clone(), window, app)
+                                .on_click({
+                                    let id = id.clone();
+                                    let on_save_enter = on_save_enter.clone();
+                                    move |_, window, app| on_save_enter(id.clone(), window, app)
                                 })
-                                .child(confirm_label),
+                                .child(save_label),
                         )
                         .child(
                             div()
                                 .id(gpui::ElementId::Name(
-                                    format!("extension-cancel-{item_id}").into(),
+                                    format!("extension-rename-cancel-{id}").into(),
                                 ))
                                 .cursor_pointer()
-                                .on_click(move |_, window, app| on_cancel_delete(window, app))
+                                .on_click(move |_, window, app| on_cancel_rename(window, app))
                                 .child(cancel_label),
                         )
+                } else if item.kind == "mcp" {
+                    let id = item.item_id.clone();
+                    let name = item.name.clone();
+                    let rename_label = rename_label.clone();
+                    let on_rename = on_rename.clone();
+                    div().child(
+                        div()
+                            .id(gpui::ElementId::Name(
+                                format!("extension-rename-{id}").into(),
+                            ))
+                            .cursor_pointer()
+                            .on_click(move |_, window, app| {
+                                on_rename(id.clone(), name.clone(), window, app)
+                            })
+                            .child(rename_label),
+                    )
                 } else {
-                    let delete_label = delete_label.clone();
                     div()
-                        .flex()
-                        .gap(px(6.))
-                        .child(
-                            div().flex().gap(px(6.)).children(toggle_buttons),
-                        )
-                        .child(
+                };
+                let actions = if item.kind == "mcp" {
+                    let toggle_buttons = ["claude", "codex", "grok"]
+                        .into_iter()
+                        .zip(cli_labels.iter().cloned())
+                        .map(|(cli, label)| {
+                            let on_toggle_cli = on_toggle_cli.clone();
+                            let resource_id = item.item_id.clone();
+                            let enabled = item.enabled_for(cli);
                             div()
                                 .id(gpui::ElementId::Name(
-                                    format!("extension-delete-{delete_id}").into(),
+                                    format!("extension-toggle-{cli}-{}", item.item_id).into(),
                                 ))
                                 .cursor_pointer()
+                                .child(format!("{} {}", label, if enabled { "✓" } else { "○" }))
                                 .on_click(move |_, window, app| {
-                                    on_delete(delete_id.clone(), window, app)
+                                    on_toggle_cli(
+                                        resource_id.clone(),
+                                        cli.to_string(),
+                                        !enabled,
+                                        window,
+                                        app,
+                                    )
                                 })
-                                .child(delete_label),
-                        )
-                }
-            } else {
+                        })
+                        .collect::<Vec<_>>();
+                    if is_pending {
+                        let confirm_label = confirm_delete_label.clone();
+                        let cancel_label = cancel_label.clone();
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .child(div().flex().gap(px(6.)).children(toggle_buttons))
+                            .child(
+                                div()
+                                    .id(gpui::ElementId::Name(
+                                        format!("extension-confirm-{confirm_id}").into(),
+                                    ))
+                                    .cursor_pointer()
+                                    .on_click(move |_, window, app| {
+                                        on_confirm_delete(confirm_id.clone(), window, app)
+                                    })
+                                    .child(confirm_label),
+                            )
+                            .child(
+                                div()
+                                    .id(gpui::ElementId::Name(
+                                        format!("extension-cancel-{item_id}").into(),
+                                    ))
+                                    .cursor_pointer()
+                                    .on_click(move |_, window, app| on_cancel_delete(window, app))
+                                    .child(cancel_label),
+                            )
+                    } else {
+                        let delete_label = delete_label.clone();
+                        div()
+                            .flex()
+                            .gap(px(6.))
+                            .child(div().flex().gap(px(6.)).children(toggle_buttons))
+                            .child(
+                                div()
+                                    .id(gpui::ElementId::Name(
+                                        format!("extension-delete-{delete_id}").into(),
+                                    ))
+                                    .cursor_pointer()
+                                    .on_click(move |_, window, app| {
+                                        on_delete(delete_id.clone(), window, app)
+                                    })
+                                    .child(delete_label),
+                            )
+                    }
+                } else {
+                    div()
+                };
                 div()
-            };
-            div()
-                .flex()
-                .justify_between()
-                .px(px(10.))
-                .py(px(8.))
-                .bg(rgb(surface))
-                .border(px(1.))
-                .border_color(rgb(raised))
-                .text_color(rgb(text))
-                .child(format!("{} · {}", kind, item.name))
-                .child(format!("{} · {}", status, item.source))
-                .child(rename_controls)
-                .child(actions)
-        })).children(
-            error
-                .into_iter()
-                .chain(rename_error.map(str::to_owned))
-                .chain(loading.then_some(loading_label))
-                .map(|message| div().child(message)),
-        )
+                    .flex()
+                    .justify_between()
+                    .px(px(10.))
+                    .py(px(8.))
+                    .bg(rgb(surface))
+                    .border(px(1.))
+                    .border_color(rgb(raised))
+                    .text_color(rgb(text))
+                    .child(format!("{} · {}", kind, item.name))
+                    .child(format!("{} · {}", status, item.source))
+                    .child(rename_controls)
+                    .child(actions)
+            }))
+            .children(
+                error
+                    .into_iter()
+                    .chain(rename_error.map(str::to_owned))
+                    .chain(loading.then_some(loading_label))
+                    .map(|message| div().child(message)),
+            )
     };
     div()
         .flex()
@@ -327,10 +334,10 @@ impl StatsSummary {
             }
             if let Some(age_days) = activity_bucket(now_ms, row.updated_at) {
                 summary.activity[age_days] += 1;
-                summary.input_activity[age_days] = summary.input_activity[age_days]
-                    .saturating_add(row.input_tokens);
-                summary.output_activity[age_days] = summary.output_activity[age_days]
-                    .saturating_add(row.output_tokens);
+                summary.input_activity[age_days] =
+                    summary.input_activity[age_days].saturating_add(row.input_tokens);
+                summary.output_activity[age_days] =
+                    summary.output_activity[age_days].saturating_add(row.output_tokens);
             }
         }
         summary
@@ -412,8 +419,16 @@ pub(crate) fn view(
             card(claude, summary.claude, raised),
             card(codex, summary.codex, raised),
             card(starred, summary.starred, raised),
-            card(input_tokens_label.clone(), summary.input_tokens as usize, raised),
-            card(output_tokens_label.clone(), summary.output_tokens as usize, raised),
+            card(
+                input_tokens_label.clone(),
+                summary.input_tokens as usize,
+                raised,
+            ),
+            card(
+                output_tokens_label.clone(),
+                summary.output_tokens as usize,
+                raised,
+            ),
             card(cached_tokens_label, summary.cached_tokens as usize, raised),
             card(requests_label.clone(), request_count, raised),
         ])
@@ -445,10 +460,16 @@ pub(crate) fn view(
                 .children(source_filters.into_iter().map(|(label, filter)| {
                     let on_source_filter = on_source_filter.clone();
                     div()
-                        .id(gpui::ElementId::Name(format!("stats-source-{filter:?}").into()))
+                        .id(gpui::ElementId::Name(
+                            format!("stats-source-{filter:?}").into(),
+                        ))
                         .px(px(8.))
                         .py(px(5.))
-                        .bg(rgb(if source_filter == filter { raised } else { surface }))
+                        .bg(rgb(if source_filter == filter {
+                            raised
+                        } else {
+                            surface
+                        }))
                         .cursor_pointer()
                         .on_click(move |_, window, app| on_source_filter(filter, window, app))
                         .child(label)
@@ -457,7 +478,9 @@ pub(crate) fn view(
                     let on_project_filter = on_project_filter.clone();
                     let selected = project_filter == filter.as_deref();
                     div()
-                        .id(gpui::ElementId::Name(format!("stats-project-{label}").into()))
+                        .id(gpui::ElementId::Name(
+                            format!("stats-project-{label}").into(),
+                        ))
                         .px(px(8.))
                         .py(px(5.))
                         .bg(rgb(if selected { raised } else { surface }))
@@ -470,36 +493,44 @@ pub(crate) fn view(
                 .children(time_filters.into_iter().map(|(label, filter)| {
                     let on_time_filter = on_time_filter.clone();
                     div()
-                        .id(gpui::ElementId::Name(format!("stats-time-{filter:?}").into()))
+                        .id(gpui::ElementId::Name(
+                            format!("stats-time-{filter:?}").into(),
+                        ))
                         .px(px(8.))
                         .py(px(5.))
-                        .bg(rgb(if time_filter == filter { raised } else { surface }))
+                        .bg(rgb(if time_filter == filter {
+                            raised
+                        } else {
+                            surface
+                        }))
                         .cursor_pointer()
                         .on_click(move |_, window, app| on_time_filter(filter, window, app))
                         .child(label)
                 })),
         )
         .child(request_entries_label)
-        .children(request_entries.iter().filter(|item| {
-            source_matches(item.source.as_str(), source_filter)
-                && time_matches(
-                    current_time_ms(),
-                    item.timestamp_ms,
-                    time_filter,
-                )
-        }).take(12).map(|item| {
-            card(
-                format!(
-                    "{} · {} · in {} · out {}",
-                    item.source,
-                    item.model.as_deref().unwrap_or("(unknown)"),
-                    item.input_tokens.max(0),
-                    item.output_tokens.max(0),
-                ),
-                item.timestamp_ms.max(0) as usize,
-                raised,
-            )
-        }))
+        .children(
+            request_entries
+                .iter()
+                .filter(|item| {
+                    source_matches(item.source.as_str(), source_filter)
+                        && time_matches(current_time_ms(), item.timestamp_ms, time_filter)
+                })
+                .take(12)
+                .map(|item| {
+                    card(
+                        format!(
+                            "{} · {} · in {} · out {}",
+                            item.source,
+                            item.model.as_deref().unwrap_or("(unknown)"),
+                            item.input_tokens.max(0),
+                            item.output_tokens.max(0),
+                        ),
+                        item.timestamp_ms.max(0) as usize,
+                        raised,
+                    )
+                }),
+        )
         .child(format!(
             "{} · {} {} · {} {} · {} {} · {} {}",
             efficiency_label,
@@ -514,25 +545,26 @@ pub(crate) fn view(
         ))
         .child(activity_label)
         .child(
-            div()
-                .flex()
-                .items_end()
-                .gap(px(6.))
-                .h(px(90.))
-                .children(summary.activity.into_iter().enumerate().map(|(index, count)| {
-                    div()
-                        .flex()
-                        .flex_col()
-                        .items_center()
-                        .gap(px(3.))
-                        .child(
-                            div()
-                                .w(px(28.))
-                                .h(px(8. + 62. * count as f32 / max_activity as f32))
-                                .bg(rgb(0x5d8bd3)),
-                        )
-                        .child(day_labels[index].clone())
-                })),
+            div().flex().items_end().gap(px(6.)).h(px(90.)).children(
+                summary
+                    .activity
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, count)| {
+                        div()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .w(px(28.))
+                                    .h(px(8. + 62. * count as f32 / max_activity as f32))
+                                    .bg(rgb(0x5d8bd3)),
+                            )
+                            .child(day_labels[index].clone())
+                    }),
+            ),
         )
         .child(source_label)
         .child(
@@ -541,12 +573,7 @@ pub(crate) fn view(
                 .h(px(18.))
                 .w_full()
                 .bg(rgb(raised))
-                .child(
-                    div()
-                        .w(px(520. * claude_ratio))
-                        .h_full()
-                        .bg(rgb(0x6b9ee8)),
-                )
+                .child(div().w(px(520. * claude_ratio)).h_full().bg(rgb(0x6b9ee8)))
                 .child(div().flex_1().h_full().bg(rgb(0x8a6fc4))),
         )
         .child(format!(
@@ -596,8 +623,7 @@ fn time_matches(now_ms: i64, updated_at: i64, filter: TimeFilter) -> bool {
     }) else {
         return updated_at <= now_ms;
     };
-    updated_at <= now_ms
-        && now_ms.saturating_sub(updated_at) < max_age_days * 24 * 60 * 60 * 1000
+    updated_at <= now_ms && now_ms.saturating_sub(updated_at) < max_age_days * 24 * 60 * 60 * 1000
 }
 
 fn token_row(
@@ -660,16 +686,59 @@ mod tests {
     fn summarizes_history_rows_and_metadata() {
         let mut history = HistoryState::default();
         history.rows = vec![
-            HistoryRow { session_id: "a".into(), source: "claude".into(), project_key: "p".into(), title: "A".into(), file_path: PathBuf::from("a.jsonl"), updated_at: 1, message_count: 3, input_tokens: 10, output_tokens: 2, cache_read_tokens: 3, cache_creation_tokens: 1 },
-            HistoryRow { session_id: "b".into(), source: "codex".into(), project_key: "p".into(), title: "B".into(), file_path: PathBuf::from("b.jsonl"), updated_at: 2, message_count: 4, input_tokens: 20, output_tokens: 4, cache_read_tokens: 5, cache_creation_tokens: 2 },
+            HistoryRow {
+                session_id: "a".into(),
+                source: "claude".into(),
+                project_key: "p".into(),
+                title: "A".into(),
+                file_path: PathBuf::from("a.jsonl"),
+                updated_at: 1,
+                message_count: 3,
+                input_tokens: 10,
+                output_tokens: 2,
+                cache_read_tokens: 3,
+                cache_creation_tokens: 1,
+            },
+            HistoryRow {
+                session_id: "b".into(),
+                source: "codex".into(),
+                project_key: "p".into(),
+                title: "B".into(),
+                file_path: PathBuf::from("b.jsonl"),
+                updated_at: 2,
+                message_count: 4,
+                input_tokens: 20,
+                output_tokens: 4,
+                cache_read_tokens: 5,
+                cache_creation_tokens: 2,
+            },
         ];
         history.metadata.insert(
             crate::history::metadata_key_for_row(&history.rows[0]),
-            HistoryMeta { starred: true, ..HistoryMeta::default() },
+            HistoryMeta {
+                starred: true,
+                ..HistoryMeta::default()
+            },
         );
         let summary = StatsSummary::from_history(&history);
-        assert_eq!((summary.sessions, summary.messages, summary.claude, summary.codex, summary.starred), (2, 7, 1, 1, 1));
-        assert_eq!((summary.input_tokens, summary.output_tokens, summary.cached_tokens), (30, 6, 11));
+        assert_eq!(
+            (
+                summary.sessions,
+                summary.messages,
+                summary.claude,
+                summary.codex,
+                summary.starred
+            ),
+            (2, 7, 1, 1, 1)
+        );
+        assert_eq!(
+            (
+                summary.input_tokens,
+                summary.output_tokens,
+                summary.cached_tokens
+            ),
+            (30, 6, 11)
+        );
     }
 
     #[test]
