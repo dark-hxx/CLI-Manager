@@ -1,8 +1,12 @@
 use std::env;
 #[cfg(windows)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+
+use cli_manager_core::git_bash_paths::{fixed_path_candidate, is_git_bash_path, is_git_path_dir};
+use cli_manager_core::git_bash_registry::{
+    git_bash_candidates_from_install_dir, install_locations_from_reg_output, parse_reg_value,
+};
 
 #[cfg(windows)]
 #[path = "git_bash_paths.rs"]
@@ -13,13 +17,6 @@ use crate::process_job::ChildJob;
 
 pub const GIT_BASH_NOT_FOUND_MESSAGE: &str =
     "Git Bash executable not found. Please install Git for Windows or add Git Bash to PATH.";
-
-const GIT_BASH_CANDIDATES: [&str; 4] = [
-    r"C:\Program Files\Git\bin\bash.exe",
-    r"C:\Program Files\Git\usr\bin\bash.exe",
-    r"C:\Program Files (x86)\Git\bin\bash.exe",
-    r"C:\Program Files (x86)\Git\usr\bin\bash.exe",
-];
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -466,28 +463,14 @@ pub fn resolve_git_bash_exe() -> Option<PathBuf> {
     candidate.or_else(registry_git_candidate)
 }
 
-// 按预设顺序选择存在的常见安装路径，仅检查 exists，不验证文件类型或版本。
-fn fixed_path_candidate() -> Option<PathBuf> {
-    GIT_BASH_CANDIDATES
-        .iter()
-        .map(PathBuf::from)
-        .find(|candidate| candidate.exists())
-}
-
 // 仅在 PATH 中形如 Git/bin 或 Git/usr/bin 的目录寻找 bash.exe，避免任意同名 Shell 被选中。
 fn path_git_candidate() -> Option<PathBuf> {
     env::var_os("PATH").and_then(|path| {
         env::split_paths(&path)
-            .filter(is_git_path_dir)
+            .filter(|dir| is_git_path_dir(dir))
             .map(|dir| dir.join("bash.exe"))
             .find(|candidate| candidate.exists())
     })
-}
-
-// 统一分隔符和大小写后按目录后缀识别 Git 路径，不做文件系统规范化。
-fn is_git_path_dir(dir: &PathBuf) -> bool {
-    let normalized = dir.to_string_lossy().replace('\\', "/").to_lowercase();
-    normalized.ends_with("/git/bin") || normalized.ends_with("/git/usr/bin")
 }
 
 #[cfg(windows)]
@@ -563,59 +546,4 @@ fn reg_query_value(key: &str, value: Option<&str>) -> Option<String> {
     }
 
     parse_reg_value(&String::from_utf8_lossy(&output.stdout))
-}
-
-#[cfg(windows)]
-// 从 reg 文本中提取首个 REG_ 类型后面的非空值并清理路径装饰，不展开环境变量。
-fn parse_reg_value(output: &str) -> Option<String> {
-    output.lines().find_map(|line| {
-        let trimmed = line.trim();
-        let value_start = trimmed.find("REG_")?;
-        let value = trimmed[value_start..].split_once(char::is_whitespace)?.1;
-        let cleaned = clean_registry_path(value.trim());
-        (!cleaned.is_empty()).then_some(cleaned)
-    })
-}
-
-#[cfg(windows)]
-// 仅收集 InstallLocation 开头的行，复用值解析并保留输出顺序，不验证目录是否存在。
-fn install_locations_from_reg_output(output: &str) -> Vec<PathBuf> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if !trimmed.starts_with("InstallLocation") {
-                return None;
-            }
-            parse_reg_value(trimmed).map(PathBuf::from)
-        })
-        .collect()
-}
-
-#[cfg(windows)]
-// 去除外层引号及约定的 ,0/,-0 图标索引后缀，不执行路径解析或变量替换。
-fn clean_registry_path(value: &str) -> String {
-    let trimmed = value.trim().trim_matches('"');
-    let without_icon_index = trimmed
-        .strip_suffix(",0")
-        .or_else(|| trimmed.strip_suffix(",-0"))
-        .unwrap_or(trimmed);
-    without_icon_index.trim_matches('"').to_string()
-}
-
-#[cfg(windows)]
-// 从安装根生成 bin 与 usr/bin 两个候选，存在性由调用方检查。
-fn git_bash_candidates_from_install_dir(dir: PathBuf) -> Vec<PathBuf> {
-    vec![
-        dir.join("bin").join("bash.exe"),
-        dir.join("usr").join("bin").join("bash.exe"),
-    ]
-}
-
-#[cfg(windows)]
-// 按忽略大小写的 Git Bash 路径后缀并结合 exists 判断候选，不检查可执行权限或签名。
-fn is_git_bash_path(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/").to_lowercase();
-    (normalized.ends_with("/git/bin/bash.exe") || normalized.ends_with("/git/usr/bin/bash.exe"))
-        && path.exists()
 }

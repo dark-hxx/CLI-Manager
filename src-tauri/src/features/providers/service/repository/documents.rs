@@ -1,10 +1,10 @@
+use super::super::global::is_toml_secret_key;
 use super::catalog::get_provider;
 use super::dto::{ProviderDetail, ProviderDocument, ProviderDocumentUpdateInput};
 use super::support::{
-    error, is_secret_key as is_json_secret_key, load_provider, map_database_error, normalize_app_type, redact_json,
-    redact_settings_config,
+    error, is_secret_key as is_json_secret_key, load_provider, map_database_error,
+    normalize_app_type, redact_json, redact_settings_config,
 };
-use super::super::global::is_toml_secret_key;
 use crate::provider::database;
 use serde_json::{Map, Value as JsonValue};
 use toml_edit::{DocumentMut, Item, Table, Value as TomlValue};
@@ -169,7 +169,8 @@ pub(crate) fn merge_json_documents(common: &str, provider: &str) -> Result<Strin
 
 // 普通/内联 TOML 表递归合并，标量和数组由后者整体替换，避免覆盖同表的无关设置。
 pub(crate) fn merge_toml_items(common: &mut Item, provider: Item) {
-    if let (Some(common_table), Some(provider_table)) = (common.as_table_like_mut(), provider.as_table_like())
+    if let (Some(common_table), Some(provider_table)) =
+        (common.as_table_like_mut(), provider.as_table_like())
     {
         let entries = provider_table
             .iter()
@@ -728,19 +729,30 @@ mod tests {
             "config": "# provider comment\nmodel = \"old-model\" # model note\ncustom_setting = 42\n"
         })
         .to_string();
-        for common in [None, Some("model = \"common-model\"\ncommon_setting = true\n")] {
+        for common in [
+            None,
+            Some("model = \"common-model\"\ncommon_setting = true\n"),
+        ] {
             let effective = match common {
-                Some(common) => super::merge_common_into_settings("codex", common, &provider).unwrap(),
+                Some(common) => {
+                    super::merge_common_into_settings("codex", common, &provider).unwrap()
+                }
                 None => provider.clone(),
             };
             let preview: serde_json::Value =
                 serde_json::from_str(&super::project_effective_model("codex", &effective)).unwrap();
             let preview_doc = preview["config"]
-                .as_str().unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+                .as_str()
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
             let effective: serde_json::Value = serde_json::from_str(&effective).unwrap();
-            let (written, _) = crate::provider::global::materialize_codex_config(None, &effective).unwrap();
+            let (written, _) =
+                crate::provider::global::materialize_codex_config(None, &effective).unwrap();
             let written_doc = String::from_utf8(written)
-                .unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+                .unwrap()
+                .parse::<toml_edit::DocumentMut>()
+                .unwrap();
             assert_eq!(preview_doc["model"].as_str(), Some("abc/sdf"));
             assert_eq!(preview_doc["model"].as_str(), written_doc["model"].as_str());
             assert_eq!(preview_doc["custom_setting"].as_integer(), Some(42));
@@ -751,8 +763,14 @@ mod tests {
             }
             // 公共合并可能已调整文档前导注释；投影只负责保留传入结果中的格式。
             assert_eq!(
-                preview["config"].as_str().unwrap().contains("# provider comment"),
-                effective["config"].as_str().unwrap().contains("# provider comment")
+                preview["config"]
+                    .as_str()
+                    .unwrap()
+                    .contains("# provider comment"),
+                effective["config"]
+                    .as_str()
+                    .unwrap()
+                    .contains("# provider comment")
             );
             assert!(preview["config"].as_str().unwrap().contains("# model note"));
         }
@@ -760,8 +778,13 @@ mod tests {
 
     #[test]
     fn effective_codex_model_keeps_toml_when_explicit_model_is_empty() {
-        for model in [serde_json::Value::Null, serde_json::json!(""), serde_json::json!("  ")] {
-            let raw = serde_json::json!({"model": model, "config": "model = \"abc/sdf\"\n"}).to_string();
+        for model in [
+            serde_json::Value::Null,
+            serde_json::json!(""),
+            serde_json::json!("  "),
+        ] {
+            let raw =
+                serde_json::json!({"model": model, "config": "model = \"abc/sdf\"\n"}).to_string();
             let preview: serde_json::Value =
                 serde_json::from_str(&super::project_effective_model("codex", &raw)).unwrap();
             assert_eq!(preview["config"], "model = \"abc/sdf\"\n");
@@ -772,7 +795,10 @@ mod tests {
     fn effective_model_preserves_other_types_and_invalid_drafts() {
         for (app_type, raw) in [
             ("claude", r#"{"model":"abc/sdf"}"#),
-            ("grokbuild", r#"{"model":"abc/sdf","config":"model = 'old'"}"#),
+            (
+                "grokbuild",
+                r#"{"model":"abc/sdf","config":"model = 'old'"}"#,
+            ),
             ("codex", r#"{"model":"abc/sdf","config":"model ="}"#),
             ("codex", "not-json"),
             ("codex", "[]"),
@@ -804,13 +830,18 @@ mod tests {
         for app_type in ["codex", "grokbuild"] {
             let stored = serde_json::json!({"config": config}).to_string();
             let documents = documents_from_settings(app_type, &stored);
-            let document = documents.iter().find(|document| document.kind == format!("{app_type}.config")).unwrap();
+            let document = documents
+                .iter()
+                .find(|document| document.kind == format!("{app_type}.config"))
+                .unwrap();
             assert!(document.valid);
             assert!(!document.has_secret);
             assert_eq!(document.value, config);
 
             let existing = r#"{"config":"model = \"gpt-test\"\n"}"#;
-            let updated = patch_settings_document(app_type, existing, &format!("{app_type}.config"), config).unwrap();
+            let updated =
+                patch_settings_document(app_type, existing, &format!("{app_type}.config"), config)
+                    .unwrap();
             let saved: Value = serde_json::from_str(&updated).unwrap();
             assert_eq!(saved["config"].as_str(), Some(config));
         }
@@ -818,7 +849,8 @@ mod tests {
 
     #[test]
     fn ordinary_token_limit_can_be_edited_without_exposing_existing_api_key() {
-        let existing = r#"{"config":"model_auto_compact_token_limit = 100000\napi_key = \"old-secret\"\n"}"#;
+        let existing =
+            r#"{"config":"model_auto_compact_token_limit = 100000\napi_key = \"old-secret\"\n"}"#;
         let incoming = "model_auto_compact_token_limit = 240000\napi_key = \"[REDACTED]\"\n";
         let (display, has_secret, valid) = redact_toml_document(
             "model_auto_compact_token_limit = 100000\napi_key = \"old-secret\"\n",
@@ -860,7 +892,8 @@ mod tests {
         assert!(!display.contains("token-test"));
 
         let existing = r#"{"config":"[features]\napi_key_model_discovery = true\n"}"#;
-        let rejected = patch_settings_document("codex", existing, "codex.config", config).unwrap_err();
+        let rejected =
+            patch_settings_document("codex", existing, "codex.config", config).unwrap_err();
         assert!(rejected.contains("provider_document_secret_edit_requires_key_manager"));
     }
 

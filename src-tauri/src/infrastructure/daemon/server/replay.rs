@@ -7,8 +7,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 
-#[path = "mouse_snapshot.rs"]
-mod mouse_snapshot;
+use cli_manager_core::mouse_snapshot;
 
 #[derive(Clone)]
 pub(super) struct ReplayFrame {
@@ -344,13 +343,18 @@ mod mouse_snapshot_tests {
     #[test]
     fn old_checkpoint_disables_unknown_mouse_but_never_rewrites_live_frames() {
         let mut buffer = SessionBuffer::new();
-        buffer.accept_checkpoint(80, 24, 10, b"screen\x1b[?1003h".to_vec()).unwrap();
+        buffer
+            .accept_checkpoint(80, 24, 10, b"screen\x1b[?1003h".to_vec())
+            .unwrap();
         let live = b"\x1b[?1003h";
         buffer.push_output(80, 24, 11, live);
         let replay = buffer.replay_frames();
         assert!(replay[0].data.ends_with(b"\x1b[?9;1000;1002;1003l"));
         assert_eq!(replay[1].data, live);
-        assert_eq!(buffer.checkpoint.as_ref().unwrap().data, b"screen\x1b[?1003h");
+        assert_eq!(
+            buffer.checkpoint.as_ref().unwrap().data,
+            b"screen\x1b[?1003h"
+        );
     }
 
     #[test]
@@ -364,7 +368,9 @@ mod mouse_snapshot_tests {
             b"partial\x1b[?1003".as_slice(),
         ] {
             let mut buffer = SessionBuffer::new();
-            buffer.accept_checkpoint(80, 24, 1, snapshot.to_vec()).unwrap();
+            buffer
+                .accept_checkpoint(80, 24, 1, snapshot.to_vec())
+                .unwrap();
             assert_eq!(buffer.replay_frames()[0].data, snapshot);
         }
     }

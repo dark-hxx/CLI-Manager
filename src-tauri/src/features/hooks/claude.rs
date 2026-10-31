@@ -138,7 +138,10 @@ impl ClaudeHookPayload {
                 && matches!(
                     (self.source.as_str(), self.tool_name.as_deref()),
                     ("claude", Some(CLAUDE_QUESTION_TOOL_NAME))
-                        | ("codex", Some(CODEX_QUESTION_TOOL_NAME | CODEX_ASYNC_QUESTION_TOOL_NAME))
+                        | (
+                            "codex",
+                            Some(CODEX_QUESTION_TOOL_NAME | CODEX_ASYNC_QUESTION_TOOL_NAME)
+                        )
                 ))
     }
 
@@ -1341,7 +1344,8 @@ mod remote_tests {
             remote_question_notification("codex", "request_user_input").requires_user_response()
         );
         assert!(
-            remote_question_notification("codex", "request_user_input_async").requires_user_response()
+            remote_question_notification("codex", "request_user_input_async")
+                .requires_user_response()
         );
         assert!(!remote_question_notification("codex", "Read").requires_user_response());
     }

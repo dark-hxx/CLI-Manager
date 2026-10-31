@@ -3,7 +3,11 @@ use std::collections::HashMap;
 
 use crate::ssh_transport::{
     format_remote_home_path, posix_quote, validate_remote_home_path, SshOneShotOptions,
-    SshRemoteHomePathError, SshTransportLaunch, SshTransportSpec,
+    SshTransportLaunch, SshTransportSpec,
+};
+use cli_manager_core::ssh_launch_validation::{
+    format_tool_config_root, is_valid_environment_key, validate_remote_path,
+    validate_tool_config_root,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,41 +240,6 @@ impl SshLaunchPlan {
             )
         }
     }
-}
-
-// 对去除首尾空白的路径检查绝对形式、控制字符和父级段，不访问远端文件系统。
-fn validate_remote_path(path: &str) -> Result<(), String> {
-    let path = path.trim();
-    if !path.starts_with('/') || path.contains(['\0', '\r', '\n']) {
-        return Err("ssh_remote_path_invalid".to_string());
-    }
-    if path.split('/').any(|part| part == "..") {
-        return Err("ssh_remote_path_parent_forbidden".to_string());
-    }
-    Ok(())
-}
-
-// 复用远端 HOME 路径校验，并把格式与父级穿越错误转换为工具配置根目录错误码。
-fn validate_tool_config_root(path: &str) -> Result<(), String> {
-    match validate_remote_home_path(path) {
-        Ok(()) => Ok(()),
-        Err(SshRemoteHomePathError::Invalid) => Err("ssh_tool_config_root_invalid".to_string()),
-        Err(SshRemoteHomePathError::ParentTraversal) => {
-            Err("ssh_tool_config_root_parent_forbidden".to_string())
-        }
-    }
-}
-
-// 委托共享格式化器保留受控 HOME 展开；调用方应先校验路径。
-fn format_tool_config_root(path: &str) -> String {
-    format_remote_home_path(path)
-}
-
-// 仅接受 ASCII 字母或下划线开头、后续可含数字的非空 shell 环境变量名。
-fn is_valid_environment_key(key: &str) -> bool {
-    let mut chars = key.chars();
-    matches!(chars.next(), Some('_' | 'A'..='Z' | 'a'..='z'))
-        && chars.all(|ch| matches!(ch, '_' | 'A'..='Z' | 'a'..='z' | '0'..='9'))
 }
 
 #[cfg(test)]

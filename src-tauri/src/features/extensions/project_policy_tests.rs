@@ -5,11 +5,17 @@ use super::*;
 fn codex_project_profile_preserves_runtime_options_without_provider_home_state() {
     let settings = serde_json::json!({"base_url":"https://example.test/v1", "auth":{"OPENAI_API_KEY":"test-only"},
         "config": "service_tier='fast'\n[hooks.state.old]\ntrusted_hash='stale'\n[notice]\nmodel_migrations={old='stale'}\n[tui]\nmodel_availability_nux={old=1}\nnotifications=false\n[projects.old]\ntrust_level='trusted'\n"});
-    let runtime = crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
+    let runtime =
+        crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
     let content = codex_profile_content(
-        "12345678-1234-1234-1234-123456789abc", &runtime.profile.profile_text,
-        &["mcp_servers.project.command='tool'".to_string(), "skills.config=[]".to_string()],
-    ).unwrap();
+        "12345678-1234-1234-1234-123456789abc",
+        &runtime.profile.profile_text,
+        &[
+            "mcp_servers.project.command='tool'".to_string(),
+            "skills.config=[]".to_string(),
+        ],
+    )
+    .unwrap();
     let actual: toml::Value = toml::from_slice(&content).unwrap();
     for section in ["hooks", "notice", "projects"] {
         assert!(actual.get(section).is_none());
@@ -17,7 +23,10 @@ fn codex_project_profile_preserves_runtime_options_without_provider_home_state()
     assert!(actual["tui"].get("model_availability_nux").is_none());
     assert_eq!(actual["tui"]["notifications"].as_bool(), Some(false));
     assert_eq!(actual["service_tier"].as_str(), Some("fast"));
-    assert_eq!(actual["mcp_servers"]["project"]["command"].as_str(), Some("tool"));
+    assert_eq!(
+        actual["mcp_servers"]["project"]["command"].as_str(),
+        Some("tool")
+    );
     assert!(actual["skills"]["config"].as_array().unwrap().is_empty());
     assert!(!String::from_utf8(content).unwrap().contains("test-only"));
 }
@@ -369,16 +378,21 @@ fn codex_project_profile_inherits_home_statusline_after_provider_composition() {
         "auth": {"OPENAI_API_KEY": "test-secret"},
         "config": "service_tier='fast'\n[tui]\nstatus_line=['total-input-tokens']\nnotifications=false\n",
     });
-    let runtime = crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
+    let runtime =
+        crate::provider::runtime::parse_runtime_config("provider", &settings.to_string()).unwrap();
     let content = codex_profile_content(
         "12345678-1234-1234-1234-123456789abc",
         &runtime.profile.profile_text,
         &["skills.bundled.enabled=false".to_string()],
-    ).unwrap();
+    )
+    .unwrap();
     let actual: toml::Value = toml::from_slice(&content).unwrap();
     assert!(actual["tui"].get("status_line").is_none());
     assert_eq!(actual["tui"]["notifications"].as_bool(), Some(false));
-    assert_eq!(actual["skills"]["bundled"]["enabled"].as_bool(), Some(false));
+    assert_eq!(
+        actual["skills"]["bundled"]["enabled"].as_bool(),
+        Some(false)
+    );
     assert_eq!(actual["service_tier"].as_str(), Some("fast"));
 }
 

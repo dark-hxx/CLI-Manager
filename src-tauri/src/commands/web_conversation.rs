@@ -163,14 +163,22 @@ async fn history_publish(
 ) -> Result<usize, String> {
     web_device::web_device_operation_accepted_blocking(
         events.app.clone(),
-        events.app.state::<web_device::WebDeviceManager>().inner().clone(),
+        events
+            .app
+            .state::<web_device::WebDeviceManager>()
+            .inner()
+            .clone(),
         web_device::OperationIdRequest {
             operation_id: request.operation_id.clone(),
         },
     )?;
     web_device::web_device_operation_running_blocking(
         events.app.clone(),
-        events.app.state::<web_device::WebDeviceManager>().inner().clone(),
+        events
+            .app
+            .state::<web_device::WebDeviceManager>()
+            .inner()
+            .clone(),
         web_device::OperationIdRequest {
             operation_id: request.operation_id.clone(),
         },
@@ -1013,14 +1021,22 @@ fn script_command(launcher: &str, args: &[String]) -> Result<Command, String> {
 fn execute(request: &StartRequest, prompt: &str, events: &mut Events<'_>) -> Result<(), String> {
     web_device::web_device_operation_accepted_blocking(
         events.app.clone(),
-        events.app.state::<web_device::WebDeviceManager>().inner().clone(),
+        events
+            .app
+            .state::<web_device::WebDeviceManager>()
+            .inner()
+            .clone(),
         web_device::OperationIdRequest {
             operation_id: request.operation_id.clone(),
         },
     )?;
     web_device::web_device_operation_running_blocking(
         events.app.clone(),
-        events.app.state::<web_device::WebDeviceManager>().inner().clone(),
+        events
+            .app
+            .state::<web_device::WebDeviceManager>()
+            .inner()
+            .clone(),
         web_device::OperationIdRequest {
             operation_id: request.operation_id.clone(),
         },

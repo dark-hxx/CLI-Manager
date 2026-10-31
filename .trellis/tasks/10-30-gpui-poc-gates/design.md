@@ -13,9 +13,9 @@
 
 ```
 spikes/gpui-poc/
-  Cargo.toml                 # [workspace] members = ["poc-*"]；[patch.crates-io] 指向 gpui-pre 适配
+  Cargo.toml                 # 显式列出七成员；当前锁定版本无需 patch
   deny.toml                  # cargo-deny 许可证与 bans 配置（后续并入根 workspace）
-  poc-compat/                # 仅编译验证：gpui-pre + gpui-component + wry + alacritty_terminal + tokio-tungstenite
+  poc-compat/                # 编译兼容；另含 poc-window binary，七成员不变
   poc-ime/                   # 输入框 + 自绘终端元素的 IME
   poc-term/                  # daemon 客户端 + alacritty + TerminalElement + 8 分屏
   poc-checkpoint/            # ANSI checkpoint 往返（含 Node 脚本生成 xterm fixture）
@@ -26,10 +26,12 @@ spikes/gpui-poc/
   bench/                     # 基准脚本（后续迁到 scripts/bench/）
 ```
 
+当前实现映射：`poc-input` 合并输入法接收器与编辑器实验，`poc-daemon` 独立验证客户端；`poc-preview --probe` 保留正常机器诊断，独立 `poc-webview-probe` 已完成动态加载 P8；未集成真实 PreviewHost，异常 runtime VM 尚未验证。`poc-window` 已作为 `poc-compat` 的额外 binary 实施。下列目录草图表示验证职责，不表示每项已经完成。用户暂缓 macOS，允许继续 Windows 隔离运行时研究，未放行 M1。
+
 ## 3. 各 PoC 的验证设计
 
 ### 3.1 poc-compat（编译兼容）
-- 依赖：`gpui = { package = "gpui-pre", version = "=0.3.x" }`；gpui-component 最新版，通过 `[patch.crates-io] gpui = { package = "gpui-pre", ... }` 或 git fork 让其改用 gpui-pre；`wry`（与 gpui-pre 的 raw-window-handle 版本一致）；`alacritty_terminal`；`tokio-tungstenite`。
+- 依赖：`gpui = { package = "gpui-pre", version = "=0.3.x" }`；锁定 gpui-component 0.8.1，已直接依赖 gpui-pre 0.3.10，当前无需 patch/fork；`wry`（与 gpui-pre 的 raw-window-handle 版本一致）；`alacritty_terminal`；`tokio-tungstenite`。
 - 记录：所需 patch、fork 改动行数、重复依赖（`cargo tree -d`）、编译时间、Windows/macOS 是否都能编译。
 - 失败判定：无法在 3 人日内通过 patch/fork 编译通过。
 
@@ -77,7 +79,7 @@ spikes/gpui-poc/
 - 自绘标题栏：拖动、双击最大化、Snap Layouts（Win11 悬停最大化按钮）、DPI。
 - 托盘：`tray-icon` 或 GPUI 平台能力；菜单“显示/退出”。
 - 第二窗口：透明、置顶、无边框、不进任务栏、可拖动、点击穿透（可选）。
-- 单实例互认：核实 `tauri-plugin-single-instance` 2.4.x 在 Windows 上使用的互斥/命名管道名与参数转发格式；GPUI 侧实现同名互斥并验证 Tauri 已运行时 GPUI 能转发参数、反之亦然。
+- 单实例互认：已核实锁定 `tauri-plugin-single-instance` 2.4.2 在 Windows 使用命名 mutex + 隐藏窗口 WM_COPYDATA，并非命名管道。隔离 PoC 实现同格式，独立 peer 验证双向；真实 Tauri↔GPUI 互认仍需专用产品测试环境，不使用实际产品 namespace 实验。
 
 ### 3.10 基线测量（Tauri 版）
 - 机器：至少两台 Windows（独显 + 核显），记录 CPU/GPU/内存/系统版本/DPI。

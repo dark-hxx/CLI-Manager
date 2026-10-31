@@ -121,7 +121,8 @@ pub async fn extensions_mcp_set_enabled(
 // 批量保存显示基线，不写 CLI 文件；后端事务保留未涉及字段与秘密。
 #[tauri::command]
 pub async fn extensions_mcp_set_selection(
-    items: Vec<repository::McpSelectionItem>, home_identity: String,
+    items: Vec<repository::McpSelectionItem>,
+    home_identity: String,
 ) -> Result<Vec<McpResourceRedacted>, String> {
     repository::set_mcp_selection(items, home_identity).await
 }

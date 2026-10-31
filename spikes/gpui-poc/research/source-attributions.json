@@ -1,0 +1,462 @@
+[
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "README.md",
+    "sha256": "8c1f0ce117fd98117f6733ab4f8a1c07b9f5723f8623b60b988754c00cb40d61",
+    "matches": [
+      {
+        "line": 5,
+        "text": "[![License](https://img.shields.io/crates/l/gpui-base.svg)](../../LICENSE-APACHE)"
+      },
+      {
+        "line": 348,
+        "text": "Apache-2.0. See [`../../LICENSE-APACHE`](../../LICENSE-APACHE)."
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/input/base/state.rs",
+    "sha256": "3da5756412bd66422ecfc51eb43d30270f35c4e22df18ba254e9312bd643eaaa",
+    "matches": [
+      {
+        "line": 711,
+        "text": "/// The placeholder derived from the mask pattern, e.g.: `(___) ___-____`."
+      },
+      {
+        "line": 9204,
+        "text": "/// single-line, because the answer was derived from the row counts."
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/root.rs",
+    "sha256": "a3e8f48d6b099f5ded891077d3e2185d1b9a67df62af479999967803ef508e8f",
+    "matches": [
+      {
+        "line": 75,
+        "text": "/// Synchronize settings derived from this plugin with the window."
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/scrollbar.rs",
+    "sha256": "640fa8c28e304599e8ab9bda908a21b9c0a51123e20cfd047aeb4f24fd7ff46a",
+    "matches": [
+      {
+        "line": 1029,
+        "text": "/// `Theme` carries `scrollbar` beside `tokens` rather than derived from"
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/text/format/markdown.rs",
+    "sha256": "1b8107b7a0b84a44f3ad2317725d6c981986d8a23c0fa19d1c675bc46fbb5df4",
+    "matches": [
+      {
+        "line": 1929,
+        "text": "let source = \"Copyright &copy; &#x1F600; &#169; 2024\";"
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/text/node.rs",
+    "sha256": "9c98338199b5269791f0aefcb24038f4f59c681adc1ca5e6a6dcd676057ba219",
+    "matches": [
+      {
+        "line": 2302,
+        "text": "/// The children changed, so what was derived from them is stale."
+      },
+      {
+        "line": 4050,
+        "text": "/// Corner radii for the first and last table rows, derived from the"
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/text/state.rs",
+    "sha256": "b22bf74f36e5fc0adcbb1200b4db64356272965e5fdecfdcd2b62d700de38bec",
+    "matches": [
+      {
+        "line": 416,
+        "text": "/// derived from parser positions retained by the rendered inline nodes, so"
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/text/style.rs",
+    "sha256": "3d754d79c126ad2e7bf0f3cd9295662fca95767f300124b7631c5d73bb12217b",
+    "matches": [
+      {
+        "line": 371,
+        "text": "/// derived from `color`, and [`Self::is_dark`] flips."
+      }
+    ]
+  },
+  {
+    "package": "gpui-base 0.8.1",
+    "file": "src/text/text_view.rs",
+    "sha256": "094aa37246a2a26cab185122f0ea637ee05097177a07a287361ede92162354ef",
+    "matches": [
+      {
+        "line": 74,
+        "text": "/// selection are derived from it too, and the installed syntax highlighter"
+      }
+    ]
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "file": "README.md",
+    "sha256": "5954b9e237e78df5384a7768f3b2c0921bc07ceab10bf4b4cb33767c8968ec06",
+    "matches": [
+      {
+        "line": 262,
+        "text": "Software source and documentation code examples: [Apache-2.0](LICENSE-APACHE)."
+      }
+    ]
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "file": "src/chart/bar_chart.rs",
+    "sha256": "45bdcd32f8a59c73d628f97ad40b39be4b424d682ac5404db64a90d67e81bf48",
+    "matches": [
+      {
+        "line": 270,
+        "text": "/// (`chart_range`, derived from all data values), and a `chart_to_bar`"
+      },
+      {
+        "line": 299,
+        "text": "/// The gradient angle is derived from [`BarAlignment`] so stop-0 is at the"
+      }
+    ]
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "file": "src/highlighter/languages/kotlin/highlights.scm",
+    "sha256": "ab270633ef065b69da396249bc4930438097bb294f6c64d547d8951dff586195",
+    "matches": [
+      {
+        "line": 1,
+        "text": ";; Kotlin highlights — adapted from tree-sitter-kotlin-sg (nvim-treesitter)"
+      }
+    ]
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "file": "src/sidebar/mod.rs",
+    "sha256": "c401621ca71641e780507c8f8d51bb4d409c2fdcfd6e644641d303f5e47ffba1",
+    "matches": [
+      {
+        "line": 509,
+        "text": "// The target width is derived from the current layout, so changes to"
+      }
+    ]
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "file": "src/text/compat.rs",
+    "sha256": "daa6b7e5d2d6a5807fe66f9eb818d57a45cbe944d48efd32811e53ade0d2ca33",
+    "matches": [
+      {
+        "line": 101,
+        "text": "/// Sets the style, folded onto the one derived from the active theme."
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "examples/README.md",
+    "sha256": "7fa416c24854b64f0e0bd5bfed7b39caffba2cf0cdefae01850c0ef805c1c32c",
+    "matches": [
+      {
+        "line": 49,
+        "text": "from Google Fonts' CDN. The 219 KB font is licensed under the"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "examples/svg/dragon.svg",
+    "sha256": "a66278ec0c72d70152ab05fc9dd122ad094a262d96fa6f61fba6b12e128e0e47",
+    "matches": [
+      {
+        "line": 4,
+        "text": "<!-- License: CC BY-SA 3.0 -->"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "src/_accessibility.rs",
+    "sha256": "bcdeb209fa6309f5c507d9e8918235e75c18751c1985d0ebed632de643d7ea2e",
+    "matches": [
+      {
+        "line": 113,
+        "text": "//! The ID of an invocation of the [`text!`] macro is derived from the"
+      },
+      {
+        "line": 181,
+        "text": "//! Since the AccessKit [`NodeId`][accesskit::NodeId] is derived from the global"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "src/elements/text.rs",
+    "sha256": "3ffcc422356924ae4d6eef864421f56588be65cd931c8fe35d7e5e6438c23346",
+    "matches": [
+      {
+        "line": 44,
+        "text": "/// unique ID, derived from its position in the source code (filename, line, and"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "src/geometry.rs",
+    "sha256": "900fc506a964cda44ed0cf1f97c01ff28d7268c87c9eeadbf7a4f1bb50e33edd",
+    "matches": [
+      {
+        "line": 187,
+        "text": "/// Scales the point by a given factor, which is typically derived from the resolution"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "file": "src/platform.rs",
+    "sha256": "d5a1f49466edafc882f2646c0d97b7febcec61aa2a3df43f08035a812c9be7b5",
+    "matches": [
+      {
+        "line": 1188,
+        "text": "/// (iOS: derived from `keyboardWillShow`/frame-change notifications."
+      },
+      {
+        "line": 1692,
+        "text": "// Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp"
+      },
+      {
+        "line": 1693,
+        "text": "// Copyright (c) Microsoft Corporation."
+      },
+      {
+        "line": 1694,
+        "text": "// Licensed under the MIT license."
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-apple 0.3.10",
+    "file": "src/shaders.metal",
+    "sha256": "436647169d914d26092fcf3bfd4020a6638a97d1ea3b39466fd2d4641d1c219e",
+    "matches": [
+      {
+        "line": 959,
+        "text": "// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-apple 0.3.10",
+    "file": "vendor/gpui/src/geometry.rs",
+    "sha256": "900fc506a964cda44ed0cf1f97c01ff28d7268c87c9eeadbf7a4f1bb50e33edd",
+    "matches": [
+      {
+        "line": 187,
+        "text": "/// Scales the point by a given factor, which is typically derived from the resolution"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-apple 0.3.10",
+    "file": "vendor/gpui/src/platform.rs",
+    "sha256": "d5a1f49466edafc882f2646c0d97b7febcec61aa2a3df43f08035a812c9be7b5",
+    "matches": [
+      {
+        "line": 1188,
+        "text": "/// (iOS: derived from `keyboardWillShow`/frame-change notifications."
+      },
+      {
+        "line": 1692,
+        "text": "// Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.cpp"
+      },
+      {
+        "line": 1693,
+        "text": "// Copyright (c) Microsoft Corporation."
+      },
+      {
+        "line": 1694,
+        "text": "// Licensed under the MIT license."
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-linux 0.3.10",
+    "file": "src/linux/x11/client.rs",
+    "sha256": "9312432f6a5cea2e816dea192395faf92fe8e88bc52d35e0eb13d090283fc6b4",
+    "matches": [
+      {
+        "line": 2222,
+        "text": "// Adapted from:"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-linux 0.3.10",
+    "file": "src/linux/x11/clipboard.rs",
+    "sha256": "580eb2519d8c38422b3e5baba24a11e6fa5e942392c9a9e74abedfa3fa84c0f3",
+    "matches": [
+      {
+        "line": 2,
+        "text": "* Copyright 2022 - 2025 Zed Industries, Inc."
+      },
+      {
+        "line": 3,
+        "text": "* License: Apache-2.0"
+      },
+      {
+        "line": 4,
+        "text": "* See LICENSE-APACHE for complete license terms"
+      },
+      {
+        "line": 6,
+        "text": "* Adapted from the x11 submodule of the arboard project https://github.com/1Password/arboard"
+      },
+      {
+        "line": 8,
+        "text": "* SPDX-License-Identifier: Apache-2.0 OR MIT"
+      },
+      {
+        "line": 10,
+        "text": "* Copyright 2022 The Arboard contributors"
+      },
+      {
+        "line": 12,
+        "text": "* The project to which this file belongs is licensed under either of"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-macos 0.3.10",
+    "file": "src/display_link.rs",
+    "sha256": "088f3e0b8dd9b242a1f6c090a2c79ef081857cc917564673d61d84a48c6cf1cc",
+    "matches": [
+      {
+        "line": 356,
+        "text": "//! Derived from display-link crate under the following license:"
+      },
+      {
+        "line": 357,
+        "text": "//! <https://github.com/BrainiumLLC/display-link/blob/master/LICENSE-MIT>"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-macos 0.3.10",
+    "file": "src/platform.rs",
+    "sha256": "c790996c4ce334fe43446b8af8fe2c6a2dcc8f908fb2fb0a0e187c81ab013146",
+    "matches": [
+      {
+        "line": 1290,
+        "text": "// Adapted from: https://github.com/ghostty-org/ghostty/pull/8625"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-reqwest 0.12.15",
+    "file": "README.md",
+    "sha256": "5955117fef98cf4a562f36e33eed10dcf5f4c437a383915a056c00d988428e55",
+    "matches": [
+      {
+        "line": 5,
+        "text": "[![MIT/Apache-2 licensed](https://img.shields.io/crates/l/reqwest.svg)](./LICENSE-APACHE)"
+      },
+      {
+        "line": 71,
+        "text": "Licensed under either of"
+      },
+      {
+        "line": 73,
+        "text": "- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://apache.org/licenses/LICENSE-2.0)"
+      },
+      {
+        "line": 74,
+        "text": "- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-web 0.3.10",
+    "file": "src/events.rs",
+    "sha256": "250ba40e44975b282cd74797e76c96de6ef5bdcc537a8009f7e876c8a47ff239",
+    "matches": [
+      {
+        "line": 1420,
+        "text": "/// position is derived from the client-coordinate delta against the parent"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-wgpu 0.3.10",
+    "file": "src/shaders.wgsl",
+    "sha256": "bf22f0bd45bdc2da6fc88e5c678e03549941d270d6d85f5a2d1044f875f75729",
+    "matches": [
+      {
+        "line": 31,
+        "text": "// Contrast and gamma correction adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl"
+      },
+      {
+        "line": 32,
+        "text": "// Copyright (c) Microsoft Corporation."
+      },
+      {
+        "line": 33,
+        "text": "// Licensed under the MIT license."
+      },
+      {
+        "line": 209,
+        "text": "// https://gamedev.stackexchange.com/questions/92015/optimized-linear-to-srgb-glsl"
+      },
+      {
+        "line": 277,
+        "text": "/// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab"
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-windows 0.3.10",
+    "file": "src/alpha_correction.hlsl",
+    "sha256": "d37b106f1266b40a0e17478455dfaac1205214f597e23fbd0a26455c49806bf4",
+    "matches": [
+      {
+        "line": 1,
+        "text": "// Adapted from https://github.com/microsoft/terminal/blob/1283c0f5b99a2961673249fa77c6b986efb5086c/src/renderer/atlas/dwrite.hlsl"
+      },
+      {
+        "line": 2,
+        "text": "// Copyright (c) Microsoft Corporation."
+      },
+      {
+        "line": 3,
+        "text": "// Licensed under the MIT license."
+      }
+    ]
+  },
+  {
+    "package": "gpui-pre-windows 0.3.10",
+    "file": "src/shaders.hlsl",
+    "sha256": "16045fea900725fcd9cc349266207078c7fe774507d38ed0b5832a320c7c55c5",
+    "matches": [
+      {
+        "line": 188,
+        "text": "// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab"
+      }
+    ]
+  }
+]

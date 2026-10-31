@@ -1,6 +1,5 @@
 use super::super::history_backup::{
-    create_file_backup_snapshot, default_backup_root,
-    lock_source_mutations,
+    create_file_backup_snapshot, default_backup_root, lock_source_mutations,
 };
 use super::{
     antigravity_path_parts, cline_project_key_from_path, codex_project_key_from_session,

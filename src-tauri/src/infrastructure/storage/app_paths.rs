@@ -1,6 +1,11 @@
+#[cfg(all(test, target_os = "windows"))]
+use cli_manager_core::data_paths::strip_windows_verbatim_prefix;
+use cli_manager_core::data_paths::{
+    ensure_existing_prefixes_are_not_links, normalize_absolute_path, path_is_symlink_or_reparse,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsStr;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -12,12 +17,9 @@ use uuid::Uuid;
 #[path = "app_paths/runtime_socket.rs"]
 mod runtime_socket;
 
-const APP_HOME_DIR_NAME: &str = ".cli-manager";
 const PORTABLE_FLAG_FILE_NAME: &str = "portable.flag";
-const PORTABLE_DATA_DIR_NAME: &str = "data";
 const DATA_ROOT_BOOTSTRAP_FILE_NAME: &str = "data-root.json";
 const DATA_ROOT_BOOTSTRAP_VERSION: u32 = 1;
-const WINDOWS_APP_IDENTIFIER: &str = "com.cli-manager.app";
 const MACHINE_ID_FILE_NAME: &str = "machine-id";
 const DB_FILE_NAME: &str = "cli-manager.db";
 const PROVIDERS_DB_FILE_NAME: &str = "providers.db";
@@ -152,13 +154,15 @@ fn distribution_from_inputs(
     portable_marker_exists: bool,
     is_windows: bool,
 ) -> AppDistribution {
-    if configured_distribution.is_some_and(|value| value.eq_ignore_ascii_case("aur")) {
-        return AppDistribution::Aur;
+    match cli_manager_core::data_paths::distribution(
+        configured_distribution,
+        portable_marker_exists,
+        is_windows,
+    ) {
+        cli_manager_core::data_paths::Distribution::Aur => AppDistribution::Aur,
+        cli_manager_core::data_paths::Distribution::Portable => AppDistribution::Portable,
+        cli_manager_core::data_paths::Distribution::Standalone => AppDistribution::Standalone,
     }
-    if is_windows && portable_marker_exists {
-        return AppDistribution::Portable;
-    }
-    AppDistribution::Standalone
 }
 
 // 获取当前可执行文件父目录，无法定位程序或父目录时返回明确错误。
@@ -194,19 +198,28 @@ fn default_data_dir_for(
     home_dir: &Path,
     executable_dir: &Path,
 ) -> PathBuf {
-    match distribution {
-        AppDistribution::Portable => executable_dir.join(PORTABLE_DATA_DIR_NAME),
-        AppDistribution::Standalone | AppDistribution::Aur => home_dir.join(APP_HOME_DIR_NAME),
-    }
+    cli_manager_core::data_paths::default_root(
+        core_distribution(distribution),
+        home_dir,
+        executable_dir,
+    )
 }
 
 // 返回发行方式对应的默认根，不应用自定义配置，也不创建目录。
 pub fn default_data_dir() -> Result<PathBuf, String> {
     let distribution = app_distribution();
     if distribution == AppDistribution::Portable {
-        return Ok(executable_dir()?.join(PORTABLE_DATA_DIR_NAME));
+        return Ok(cli_manager_core::data_paths::default_root(
+            core_distribution(distribution),
+            Path::new(""),
+            &executable_dir()?,
+        ));
     }
-    Ok(home_dir_from_env()?.join(APP_HOME_DIR_NAME))
+    Ok(cli_manager_core::data_paths::default_root(
+        core_distribution(distribution),
+        &home_dir_from_env()?,
+        Path::new(""),
+    ))
 }
 
 // 将 Windows 引导指针放在程序旁或 LOCALAPPDATA，确保它不依赖被重定向的数据根。
@@ -216,19 +229,19 @@ fn bootstrap_path_for(
     local_app_data: Option<&Path>,
     executable_dir: &Path,
 ) -> Result<Option<PathBuf>, String> {
-    if !cfg!(target_os = "windows") {
-        return Ok(None);
-    }
+    cli_manager_core::data_paths::bootstrap_path(
+        core_distribution(distribution),
+        local_app_data,
+        executable_dir,
+        cfg!(target_os = "windows"),
+    )
+}
+
+fn core_distribution(distribution: AppDistribution) -> cli_manager_core::data_paths::Distribution {
     match distribution {
-        AppDistribution::Portable => Ok(Some(executable_dir.join(DATA_ROOT_BOOTSTRAP_FILE_NAME))),
-        AppDistribution::Standalone => local_app_data
-            .map(|root| {
-                root.join(WINDOWS_APP_IDENTIFIER)
-                    .join(DATA_ROOT_BOOTSTRAP_FILE_NAME)
-            })
-            .map(Some)
-            .ok_or_else(|| "local_app_data_dir_unavailable".to_string()),
-        AppDistribution::Aur => Ok(None),
+        AppDistribution::Standalone => cli_manager_core::data_paths::Distribution::Standalone,
+        AppDistribution::Portable => cli_manager_core::data_paths::Distribution::Portable,
+        AppDistribution::Aur => cli_manager_core::data_paths::Distribution::Aur,
     }
 }
 
@@ -240,106 +253,6 @@ pub fn data_root_bootstrap_path() -> Result<Option<PathBuf>, String> {
     }
     let local_app_data = std::env::var_os("LOCALAPPDATA").map(PathBuf::from);
     bootstrap_path_for(distribution, local_app_data.as_deref(), &executable_dir()?)
-}
-
-// 用不跟随最终链接的元数据识别符号链接和 Windows 重解析点，元数据读取失败向上传播。
-fn path_is_symlink_or_reparse(path: &Path) -> Result<bool, String> {
-    let metadata =
-        fs::symlink_metadata(path).map_err(|err| format!("data_storage_metadata_failed: {err}"))?;
-    if metadata.file_type().is_symlink() {
-        return Ok(true);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::fs::MetadataExt;
-        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
-        return Ok(metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0);
-    }
-    #[cfg(not(target_os = "windows"))]
-    Ok(false)
-}
-
-// 逐级检查 exists 为真的路径前缀并拒绝链接/重解析点；这是检查时快照，不锁定文件系统。
-fn ensure_existing_prefixes_are_not_links(path: &Path) -> Result<(), String> {
-    let mut current = PathBuf::new();
-    for component in path.components() {
-        current.push(component.as_os_str());
-        if current.exists() && path_is_symlink_or_reparse(&current)? {
-            return Err(format!(
-                "data_storage_path_is_symlink: {}",
-                current.to_string_lossy()
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-// 将规范化产生的 Windows verbatim 路径恢复为普通盘符或 UNC，避免问号被 SQLite 当作查询起点。
-fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
-    let value = path.to_string_lossy().into_owned();
-    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
-        PathBuf::from(format!(r"\\{rest}"))
-    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
-        PathBuf::from(rest)
-    } else {
-        path
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-// 非 Windows 不存在此序列化兼容处理，保留原路径。
-fn strip_windows_verbatim_prefix(path: PathBuf) -> PathBuf {
-    path
-}
-
-// 拒绝相对路径、父级跳转和根目录，检查已有前缀后规范化最近存在的祖先，再接回缺失部分。
-// 不创建目录；Windows 输出移除 verbatim 前缀，供后续比较与存储使用。
-fn normalize_absolute_path(path: &Path) -> Result<PathBuf, String> {
-    use std::path::Component;
-
-    if !path.is_absolute() {
-        return Err("data_storage_path_must_be_absolute".to_string());
-    }
-    let mut normalized = PathBuf::new();
-    for component in path.components() {
-        match component {
-            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
-                normalized.push(component.as_os_str());
-            }
-            Component::CurDir => {}
-            Component::ParentDir => {
-                return Err("data_storage_parent_segment_not_allowed".to_string());
-            }
-        }
-    }
-    if normalized.parent().is_none() {
-        return Err("data_storage_root_directory_not_allowed".to_string());
-    }
-    ensure_existing_prefixes_are_not_links(&normalized)?;
-
-    let mut existing = normalized.as_path();
-    let mut missing = Vec::<OsString>::new();
-    while !existing.exists() {
-        let name = existing
-            .file_name()
-            .ok_or_else(|| "data_storage_target_parent_unavailable".to_string())?;
-        missing.push(name.to_os_string());
-        existing = existing
-            .parent()
-            .ok_or_else(|| "data_storage_target_parent_unavailable".to_string())?;
-    }
-    let mut canonical = existing
-        .canonicalize()
-        .map_err(|err| format!("data_storage_canonicalize_failed: {err}"))?;
-    for component in missing.into_iter().rev() {
-        canonical.push(component);
-    }
-    let canonical = strip_windows_verbatim_prefix(canonical);
-    if canonical.parent().is_none() {
-        return Err("data_storage_root_directory_not_allowed".to_string());
-    }
-    Ok(canonical)
 }
 
 // 将路径组件转为比较键，Windows 转小写，其他平台保留大小写；非 Unicode 内容有损转换。
@@ -589,7 +502,11 @@ fn validate_active_data_dir(path: &Path) -> Result<(), String> {
 
 // 复制普通数据，仅跳过已停止的固定运行套接字；其余链接/重解析点及特殊节点仍拒绝。
 // 中途失败可能留下部分目标树，统一清理由迁移调用方负责。
-fn copy_directory_recursive(source_root: &Path, source: &Path, target: &Path) -> Result<(), String> {
+fn copy_directory_recursive(
+    source_root: &Path,
+    source: &Path,
+    target: &Path,
+) -> Result<(), String> {
     if path_is_symlink_or_reparse(source)? {
         return Err(format!(
             "data_storage_migration_symlink_rejected: {}",

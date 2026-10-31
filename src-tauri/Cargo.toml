@@ -98,6 +98,8 @@ local-ip-address = "0.6.13"
 tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 cli-manager-web-protocol = { path = "../crates/web-protocol" }
 cli-manager-web-server = { path = "../apps/server" }
+cli-manager-core = { path = "../crates/core" }
+cli-manager-core-db = { path = "../crates/core-db" }
 
 # macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
 # 注意：macos-private-api 必须在上方 [dependencies].tauri 中声明（不能仅放在 macOS target 下），
@@ -131,15 +133,3 @@ nix = { version = "0.31.3", features = ["fs", "ioctl", "process", "signal", "ter
 [dev-dependencies]
 tempfile = "3"
 
-[profile.dev]
-debug = 1
-incremental = true
-
-[profile.dev.package."*"]
-debug = 0
-
-[profile.release]
-lto = "fat"
-codegen-units = 1
-strip = "symbols"
-panic = "abort"

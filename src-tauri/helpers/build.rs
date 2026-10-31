@@ -37,7 +37,9 @@ END
         std::fs::write(&resource_path, resource).expect("failed to write Windows version resource");
         embed_resource::compile_for(&resource_path, [binary], embed_resource::NONE)
             .manifest_optional()
-            .unwrap_or_else(|error| panic!("failed to compile Windows resource for {binary}: {error}"));
+            .unwrap_or_else(|error| {
+                panic!("failed to compile Windows resource for {binary}: {error}")
+            });
     }
 }
 

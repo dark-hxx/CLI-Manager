@@ -5,12 +5,16 @@
 
 ## 步骤
 
+### 2026-10-30 用户调整
+
+用户明确要求“macos 的测试先跳过，继续完成其他的”。macOS 原生编译、窗口与系统拼音验证暂缓，不作为继续 Windows 隔离 PoC 的阻塞项，也不记为通过。检查点 A 的未决授权项继续追踪；允许执行隔离运行时实验以收集 Windows 证据。该调整不代表授权审核完成或 M0 已通过，不放行 M1、生产迁移或发布。最终结论必须列明暂缓项及其适用范围。
+
 | # | 步骤 | 产出 | 估时 |
 |---|---|---|---|
 | 1 | 建立 `spikes/gpui-poc` 独立 workspace、`deny.toml`；在根目录 `.gitignore` 中忽略其 `target/` | 工程骨架 | 0.5 d |
-| 2 | poc-compat：逐步加入 gpui-pre、gpui-component（patch/fork）、wry、alacritty_terminal、tokio-tungstenite，Windows + macOS 编译 | `research/compat.md` | 1–3 d |
+| 2 | poc-compat：逐步加入 gpui-pre、gpui-component（当前锁定版本直接兼容，无 patch/fork）、wry、alacritty_terminal、tokio-tungstenite，Windows + macOS 编译 | `research/compat.md` | 1–3 d |
 | 3 | 许可证审查：`cargo deny check licenses bans`，脚本导出全量许可证表，人工复核 Zed 内部 crate | `research/license-audit.md` | 1 d |
-| 4 | **硬门槛检查点 A**：步骤 2、3 任一失败 → 写 No-Go 结论并停止 | — | — |
+| 4 | **硬门槛检查点 A**：按原硬门槛判断失败；用户暂缓 macOS、允许 Windows 隔离实验，未决许可不放行 M1 / 发布 | — | — |
 | 5 | Tauri 基线测量（与步骤 6 起并行） | `research/baseline.md`、`bench/*` | 2 d |
 | 6 | poc-ime | poc-results §IME | 2 d |
 | 7 | poc-term：daemon 客户端最小实现 + TerminalElement + 测量 | poc-results §终端 | 4 d |

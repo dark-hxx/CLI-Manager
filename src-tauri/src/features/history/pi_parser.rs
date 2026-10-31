@@ -184,7 +184,10 @@ pub(super) fn scan_pi_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
                 &mut events,
                 call_id.as_deref(),
                 extract_content(&value),
-                Some(super::tool_observations::result_status(value.get("message").unwrap_or(&value)).to_string()),
+                Some(
+                    super::tool_observations::result_status(value.get("message").unwrap_or(&value))
+                        .to_string(),
+                ),
             );
         }
     }

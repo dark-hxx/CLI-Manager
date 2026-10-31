@@ -143,6 +143,7 @@ pub(super) fn emit_daemon_status(host: &DaemonHost, session_id: &str, status: Pt
             exit_code: status.exit_code,
         },
     );
+    host.push_session_status(session_id, &status.status, status.exit_code);
     host.release_ssh_agent_bridge(session_id);
     host.enforce_total_buffer_cap();
 }

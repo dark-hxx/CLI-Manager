@@ -358,10 +358,13 @@ impl ClientWriter {
     }
 }
 
-// 实时输出按 base64 文本长度计费，其他帧返回零；此值不是实际二进制线缆字节数。
+// 实时输出按解码后的 payload 字节计费，供二进制 ACK 与队列上限复用。
 pub(super) fn frame_payload_bytes(frame: &DaemonFrame) -> usize {
     match frame {
-        DaemonFrame::Output { data_base64, .. } => data_base64.len(),
+        DaemonFrame::Output { data_base64, .. } => STANDARD
+            .decode(data_base64)
+            .map(|data| data.len())
+            .unwrap_or(0),
         _ => 0,
     }
 }

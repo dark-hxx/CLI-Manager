@@ -1,0 +1,157 @@
+[
+  {
+    "package": "gpui-base 0.8.1",
+    "features": []
+  },
+  {
+    "package": "gpui-component 0.8.1",
+    "features": []
+  },
+  {
+    "package": "gpui-component-macros 0.8.1",
+    "features": []
+  },
+  {
+    "package": "gpui-kit-assets 0.8.1",
+    "features": []
+  },
+  {
+    "package": "gpui-pre 0.3.10",
+    "features": [
+      "default",
+      "font-kit",
+      "wayland",
+      "windows-manifest",
+      "x11"
+    ]
+  },
+  {
+    "package": "gpui-pre-apple 0.3.10",
+    "features": [
+      "default",
+      "font-kit"
+    ]
+  },
+  {
+    "package": "gpui-pre-collections 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-derive-refineable 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-http-client 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-ios 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-linux 0.3.10",
+    "features": [
+      "as-raw-xcb-connection",
+      "ashpd",
+      "calloop-wayland-source",
+      "filedescriptor",
+      "gpui_wgpu",
+      "open",
+      "wayland",
+      "wayland-backend",
+      "wayland-client",
+      "wayland-cursor",
+      "wayland-protocols",
+      "wayland-protocols-plasma",
+      "wayland-protocols-wlr",
+      "x11",
+      "x11rb",
+      "xim",
+      "xkbcommon"
+    ]
+  },
+  {
+    "package": "gpui-pre-macos 0.3.10",
+    "features": [
+      "font-kit"
+    ]
+  },
+  {
+    "package": "gpui-pre-macros 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-platform 0.3.10",
+    "features": [
+      "default",
+      "font-kit",
+      "multithreaded",
+      "wayland",
+      "x11"
+    ]
+  },
+  {
+    "package": "gpui-pre-refineable 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-reqwest 0.12.15",
+    "features": [
+      "__rustls",
+      "__rustls-ring",
+      "__tls",
+      "charset",
+      "h2",
+      "http2",
+      "macos-system-configuration",
+      "multipart",
+      "rustls-tls-native-roots",
+      "rustls-tls-native-roots-no-provider",
+      "socks",
+      "stream"
+    ]
+  },
+  {
+    "package": "gpui-pre-scheduler 0.3.10",
+    "features": [
+      "wasm-threads"
+    ]
+  },
+  {
+    "package": "gpui-pre-shared-string 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-sum-tree 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-util 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-web 0.3.10",
+    "features": [
+      "multithreaded"
+    ]
+  },
+  {
+    "package": "gpui-pre-wgpu 0.3.10",
+    "features": [
+      "default",
+      "font-kit"
+    ]
+  },
+  {
+    "package": "gpui-pre-windows 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-ztracing 0.3.10",
+    "features": []
+  },
+  {
+    "package": "gpui-pre-ztracing-macro 0.3.10",
+    "features": []
+  }
+]

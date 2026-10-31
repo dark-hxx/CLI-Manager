@@ -11,6 +11,39 @@ use std::io::Write;
 use tungstenite::client::IntoClientRequest;
 
 #[test]
+fn native_websocket_handshake_omits_origin_but_rejects_supplied_bad_origins() {
+    fn check(origin: Option<&str>) -> Result<Response, ErrorResponse> {
+        let mut request = "ws://127.0.0.1:1234/pty".into_client_request().unwrap();
+        if let Some(origin) = origin {
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
+        }
+        validate_websocket_request(&request, Response::new(()))
+    }
+    assert!(check(None).is_ok());
+    assert!(check(Some("http://tauri.localhost")).is_ok());
+    for origin in [
+        "",
+        "null",
+        "https://example.com",
+        "http://localhost.attacker.com",
+    ] {
+        assert_eq!(
+            check(Some(origin)).unwrap_err().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+    let request = "ws://127.0.0.1:1234/other".into_client_request().unwrap();
+    assert_eq!(
+        validate_websocket_request(&request, Response::new(()))
+            .unwrap_err()
+            .status(),
+        StatusCode::NOT_FOUND
+    );
+}
+
+#[test]
 // 验证输出批次在已有数据时不跨越实时帧预算，并允许空批次接收首个大块。
 fn daemon_output_batch_stops_before_crossing_live_frame_budget() {
     assert!(!output_batch_would_overflow(0, 80 * 1024));
@@ -225,6 +258,7 @@ fn ndjson_redacts_unknown_frame_types() {
             encode_frame(&ClientFrame::Auth {
                 token: "token".to_string(),
                 client_version: "test".to_string(),
+                client_features: Vec::new(),
             })
             .as_bytes(),
         )
@@ -281,6 +315,7 @@ fn websocket_rejects_routing_control_and_redacts_unknown_frame_types() {
             encode_frame(&ClientFrame::Auth {
                 token: "token".to_string(),
                 client_version: "test".to_string(),
+                client_features: Vec::new(),
             })
             .trim_end()
             .to_string()
@@ -577,6 +612,8 @@ fn attach_returns_replay_and_registers_client() {
         client_id,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::new(),
             unacknowledged_chars: HashMap::new(),
             flow_control_paused: HashSet::new(),
@@ -645,6 +682,8 @@ fn attach_barrier_sends_replay_control_before_buffered_live_output() {
         client_id,
         ClientHandle {
             writer: Arc::clone(&writer),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::new(),
             unacknowledged_chars: HashMap::new(),
             flow_control_paused: HashSet::new(),
@@ -706,6 +745,8 @@ fn detach_session_clears_flow_control_state() {
         1,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::from([session_id.to_string()]),
             unacknowledged_chars: HashMap::from([(session_id.to_string(), 10)]),
             flow_control_paused: HashSet::from([session_id.to_string()]),
@@ -747,6 +788,8 @@ fn output_flow_control_buffers_slow_client_and_flushes_after_ack() {
         1,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::from([session_id.to_string()]),
             unacknowledged_chars: HashMap::from([(
                 session_id.to_string(),
@@ -782,6 +825,7 @@ fn output_flow_control_buffers_slow_client_and_flushes_after_ack() {
         session_id,
         1,
         CLIENT_OUTPUT_HIGH_WATERMARK - CLIENT_OUTPUT_LOW_WATERMARK,
+        None,
     );
 
     let mut reader = BufReader::new(peer);
@@ -828,6 +872,8 @@ fn output_flow_control_pauses_only_the_slow_client() {
         1,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(slow_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::from([session_id.to_string()]),
             unacknowledged_chars: HashMap::from([(
                 session_id.to_string(),
@@ -843,6 +889,8 @@ fn output_flow_control_pauses_only_the_slow_client() {
         2,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(fast_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::from([session_id.to_string()]),
             unacknowledged_chars: HashMap::from([(session_id.to_string(), 0)]),
             flow_control_paused: HashSet::new(),
@@ -900,6 +948,8 @@ fn output_flow_control_closes_client_when_replay_window_has_gap() {
         1,
         ClientHandle {
             writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(server_stream))),
+            ack_bytes: false,
+            session_status_push: false,
             attached: HashSet::from([session_id.to_string()]),
             unacknowledged_chars: HashMap::from([(
                 session_id.to_string(),
@@ -917,6 +967,7 @@ fn output_flow_control_closes_client_when_replay_window_has_gap() {
         session_id,
         1,
         CLIENT_OUTPUT_HIGH_WATERMARK - CLIENT_OUTPUT_LOW_WATERMARK,
+        None,
     );
 
     let clients = host.clients.lock().unwrap();

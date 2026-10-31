@@ -1251,10 +1251,12 @@ mod tests {
                 "codexConfigOverrides": ["model='selected'", "tui.status_line=['old']", "tui.theme='theme'"],
             });
             if complete {
-                value["codexProfileText"] = json!("model='selected'\n[tui]\nstatus_line=['old']\ntheme='theme'\n");
+                value["codexProfileText"] =
+                    json!("model='selected'\n[tui]\nstatus_line=['old']\ntheme='theme'\n");
             }
             let manifest = serde_json::from_value::<SnapshotManifest>(value).unwrap();
-            let config = codex_profile_config_from_manifest(manifest, "snapshot", "provider").unwrap();
+            let config =
+                codex_profile_config_from_manifest(manifest, "snapshot", "provider").unwrap();
             let actual: toml::Value = toml::from_str(&config).unwrap();
             assert_eq!(actual["model"].as_str(), Some("selected"));
             assert_eq!(actual["tui"]["theme"].as_str(), Some("theme"));
@@ -1269,11 +1271,19 @@ mod tests {
         for complete in [false, true] {
             let mut value = json!({"appType":"codex","providerId":"provider","activeKeyId":"key",
                 "snapshotId":"snapshot", "codexConfigOverrides": config.lines().collect::<Vec<_>>()});
-            if complete { value["codexProfileText"] = json!(config); }
+            if complete {
+                value["codexProfileText"] = json!(config);
+            }
             let manifest = serde_json::from_value::<SnapshotManifest>(value).unwrap();
-            let text = codex_profile_config_from_manifest(manifest, "snapshot", "provider").unwrap();
+            let text =
+                codex_profile_config_from_manifest(manifest, "snapshot", "provider").unwrap();
             let actual: toml::Value = toml::from_str(&text).unwrap();
-            for section in ["hooks", "notice", "projects", "windows_wsl_setup_acknowledged"] {
+            for section in [
+                "hooks",
+                "notice",
+                "projects",
+                "windows_wsl_setup_acknowledged",
+            ] {
                 assert!(actual.get(section).is_none());
             }
             assert!(actual["tui"].get("model_availability_nux").is_none());

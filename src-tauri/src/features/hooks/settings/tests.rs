@@ -17,27 +17,47 @@ fn codex_common_sync_copies_only_current_saved_trust() {
     install_codex_hooks(&dir).unwrap();
     let path = dir.join(CODEX_CONFIG_FILE_NAME);
     let original = fs::read(&path).unwrap();
-    assert!(read_codex_cli_manager_hook_state_blocks(&dir).unwrap().is_empty());
+    assert!(read_codex_cli_manager_hook_state_blocks(&dir)
+        .unwrap()
+        .is_empty());
     assert_eq!(fs::read(&path).unwrap(), original);
     trust_installed_codex_hooks(&dir);
     let trusted = fs::read_to_string(&path).unwrap();
     let blocks = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
     assert_eq!(blocks.len(), 9);
-    fs::write(&path, trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1)).unwrap();
+    fs::write(
+        &path,
+        trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1),
+    )
+    .unwrap();
     let disabled = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
     assert_eq!(disabled.len(), 9);
-    assert!(disabled.iter().any(|block| block.iter().any(|line| line == "enabled = false")));
+    assert!(disabled
+        .iter()
+        .any(|block| block.iter().any(|line| line == "enabled = false")));
     let merged = merge_codex_common_config_toml(None, &disabled);
     assert!(merged.contains("enabled = false"));
     fs::write(&path, trusted.replacen("sha256:", "sha256:stale-", 1)).unwrap();
     let stale = fs::read(&path).unwrap();
-    assert_eq!(read_codex_cli_manager_hook_state_blocks(&dir).unwrap().len(), 8);
+    assert_eq!(
+        read_codex_cli_manager_hook_state_blocks(&dir)
+            .unwrap()
+            .len(),
+        8
+    );
     assert_eq!(fs::read(&path).unwrap(), stale);
     // 禁用决定不依赖已有确认；没有/过期哈希不能被公共同步重新启用。
     for hash in [None, Some("sha256:stale")] {
         let mut doc: toml::Value = toml::from_str(&trusted).unwrap();
-        let saved = doc["hooks"]["state"].as_table_mut().unwrap().iter_mut().next().unwrap().1
-            .as_table_mut().unwrap();
+        let saved = doc["hooks"]["state"]
+            .as_table_mut()
+            .unwrap()
+            .iter_mut()
+            .next()
+            .unwrap()
+            .1
+            .as_table_mut()
+            .unwrap();
         saved.insert("enabled".to_string(), false.into());
         saved.remove("trusted_hash");
         if let Some(hash) = hash {
@@ -46,7 +66,9 @@ fn codex_common_sync_copies_only_current_saved_trust() {
         fs::write(&path, toml::to_string(&doc).unwrap()).unwrap();
         let blocks = read_codex_cli_manager_hook_state_blocks(&dir).unwrap();
         assert_eq!(blocks.len(), 9);
-        assert!(blocks.iter().any(|block| block.len() == 2 && block[1] == "enabled = false"));
+        assert!(blocks
+            .iter()
+            .any(|block| block.len() == 2 && block[1] == "enabled = false"));
         let merged = merge_codex_common_config_toml(None, &blocks);
         assert!(merged.contains("enabled = false"));
         assert!(!merged.contains("sha256:stale"));
@@ -383,13 +405,19 @@ fn codex_status_preserves_missing_disabled_or_stale_hook_trust() {
     for (config, installed) in [
         (untrusted, false),
         (trusted.clone(), true),
-        (trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1), false),
+        (
+            trusted.replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1),
+            false,
+        ),
         (trusted.replacen("sha256:", "sha256:stale-", 1), false),
     ] {
         fs::write(&config_path, &config).unwrap();
         for _ in 0..3 {
             let status = build_codex_status(Some(codex_dir.clone())).unwrap();
-            assert_eq!(matches!(status.status, HookInstallStatus::Installed), installed);
+            assert_eq!(
+                matches!(status.status, HookInstallStatus::Installed),
+                installed
+            );
             assert_eq!(fs::read_to_string(&config_path).unwrap(), config);
             assert_eq!(fs::read(&hooks_path).unwrap(), hooks);
         }
@@ -414,8 +442,11 @@ fn codex_explicit_install_repairs_duplicate_keys_without_trusting_or_enabling() 
         .next()
         .unwrap();
     let config_path = codex_dir.join(CODEX_CONFIG_FILE_NAME);
-    let config = fs::read_to_string(&config_path).unwrap()
-        .replacen("trusted_hash =", "enabled = false\ntrusted_hash =", 1);
+    let config = fs::read_to_string(&config_path).unwrap().replacen(
+        "trusted_hash =",
+        "enabled = false\ntrusted_hash =",
+        1,
+    );
     let broken = format!("[hooks.state.'{key}']\ntrusted_hash = \"sha256:old\"\n\n{config}");
     fs::write(&config_path, &broken).unwrap();
     assert!(build_codex_status(Some(codex_dir.clone())).is_err());
@@ -424,7 +455,10 @@ fn codex_explicit_install_repairs_duplicate_keys_without_trusting_or_enabling() 
     install_codex_hooks(&codex_dir).unwrap();
     let repaired = build_codex_status(Some(codex_dir)).unwrap();
 
-    assert!(matches!(repaired.status, HookInstallStatus::PartialInstalled));
+    assert!(matches!(
+        repaired.status,
+        HookInstallStatus::PartialInstalled
+    ));
     let config = fs::read_to_string(config_path).unwrap();
     toml::from_str::<toml::Value>(&config).unwrap();
     assert!(!config.contains("sha256:old"));
@@ -940,7 +974,12 @@ async fn install_then_uninstall_pi_extension() {
     assert!(extension.contains("agent_settled"));
     // before_agent_start 只跟踪代际，对外 running 仍仅从 agent_start 上报一次。
     assert!(extension.contains("before_agent_start"));
-    assert_eq!(extension.matches("postHookEvent(\"UserPromptSubmit\")").count(), 1);
+    assert_eq!(
+        extension
+            .matches("postHookEvent(\"UserPromptSubmit\")")
+            .count(),
+        1
+    );
     assert!(extension.contains("void postHookEvent"));
     assert!(!extension.contains("await postHookEvent"));
     assert!(extension.contains("AbortController"));

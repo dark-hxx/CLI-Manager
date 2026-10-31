@@ -13,40 +13,63 @@ fn encode_hdrop(paths: &[std::path::PathBuf]) -> Result<Vec<u8>, String> {
     let mut names = Vec::<u16>::new();
     for path in paths {
         let name: Vec<u16> = path.as_os_str().encode_wide().collect();
-        if name.contains(&0) { return Err("clipboard_invalid_path".into()); }
+        if name.contains(&0) {
+            return Err("clipboard_invalid_path".into());
+        }
         names.extend(name);
         names.push(0);
     }
     names.push(0);
     let header_size = std::mem::size_of::<DROPFILES>();
-    let byte_count = header_size.checked_add(names.len().checked_mul(2).ok_or("clipboard_too_large")?)
+    let byte_count = header_size
+        .checked_add(names.len().checked_mul(2).ok_or("clipboard_too_large")?)
         .ok_or("clipboard_too_large")?;
-    if byte_count > 16 * 1024 * 1024 { return Err("clipboard_too_large".into()); }
+    if byte_count > 16 * 1024 * 1024 {
+        return Err("clipboard_too_large".into());
+    }
 
     let mut bytes = vec![0u8; byte_count];
-    let header = DROPFILES { pFiles: header_size as u32, pt: POINT { x: 0, y: 0 }, fNC: 0, fWide: 1 };
+    let header = DROPFILES {
+        pFiles: header_size as u32,
+        pt: POINT { x: 0, y: 0 },
+        fNC: 0,
+        fWide: 1,
+    };
     unsafe {
         std::ptr::write_unaligned(bytes.as_mut_ptr().cast::<DROPFILES>(), header);
-        std::ptr::copy_nonoverlapping(names.as_ptr().cast::<u8>(), bytes.as_mut_ptr().add(header_size), names.len() * 2);
+        std::ptr::copy_nonoverlapping(
+            names.as_ptr().cast::<u8>(),
+            bytes.as_mut_ptr().add(header_size),
+            names.len() * 2,
+        );
     }
     Ok(bytes)
 }
 
 #[cfg(target_os = "windows")]
-pub(super) fn write_clipboard_file_paths(paths: &[std::path::PathBuf], owner: usize) -> Result<(), String> {
+pub(super) fn write_clipboard_file_paths(
+    paths: &[std::path::PathBuf],
+    owner: usize,
+) -> Result<(), String> {
     use windows_sys::Win32::Foundation::GlobalFree;
     use windows_sys::Win32::System::DataExchange::{
         CloseClipboard, EmptyClipboard, OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
     };
-    use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+    use windows_sys::Win32::System::Memory::{
+        GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
 
     // The clipboard owns each movable global allocation after SetClipboardData succeeds.
     unsafe fn allocate(bytes: &[u8]) -> Result<windows_sys::Win32::Foundation::HGLOBAL, String> {
         let handle = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) };
-        if handle.is_null() { return Err("clipboard_write_failed".into()); }
+        if handle.is_null() {
+            return Err("clipboard_write_failed".into());
+        }
         let pointer = unsafe { GlobalLock(handle) };
         if pointer.is_null() {
-            unsafe { GlobalFree(handle); }
+            unsafe {
+                GlobalFree(handle);
+            }
             return Err("clipboard_write_failed".into());
         }
         unsafe {
@@ -62,24 +85,35 @@ pub(super) fn write_clipboard_file_paths(paths: &[std::path::PathBuf], owner: us
     let effect_handle = match unsafe { allocate(&effect) } {
         Ok(handle) => handle,
         Err(error) => {
-            unsafe { GlobalFree(hdrop); }
+            unsafe {
+                GlobalFree(hdrop);
+            }
             return Err(error);
         }
     };
     let format_name: Vec<u16> = "Preferred DropEffect\0".encode_utf16().collect();
     let effect_format = unsafe { RegisterClipboardFormatW(format_name.as_ptr()) };
     if effect_format == 0 {
-        unsafe { GlobalFree(hdrop); GlobalFree(effect_handle); }
+        unsafe {
+            GlobalFree(hdrop);
+            GlobalFree(effect_handle);
+        }
         return Err("clipboard_write_failed".into());
     }
 
     let mut opened = false;
     for _ in 0..5 {
-        if unsafe { OpenClipboard(owner as _) } != 0 { opened = true; break; }
+        if unsafe { OpenClipboard(owner as _) } != 0 {
+            opened = true;
+            break;
+        }
         std::thread::sleep(Duration::from_millis(20));
     }
     if !opened {
-        unsafe { GlobalFree(hdrop); GlobalFree(effect_handle); }
+        unsafe {
+            GlobalFree(hdrop);
+            GlobalFree(effect_handle);
+        }
         return Err("clipboard_busy".into());
     }
     let result = unsafe {
@@ -94,13 +128,23 @@ pub(super) fn write_clipboard_file_paths(paths: &[std::path::PathBuf], owner: us
             effect_owned = !SetClipboardData(effect_format, effect_handle).is_null();
             ok = effect_owned;
         }
-        if !ok { EmptyClipboard(); }
+        if !ok {
+            EmptyClipboard();
+        }
         CloseClipboard();
-        if !hdrop_owned { GlobalFree(hdrop); }
-        if !effect_owned { GlobalFree(effect_handle); }
+        if !hdrop_owned {
+            GlobalFree(hdrop);
+        }
+        if !effect_owned {
+            GlobalFree(effect_handle);
+        }
         ok
     };
-    if result { Ok(()) } else { Err("clipboard_write_failed".into()) }
+    if result {
+        Ok(())
+    } else {
+        Err("clipboard_write_failed".into())
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -187,10 +231,14 @@ mod tests {
 
     #[test]
     fn hdrop_encodes_unicode_paths_with_double_nul_terminator() {
-        let bytes = encode_hdrop(&[PathBuf::from(r"C:\项目\a.txt"), PathBuf::from(r"C:\项目\b")]).unwrap();
+        let bytes =
+            encode_hdrop(&[PathBuf::from(r"C:\项目\a.txt"), PathBuf::from(r"C:\项目\b")]).unwrap();
         let header = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<DROPFILES>()) };
         let offset = header.pFiles as usize;
-        let wide: Vec<u16> = bytes[offset..].chunks_exact(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+        let wide: Vec<u16> = bytes[offset..]
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
         let expected: Vec<u16> = "C:\\项目\\a.txt\0C:\\项目\\b\0\0".encode_utf16().collect();
         assert_eq!(wide, expected);
         let is_wide = header.fWide;
@@ -199,6 +247,9 @@ mod tests {
 
     #[test]
     fn hdrop_rejects_empty_selection() {
-        assert_eq!(encode_hdrop(&[]).unwrap_err(), "clipboard_invalid_file_count");
+        assert_eq!(
+            encode_hdrop(&[]).unwrap_err(),
+            "clipboard_invalid_file_count"
+        );
     }
 }

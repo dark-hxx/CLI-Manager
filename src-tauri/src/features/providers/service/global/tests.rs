@@ -387,7 +387,10 @@ ordinary_option = true
     assert_eq!(provider["http_headers"]["x-region"].as_str(), Some("test"));
     assert!(!text.contains("secret"));
     assert!(actual.get("auth").is_none());
-    assert_eq!(actual["profiles"]["alt"]["service_tier"].as_str(), Some("fast"));
+    assert_eq!(
+        actual["profiles"]["alt"]["service_tier"].as_str(),
+        Some("fast")
+    );
     assert_eq!(actual["custom"]["ordinary_option"].as_bool(), Some(true));
 }
 
@@ -399,14 +402,23 @@ fn codex_writer_preserves_home_statusline_and_other_provider_tui_options() {
         "tui = { status_line = ['total-input-tokens'], theme = 'new-theme' }\n",
         "tui.status_line = ['total-input-tokens']\ntui.theme = 'new-theme'\n",
     ] {
-        for items in [Some("['context-remaining', 'codex-version']"), Some("[]"), None] {
-            let status = items.map(|value| format!("status_line = {value}\n")).unwrap_or_default();
+        for items in [
+            Some("['context-remaining', 'codex-version']"),
+            Some("[]"),
+            None,
+        ] {
+            let status = items
+                .map(|value| format!("status_line = {value}\n"))
+                .unwrap_or_default();
             let before = format!("[tui]\n{status}notifications = false\n");
             let effective = json!({"config": source});
             let (bytes, _) = materialize_codex_config(Some(before.as_bytes()), &effective).unwrap();
             let actual: toml::Value = toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
             let previous: toml::Value = toml::from_str(&before).unwrap();
-            assert_eq!(actual["tui"].get("status_line"), previous["tui"].get("status_line"));
+            assert_eq!(
+                actual["tui"].get("status_line"),
+                previous["tui"].get("status_line")
+            );
             assert_eq!(actual["tui"]["theme"].as_str(), Some("new-theme"));
             assert_eq!(actual["tui"]["notifications"].as_bool(), Some(false));
         }
@@ -416,7 +428,10 @@ fn codex_writer_preserves_home_statusline_and_other_provider_tui_options() {
 #[test]
 // 无 Home 时不把供应商旧界面设置写进 profile，也不产生空的 tui 覆盖表。
 fn codex_writer_omits_statusline_only_provider_tables() {
-    for source in ["[tui]\nstatus_line = []\n", "tui = { status_line = ['model'] }\n"] {
+    for source in [
+        "[tui]\nstatus_line = []\n",
+        "tui = { status_line = ['model'] }\n",
+    ] {
         let (bytes, owned) = materialize_codex_config(None, &json!({"config": source})).unwrap();
         let actual: toml::Value = toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
         assert!(actual.get("tui").is_none());
@@ -430,7 +445,10 @@ fn codex_writer_leaves_explicit_named_profile_statusline_untouched() {
     let source = "[profiles.personal.tui]\nstatus_line = ['model']\n[tui]\nstatus_line = ['old']\nfuture_option = true\n";
     let (bytes, _) = materialize_codex_config(None, &json!({"config": source})).unwrap();
     let actual: toml::Value = toml::from_str(std::str::from_utf8(&bytes).unwrap()).unwrap();
-    assert_eq!(actual["profiles"]["personal"]["tui"]["status_line"][0].as_str(), Some("model"));
+    assert_eq!(
+        actual["profiles"]["personal"]["tui"]["status_line"][0].as_str(),
+        Some("model")
+    );
     assert_eq!(actual["tui"]["future_option"].as_bool(), Some(true));
     assert!(actual["tui"].get("status_line").is_none());
 }

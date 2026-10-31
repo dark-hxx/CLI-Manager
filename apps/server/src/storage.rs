@@ -1406,10 +1406,13 @@ mod tests {
             updated_at,
         };
         let mut first_workspace = workspace("CLI-Manager", 1);
-        first_workspace.terminals = Some(vec![cli_manager_web_protocol::WorkspaceTerminalSummary {
-            session_id: "terminal-a".to_string(), project_id: "project-1".to_string(),
-            worktree_id: None, title: "Terminal A".to_string(),
-        }]);
+        first_workspace.terminals =
+            Some(vec![cli_manager_web_protocol::WorkspaceTerminalSummary {
+                session_id: "terminal-a".to_string(),
+                project_id: "project-1".to_string(),
+                worktree_id: None,
+                title: "Terminal A".to_string(),
+            }]);
         storage
             .replace_history_snapshot(
                 "device-1",
@@ -1421,7 +1424,15 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(storage.workspace_snapshot("device-1").await.unwrap().unwrap().terminals, first_workspace.terminals);
+        assert_eq!(
+            storage
+                .workspace_snapshot("device-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .terminals,
+            first_workspace.terminals
+        );
         let mut next_workspace = workspace("CLI-Manager renamed", 2);
         next_workspace.terminals = Some(vec![]);
         storage
@@ -1447,33 +1458,114 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(stored_workspace.projects[0].name, "CLI-Manager renamed");
-        assert_eq!(stored_workspace.projects[0].cwd.as_deref(), Some(r"D:\work\CLI-Manager"));
+        assert_eq!(
+            stored_workspace.projects[0].cwd.as_deref(),
+            Some(r"D:\work\CLI-Manager")
+        );
         assert_eq!(stored_workspace.updated_at, 2);
         assert_eq!(stored_workspace.terminals, Some(vec![]));
         assert!(sessions[0].cwd.is_none());
         next_workspace.updated_at = 3;
-        assert!(storage.replace_history_snapshot("device-1", &user.id, 3, &[], Some(&next_workspace), true).await.unwrap());
-        let retained = storage.list_history(&user.id, Some("device-1"), 50, 0).await.unwrap();
-        assert_eq!(retained.len(), 1, "workspace-only update must retain history");
+        assert!(storage
+            .replace_history_snapshot("device-1", &user.id, 3, &[], Some(&next_workspace), true)
+            .await
+            .unwrap());
+        let retained = storage
+            .list_history(&user.id, Some("device-1"), 50, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            retained.len(),
+            1,
+            "workspace-only update must retain history"
+        );
         assert_eq!(retained[0].session_id, "session-b");
-        assert_eq!(storage.workspace_snapshot("device-1").await.unwrap().unwrap().updated_at, 3);
-        assert!(!storage.replace_history_snapshot("device-1", &user.id, 2, &[], Some(&first_workspace), true).await.unwrap());
-        assert!(storage.replace_history_snapshot("device-1", &user.id, 4, &[], None, true).await.is_err());
-        assert!(storage.replace_history_snapshot("device-1", &user.id, 4, &[session("invalid")], Some(&next_workspace), true).await.is_err());
-        assert_eq!(storage.list_history(&user.id, Some("device-1"), 50, 0).await.unwrap()[0].session_id, "session-b");
-        let history = storage.append_browser_event(&user.id, BrowserEventPayload::HistoryUpdated {
-            device_id: "device-1".into(), latest_updated_at: 2,
-        }).await.unwrap();
-        let first_event = storage.append_browser_event(&user.id, BrowserEventPayload::WorkspaceUpdated {
-            device_id: "device-1".into(), workspace: first_workspace,
-        }).await.unwrap();
-        let latest_event = storage.append_browser_event(&user.id, BrowserEventPayload::WorkspaceUpdated {
-            device_id: "device-1".into(), workspace: next_workspace,
-        }).await.unwrap();
+        assert_eq!(
+            storage
+                .workspace_snapshot("device-1")
+                .await
+                .unwrap()
+                .unwrap()
+                .updated_at,
+            3
+        );
+        assert!(!storage
+            .replace_history_snapshot("device-1", &user.id, 2, &[], Some(&first_workspace), true)
+            .await
+            .unwrap());
+        assert!(storage
+            .replace_history_snapshot("device-1", &user.id, 4, &[], None, true)
+            .await
+            .is_err());
+        assert!(storage
+            .replace_history_snapshot(
+                "device-1",
+                &user.id,
+                4,
+                &[session("invalid")],
+                Some(&next_workspace),
+                true
+            )
+            .await
+            .is_err());
+        assert_eq!(
+            storage
+                .list_history(&user.id, Some("device-1"), 50, 0)
+                .await
+                .unwrap()[0]
+                .session_id,
+            "session-b"
+        );
+        let history = storage
+            .append_browser_event(
+                &user.id,
+                BrowserEventPayload::HistoryUpdated {
+                    device_id: "device-1".into(),
+                    latest_updated_at: 2,
+                },
+            )
+            .await
+            .unwrap();
+        let first_event = storage
+            .append_browser_event(
+                &user.id,
+                BrowserEventPayload::WorkspaceUpdated {
+                    device_id: "device-1".into(),
+                    workspace: first_workspace,
+                },
+            )
+            .await
+            .unwrap();
+        let latest_event = storage
+            .append_browser_event(
+                &user.id,
+                BrowserEventPayload::WorkspaceUpdated {
+                    device_id: "device-1".into(),
+                    workspace: next_workspace,
+                },
+            )
+            .await
+            .unwrap();
         let events = storage.browser_events_after(&user.id, 0).await.unwrap();
-        assert_eq!(events, vec![history, latest_event.clone()], "retain history invalidation and only the latest workspace payload");
-        let BrowserSocketFrame::Event { sequence: first_sequence, .. } = first_event else { panic!("event expected") };
-        let BrowserSocketFrame::Event { sequence: latest_sequence, .. } = latest_event else { panic!("event expected") };
+        assert_eq!(
+            events,
+            vec![history, latest_event.clone()],
+            "retain history invalidation and only the latest workspace payload"
+        );
+        let BrowserSocketFrame::Event {
+            sequence: first_sequence,
+            ..
+        } = first_event
+        else {
+            panic!("event expected")
+        };
+        let BrowserSocketFrame::Event {
+            sequence: latest_sequence,
+            ..
+        } = latest_event
+        else {
+            panic!("event expected")
+        };
         assert!(latest_sequence > first_sequence);
     }
 
@@ -1482,30 +1574,64 @@ mod tests {
         let path = std::env::temp_dir().join(format!("web-history-lock-{}.db", Uuid::new_v4()));
         let storage = Storage::open(&path).await.unwrap();
         storage.ensure_single_user("admin", "unused").await.unwrap();
-        let user = storage.find_user_by_username("admin").await.unwrap().unwrap();
-        storage.upsert_device_hello("device", "PC", "windows", "1", &[], None, None, None, None).await.unwrap();
+        let user = storage
+            .find_user_by_username("admin")
+            .await
+            .unwrap()
+            .unwrap();
+        storage
+            .upsert_device_hello("device", "PC", "windows", "1", &[], None, None, None, None)
+            .await
+            .unwrap();
         let mut blocker = storage.pool().begin_with("BEGIN IMMEDIATE").await.unwrap();
         sqlx::query("UPDATE devices SET last_seen_at = 123 WHERE id = 'device'")
-            .execute(&mut *blocker).await.unwrap();
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
         let writer_storage = storage.clone();
         let owner = user.id.clone();
         let writer = tokio::spawn(async move {
-            let workspace = WorkspaceSnapshot { subagents: vec![],
-            terminals: Some(vec![]), groups: vec![],
-                projects: vec![], worktrees: vec![], updated_at: 7 };
-            writer_storage.replace_history_snapshot("device", &owner, 7, &[], Some(&workspace), false).await
+            let workspace = WorkspaceSnapshot {
+                subagents: vec![],
+                terminals: Some(vec![]),
+                groups: vec![],
+                projects: vec![],
+                worktrees: vec![],
+                updated_at: 7,
+            };
+            writer_storage
+                .replace_history_snapshot("device", &owner, 7, &[], Some(&workspace), false)
+                .await
         });
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(!writer.is_finished(), "snapshot must wait for the reserved writer");
+        assert!(
+            !writer.is_finished(),
+            "snapshot must wait for the reserved writer"
+        );
         blocker.commit().await.unwrap();
         assert!(writer.await.unwrap().unwrap());
-        assert_eq!(storage.workspace_snapshot("device").await.unwrap().unwrap().updated_at, 7);
-        assert!(!storage.replace_history_snapshot("device", &user.id, 6, &[], None, false).await.unwrap());
+        assert_eq!(
+            storage
+                .workspace_snapshot("device")
+                .await
+                .unwrap()
+                .unwrap()
+                .updated_at,
+            7
+        );
+        assert!(!storage
+            .replace_history_snapshot("device", &user.id, 6, &[], None, false)
+            .await
+            .unwrap());
         let sequence: i64 = sqlx::query_scalar("SELECT last_sequence FROM device_event_cursors WHERE device_id = 'device' AND stream = 'history'")
             .fetch_one(storage.pool()).await.unwrap();
         assert_eq!(sequence, 7);
         storage.pool().close().await;
-        for file in [path.clone(), path.with_extension("db-wal"), path.with_extension("db-shm")] {
+        for file in [
+            path.clone(),
+            path.with_extension("db-wal"),
+            path.with_extension("db-shm"),
+        ] {
             let _ = std::fs::remove_file(file);
         }
     }

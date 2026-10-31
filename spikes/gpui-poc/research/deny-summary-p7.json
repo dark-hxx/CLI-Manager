@@ -1,0 +1,19 @@
+{
+  "command": "cargo deny --format json --offline --locked --features poc-term/allocator-mimalloc check licenses bans",
+  "allFeatures": false,
+  "summary": {
+    "bans": {
+      "errors": 0,
+      "helps": 0,
+      "notes": 0,
+      "warnings": 75
+    },
+    "licenses": {
+      "errors": 0,
+      "helps": 828,
+      "notes": 0,
+      "warnings": 0
+    }
+  },
+  "features": "poc-term/allocator-mimalloc"
+}

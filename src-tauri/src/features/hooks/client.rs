@@ -101,7 +101,10 @@ fn try_notify(source: &str, event: &str) -> Result<(), HookNotifyError> {
         .map(|path| path.to_string_lossy().to_string());
     let goal_metadata = (source == "codex" && event == "Stop")
         .then(|| lookup_stop_goal(normalized.session_id.as_deref(), wsl_distro_name.as_deref()));
-    if let Some(diagnostic) = goal_metadata.as_ref().and_then(|metadata| metadata.diagnostic) {
+    if let Some(diagnostic) = goal_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.diagnostic)
+    {
         log::debug!("codex goal lookup returned unknown: code={diagnostic}");
     }
 

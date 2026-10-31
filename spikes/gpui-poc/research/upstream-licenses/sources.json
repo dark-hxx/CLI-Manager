@@ -1,0 +1,41 @@
+[
+  {
+    "file": "microsoft-terminal.txt",
+    "url": "https://raw.githubusercontent.com/microsoft/terminal/1283c0f5b99a2961673249fa77c6b986efb5086c/LICENSE",
+    "scope": "Exact revision cited by GPUI platform.rs and shader headers.",
+    "sha256": "5d177f23ecfeb0ea8e050b6a5a16355e1ae9a0b286436ca8f83ed08b3795be6b"
+  },
+  {
+    "file": "display-link.txt",
+    "url": "https://raw.githubusercontent.com/BrainiumLLC/display-link/32780138c65ee3981d0fa44f321bb9946146a580/LICENSE-MIT",
+    "scope": "Pinned review snapshot; GPUI header references master, original copied revision unknown.",
+    "sha256": "30fefc3a7d6a0041541858293bcbea2dde4caa4c0a5802f996a7f7e8c0085652"
+  },
+  {
+    "file": "ghostty.txt",
+    "url": "https://raw.githubusercontent.com/ghostty-org/ghostty/b58a761aba75fadf1e3dd2ea23df9e38c4284c92/LICENSE",
+    "scope": "Merge commit of PR 8625 cited by GPUI macOS platform.rs.",
+    "sha256": "386211873e5b7a02f663ae4d7adf96285999f91608f8f9f31fecfd0f4095e6f1"
+  },
+  {
+    "file": "winit.txt",
+    "url": "https://raw.githubusercontent.com/rust-windowing/winit/8b6c8ef323e8a7a41bb6541c6f000b2ec34ccca4/LICENSE",
+    "scope": "Commit resolved from v0.29.11, the version cited by GPUI Linux mode_refresh_rate.",
+    "sha256": "6dc0e068dcf3a5bc8e054205b85b7720e1d49265bbc64bf515d2cf79197df69a"
+  },
+  {
+    "file": "gpui-kit-docs.txt",
+    "url": "https://raw.githubusercontent.com/longbridge/gpui-kit/99576db58ec8103417c41a092e891b4022d24e7e/LICENSE-DOCS.md",
+    "scope": "Repository-root documentation notice at gpui-component 0.8.1 .cargo_vcs_info revision; not included in registry package. Links CC BY 4.0; this notice is not the full legal code.",
+    "sha256": "8a9ccf144b2d5bf5aae56abdc6e723e17e1ba4de1f5d515b3b644288fd4fc16f"
+  },
+  {
+    "file": "oklab.txt",
+    "url": "https://bottosson.github.io/misc/License.txt",
+    "scope": "Author-linked MIT license for Oklab example code; original copied revision unknown.",
+    "sourcePage": "https://bottosson.github.io/posts/oklab/",
+    "revisionPinned": false,
+    "retrievedAt": "2026-10-30T11:51:44.052455+00:00",
+    "sha256": "3929a10fc5ae2932be781b4c076fb806b62ccab45a6991c0ebc151d06e8c5888"
+  }
+]

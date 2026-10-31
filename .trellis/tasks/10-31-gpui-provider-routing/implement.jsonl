@@ -1,0 +1,7 @@
+{"file":".trellis/tasks/10-30-gpui-native-migration/prd.md","reason":"Provider 阶段必须满足父迁移任务的零数据迁移、双壳共存与整体验收约束。"}
+{"file":".trellis/tasks/10-30-gpui-native-migration/design.md","reason":"Provider/core/db/daemon 的目标 crate 边界和迁移顺序由父设计定义。"}
+{"file":".trellis/tasks/10-30-gpui-settings-panels/design.md","reason":"复用 Provider 面板、路由、密钥和快速切换的产品设计约束。"}
+{"file":".trellis/tasks/10-30-gpui-core-extraction/design.md","reason":"领域服务去 Tauri 化、Repository 与 Providers DB 迁移要遵守 M1 契约。"}
+{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"跨边界 Provider/路由改造须按场景矩阵和根因分析要求实施。"}
+{"file":".trellis/spec/backend/core-crate-contracts.md","reason":"Provider service 迁移需遵循当前 core、数据库与 adapter 契约。"}
+{"file":".trellis/spec/backend/pty-daemon-contracts.md","reason":"routing 状态、daemon 能力协商和事件接线依赖既有协议契约。"}

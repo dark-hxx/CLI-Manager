@@ -1269,7 +1269,8 @@ pub async fn git_commit_paths(
     }
     tokio::task::spawn_blocking(move || {
         let effective_path = effective_git_project_path(&project_path);
-        let repo = open_git_repo(Path::new(&effective_path)).map_err(|e| format!("open_repo_failed: {e}"))?;
+        let repo = open_git_repo(Path::new(&effective_path))
+            .map_err(|e| format!("open_repo_failed: {e}"))?;
         let _operation = crate::repo_operation::begin_ordinary_write(&repo)?;
         let mut args: Vec<&str> = vec!["commit", "-m", &msg, "--"];
         for p in &paths {

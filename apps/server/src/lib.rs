@@ -64,7 +64,10 @@ pub fn build_router(state: AppState) -> Result<Router, String> {
         .route("/operations", post(api::create_operation))
         .route("/operations/{operation_id}", get(api::get_operation))
         .fallback(api::not_found)
-        .layer(axum::middleware::from_fn_with_state(state.clone(), check_api_origin));
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            check_api_origin,
+        ));
 
     let mut router = Router::new()
         .nest("/api", api_router)
@@ -103,13 +106,28 @@ async fn check_api_origin(
     // Native device clients have no Origin; browser requests must match the
     // configured public origin. CORS alone does not prevent request execution.
     if let Some(origin) = request.headers().get(header::ORIGIN) {
-        let host = request.headers().get(header::HOST).and_then(|value| value.to_str().ok());
-        if !origin.to_str().is_ok_and(|origin| state.config.allows_browser_origin(origin, host)) {
-            return Err(error::AppError::forbidden("origin_forbidden", "request origin is not allowed"));
+        let host = request
+            .headers()
+            .get(header::HOST)
+            .and_then(|value| value.to_str().ok());
+        if !origin
+            .to_str()
+            .is_ok_and(|origin| state.config.allows_browser_origin(origin, host))
+        {
+            return Err(error::AppError::forbidden(
+                "origin_forbidden",
+                "request origin is not allowed",
+            ));
         }
-    } else if !matches!(*request.method(), Method::GET | Method::HEAD | Method::OPTIONS)
-        && auth::cookie_value(request.headers()).is_some() {
-        return Err(error::AppError::forbidden("origin_required", "Origin header is required for browser changes"));
+    } else if !matches!(
+        *request.method(),
+        Method::GET | Method::HEAD | Method::OPTIONS
+    ) && auth::cookie_value(request.headers()).is_some()
+    {
+        return Err(error::AppError::forbidden(
+            "origin_required",
+            "Origin header is required for browser changes",
+        ));
     }
     Ok(next.run(request).await)
 }
@@ -144,10 +162,20 @@ where
         // A specific VPN/LAN bind excludes loopback. Reserve both before opening
         // storage so a failed local bind cannot disturb another server instance.
         let local_listener = if !bind.ip().is_loopback() && !bind.ip().is_unspecified() {
-            let local = std::net::SocketAddr::from(([127, 0, 0, 1], listener.local_addr()
-                .map_err(|error| error.to_string())?.port()));
-            Some(tokio::net::TcpListener::bind(local).await
-                .map_err(|error| format!("bind local device listener failed on {local}: {error}"))?)
+            let local = std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                listener
+                    .local_addr()
+                    .map_err(|error| error.to_string())?
+                    .port(),
+            ));
+            Some(
+                tokio::net::TcpListener::bind(local)
+                    .await
+                    .map_err(|error| {
+                        format!("bind local device listener failed on {local}: {error}")
+                    })?,
+            )
         } else {
             None
         };
@@ -190,12 +218,16 @@ where
     let mut main_stop = state.shutdown.subscribe();
     let mut local_stop = state.shutdown.subscribe();
     let main_server = axum::serve(listener, router.clone())
-        .with_graceful_shutdown(async move { let _ = main_stop.wait_for(|stop| *stop).await; })
+        .with_graceful_shutdown(async move {
+            let _ = main_stop.wait_for(|stop| *stop).await;
+        })
         .into_future();
     let local_server = async move {
         if let Some(listener) = local_listener {
             axum::serve(listener, router)
-                .with_graceful_shutdown(async move { let _ = local_stop.wait_for(|stop| *stop).await; })
+                .with_graceful_shutdown(async move {
+                    let _ = local_stop.wait_for(|stop| *stop).await;
+                })
                 .await
         } else {
             Ok(())
@@ -267,13 +299,20 @@ mod tests {
             ("http://cli.example.com", StatusCode::FORBIDDEN),
             ("https://evil.example", StatusCode::FORBIDDEN),
         ] {
-            let response = router.clone().oneshot(Request::builder()
-                .uri("/api/health")
-                .header("host", "127.0.0.1:9090")
-                .header("origin", origin)
-                .header("x-forwarded-proto", "https")
-                .header("x-forwarded-host", "cli.example.com")
-                .body(Body::empty()).unwrap()).await.unwrap();
+            let response = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/health")
+                        .header("host", "127.0.0.1:9090")
+                        .header("origin", origin)
+                        .header("x-forwarded-proto", "https")
+                        .header("x-forwarded-host", "cli.example.com")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
             assert_eq!(response.status(), expected);
         }
     }
@@ -281,16 +320,31 @@ mod tests {
     #[tokio::test]
     async fn cookie_mutation_needs_origin_but_native_ticket_uses_device_auth() {
         let router = test_router().await;
-        let response = router.clone().oneshot(Request::builder()
-            .method(Method::POST).uri("/api/auth/logout")
-            .header(header::COOKIE, "cli_manager_session=token")
-            .body(Body::empty()).unwrap()).await.unwrap();
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/auth/logout")
+                    .header(header::COOKIE, "cli_manager_session=token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let response = router.oneshot(Request::builder()
-            .method(Method::POST).uri("/api/mobile/device-ticket")
-            .header(header::CONTENT_TYPE, "application/json")
-            .header(header::AUTHORIZATION, "Bearer invalid")
-            .body(Body::from(r#"{"deviceId":"device"}"#)).unwrap()).await.unwrap();
+        let response = router
+            .oneshot(
+                Request::builder()
+                    .method(Method::POST)
+                    .uri("/api/mobile/device-ticket")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::AUTHORIZATION, "Bearer invalid")
+                    .body(Body::from(r#"{"deviceId":"device"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
         // Reaches device authentication, not blocked by browser Origin rules.
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -398,31 +452,62 @@ mod tests {
         // A UDP route lookup sends no packets. Machines without an IPv4 route
         // cannot exercise a specific LAN bind and retain pure config coverage.
         let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap();
-        if probe.connect("192.0.2.1:9").is_err() { return; }
+        if probe.connect("192.0.2.1:9").is_err() {
+            return;
+        }
         let ip = probe.local_addr().unwrap().ip();
-        if ip.is_loopback() || ip.is_unspecified() { return; }
+        if ip.is_loopback() || ip.is_unspecified() {
+            return;
+        }
         let port_probe = std::net::TcpListener::bind((ip, 0)).unwrap();
         let bind = port_probe.local_addr().unwrap();
         drop(port_probe);
-        let mut config = Config::test(std::env::temp_dir().join(format!("web-dual-{}.db", uuid::Uuid::new_v4())));
+        let mut config = Config::test(
+            std::env::temp_dir().join(format!("web-dual-{}.db", uuid::Uuid::new_v4())),
+        );
         config.bind = bind;
         config.trusted_network = true;
         config.allowed_origin = Some(format!("http://{bind}"));
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
         let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
-        let server = tokio::spawn(run_with_shutdown_ready(config, async { let _ = stop_rx.await; }, Some(ready_tx)));
-        tokio::task::spawn_blocking(move || ready_rx.recv_timeout(Duration::from_secs(30)).unwrap().unwrap()).await.unwrap();
+        let server = tokio::spawn(run_with_shutdown_ready(
+            config,
+            async {
+                let _ = stop_rx.await;
+            },
+            Some(ready_tx),
+        ));
+        tokio::task::spawn_blocking(move || {
+            ready_rx
+                .recv_timeout(Duration::from_secs(30))
+                .unwrap()
+                .unwrap()
+        })
+        .await
+        .unwrap();
         let local = std::net::SocketAddr::from(([127, 0, 0, 1], bind.port()));
         for address in [bind, local] {
             let mut stream = tokio::net::TcpStream::connect(address).await.unwrap();
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
-            stream.write_all(b"GET /api/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+            stream
+                .write_all(
+                    b"GET /api/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
             let mut response = Vec::new();
-            tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response)).await.unwrap().unwrap();
+            tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response))
+                .await
+                .unwrap()
+                .unwrap();
             assert!(response.starts_with(b"HTTP/1.1 200"));
         }
         stop_tx.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(4), server).await.unwrap().unwrap().unwrap();
+        tokio::time::timeout(Duration::from_secs(4), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         for address in [bind, local] {
             let rebound = std::net::TcpListener::bind(address).unwrap();
             drop(rebound);

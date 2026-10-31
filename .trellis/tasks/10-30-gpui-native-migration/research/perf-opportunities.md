@@ -69,7 +69,7 @@ GPUI 版中 core 与 UI 同进程，core 直接通过 `EventSink` 把变化推�
 ### P5 历史与实时转录
 
 - 共享一个 notify watcher（按目录聚合），事件分发到 tokio 任务，取代“每个文件一个线程 + sleep 循环”。
-- 记录每个 JSONL 文件已读取的字节偏移，只解析新追加的部分（需核实 `scan_state.rs` 现有能力后在其基础上扩展）。
+- M0 源码核实：`scan_state.rs` 仅存 fingerprint（时间/size），catalog 对变更文件仍全量重算；但 `live_transcript_reader.rs` 已有 offset 增量尾读、改写/截断探测、半行/UTF-8 处理、分页和空闲零正文读取测试。后续复用该 reader，重点改为共享目录 watcher 与统一调度，不能重复实现尾读。catalog 增量聚合另行设计删除/改写下的撤销或重算策略。详见 M0 `research/poc-results.md` §P5；本次未运行 benchmark。
 - 首次全量扫描用有界并发（如 `rayon`，并发数 ≤ CPU 核数的一半），避免抢占终端。
 - JSON 解析热点可评估 `simd-json` / `sonic-rs`，需基准证明收益后再引入。
 

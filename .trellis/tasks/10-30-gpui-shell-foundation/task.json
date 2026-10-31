@@ -3,7 +3,7 @@
   "name": "gpui-shell-foundation",
   "title": "GPUI 迁移：桌面壳骨架（窗口/主题/i18n/Keymap/状态模型）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "10-30-gpui-native-migration",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "已建立双语 GPUI 最小窗口及生命周期，增加 Tokio 后台项目只读加载与项目选择；主题、Keymap、完整状态模型和桌面集成未完成。",
   "meta": {}
 }

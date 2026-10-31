@@ -3,9 +3,7 @@ use std::net::TcpListener;
 
 use super::route_http::RouteHttpServer;
 
-pub(crate) const FALLBACK_PORT_START: u16 = 15_721;
-pub(crate) const FALLBACK_PORT_END: u16 = 15_799;
-pub(crate) const MIN_PORT: u16 = 1_024;
+pub(crate) use cli_manager_core::port_allocator::FALLBACK_PORT_START;
 
 #[derive(Debug)]
 pub(crate) struct RoutingListenerLease {
@@ -199,48 +197,15 @@ impl PortAllocator {
 
 // 拒绝特权端口，按上次实际端口、首选端口、固定回退范围的顺序生成去重候选。
 fn candidate_ports(preferred_port: u16, last_actual_port: Option<u16>) -> Result<Vec<u16>, String> {
-    if preferred_port < MIN_PORT {
-        return Err("routing_port_invalid".to_string());
-    }
-    if last_actual_port.is_some_and(|port| port < MIN_PORT) {
-        return Err("routing_port_invalid".to_string());
-    }
-
-    let mut candidates =
-        Vec::with_capacity(2 + usize::from(FALLBACK_PORT_END - FALLBACK_PORT_START));
-    let mut add = |port: u16| {
-        if !candidates.contains(&port) {
-            candidates.push(port);
-        }
-    };
-    if let Some(port) = last_actual_port {
-        add(port);
-    }
-    add(preferred_port);
-    for port in FALLBACK_PORT_START..=FALLBACK_PORT_END {
-        add(port);
-    }
-    Ok(candidates)
+    cli_manager_core::port_allocator::candidate_ports(preferred_port, last_actual_port)
 }
 
 // 裁剪并去重地址，只接受回环名称/地址或系统枚举出的本机 IPv4 单播地址；拒绝空列表。
 fn normalize_listener_addresses(listen_addresses: &[String]) -> Result<Vec<String>, String> {
-    if listen_addresses.is_empty() {
-        return Err("routing_listen_address_invalid".to_string());
-    }
-    let mut normalized = Vec::with_capacity(listen_addresses.len());
-    for address in listen_addresses {
-        let address = address.trim();
-        if !matches!(address, "127.0.0.1" | "::1" | "localhost")
-            && !crate::provider::routing::is_local_unicast_address(address)
-        {
-            return Err("routing_listen_address_invalid".to_string());
-        }
-        if !normalized.iter().any(|item| item == address) {
-            normalized.push(address.to_string());
-        }
-    }
-    Ok(normalized)
+    cli_manager_core::listener_addresses::normalize_listener_addresses(
+        listen_addresses,
+        crate::provider::routing::is_local_unicast_address,
+    )
 }
 
 // 用可注入绑定函数尝试各候选端口；任一地址失败即释放本轮已绑定监听器并继续。

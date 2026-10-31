@@ -2,6 +2,7 @@
 name = "cli-manager-helpers"
 version = "1.4.4"
 edition = "2021"
+license.workspace = true
 publish = false
 
 [[bin]]

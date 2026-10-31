@@ -1,0 +1,16 @@
+[package]
+name = "cli-manager-core-db"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dev-dependencies]
+serde_json = "1"
+sha2 = "0.10"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tempfile = "3"
+
+[dependencies]
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "macros"] }
+serde_json = "1"

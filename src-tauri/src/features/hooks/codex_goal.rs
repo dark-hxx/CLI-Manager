@@ -188,9 +188,7 @@ pub(crate) fn parse_wire_status(value: Option<&str>) -> Option<CodexGoalStatus> 
 pub(crate) fn classify_codex_stop(value: Option<&str>) -> CodexGoalHookState {
     match parse_wire_status(value) {
         Some(CodexGoalStatus::None | CodexGoalStatus::Complete) => CodexGoalHookState::Completed,
-        Some(CodexGoalStatus::Paused | CodexGoalStatus::Blocked) => {
-            CodexGoalHookState::Attention
-        }
+        Some(CodexGoalStatus::Paused | CodexGoalStatus::Blocked) => CodexGoalHookState::Attention,
         Some(CodexGoalStatus::BudgetLimited | CodexGoalStatus::UsageLimited) => {
             CodexGoalHookState::Failed
         }
@@ -215,9 +213,7 @@ pub(crate) fn codex_goal_status_is_terminal(value: Option<&str>) -> bool {
 // 只接受短的无控制字符 session ID，避免把任意 stdin 文本送入数据库查询。
 fn valid_session_id(value: Option<&str>) -> Option<String> {
     let value = value?.trim();
-    if value.is_empty()
-        || value.len() > MAX_SESSION_ID_BYTES
-        || value.chars().any(char::is_control)
+    if value.is_empty() || value.len() > MAX_SESSION_ID_BYTES || value.chars().any(char::is_control)
     {
         return None;
     }
@@ -296,10 +292,17 @@ fn configured_sqlite_home(root: &Path, wsl_distro_name: Option<&str>) -> Option<
         return None;
     }
     if value == "~" || value.starts_with("~/") || value.starts_with("~\\") {
-        let base = root.parent().map(Path::to_path_buf).or_else(|| {
-            crate::app_paths::home_dir_from_env().ok()
-        })?;
-        return Some(base.join(value.trim_start_matches('~').trim_start_matches(['/', '\\'])));
+        let base = root
+            .parent()
+            .map(Path::to_path_buf)
+            .or_else(|| crate::app_paths::home_dir_from_env().ok())?;
+        return Some(
+            base.join(
+                value
+                    .trim_start_matches('~')
+                    .trim_start_matches(['/', '\\']),
+            ),
+        );
     }
     if is_linux_absolute_text(value) && wsl_distro_name.is_some() {
         return Some(PathBuf::from(value));
@@ -372,16 +375,12 @@ async fn query_candidate_inner(
     if !candidate.is_wsl && !candidate.path.is_file() {
         return CandidateResult::Missing;
     }
-    let prepared = match ccswitch_db::prepare_read_path_with_timeout(
-        &candidate.path,
-        query_timeout,
-    )
-    .await
-    {
-        Ok(prepared) => prepared,
-        Err(error) if error == "wsl_sqlite_not_found" => return CandidateResult::Missing,
-        Err(_) => return CandidateResult::Failed,
-    };
+    let prepared =
+        match ccswitch_db::prepare_read_path_with_timeout(&candidate.path, query_timeout).await {
+            Ok(prepared) => prepared,
+            Err(error) if error == "wsl_sqlite_not_found" => return CandidateResult::Missing,
+            Err(_) => return CandidateResult::Failed,
+        };
     let options = SqliteConnectOptions::new()
         .filename(prepared.path())
         .read_only(true)
@@ -391,17 +390,16 @@ async fn query_candidate_inner(
         Ok(connection) => connection,
         Err(_) => return CandidateResult::Failed,
     };
-    let row = match sqlx::query(
-        "SELECT goal_id, status FROM thread_goals WHERE thread_id = ?1 LIMIT 1",
-    )
-    .bind(session_id)
-    .fetch_optional(&mut connection)
-    .await
-    {
-        Ok(row) => row,
-        Err(error) if is_missing_goal_table(&error) => return CandidateResult::Unsupported,
-        Err(_) => return CandidateResult::Failed,
-    };
+    let row =
+        match sqlx::query("SELECT goal_id, status FROM thread_goals WHERE thread_id = ?1 LIMIT 1")
+            .bind(session_id)
+            .fetch_optional(&mut connection)
+            .await
+        {
+            Ok(row) => row,
+            Err(error) if is_missing_goal_table(&error) => return CandidateResult::Unsupported,
+            Err(_) => return CandidateResult::Failed,
+        };
     let Some(row) = row else {
         return CandidateResult::NoGoal;
     };
@@ -516,7 +514,10 @@ mod tests {
                 (key.trim() == "sqlite_home").then(|| parse_toml_string(value.trim()))?
             })
             .unwrap();
-        assert_eq!(root.join(value), PathBuf::from(r"C:\Users\me\.codex\sqlite-data"));
+        assert_eq!(
+            root.join(value),
+            PathBuf::from(r"C:\Users\me\.codex\sqlite-data")
+        );
     }
 
     #[tokio::test]

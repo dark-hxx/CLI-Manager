@@ -620,7 +620,10 @@ pub(super) fn opencode_tool_event(
             .or_else(|| part.get("call_id"))
             .and_then(Value::as_str)
             .map(str::to_string),
-        category: super::tool_observations::tool_category(&name, super::tool_observations::mcp_server(part)),
+        category: super::tool_observations::tool_category(
+            &name,
+            super::tool_observations::mcp_server(part),
+        ),
         name,
         message_index: Some(message_index),
         timestamp,
@@ -638,7 +641,10 @@ pub(super) fn opencode_tool_event(
         output_summary: part
             .get("output")
             .or_else(|| part.get("result"))
-            .or_else(|| part.get("state").and_then(|state| state.get("output").or_else(|| state.get("error"))))
+            .or_else(|| {
+                part.get("state")
+                    .and_then(|state| state.get("output").or_else(|| state.get("error")))
+            })
             .and_then(summarize_json_value),
     })
 }

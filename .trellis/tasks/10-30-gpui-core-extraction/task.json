@@ -3,7 +3,7 @@
   "name": "gpui-core-extraction",
   "title": "GPUI 迁移 M1：抽取去 Tauri 化的 Rust 核心 crate",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "10-30-gpui-native-migration",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "已建立 workspace、core 纯逻辑模块、41 项主库迁移、读写池、项目只读仓储与原子偏好存储；完整上下文适配、daemon/helper、领域仓储和生产接入仍待完成。",
   "meta": {}
 }

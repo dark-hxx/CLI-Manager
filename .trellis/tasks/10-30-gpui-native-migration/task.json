@@ -3,7 +3,7 @@
   "name": "gpui-native-migration",
   "title": "GPUI 原生桌面壳迁移规划（按需系统 WebView + 降级）",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -27,10 +27,11 @@
     "10-30-gpui-workspace-features",
     "10-30-gpui-settings-panels",
     "10-30-gpui-desktop-integration",
-    "10-30-gpui-release-cutover"
+    "10-30-gpui-release-cutover",
+    "10-31-gpui-provider-routing"
   ],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "用户授权跳过当前门禁继续实施。核心抽取与 GPUI 壳已开始，M0 未全部验收，其他阶段不标完成。",
   "meta": {}
 }

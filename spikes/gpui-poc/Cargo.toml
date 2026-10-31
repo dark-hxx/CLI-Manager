@@ -1,0 +1,15 @@
+[workspace]
+members = ["poc-compat", "poc-checkpoint", "poc-input", "poc-daemon", "poc-term", "poc-preview", "poc-webview-probe"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-or-later"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

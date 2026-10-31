@@ -46,21 +46,44 @@ trust_level = 'trusted'
     let crlf_marked = marked.replace('\n', "\r\n");
     let uuid_name = crate::provider::runtime::codex_profile_name(&id);
     let custom_env_key = config.replace("CLI_MANAGER_PROVIDER_KEY", "USER_KEY");
-    for (name, text) in [(&generated_name, config), (&project_name, marked.as_str()),
-        (&project_name, crlf_marked.as_str()), (&uuid_name, custom_env_key.as_str())] {
+    for (name, text) in [
+        (&generated_name, config),
+        (&project_name, marked.as_str()),
+        (&project_name, crlf_marked.as_str()),
+        (&uuid_name, custom_env_key.as_str()),
+    ] {
         let overrides = parse_codex_profile_overrides(name, text).unwrap();
-        assert!(overrides.iter().any(|value| value == "service_tier=\"fast\""));
-        assert!(overrides.iter().any(|value| value == "tui.notifications=false"));
-        assert!(!overrides.iter().any(|value| value.starts_with("hooks.state.")
-            || value.starts_with("notice.") || value.starts_with("projects.")
-            || value.starts_with("tui.status_line=") || value.starts_with("tui.model_availability_nux.")
-            || value.starts_with("windows_wsl_setup_acknowledged=")));
+        assert!(overrides
+            .iter()
+            .any(|value| value == "service_tier=\"fast\""));
+        assert!(overrides
+            .iter()
+            .any(|value| value == "tui.notifications=false"));
+        assert!(!overrides
+            .iter()
+            .any(|value| value.starts_with("hooks.state.")
+                || value.starts_with("notice.")
+                || value.starts_with("projects.")
+                || value.starts_with("tui.status_line=")
+                || value.starts_with("tui.model_availability_nux.")
+                || value.starts_with("windows_wsl_setup_acknowledged=")));
     }
-    for (name, text) in [("personal", config), ("cli-manager-personal", config),
-        (project_name.as_str(), config), (generated_name.as_str(), &config.replace("CLI_MANAGER_PROVIDER_KEY", "USER_KEY"))] {
+    for (name, text) in [
+        ("personal", config),
+        ("cli-manager-personal", config),
+        (project_name.as_str(), config),
+        (
+            generated_name.as_str(),
+            &config.replace("CLI_MANAGER_PROVIDER_KEY", "USER_KEY"),
+        ),
+    ] {
         let overrides = parse_codex_profile_overrides(name, text).unwrap();
-        assert!(overrides.iter().any(|value| value.starts_with("hooks.state.old.trusted_hash=")));
-        assert!(overrides.iter().any(|value| value.starts_with("tui.status_line=")));
+        assert!(overrides
+            .iter()
+            .any(|value| value.starts_with("hooks.state.old.trusted_hash=")));
+        assert!(overrides
+            .iter()
+            .any(|value| value.starts_with("tui.status_line=")));
     }
 }
 
@@ -531,13 +554,9 @@ fn strict_handoff_rejects_session_drift_and_fresh_thread_fallback() {
     let drifted =
         br#"{"jsonrpc":"2.0","id":3,"method":"thread/resume","params":{"threadId":"thread-new"}}
 "#;
-    let ClientLineAction::Reject(response) = inspect_client_line(
-        drifted,
-        Some("thread-original"),
-        None,
-        None,
-        &mut pending,
-    ) else {
+    let ClientLineAction::Reject(response) =
+        inspect_client_line(drifted, Some("thread-original"), None, None, &mut pending)
+    else {
         panic!("drifted resume must be rejected");
     };
     let response: Value = serde_json::from_slice(trim_line_ending(&response)).unwrap();
@@ -551,13 +570,7 @@ fn strict_handoff_rejects_session_drift_and_fresh_thread_fallback() {
     let fresh = br#"{"jsonrpc":"2.0","id":4,"method":"thread/start","params":{}}
 "#;
     assert!(matches!(
-        inspect_client_line(
-            fresh,
-            Some("thread-original"),
-            None,
-            None,
-            &mut pending,
-        ),
+        inspect_client_line(fresh, Some("thread-original"), None, None, &mut pending,),
         ClientLineAction::Reject(_)
     ));
 }
@@ -569,13 +582,7 @@ fn matching_resume_is_forwarded_and_tracked() {
     let request = br#"{"jsonrpc":"2.0","id":7,"method":"thread/resume","params":{"threadId":"thread-original"}}
 "#;
     assert!(matches!(
-        inspect_client_line(
-            request,
-            Some("thread-original"),
-            None,
-            None,
-            &mut pending,
-        ),
+        inspect_client_line(request, Some("thread-original"), None, None, &mut pending,),
         ClientLineAction::Forward(_)
     ));
     assert_eq!(
@@ -604,13 +611,9 @@ fn resume_tracking_rejects_new_requests_at_capacity_without_dropping_existing_en
         br#"{"jsonrpc":"2.0","id":999,"method":"thread/resume","params":{"threadId":"thread-new"}}
 "#;
 
-    let ClientLineAction::Reject(response) = inspect_client_line(
-        request,
-        None,
-        None,
-        None,
-        &mut pending,
-    ) else {
+    let ClientLineAction::Reject(response) =
+        inspect_client_line(request, None, None, None, &mut pending)
+    else {
         panic!("resume request beyond capacity must be rejected");
     };
     let response: Value = serde_json::from_slice(trim_line_ending(&response)).unwrap();

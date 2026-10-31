@@ -78,10 +78,22 @@ projects.'C:\foreign'.trust_level = 'trusted'
                 assert_eq!(actual["hooks"]["state"], original["hooks"]["state"]);
                 assert_eq!(actual["notice"], original["notice"]);
                 assert_eq!(actual["tui"]["status_line"], original["tui"]["status_line"]);
-                assert_eq!(actual["tui"]["model_availability_nux"], original["tui"]["model_availability_nux"]);
-                assert_eq!(actual["windows_wsl_setup_acknowledged"], original["windows_wsl_setup_acknowledged"]);
-                assert_eq!(actual["projects"][r"C:\repo"]["trust_level"].as_str(), Some("untrusted"));
-                assert_eq!(actual["projects"][r"C:\home-only"], original["projects"][r"C:\home-only"]);
+                assert_eq!(
+                    actual["tui"]["model_availability_nux"],
+                    original["tui"]["model_availability_nux"]
+                );
+                assert_eq!(
+                    actual["windows_wsl_setup_acknowledged"],
+                    original["windows_wsl_setup_acknowledged"]
+                );
+                assert_eq!(
+                    actual["projects"][r"C:\repo"]["trust_level"].as_str(),
+                    Some("untrusted")
+                );
+                assert_eq!(
+                    actual["projects"][r"C:\home-only"],
+                    original["projects"][r"C:\home-only"]
+                );
             } else {
                 assert!(actual["hooks"].get("state").is_none());
                 assert!(actual.get("notice").is_none());
@@ -91,13 +103,21 @@ projects.'C:\foreign'.trust_level = 'trusted'
                 assert!(actual["projects"][r"C:\repo"].get("trust_level").is_none());
             }
             assert!(actual["projects"].get(r"C:\foreign").is_none());
-            assert_eq!(actual["projects"][r"C:\repo"]["custom"].as_integer(), Some(7));
+            assert_eq!(
+                actual["projects"][r"C:\repo"]["custom"].as_integer(),
+                Some(7)
+            );
             assert_eq!(actual["hooks"]["future_flag"].as_bool(), Some(false));
             assert_eq!(actual["features"]["hooks"].as_bool(), Some(false));
             assert_eq!(actual["windows"]["sandbox"].as_str(), Some("unelevated"));
             assert_eq!(actual["tui"]["theme"].as_str(), Some("user-theme"));
-            assert_eq!(actual["profiles"]["personal"]["tui"]["status_line"][0].as_str(), Some("model"));
-            assert!(!owned.iter().any(|key| key == "notice" || key == "windows_wsl_setup_acknowledged"));
+            assert_eq!(
+                actual["profiles"]["personal"]["tui"]["status_line"][0].as_str(),
+                Some("model")
+            );
+            assert!(!owned
+                .iter()
+                .any(|key| key == "notice" || key == "windows_wsl_setup_acknowledged"));
         }
     }
 }
@@ -133,7 +153,9 @@ fn codex_common_and_provider_state_never_enters_generated_runtime() {
     let common = format!("{HOME}\n[features]\nhooks=true\n[mcp_servers.common]\ncommand='tool'\n");
     let supplier = json!({"base_url":"https://example.test/v1", "auth":{"OPENAI_API_KEY":"test-only"},
         "config":"service_tier='fast'\n[hooks.state.old]\ntrusted_hash='stale'\n[tui]\nmodel_availability_nux={old=1}\n"}).to_string();
-    let merged = crate::provider::repository::merge_common_into_settings("codex", &common, &supplier).unwrap();
+    let merged =
+        crate::provider::repository::merge_common_into_settings("codex", &common, &supplier)
+            .unwrap();
     assert!(merged.contains("trusted_hash"));
     for input in [&supplier, &merged] {
         for _ in 0..3 {
@@ -146,7 +168,10 @@ fn codex_common_and_provider_state_never_enters_generated_runtime() {
             assert_eq!(actual["service_tier"].as_str(), Some("fast"));
             if input == &merged {
                 assert_eq!(actual["features"]["hooks"].as_bool(), Some(true));
-                assert_eq!(actual["mcp_servers"]["common"]["command"].as_str(), Some("tool"));
+                assert_eq!(
+                    actual["mcp_servers"]["common"]["command"].as_str(),
+                    Some("tool")
+                );
             }
             assert!(!runtime.profile.profile_text.contains("test-only"));
         }

@@ -3,7 +3,7 @@
   "name": "gpui-poc-gates",
   "title": "GPUI 迁移 M0：许可证审查与关键 PoC 门禁",
   "description": "",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "10-30-gpui-native-migration",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "2026-10-30：独立 PoC Windows release 编译、中英文平台窗口截图/自动退出、许可证自动检查与只读采样器冒烟通过；四份 research 进度报告已建立。新增 25 个 GPUI 包的源码来源扫描、1868 个资源/构建候选哈希、默认 feature 清单和四份固定上游 commit 许可快照；tree-sitter 未启用，来源未确认项保留待审。用户确认暂无 macOS 环境，跨平台编译及完整资源人工审核未关闭，检查点 A 未放行；IME、终端、性能、预览等仍待测。变更记录版本 V1.4.6，不改生产代码。 补齐固定 100,000,000-byte 终端输入生成器和测量操作说明，回读/哈希/边界/拒绝覆盖验证通过，未运行正式吞吐；Windows 依赖树确认共用 raw-window-handle 0.6.2，重复 API 版本保持共存。 追加着色器/图标复核报告，来源扫描捕获纯 URL 后为 32 个匹配文件；保存第 5 份 Oklab MIT 作者站点快照（非固定 revision），WGSL Stack Exchange 已经官方 API 补齐两个答案作者、CC BY-SA 3.0/4.0 声明与 revision；各五项归一化表达匹配，实际复制关系及授权兼容性仍待处置，Windows 当前未选入 wgpu。 完成 source-review.md：32 个现有命中均回读上下文并核对锁定文件哈希，16 个为普通注释/测试字符串误报；补记组件文档 CC BY 4.0 声明和 registry 包缺少 LICENSE-DOCS.md 的边界，未导入其散文/插图。 已从 gpui-component 0.8.1 的 .cargo_vcs_info 固定 commit 补齐仓库根 LICENSE-DOCS.md，关闭对应声明证据缺口；上游快照现六份，区分文档声明与 CC BY 4.0 法律条款全文。 2026-10-30 用户调整：macOS 编译及系统测试暂缓，不计通过，不阻塞 Windows 隔离运行时 PoC。新增 input/IME receiver、daemon、checkpoint、term、preview 六成员实验；Windows 编译通过，daemon 临时会话全流程及输入逻辑测试通过；checkpoint 已发现状态丢失，完整报告持续更新。M0 进行中，不启动 M1。 七成员 Windows offline/locked workspace release 复核通过；预览中英文缩放、最小化恢复及已观察后代回收通过，最新六图均已人工检查。独立动态 WebView2 探测四单测、五 CLI 与外部 P8 三阶段通过；实际宿主集成及异常 VM 未测。无绘制 100 MB 同样超时，瓶颈未定位；继续 P7 隔离分配器对照。 P7 新增显式 mimalloc feature 与配对采样，100/200 MB 各 5 组共 20 次完整解析通过；未显示收益，保留系统默认分配器；冷启动/真实终端仍待测。899 包显式 feature 声明与 deny 增量检查通过，MIT 两层来源已回读。 checkpoint 第二版诊断加入 OSC8 ID/URI、各阶段续写与原始单元格差异，定位链接在 xterm 自序列化丢失、反向编码未保存隐藏状态；直接编码保留显式链接 ID；定向 release 编译通过，八场景诊断保持预期退出 1，M0 不放行。",
   "meta": {}
 }

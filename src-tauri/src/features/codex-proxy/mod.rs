@@ -612,11 +612,7 @@ fn parse_codex_profile_overrides(profile_name: &str, profile: &str) -> Result<Ve
 }
 
 // 名称与内容双重识别本应用生成文件，避免仅凭前缀清理用户自定义配置。
-fn is_managed_codex_profile(
-    name: &str,
-    text: &str,
-    document: &toml_edit::DocumentMut,
-) -> bool {
+fn is_managed_codex_profile(name: &str, text: &str, document: &toml_edit::DocumentMut) -> bool {
     if let Some(id) = name.strip_prefix("cli-manager-project-") {
         if uuid::Uuid::parse_str(id).is_ok()
             && text.lines().next() == Some(format!("# cli-manager-project-profile:{id}").as_str())
@@ -637,10 +633,16 @@ fn is_managed_codex_profile(
     {
         return false;
     }
-    let Some(provider) = document.get("model_provider").and_then(|value| value.as_str()) else {
+    let Some(provider) = document
+        .get("model_provider")
+        .and_then(|value| value.as_str())
+    else {
         return false;
     };
-    let Some(table) = document.get("model_providers").and_then(|table| table.get(provider)) else {
+    let Some(table) = document
+        .get("model_providers")
+        .and_then(|table| table.get(provider))
+    else {
         return false;
     };
     let Some(key) = table.get("env_key").and_then(|value| value.as_str()) else {
@@ -649,7 +651,10 @@ fn is_managed_codex_profile(
     // 旧 UUID 供应商可能沿用用户自定义 env_key，名称摘要仍可验证其生成身份。
     let uuid_identity = uuid::Uuid::parse_str(slug).is_ok()
         && crate::provider::runtime::codex_profile_name(slug) == name
-        && table.get("base_url").and_then(|value| value.as_str()).is_some();
+        && table
+            .get("base_url")
+            .and_then(|value| value.as_str())
+            .is_some();
     key == "CLI_MANAGER_PROVIDER_KEY"
         || key.starts_with("CLI_MANAGER_CODEX_PROVIDER_")
         || (uuid_identity && !key.is_empty())

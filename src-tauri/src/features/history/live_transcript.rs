@@ -1,14 +1,14 @@
 //! Live Web reads never materialize HistorySessionDetail or hold the history catalog lock.
-use super::live_transcript_reader::{Reader, Stamp, TranscriptPage};
+use super::live_transcript_reader::{Reader, TranscriptPage};
 use super::scope::history_source_base;
 use super::{collect_session_files, history_roots, path_within_history_scope, HistoryRoots};
-use notify::{RecursiveMode, Watcher};
+use cli_manager_history_core::TranscriptWatcher;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex, OnceLock,
+    Arc, Mutex, OnceLock, Weak,
 };
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::AppHandle;
@@ -39,6 +39,14 @@ struct Entry {
 type Entries = Mutex<HashMap<String, Arc<Entry>>>;
 static ENTRIES: OnceLock<Entries> = OnceLock::new();
 static READ_LANES: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+type TranscriptCallback = Arc<dyn Fn() + Send + Sync + 'static>;
+
+struct WatchRequest {
+    key: String,
+    path: PathBuf,
+    entry: Weak<Entry>,
+    callback: TranscriptCallback,
+}
 
 fn now() -> u64 {
     SystemTime::now()
@@ -97,50 +105,71 @@ fn locate(roots: &HistoryRoots, request: &TranscriptRequest) -> Result<(PathBuf,
     Ok((path, base))
 }
 
-fn watch(key: String, entry: &Arc<Entry>, changed: impl Fn() + Send + 'static) {
-    let weak = Arc::downgrade(entry);
-    let path = entry.path.clone();
-    std::thread::spawn(move || {
-        let (send, receive) = std::sync::mpsc::sync_channel(1);
-        let mut watcher = notify::recommended_watcher(move |_: notify::Result<notify::Event>| {
-            let _ = send.try_send(());
-        })
-        .ok();
-        // Parent watch survives atomic file replacement. Metadata fallback also works on WSL.
-        if let (Some(watcher), Some(parent)) = (watcher.as_mut(), path.parent()) {
-            let _ = watcher.watch(parent, RecursiveMode::NonRecursive);
-        }
-        let mut previous = std::fs::metadata(&path).ok().map(|m| Stamp::from(&m));
-        loop {
-            if matches!(
-                receive.recv_timeout(Duration::from_millis(1000)),
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected)
-            ) {
-                std::thread::sleep(Duration::from_millis(900));
-            }
-            std::thread::sleep(Duration::from_millis(100));
-            while receive.try_recv().is_ok() {}
-            let Some(entry) = weak.upgrade() else {
-                break;
+fn watch(key: String, entry: &Arc<Entry>, changed: impl Fn() + Send + Sync + 'static) {
+    static WATCH_COMMANDS: OnceLock<tokio::sync::mpsc::UnboundedSender<WatchRequest>> =
+        OnceLock::new();
+    let sender = WATCH_COMMANDS.get_or_init(|| {
+        let (sender, mut commands) = tokio::sync::mpsc::unbounded_channel::<WatchRequest>();
+        tauri::async_runtime::spawn(async move {
+            let Ok(mut watcher) = TranscriptWatcher::new() else {
+                return;
             };
-            if now().saturating_sub(entry.touched.load(Ordering::Relaxed)) > LEASE_MS {
-                if let Ok(mut entries) = ENTRIES.get_or_init(Default::default).lock() {
-                    if entries
-                        .get(&key)
-                        .is_some_and(|current| Arc::ptr_eq(current, &entry))
-                    {
-                        entries.remove(&key);
+            let mut subscriptions: HashMap<PathBuf, Vec<WatchRequest>> = HashMap::new();
+            loop {
+                tokio::select! {
+                    command = commands.recv() => {
+                        let Some(command) = command else { break; };
+                        let path = command.path.canonicalize().unwrap_or_else(|_| command.path.clone());
+                        if watcher.watch_path(&path).is_ok() {
+                            subscriptions.entry(path).or_default().push(command);
+                        }
+                    }
+                    batch = watcher.next_changed_paths() => {
+                        let Ok(paths) = batch else { break; };
+                        for path in paths {
+                            if let Some(items) = subscriptions.get(&path) {
+                                for item in items {
+                                    if let Some(entry) = item.entry.upgrade() {
+                                        if now().saturating_sub(entry.touched.load(Ordering::Relaxed)) <= LEASE_MS {
+                                            // Hints contain no text/path and never masquerade as PTY output frames.
+                                            (item.callback)();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                        let mut expired = Vec::new();
+                        subscriptions.retain(|path, items| {
+                            items.retain(|item| {
+                                let Some(entry) = item.entry.upgrade() else { return false; };
+                                let active = now().saturating_sub(entry.touched.load(Ordering::Relaxed)) <= LEASE_MS;
+                                if !active {
+                                    if let Ok(mut entries) = ENTRIES.get_or_init(Default::default).lock() {
+                                        if entries.get(&item.key).is_some_and(|current| Arc::ptr_eq(current, &entry)) {
+                                            entries.remove(&item.key);
+                                        }
+                                    }
+                                }
+                                active
+                            });
+                            if items.is_empty() { expired.push(path.clone()); false } else { true }
+                        });
+                        for path in expired {
+                            watcher.unregister_path(path);
+                        }
                     }
                 }
-                break;
             }
-            let current = std::fs::metadata(&path).ok().map(|m| Stamp::from(&m));
-            if current != previous {
-                previous = current;
-                // Hints contain no text/path and never masquerade as PTY output frames.
-                changed();
-            }
-        }
+        });
+        sender
+    });
+    let _ = sender.send(WatchRequest {
+        key,
+        path: entry.path.clone(),
+        entry: Arc::downgrade(entry),
+        callback: Arc::new(changed),
     });
 }
 

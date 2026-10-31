@@ -199,7 +199,10 @@ pub(crate) fn remove_provider_home_state(document: &mut DocumentMut) -> bool {
         }
         removed |= changed;
     }
-    if let Some(projects) = document.get_mut("projects").and_then(Item::as_table_like_mut) {
+    if let Some(projects) = document
+        .get_mut("projects")
+        .and_then(Item::as_table_like_mut)
+    {
         let mut empty = Vec::new();
         let mut changed = false;
         for (path, item) in projects.iter_mut() {

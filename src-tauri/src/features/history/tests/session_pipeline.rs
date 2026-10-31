@@ -272,8 +272,12 @@ fn build_session_detail_aggregates_subtasks_for_realtime_stats() {
     assert_eq!(detail.messages.len(), 4);
     assert_eq!(detail.message_count, 4);
     assert_eq!(
-        detail.messages.iter().flat_map(|message| &message.parts)
-            .filter(|part| part.kind == "tool_call").count(),
+        detail
+            .messages
+            .iter()
+            .flat_map(|message| &message.parts)
+            .filter(|part| part.kind == "tool_call")
+            .count(),
         2
     );
     assert_eq!(detail.usage.input_tokens, 140);

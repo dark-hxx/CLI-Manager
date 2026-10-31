@@ -114,8 +114,12 @@ pub(super) fn collect_tool_events_from_value(
     events: &mut Vec<HistoryToolEvent>,
 ) {
     super::native_tool_records::collect_native_records(value, message_index, seen_call_ids, events);
-    if let Some(payload) = value.get("payload").filter(|p| p.get("type").and_then(Value::as_str) == Some("message")) {
-        let wrapped = serde_json::json!({"message": payload, "timestamp": extract_timestamp(value)});
+    if let Some(payload) = value
+        .get("payload")
+        .filter(|p| p.get("type").and_then(Value::as_str) == Some("message"))
+    {
+        let wrapped =
+            serde_json::json!({"message": payload, "timestamp": extract_timestamp(value)});
         collect_tool_events_from_value(&wrapped, message_index, seen_call_ids, events);
     }
     if let Some(event_type) = value.get("type").and_then(Value::as_str) {
@@ -260,7 +264,10 @@ pub(super) fn collect_tool_events_from_value(
                 extract_timestamp(value),
                 Some("started"),
                 None,
-                payload.get("arguments").or_else(|| payload.get("input")).and_then(summarize_json_value),
+                payload
+                    .get("arguments")
+                    .or_else(|| payload.get("input"))
+                    .and_then(summarize_json_value),
                 None,
                 mcp_server,
             ));
@@ -273,14 +280,21 @@ pub(super) fn collect_tool_events_from_value(
             return;
         }
 
-        if matches!(payload_type, Some("function_call_output" | "custom_tool_call_output")) {
+        if matches!(
+            payload_type,
+            Some("function_call_output" | "custom_tool_call_output")
+        ) {
             let call_id = payload
                 .get("call_id")
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let output_summary = payload.get("output").and_then(summarize_json_value);
-            update_tool_event_output(events, call_id.as_deref(), output_summary,
-                Some(super::tool_observations::result_status(payload).to_string()));
+            update_tool_event_output(
+                events,
+                call_id.as_deref(),
+                output_summary,
+                Some(super::tool_observations::result_status(payload).to_string()),
+            );
             return;
         }
 

@@ -449,11 +449,16 @@ mod tests {
             .unwrap();
             assert_eq!(count, 1, "missing repaired index {name}");
         }
-        sqlx::query("SELECT project_path, error_code, error_detail FROM unified_usage_records LIMIT 0")
-            .fetch_all(&mut connection)
+        sqlx::query(
+            "SELECT project_path, error_code, error_detail FROM unified_usage_records LIMIT 0",
+        )
+        .fetch_all(&mut connection)
+        .await
+        .unwrap();
+        sqlx::query("PRAGMA query_only = ON")
+            .execute(&mut connection)
             .await
             .unwrap();
-        sqlx::query("PRAGMA query_only = ON").execute(&mut connection).await.unwrap();
         ensure_usage_schema(&mut connection).await.unwrap();
     }
 

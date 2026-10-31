@@ -19,11 +19,9 @@ impl DaemonHost {
             .and_then(|value| value.as_str())
             .unwrap_or_default();
         let goal_status = payload.get("goalStatus").and_then(|value| value.as_str());
-        let Some(task_status) = map_hook_event_to_task_status_for_payload(
-            source,
-            event,
-            goal_status,
-        ) else {
+        let Some(task_status) =
+            map_hook_event_to_task_status_for_payload(source, event, goal_status)
+        else {
             return;
         };
         let updated_at_ms = now_ms();

@@ -1,0 +1,12 @@
+[package]
+name = "poc-daemon"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+tokio-tungstenite = "=0.30.0"
+tokio = { version = "=1.54.1", features = ["rt", "net", "time", "macros"] }
+futures-util = { version = "=0.3.34", features = ["sink"] }
+serde_json = "=1.0.154"

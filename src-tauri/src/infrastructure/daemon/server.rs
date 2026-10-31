@@ -69,6 +69,8 @@ const CLIENT_CONTROL_QUEUE_MAX_FRAMES: usize = 256;
 
 struct ClientHandle {
     writer: Arc<ClientWriter>,
+    ack_bytes: bool,
+    session_status_push: bool,
     attached: HashSet<String>,
     unacknowledged_chars: HashMap<String, usize>,
     flow_control_paused: HashSet<String>,
@@ -533,6 +535,27 @@ impl DaemonHost {
         }
     }
 
+    fn push_session_status(&self, session_id: &str, status: &str, exit_code: Option<i32>) {
+        let frame = DaemonFrame::SessionStatus {
+            session_id: session_id.to_string(),
+            status: status.to_string(),
+            exit_code,
+        };
+        let Ok(mut clients) = self.clients.lock() else {
+            return;
+        };
+        for client in clients.values_mut() {
+            if !client.session_status_push || !client.attached.contains(session_id) {
+                continue;
+            }
+            if let Some(buffered) = client.attaching.get_mut(session_id) {
+                buffered.push(frame.clone());
+            } else if client.writer.send_frame(&frame).is_err() {
+                client.writer.close();
+            }
+        }
+    }
+
     // 向订阅方推送输出并累计未确认字符；高水位暂停发送，attach 缓冲超限时关闭客户端。
     fn push_output_to_attached(
         &self,
@@ -548,6 +571,11 @@ impl DaemonHost {
             if !client.attached.contains(session_id) {
                 continue;
             }
+            let effective_count = if client.ack_bytes {
+                frame_payload_bytes(frame)
+            } else {
+                char_count
+            };
             if client.attaching.contains_key(session_id) {
                 let buffered_bytes = {
                     let buffered = client
@@ -562,7 +590,7 @@ impl DaemonHost {
                         .unacknowledged_chars
                         .entry(session_id.to_string())
                         .or_default();
-                    *count += char_count;
+                    *count += effective_count;
                     *count
                 };
                 client
@@ -599,7 +627,7 @@ impl DaemonHost {
                     .unacknowledged_chars
                     .entry(session_id.to_string())
                     .or_default();
-                *count += char_count;
+                *count += effective_count;
                 *count
             };
             client
@@ -638,6 +666,7 @@ impl DaemonHost {
         session_id: &str,
         sequence: u64,
         char_count: usize,
+        byte_count: Option<usize>,
     ) {
         let Some(session) = self.get_session(session_id) else {
             return;
@@ -667,7 +696,12 @@ impl DaemonHost {
                             .unacknowledged_chars
                             .entry(session_id.to_string())
                             .or_default();
-                        *remaining = remaining.saturating_sub(char_count);
+                        let acknowledged = if client.ack_bytes {
+                            byte_count.unwrap_or(char_count)
+                        } else {
+                            char_count
+                        };
+                        *remaining = remaining.saturating_sub(acknowledged);
                         *remaining
                     };
                     client
@@ -763,9 +797,13 @@ impl DaemonHost {
                     .unacknowledged_chars
                     .entry(session_id.to_string())
                     .or_default();
-                *count += String::from_utf8_lossy(&buffered.data)
-                    .encode_utf16()
-                    .count();
+                *count += if client.ack_bytes {
+                    buffered.data.len()
+                } else {
+                    String::from_utf8_lossy(&buffered.data)
+                        .encode_utf16()
+                        .count()
+                };
                 *count
             };
             client
@@ -883,13 +921,13 @@ fn validate_websocket_request(
     if request.uri().path() != "/pty" {
         return Err(websocket_error(StatusCode::NOT_FOUND, "not found"));
     }
-    let origin = request
-        .headers()
-        .get("origin")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    if !is_allowed_webview_origin(origin) {
-        return Err(websocket_error(StatusCode::FORBIDDEN, "origin rejected"));
+    // Native clients omit Origin. Any supplied browser Origin must still pass
+    // the exact allowlist; both paths require the existing first-frame token auth.
+    let mut origins = request.headers().get_all("origin").iter();
+    if let Some(origin) = origins.next() {
+        if origins.next().is_some() || !origin.to_str().is_ok_and(is_allowed_webview_origin) {
+            return Err(websocket_error(StatusCode::FORBIDDEN, "origin rejected"));
+        }
     }
     Ok(response)
 }
@@ -1071,9 +1109,16 @@ impl DaemonServer {
         let mut reader = BufReader::new(stream);
 
         // 首帧必须 Auth，失败立即断连（契约）。
-        match read_line_bounded(&mut reader) {
+        let (ack_bytes, session_status_push) = match read_line_bounded(&mut reader) {
             Some(line) => match decode_client_frame(&line) {
-                Ok(ClientFrame::Auth { token, .. }) if token == self.token => {
+                Ok(ClientFrame::Auth {
+                    token,
+                    client_features,
+                    ..
+                }) if token == self.token => {
+                    let ack_bytes = client_features
+                        .iter()
+                        .any(|feature| feature == "ws_ack_bytes_v1");
                     let _ = writer.send_frame(&DaemonFrame::AuthOk {
                         daemon_version: self.version.clone(),
                         pid: std::process::id(),
@@ -1081,6 +1126,12 @@ impl DaemonServer {
                         binary_protocol_version: BINARY_PROTOCOL_VERSION,
                         features: supported_features(),
                     });
+                    (
+                        ack_bytes,
+                        client_features
+                            .iter()
+                            .any(|feature| feature == "session_status_push_v1"),
+                    )
                 }
                 _ => {
                     log::warn!("daemon auth rejected ({peer})");
@@ -1091,7 +1142,7 @@ impl DaemonServer {
                 }
             },
             None => return,
-        }
+        };
 
         let client_id = self.next_client_id.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut clients) = self.host.clients.lock() {
@@ -1099,6 +1150,8 @@ impl DaemonServer {
                 client_id,
                 ClientHandle {
                     writer: Arc::clone(&writer),
+                    ack_bytes,
+                    session_status_push,
                     attached: HashSet::new(),
                     unacknowledged_chars: HashMap::new(),
                     flow_control_paused: HashSet::new(),
@@ -1164,9 +1217,16 @@ impl DaemonServer {
             WebSocket::from_raw_socket(writer_stream, Role::Server, None),
         )));
 
-        match read_websocket_client_message(&mut socket) {
+        let (ack_bytes, session_status_push) = match read_websocket_client_message(&mut socket) {
             Some(WebSocketClientMessage::Text(line)) => match decode_client_frame(&line) {
-                Ok(ClientFrame::Auth { token, .. }) if token == self.token => {
+                Ok(ClientFrame::Auth {
+                    token,
+                    client_features,
+                    ..
+                }) if token == self.token => {
+                    let ack_bytes = client_features
+                        .iter()
+                        .any(|feature| feature == "ws_ack_bytes_v1");
                     let _ = writer.send_frame(&DaemonFrame::AuthOk {
                         daemon_version: self.version.clone(),
                         pid: std::process::id(),
@@ -1174,6 +1234,12 @@ impl DaemonServer {
                         binary_protocol_version: BINARY_PROTOCOL_VERSION,
                         features: supported_features(),
                     });
+                    (
+                        ack_bytes,
+                        client_features
+                            .iter()
+                            .any(|feature| feature == "session_status_push_v1"),
+                    )
                 }
                 _ => {
                     let _ = writer.send_frame(&DaemonFrame::AuthErr {
@@ -1183,7 +1249,7 @@ impl DaemonServer {
                 }
             },
             Some(WebSocketClientMessage::Binary(_)) | None => return,
-        }
+        };
 
         let client_id = self.next_client_id.fetch_add(1, Ordering::SeqCst);
         if let Ok(mut clients) = self.host.clients.lock() {
@@ -1191,6 +1257,8 @@ impl DaemonServer {
                 client_id,
                 ClientHandle {
                     writer: Arc::clone(&writer),
+                    ack_bytes,
+                    session_status_push,
                     attached: HashSet::new(),
                     unacknowledged_chars: HashMap::new(),
                     flow_control_paused: HashSet::new(),
@@ -1313,12 +1381,18 @@ impl DaemonServer {
                 session_id,
                 sequence,
                 char_count,
+                byte_count,
             } => {
                 if !is_valid_session_id(&session_id) {
                     return err_frame(id, "invalid session id");
                 }
-                self.host
-                    .acknowledge_output(client_id, &session_id, sequence, char_count);
+                self.host.acknowledge_output(
+                    client_id,
+                    &session_id,
+                    sequence,
+                    char_count,
+                    byte_count,
+                );
                 DaemonFrame::Ok { id }
             }
             ClientFrame::Resize {

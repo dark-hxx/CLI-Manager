@@ -64,9 +64,7 @@ pub(crate) fn emit_request_event<R: Runtime>(app: &AppHandle<R>, paths: &[String
     }
 }
 
-pub(crate) fn take_pending(
-    pending: &PendingOpenTerminalRequests,
-) -> Vec<String> {
+pub(crate) fn take_pending(pending: &PendingOpenTerminalRequests) -> Vec<String> {
     pending
         .0
         .lock()
@@ -125,9 +123,9 @@ pub(crate) fn set_windows_explorer_context_menu(enabled: bool) -> Result<(), Str
             .map_err(|error| format!("failed to set Explorer menu label: {error}"))?;
         key.set_value("Icon", &executable)
             .map_err(|error| format!("failed to set Explorer menu icon: {error}"))?;
-        let (command, _) = key.create_subkey("command").map_err(|error| {
-            format!("failed to create Explorer menu command key: {error}")
-        })?;
+        let (command, _) = key
+            .create_subkey("command")
+            .map_err(|error| format!("failed to create Explorer menu command key: {error}"))?;
         let command_line = format!("\"{}\" --open-terminal \"{}\"", executable, placeholder);
         command
             .set_value("", &command_line)

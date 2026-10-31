@@ -38,7 +38,7 @@
 | D2 | **先抽核心 crate**（`crates/core`、`core-db`、`core-prefs`），两壳共用 | 后端约 85% 逻辑不依赖 Tauri；避免两份业务逻辑分叉 |
 | D3 | **保留 PTY daemon 与协议**；GPUI 通过新 Rust 客户端 `crates/pty-client` 走 WebSocket 二进制帧接入 | 见 §0.1；协议只做向后兼容扩展 |
 | D4 | VT 内核用 **`alacritty_terminal`（Apache-2.0）**，渲染层自研 GPUI Element | 禁止 Zed GPL crate，需与商业双授权兼容 |
-| D5 | GPUI 用 **`gpui-pre 0.3`**；组件优先 gpui-component（Apache-2.0），通过 `[patch.crates-io]` 让其使用 gpui-pre，不行则维护适配 fork **[PoC]** | 用户指定版本；组件库与 GPUI 版本必须一致 |
+| D5 | GPUI 锁定 **`gpui-pre 0.3.10`** + `gpui-pre-platform 0.3.10`；组件优先 gpui-component 0.8.1（Apache-2.0），发布包已直接依赖同版 gpui-pre，当前无需 patch/fork **[PoC]** | M0 Windows 编译与平台窗口冒烟通过；macOS、IME、完整组件行为仍待验证；升级须重新核对 |
 | D6 | **WebView 只用于三类预览**，由 `PreviewHost` 按需创建、闲置回收；缺失时降级或提示 | 用户约束；常规路径零 WebView |
 | D7 | 数据层零迁移：同一 SQLite、同一 `_sqlx_migrations`、同一偏好 JSON、同一 daemon | 双壳可来回切换 |
 | D8 | 预览内容通过自定义协议 + 白名单提供，**不为预览启本地 HTTP 端口**（Live Server 除外，它本来就有本地服务） | 缩小攻击面 |
@@ -129,7 +129,7 @@ pub struct AppContext {
 
 ### 4.1 应用骨架
 
-- `gpui = { package = "gpui-pre", version = "=0.3.x" }`；gpui-component 通过 `[patch.crates-io]` 使用 gpui-pre 或适配 fork **[PoC]**。
+- 锁定 `gpui-pre 0.3.10`、`gpui-pre-platform 0.3.10` 与 `gpui-component 0.8.1`；组件发布包直接使用同版 gpui-pre，当前无 patch/fork **[PoC]**。
 - 初始化：tokio runtime（独立线程池）、`AppContext`、主题、i18n、Keymap，然后打开主窗口（无边框、自绘标题栏，Snap Layouts **[PoC]**）。
 - 状态模型：每个 Zustand store 对应一个 `Entity<T>`；跨模型通过 `WeakEntity` 或 `cx.global::<Services>()`。
 - 所有 IO 走 `cx.background_executor()` 或 tokio，主线程只做状态变更与绘制。
@@ -181,8 +181,9 @@ GPUI 输入 ──► term-engine 键盘编码 ──► pty-client.write（ws_b
 ### 5.4 Checkpoint 与跨壳 attach
 
 - checkpoint 目前是 xterm SerializeAddon 产出的 ANSI 文本，由客户端上传、attach 时作为 replay 起点。
-- `term-engine::serialize_to_ansi` 产出 xterm 与 alacritty 都能重放的 ANSI 流 → checkpoint 依旧与客户端无关，**两壳可以互相 attach 对方的会话**。
-- 往返测试：xterm 序列化 fixture → alacritty 重放 → 再序列化 → xterm 重放，网格一致。不一致的特性（如图片）在 checkpoint 中丢弃并记录。
+- `term-engine::serialize_to_ansi` 的目标是跨壳重放 **[PoC，当前草稿未通过]**。M0 八组 fixture 已证实活动网格相同不足以证明状态等价：备用屏退出、滚动区、待换行与 OSC8 需要额外编码，不能据此承诺两壳无损 attach。
+- 往返测试同时比较网格/SGR/光标/模式与追加输出后的结果；额外将原始 ANSI 直接送入 alacritty，区分解析差异与序列化丢失。已发现的有状态差异见 M0 `research/checkpoint.md`，须在协议中显式声明能力与退化，不能静默丢弃。
+- 第二版分阶段实验定位：OSC8 ID/URI 丢失在 xterm 自序列化；反向可见网格编码器未恢复备用屏、滚动区与待换行。相同原始输入的链接下划线及光标表示差异需与实际续写损失分别处理；完整状态契约及跨壳能力协商仍未定案。
 
 ### 5.5 输入、IME 与剪贴板
 
@@ -227,7 +228,7 @@ GPUI 输入 ──► term-engine 键盘编码 ──► pty-client.write（ws_b
 - NSIS 继续使用（复用 `installer/hooks.nsh` 的 Explorer 右键与 `cleanup.ps1`）。GPUI 安装包含：GPUI 主程序、`cli-manager-daemon`、`cli-manager-web-daemon`、`cli-manager-codex-proxy`、Hook 上报端、conpty sideload 资源。
 - 更新：自研更新器，复用 minisign 公钥与 GitHub `latest.json`（新增 `gpui` 平台键）；更新前沿用 Tauri 版的会话处理规则（有运行中会话时询问：转入后台后更新 / 结束会话后更新 / 取消），daemon 二进制只在空闲时替换。
 - 托盘、通知、桌宠（同进程第二窗口 **[PoC]**）、日志（`CLI_MANAGER_DEBUG` 语义不变）。
-- 构建参数：沿用现有 release profile（`lto = "fat"`、`codegen-units = 1`、`strip = "symbols"`、`panic = "abort"`）并迁到根 workspace；P7 只新增全局分配器 `mimalloc`（M0 测量后决定）。
+- 构建参数：沿用现有 release profile（`lto = "fat"`、`codegen-units = 1`、`strip = "symbols"`、`panic = "abort"`）并迁到根 workspace；P7 隔离解析对照暂未显示 `mimalloc` 收益，先保留系统默认分配器；冷启动与真实终端对照后再决定（见 M0 research/allocator.md）。
 
 ## 9. 功能对齐清单（Parity Checklist）
 
@@ -277,8 +278,9 @@ GPUI 输入 ──► term-engine 键盘编码 ──► pty-client.write（ws_b
 | gpui-pre 后续快照破坏性变更 | 升级时大面积编译失败 | 固定 `=0.3.x`；`ui_kit` 隔离；按季度集中升级 |
 | Windows 中文 IME 不可用 | M0 IME PoC 失败 | 上游修复 + `[patch]` 先行合入；不达标 No-Go |
 | 终端渲染性能不达标 | 8 分屏 < 60 fps 或吞吐低于 xterm | 字形/行缓存优化；仍不达标则暂停终端迁移 |
+| 终端输出传输瓶颈 | M0 中 100 MB 窗口和无绘制客户端均在 120 秒超时，无绘制仅收约 35 MB | 先分离 ConPTY、daemon、ACK/流控与消费者；保留有界统计，不据本地发送计时推断远端处理，也不直接归因 GPU |
 | 原生编辑器能力不足 | M0 编辑器 PoC 不满足 | `ui_kit` 自研补齐；分期交付 |
-| ANSI checkpoint 互操作不一致 | 往返测试失败 | 跨壳 attach 时退化为“原始 replay 窗口”重放；同壳 attach 不受影响 |
+| ANSI checkpoint 互操作不一致 | M0 已复现备用屏/滚动区/待换行继续输出差异及 OSC8 丢失 | 完整状态编码与能力协商待设计；有限原始 replay 不能恢复截断前状态，需明确降级提示，不能宣称无损跨壳恢复 |
 | 根 workspace 改变构建行为 | 打包脚本/CI 找不到产物、依赖解析冲突 | `.cargo/config.toml` 固定 target-dir；core-extraction 中同步核对脚本与 CI |
 | daemon 协议扩展影响 Tauri 版 | Tauri 回归失败 | 扩展全部是 capability 协商，旧客户端不声明即旧行为；契约测试覆盖 |
 | 预览 WebView Airspace/焦点问题 | PoC 中无法规避 | 改为独立子窗口承载预览 |

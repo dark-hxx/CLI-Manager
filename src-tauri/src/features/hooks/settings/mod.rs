@@ -346,7 +346,8 @@ pub async fn hook_settings_install_codex(
     } else {
         install_codex_hooks(&codex_dir)?;
     }
-    let codex = build_codex_status_for_profile(Some(codex_dir.clone()), codex_profile_name.as_deref())?;
+    let codex =
+        build_codex_status_for_profile(Some(codex_dir.clone()), codex_profile_name.as_deref())?;
     sync_ccswitch_for_tool_status(
         cc_switch_db_path,
         &codex_dir,
@@ -395,7 +396,8 @@ pub async fn hook_settings_uninstall_codex(
         uninstall_codex_hooks(&codex_dir)?;
     }
     let claude = build_claude_status(claude_dir.clone())?;
-    let codex = build_codex_status_for_profile(Some(codex_dir.clone()), codex_profile_name.as_deref())?;
+    let codex =
+        build_codex_status_for_profile(Some(codex_dir.clone()), codex_profile_name.as_deref())?;
     let kimi = build_kimi_status(kimi_dir.clone())?;
     sync_ccswitch_for_tool_status(
         cc_switch_db_path,
@@ -1019,8 +1021,8 @@ fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<
     let Some(config) = read_text_if_exists(&codex_dir.join(CODEX_CONFIG_FILE_NAME))? else {
         return Ok(blocks);
     };
-    let config: toml::Value = toml::from_str(&config)
-        .map_err(|_| "common_config_parse_failed".to_string())?;
+    let config: toml::Value =
+        toml::from_str(&config).map_err(|_| "common_config_parse_failed".to_string())?;
     let Some(state) = config.get("hooks").and_then(|hooks| hooks.get("state")) else {
         return Ok(blocks);
     };
@@ -1051,11 +1053,15 @@ fn read_codex_cli_manager_hook_state_blocks(codex_dir: &Path) -> Result<Vec<Vec<
                     continue;
                 };
                 let enabled = saved.get("enabled").and_then(toml::Value::as_bool);
-                let trusted = saved.get("trusted_hash").and_then(toml::Value::as_str) == Some(hash.as_str());
+                let trusted =
+                    saved.get("trusted_hash").and_then(toml::Value::as_str) == Some(hash.as_str());
                 if !trusted && enabled != Some(false) {
                     continue;
                 }
-                let mut block = vec![format!("[hooks.state.\"{}\"]", toml_escape_basic_string(&key))];
+                let mut block = vec![format!(
+                    "[hooks.state.\"{}\"]",
+                    toml_escape_basic_string(&key)
+                )];
                 if trusted {
                     block.push(format!("trusted_hash = \"{hash}\""));
                 }
