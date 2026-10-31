@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { localBuildOptions, runLocalBuild } from "./tauri-build-local.mjs";
+import { localBuildOptions, portablePackagePlan, runLocalBuild } from "./tauri-build-local.mjs";
 
 test("local build isolates cache and overrides costly inherited release settings", () => {
   const env = { PATH: "preserved", CARGO_INCREMENTAL: "0", CARGO_PROFILE_RELEASE_LTO: "fat" };
@@ -56,7 +56,8 @@ test("spawn errors fail the command instead of reporting success", async (t) => 
 test("local wiring preserves official release optimization and signed artifacts", () => {
   const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
   const config = JSON.parse(readFileSync(new URL("../src-tauri/tauri.conf.json", import.meta.url)));
-  const cargo = readFileSync(new URL("../src-tauri/Cargo.toml", import.meta.url), "utf8");
+  // release profile 只在 workspace 根生效，迁移到根 Cargo.toml 后必须在此校验。
+  const cargo = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8");
   assert.equal(pkg.scripts["tauri:build:local"], "node ./scripts/tauri-build-local.mjs");
   assert.equal(config.bundle.createUpdaterArtifacts, true);
   assert.match(cargo, /\[profile\.release\]\s+lto = "fat"\s+codegen-units = 1/);
@@ -68,4 +69,36 @@ test("Tap resources use a directory mapping that preserves nested assets and fon
     .filter(([source]) => source.startsWith("../apps/web/dist/tap"));
   // Tauri flattens glob matches to file names; mapping the directory preserves its subtree.
   assert.deepEqual(tapResources, [["../apps/web/dist/tap", "apps/web/dist/tap"]]);
+});
+
+test("Windows bundle builds package a portable ZIP from the local release directory", () => {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url)));
+  const plan = portablePackagePlan(["--bundles", "nsis"], { CARGO_TARGET_DIR: "cache with spaces" }, "win32");
+  assert.equal(plan.command, "powershell.exe");
+  assert.equal(plan.options.shell, undefined);
+  const value = (flag) => plan.args[plan.args.indexOf(flag) + 1];
+  assert.equal(value("-Version"), pkg.version);
+  assert.equal(value("-SourceDir"), path.join(plan.options.cwd, "cache with spaces/local/release"));
+  assert.equal(value("-OutputDir"), path.join(plan.options.cwd, "dist/portable"));
+  assert.ok(value("-File").endsWith(path.join("scripts", "package-portable.ps1")));
+});
+
+test("portable packaging is skipped for --no-bundle and non-Windows hosts", () => {
+  assert.equal(portablePackagePlan(["--no-bundle"], {}, "win32"), null);
+  assert.equal(portablePackagePlan([], {}, "linux"), null);
+  assert.equal(portablePackagePlan([], {}, "darwin"), null);
+});
+
+test("portable packaging runs only after a successful build and propagates its failure", async () => {
+  for (const [buildCode, portableCode, expected, calls] of [[0, 0, 0, 2], [0, 5, 5, 2], [3, 0, 3, 1]]) {
+    const commands = [];
+    const result = await runLocalBuild([], {}, (command) => {
+      commands.push(command);
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit("exit", commands.length === 1 ? buildCode : portableCode));
+      return child;
+    }, "win32");
+    assert.equal(result, expected);
+    assert.equal(commands.length, calls);
+  }
 });

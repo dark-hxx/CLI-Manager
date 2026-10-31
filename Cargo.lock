@@ -1323,7 +1323,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager"
-version = "1.4.4"
+version = "1.5.0"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",
@@ -1417,6 +1417,7 @@ version = "0.1.0"
 dependencies = [
  "chardetng",
  "encoding_rs",
+ "image",
  "log",
  "reqwest 0.12.28",
  "serde",
@@ -1475,7 +1476,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager-helpers"
-version = "1.4.4"
+version = "1.5.0"
 dependencies = [
  "cli-manager",
  "embed-resource",

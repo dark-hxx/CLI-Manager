@@ -1,6 +1,6 @@
 [package]
 name = "cli-manager"
-version = "1.4.4"
+version = "1.5.0"
 description = "A lightweight desktop app for managing CLI tools across multiple projects"
 authors = ["tianhao.zhao", "zhang.yuan"]
 license = "AGPL-3.0-or-later"
@@ -98,7 +98,7 @@ local-ip-address = "0.6.13"
 tungstenite = { version = "0.30.0", features = ["rustls-tls-native-roots"] }
 cli-manager-web-protocol = { path = "../crates/web-protocol" }
 cli-manager-web-server = { path = "../apps/server" }
-cli-manager-core = { path = "../crates/core" }
+cli-manager-core = { path = "../crates/core", features = ["clipboard-image"] }
 cli-manager-core-db = { path = "../crates/core-db" }
 
 # macOS universal 交叉编译时不能复用宿主架构的 OpenSSL，因此仅在 macOS 使用 vendored 构建。
