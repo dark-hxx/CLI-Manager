@@ -9,9 +9,12 @@ use std::io::{self, Write};
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use uuid::Uuid;
+
+#[path = "runtime_memory.rs"]
+mod runtime_memory;
 
 const CRASH_LOG_FILE_NAME: &str = "crash.log";
 const MARKER_SCHEMA_VERSION: u32 = 1;
@@ -24,6 +27,8 @@ const MAX_BREADCRUMBS: usize = 50;
 static REPORTER: OnceLock<CrashReporter> = OnceLock::new();
 static SENSITIVE_ASSIGNMENT_RE: OnceLock<Regex> = OnceLock::new();
 static SENSITIVE_FLAG_RE: OnceLock<Regex> = OnceLock::new();
+static REPORT_IO_LOCK: OnceLock<Arc<tokio::sync::Mutex<()>>> = OnceLock::new();
+static REPORT_ADMISSION: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -85,6 +90,8 @@ struct RuntimeMarker {
     updated_at: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_context: Option<FrontendRuntimeContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_memory: Option<runtime_memory::NativeMemorySnapshot>,
 }
 
 impl RuntimeMarker {
@@ -103,6 +110,7 @@ impl RuntimeMarker {
             started_at: now.clone(),
             updated_at: now,
             last_context: None,
+            native_memory: None,
         }
     }
 }
@@ -114,6 +122,14 @@ struct CrashReporter {
     marker: Mutex<RuntimeMarker>,
     started: AtomicBool,
     stopped: AtomicBool,
+    persist_lock: Mutex<()>,
+    context_writes: Mutex<ContextWriteQueue>,
+}
+
+#[derive(Default)]
+struct ContextWriteQueue {
+    active: bool,
+    dirty: bool,
 }
 
 // 创建崩溃日志写入器并安装全局 reporter 与 panic hook；重复初始化返回 AlreadyExists。
@@ -130,6 +146,8 @@ pub fn initialize(log_dir: PathBuf, process_role: &str) -> io::Result<()> {
         marker: Mutex::new(RuntimeMarker::new(Uuid::new_v4().to_string(), process_role)),
         started: AtomicBool::new(false),
         stopped: AtomicBool::new(false),
+        persist_lock: Mutex::new(()),
+        context_writes: Mutex::new(ContextWriteQueue::default()),
     };
     REPORTER.set(reporter).map_err(|_| {
         io::Error::new(
@@ -180,19 +198,36 @@ pub fn start_runtime() -> io::Result<()> {
 
 #[tauri::command]
 // IPC 更新前先限制上下文并处理可识别敏感文本，再交给 reporter 持久化；未初始化时返回错误。
-pub fn crash_context_update(payload: FrontendRuntimeContext) -> Result<(), String> {
+pub async fn crash_context_update(payload: FrontendRuntimeContext) -> Result<(), String> {
     let payload = sanitize_context(payload);
     let reporter = REPORTER
         .get()
         .ok_or_else(|| "crash_reporter_unavailable".to_string())?;
-    reporter
-        .update_context(payload)
-        .map_err(|err| err.to_string())
+    // Keep only the latest in-memory context and one writer, even when the filesystem stalls.
+    if reporter.queue_context(payload).map_err(|err| err.to_string())? {
+        tokio::task::spawn_blocking(move || reporter.flush_context_queue());
+    }
+    Ok(())
 }
 
 #[tauri::command]
 // 将前端错误交给已初始化 reporter 做字段处理和写盘，不在此入口创建 reporter。
-pub fn frontend_crash_report(payload: FrontendCrashReport) -> Result<(), String> {
+pub async fn frontend_crash_report(payload: FrontendCrashReport) -> Result<(), String> {
+    let admission = Arc::clone(REPORT_ADMISSION.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))))
+        .try_acquire_owned()
+        .map_err(|_| "crash_report_queue_full".to_string())?;
+    let io_guard = Arc::clone(REPORT_IO_LOCK.get_or_init(|| Arc::new(tokio::sync::Mutex::new(()))))
+        .lock_owned().await;
+    tokio::task::spawn_blocking(move || {
+        let _admission = admission;
+        let _io_guard = io_guard;
+        write_frontend_report(payload)
+    })
+        .await
+        .map_err(|err| format!("crash_report_worker_failed: {err}"))?
+}
+
+fn write_frontend_report(payload: FrontendCrashReport) -> Result<(), String> {
     let reporter = REPORTER
         .get()
         .ok_or_else(|| "crash_reporter_unavailable".to_string())?;
@@ -206,23 +241,56 @@ pub fn mark_graceful_exit() {
     let Some(reporter) = REPORTER.get() else {
         return;
     };
-    reporter.stopped.store(true, Ordering::Release);
-    let marker_path = reporter
-        .marker_path
-        .lock()
-        .ok()
-        .and_then(|path| path.clone());
-    let Some(marker_path) = marker_path else {
-        return;
-    };
-    if let Err(err) = fs::remove_file(marker_path) {
-        if err.kind() != io::ErrorKind::NotFound {
-            eprintln!("failed to remove crash runtime marker: {err}");
-        }
-    }
+    reporter.stop();
 }
 
 impl CrashReporter {
+    // Admission and dirty state share one lock, so updates cannot miss a worker's transition to idle.
+    fn queue_context(&self, payload: FrontendRuntimeContext) -> io::Result<bool> {
+        let mut queue = self.context_writes.lock().map_err(|_| io::Error::other("crash context queue poisoned"))?;
+        if self.stopped.load(Ordering::Acquire) {
+            return Ok(false);
+        }
+        {
+            let mut marker = self.marker.lock().map_err(|_| io::Error::other("crash marker lock poisoned"))?;
+            marker.updated_at = timestamp();
+            marker.last_context = Some(payload);
+        }
+        queue.dirty = true;
+        if queue.active {
+            return Ok(false);
+        }
+        queue.active = true;
+        Ok(true)
+    }
+
+    fn flush_context_queue(&self) {
+        loop {
+            {
+                let Ok(mut queue) = self.context_writes.lock() else { return; };
+                if self.stopped.load(Ordering::Acquire) || !queue.dirty {
+                    queue.active = false;
+                    queue.dirty = false;
+                    return;
+                }
+                queue.dirty = false;
+            }
+            if let Err(err) = self.persist_marker() {
+                eprintln!("failed to persist crash context: {err}");
+            }
+        }
+    }
+
+    // Do not wait for fsync on the GUI thread; an active writer removes its marker after seeing stopped.
+    fn stop(&self) {
+        self.stopped.store(true, Ordering::Release);
+        if let Some(path) = self.marker_path.lock().ok().and_then(|path| path.clone()) {
+            if let Err(err) = remove_marker(&path) {
+                eprintln!("failed to remove crash runtime marker: {err}");
+            }
+        }
+    }
+
     // 更新内存标记时间与上下文后持久化；传入上下文应已由外层处理大小和敏感文本。
     fn update_context(&self, payload: FrontendRuntimeContext) -> io::Result<()> {
         if let Ok(mut marker) = self.marker.lock() {
@@ -234,26 +302,39 @@ impl CrashReporter {
 
     // 心跳刷新更新时间并写回标记，不改变最近前端上下文。
     fn touch(&self) -> io::Result<()> {
+        let memory = runtime_memory::sample();
         if let Ok(mut marker) = self.marker.lock() {
             marker.updated_at = timestamp();
+            marker.native_memory = Some(memory);
         }
         self.persist_marker()
     }
 
     // 取得已启动的标记路径，持有标记锁序列化并覆盖同步写盘；不是临时文件替换式发布。
     fn persist_marker(&self) -> io::Result<()> {
+        let _persist_guard = self.persist_lock.lock()
+            .map_err(|_| io::Error::other("crash marker persistence lock poisoned"))?;
         let marker_path = self
             .marker_path
             .lock()
             .map_err(|_| io::Error::other("crash marker path lock poisoned"))?
             .clone()
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "runtime marker not started"))?;
+        if self.stopped.load(Ordering::Acquire) {
+            return remove_marker(&marker_path);
+        }
         let marker = self
             .marker
             .lock()
             .map_err(|_| io::Error::other("crash marker lock poisoned"))?;
         let bytes = serde_json::to_vec_pretty(&*marker).map_err(io::Error::other)?;
-        write_and_sync(&marker_path, &bytes)
+        // Only the persistence gate remains held during filesystem I/O; new context admission stays responsive.
+        drop(marker);
+        write_and_sync(&marker_path, &bytes)?;
+        if self.stopped.load(Ordering::Acquire) {
+            remove_marker(&marker_path)?;
+        }
+        Ok(())
     }
 
     // 处理错误文本、堆栈、URL 和可选上下文后写 JSON 日志；上下文标记更新失败不阻止错误日志写入。
@@ -312,6 +393,7 @@ impl CrashReporter {
             "timestamp": timestamp(),
             "eventId": Uuid::new_v4().to_string(),
             "kind": truncate_chars(kind, 128),
+            "nativeMemory": marker.as_ref().and_then(|value| value.native_memory.as_ref()),
             "sessionId": marker.as_ref().map(|value| value.session_id.as_str()),
             "processRole": marker.as_ref().map(|value| value.process_role.as_str()),
             "pid": std::process::id(),
@@ -645,6 +727,13 @@ fn write_and_sync(path: &Path, bytes: &[u8]) -> io::Result<()> {
     file.sync_data()
 }
 
+fn remove_marker(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
+}
+
 // 主崩溃日志不可写时，将单个事件同步写到时间戳/PID 命名的应急文件，不经过滚动写入器。
 fn write_emergency_event(log_dir: &Path, event: &Value) -> io::Result<()> {
     let file_name = format!(
@@ -659,6 +748,101 @@ fn write_emergency_event(log_dir: &Path, event: &Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_reporter(dir: &Path) -> CrashReporter {
+        CrashReporter {
+            log_dir: dir.to_path_buf(),
+            writer: Mutex::new(create_log_writer(dir.to_path_buf(), CRASH_LOG_FILE_NAME).unwrap()),
+            marker_path: Mutex::new(Some(dir.join("runtime-state-test.json"))),
+            marker: Mutex::new(RuntimeMarker::new("synthetic".into(), "app")),
+            started: AtomicBool::new(true), stopped: AtomicBool::new(false), persist_lock: Mutex::new(()),
+            context_writes: Mutex::new(ContextWriteQueue::default()),
+        }
+    }
+
+    #[test]
+    fn stopped_reporter_cannot_recreate_a_graceful_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let reporter = test_reporter(dir.path());
+        let path = reporter.marker_path.lock().unwrap().clone().unwrap();
+        reporter.persist_marker().unwrap();
+        assert!(path.exists());
+        reporter.stop();
+        assert!(!path.exists());
+        reporter.touch().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn context_updates_coalesce_to_latest_and_restart_after_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let reporter = test_reporter(dir.path());
+        let context = |activity: &str| serde_json::from_value(json!({"activity": activity, "breadcrumbs": []})).unwrap();
+        assert!(reporter.queue_context(context("first")).unwrap());
+        for _ in 0..100 { assert!(!reporter.queue_context(context("latest")).unwrap()); }
+        reporter.flush_context_queue();
+        let path = reporter.marker_path.lock().unwrap().clone().unwrap();
+        assert_eq!(read_runtime_marker(&path).unwrap().last_context.unwrap().activity, "latest");
+        assert!(reporter.queue_context(context("next")).unwrap());
+        reporter.flush_context_queue();
+        reporter.stop();
+        assert!(!reporter.queue_context(context("late")).unwrap());
+        reporter.flush_context_queue();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn stop_does_not_wait_for_an_active_writer_and_late_persistence_removes_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let reporter = test_reporter(dir.path());
+        let path = reporter.marker_path.lock().unwrap().clone().unwrap();
+        reporter.persist_marker().unwrap();
+        let write_guard = reporter.persist_lock.lock().unwrap();
+        reporter.stop();
+        assert!(reporter.stopped.load(Ordering::Acquire));
+        assert!(!path.exists());
+        drop(write_guard);
+        reporter.persist_marker().unwrap();
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn native_memory_survives_marker_recovery_without_frontend_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let reporter = test_reporter(dir.path());
+        reporter.touch().unwrap();
+        let path = reporter.marker_path.lock().unwrap().clone().unwrap();
+        let marker = read_runtime_marker(&path).unwrap();
+        assert!(marker.native_memory.is_some());
+        assert!(marker.last_context.is_none());
+        assert!(!reporter.base_event("synthetic", None)["nativeMemory"].is_null());
+    }
+
+    #[test]
+    fn legacy_markers_remain_readable_without_native_memory() {
+        let mut value = serde_json::to_value(RuntimeMarker::new("legacy".into(), "daemon")).unwrap();
+        value.as_object_mut().unwrap().remove("nativeMemory");
+        let marker: RuntimeMarker = serde_json::from_value(value).unwrap();
+        assert!(marker.native_memory.is_none());
+        assert_eq!(marker.process_role, "daemon");
+    }
+
+    #[test]
+    fn panic_log_lock_contention_preserves_the_emergency_write_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let reporter = test_reporter(dir.path());
+        let guard = reporter.writer.lock().unwrap();
+        let event = json!({"kind": "synthetic_panic"});
+        assert!(reporter.try_write_event(event.clone()).is_err());
+        write_emergency_event(dir.path(), &event).unwrap();
+        drop(guard);
+        let path = fs::read_dir(dir.path()).unwrap()
+            .filter_map(Result::ok)
+            .find(|entry| entry.file_name().to_string_lossy().starts_with("crash-emergency-"))
+            .unwrap().path();
+        let saved: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(saved, event);
+    }
 
     #[test]
     // 验证当前构建基础标记名被接受、普通日志名被拒绝；未断言另一构建标记名不匹配。

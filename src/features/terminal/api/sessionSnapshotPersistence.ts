@@ -21,12 +21,15 @@ import type { Terminal } from "@xterm/xterm";
 const SNAPSHOT_THROTTLE_MS = 10_000;
 // 单终端持久化的 scrollback 尾部行数上限（约 2000 行，符合"恢复最近画面"语义）。
 const SNAPSHOT_MAX_LINES = 2000;
+const SNAPSHOT_OPERATION_TIMEOUT_MS = 3000;
+const SNAPSHOT_PASS_TIMEOUT_MS = 10_000;
 
 interface SnapshotSource {
   /** 返回当前终端画面的完整序列化文本（含 scrollback）。 */
   serialize: (signal: AbortSignal) => string | Promise<string>;
   checkpoint?: (serialized: string) => Promise<void>;
   lifetime: AbortController;
+  checkpointInFlight?: Promise<void>;
   /** 自上次落盘后是否收到过新 PTY 输出。 */
   dirty: boolean;
 }
@@ -35,6 +38,17 @@ const sources = new Map<string, SnapshotSource>();
 let timer: ReturnType<typeof setInterval> | null = null;
 let flushInFlight: Promise<void> | null = null;
 let forceFlushPending = false;
+let suspended = 0;
+
+// A discard must drain previous writes and exclude periodic ticks; forced exit snapshots remain available.
+export function suspendTerminalSnapshots() {
+  suspended++;
+  let resumed = false;
+  return {
+    pending: flushInFlight ?? Promise.resolve(),
+    resume: () => { if (!resumed) { resumed = true; suspended--; } },
+  };
+}
 
 /** Disposing xterm can discard its write callbacks; cancellation must release the flush queue. */
 export function serializeTerminalAfterWrite(
@@ -43,7 +57,7 @@ export function serializeTerminalAfterWrite(
   signal: AbortSignal,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const abort = () => reject(new Error("Terminal snapshot source disposed"));
+    const abort = () => reject(signal.reason instanceof Error ? signal.reason : new Error("Terminal snapshot source disposed"));
     if (signal.aborted) {
       abort();
       return;
@@ -135,6 +149,7 @@ function stopTimer(): void {
 
 /** 序列化所有脏终端、尾部限行、写回内存，然后统一落盘一次。 */
 async function flushDirtySnapshots(): Promise<void> {
+  if (suspended > 0) return;
   await flushSnapshots(false);
 }
 
@@ -178,16 +193,27 @@ function flushSnapshots(force: boolean): Promise<void> {
 async function flushSnapshotPass(force: boolean): Promise<void> {
   const store = useTerminalStore.getState();
   const updated = new Map<string, SnapshotSource>();
+  const deadline = performance.now() + SNAPSHOT_PASS_TIMEOUT_MS;
 
   for (const [sessionId, source] of sources) {
     if (!force && !source.dirty) continue;
+    if (performance.now() >= deadline) {
+      source.dirty = true;
+      continue;
+    }
     source.dirty = false;
     try {
-      const serialized = await source.serialize(source.lifetime.signal);
+      const serialized = await runSnapshotAttempt(source, deadline, signal => source.serialize(signal));
       if (sources.get(sessionId) !== source) continue;
       if (source.checkpoint) {
         try {
-          await source.checkpoint(serialized);
+          // A timed-out upload is not cancelled remotely; never start an overlapping checkpoint.
+          if (source.checkpointInFlight) throw new Error("Terminal checkpoint still pending");
+          const pending = Promise.resolve().then(() => source.checkpoint!(serialized));
+          source.checkpointInFlight = pending;
+          const clear = () => { if (source.checkpointInFlight === pending) source.checkpointInFlight = undefined; };
+          void pending.then(clear, clear);
+          await runSnapshotAttempt(source, deadline, () => pending);
         } catch (err) {
           if (sources.get(sessionId) === source) {
             source.dirty = true;
@@ -219,4 +245,34 @@ async function flushSnapshotPass(force: boolean): Promise<void> {
     }
     logError("Failed to persist throttled terminal snapshots", { err });
   }
+}
+
+// Attempt cancellation is separate from disposal so a stalled live terminal can retry safely.
+function runSnapshotAttempt<T>(
+  source: SnapshotSource,
+  deadline: number,
+  work: (signal: AbortSignal) => T | Promise<T>,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const attempt = new AbortController();
+    const abort = () => attempt.abort(source.lifetime.signal.reason);
+    const finish = () => {
+      clearTimeout(timer);
+      source.lifetime.signal.removeEventListener("abort", abort);
+      attempt.signal.removeEventListener("abort", failed);
+    };
+    const failed = () => { finish(); reject(attempt.signal.reason); };
+    const timer = setTimeout(() => attempt.abort(new Error("Terminal snapshot operation timed out")),
+      Math.max(0, Math.min(SNAPSHOT_OPERATION_TIMEOUT_MS, deadline - performance.now())));
+    attempt.signal.addEventListener("abort", failed, { once: true });
+    source.lifetime.signal.addEventListener("abort", abort, { once: true });
+    if (source.lifetime.signal.aborted) { abort(); return; }
+    Promise.resolve().then(() => {
+      if (attempt.signal.aborted) throw attempt.signal.reason;
+      return work(attempt.signal);
+    }).then(value => {
+      if (attempt.signal.aborted) return;
+      finish(); resolve(value);
+    }, error => { finish(); reject(error); });
+  });
 }

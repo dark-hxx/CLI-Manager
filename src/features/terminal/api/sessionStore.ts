@@ -33,6 +33,14 @@ function isPersistableSession(session: TerminalSession): boolean {
 }
 
 let store: Store | null = null;
+let writeTail: Promise<void> = Promise.resolve();
+
+// A late snapshot must not overwrite a completed discard; rejected writes must still release the queue.
+function queueSessionWrite<T>(work: () => Promise<T>): Promise<T> {
+  const operation = writeTail.then(work);
+  writeTail = operation.then(() => undefined, () => undefined);
+  return operation;
+}
 async function getStore() {
   if (!store) {
     const paths = await getCliManagerDataPaths();
@@ -49,7 +57,7 @@ export const useSessionStore = create<SessionStore>(() => ({
   activeWorkspanId: null,
   loaded: false,
 
-  load: singleFlight(async () => {
+  load: singleFlight(() => queueSessionWrite(async () => {
     const s = await getStore();
     const original = (await s.get<TerminalSession[]>("sessions")) ?? [];
     const { sessions, retired } = partitionRetiredSessions(original);
@@ -80,23 +88,23 @@ export const useSessionStore = create<SessionStore>(() => ({
       activeWorkspanId,
       loaded: true,
     });
-  }),
+  })),
 
-  saveSessions: async (sessions) => {
+  saveSessions: (sessions) => queueSessionWrite(async () => {
     const s = await getStore();
     // 伪会话（子 Agent 转录 / 文件编辑器 / 同步历史）是临时视图，绝不持久化/恢复。
     const persistable = sessions.filter(isPersistableSession);
     await s.set("sessions", persistable);
     useSessionStore.setState({ sessions: persistable });
-  },
+  }),
 
-  saveSplits: async (splits) => {
+  saveSplits: (splits) => queueSessionWrite(async () => {
     const s = await getStore();
     await s.set("splits", splits);
     useSessionStore.setState({ splits });
-  },
+  }),
 
-  saveActiveSessionId: async (id) => {
+  saveActiveSessionId: (id) => queueSessionWrite(async () => {
     const s = await getStore();
     if (id === null) {
       await s.set("activeSessionId", null);
@@ -104,9 +112,9 @@ export const useSessionStore = create<SessionStore>(() => ({
       await s.set("activeSessionId", id);
     }
     useSessionStore.setState({ activeSessionId: id });
-  },
+  }),
 
-  saveWorkspans: async (workspans, activeWorkspanId, sessions) => {
+  saveWorkspans: (workspans, activeWorkspanId, sessions) => queueSessionWrite(async () => {
     const s = await getStore();
     const validSessionIds = new Set(sessions.filter(isPersistableSession).map((session) => session.id));
     const persistableWorkspans = sanitizeTerminalWorkspans(workspans, validSessionIds);
@@ -120,9 +128,9 @@ export const useSessionStore = create<SessionStore>(() => ({
       workspans: persistableWorkspans,
       activeWorkspanId: resolvedActiveWorkspanId,
     });
-  },
+  }),
 
-  clear: async () => {
+  clear: () => queueSessionWrite(async () => {
     const s = await getStore();
     await s.set("sessions", []);
     await s.set("splits", []);
@@ -136,5 +144,5 @@ export const useSessionStore = create<SessionStore>(() => ({
       workspans: [],
       activeWorkspanId: null,
     });
-  },
+  }),
 }));
