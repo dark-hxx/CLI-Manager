@@ -14,6 +14,12 @@ const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.Modu
 const project = (id = "one") => ({ id, name: id, path: `E:\\${id}`, environment_type: "local", remote_path: "", ssh_host_id: null });
 const entry = (path, kind = "file") => ({ path, name: path.split("/").pop(), kind, sizeBytes: 4, modifiedMs: 1 });
 const buffer = (path, dirty = false) => ({ ...entry(path), content: dirty ? "edited" : "disk", savedContent: "disk", previewKind: "text" });
+const residencySource = readFileSync(new URL("../src/features/files/lib/fileContentResidency.ts", import.meta.url), "utf8");
+const residencyCode = ts.transpileModule(residencySource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const residency = { exports: {} };
+vm.runInNewContext(`(function(require, module, exports) { ${residencyCode}\n})`)(
+  (name) => { assert.equal(name, "./fileExplorerOperations"); return operations; }, residency, residency.exports,
+);
 
 function harness(customInvoke) {
   const calls = [];
@@ -37,6 +43,7 @@ function harness(customInvoke) {
     "../../projects/api/projectCapabilities": { projectSupportsCapability: () => true },
     "../lib/fileExplorerIgnore": { isFileExplorerIgnoreCaseInsensitive },
     "../lib/fileExplorerOperations": operations,
+    "../lib/fileContentResidency": residency.exports,
     "../../git/api/gitDiffWorkspaceStore": { activateProjectFileSurface() {} },
     "../../remote/api/sshRemoteFiles": {},
   };

@@ -1,5 +1,19 @@
 # PTY Daemon Contracts (Phase 2: 守护进程)
 
+## Cursor seek index (TEMP, 2026-11-01)
+
+- Spool keeps the same 16-byte whole-frame format. A per-session sparse `(sequence, offset)` index samples every 128 frames, coarsens at 8192 samples, and is counted in resident-byte accounting.
+- Successful append updates the seek hint; successful replacement rebuilds it. Readers verify file length/mtime and monotonically increasing sequence coverage before seeking. Any invalid hint falls back to the authoritative sequential reader, without changing truncation or ACK semantics.
+- This replaces repeated prefix-header scans for known private spools, not a segmented storage-format migration. Attach still returns the complete bounded replay; checkpoint/ring/spool quotas remain separate.
+
+## Memory and spool failure ownership (2026-11-01)
+
+- The 2 MiB ring payload limit also holds when spool is unavailable. Retain a bounded whole-frame suffix, mark `replay_truncated`, invalidate the older checkpoint/prefix, and preserve existing attach warning/reset behavior; never fall back to unbounded RAM or stop running PTYs. Frame counts are capped separately so tiny outputs do not retain unlimited metadata.
+- A failed append rolls back to the committed file length; a later append first repairs a partial tail. Failed compaction does not allow unlimited disk growth. Successful compaction reclaims to 80% of the 10 MiB cap, avoiding a full rewrite per subsequent frame; a backup preserves the old spool during replacement.
+- ACK refill reads only a sequence-filtered suffix with a 512 KiB read batch (plus one indivisible frame), excluding checkpoints. Header scanning and attach's full bounded replay remain separate from a future segmented-spool optimization.
+- All sessions of one host share an additional 128 MiB checkpoint payload quota; rejected replacements preserve previous snapshots, successful replacements/drop release quota. Ring bytes, checkpoint bytes and frame metadata are counted for exited-session governance. Ring/checkpoint budgets are not a total heap limit: transport, temporary replay clones, base64 and OS/PTY allocations remain separate.
+- Regression: `replay_storage_tests.rs`, existing `session_buffer_*`, ACK flow-control, attach barrier and `recovery_tests.rs`; use synthetic paths and small quotas, never real disk-full/OOM.
+
 > Issue #123 Phase 2。把 PTY 宿主从主进程抽为独立守护进程 `cli-manager-daemon`：UI 是客户端，应用真退出后任务继续跑，重启 attach 回放。前置 Phase 1（`background-task-continuation-contracts.md`）已上线。**本契约经用户确认后方可实施。**
 
 ## Scenario: Reserve the Local Routing Control Plane

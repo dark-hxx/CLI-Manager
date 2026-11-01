@@ -1,5 +1,16 @@
 # Project File Command Contracts
 
+## Reloadable frontend file residency (TEMP, 2026-11-01)
+
+- File tabs can carry `dehydrated: true`: metadata/tab identity remain, but reloadable clean text/base64 payload is absent. The cache budget is 32 MiB/64 nonempty files across retained workspaces, excluding active, dirty, undo/redo-model and in-flight-save contents.
+- Activating a dehydrated tab or restoring its project reads through the existing `loadProjectFile` source/encoding adapter. A failed reload retains the marker and can retry; a closed tab cannot be resurrected, and a late result cannot steal newer selection. Mutation refresh does not eagerly refill dehydrated payloads.
+- Monaco model identity includes normalized local/WSL root or SSH host/remote root plus file path. Visible split panes are not treated as hidden just because another pane owns global focus. Hidden renderers release after 10 seconds; keepCurrentModel/saveViewState protect the model and cursor/undo state.
+- Idle clean models with no undo/redo use a separate 8 MiB/12-model LRU. Protected models can exceed this cache budget. Explicit closed-tab models release after the last view lease; file-content pruning never disposes dirty/undo data to satisfy a cache cap.
+- Active Diff, pending confirmation and markdown-navigation views remain mounted. Current-project workspace mirrors share authoritative file arrays and selection, so closed/pre-edit bodies cannot hide outside the cache accounting.
+- Save protection is reference-counted for overlapping saves. No source file deletion, schema change or automatic dirty-buffer eviction.
+- File-location comparisons use the narrow `files/api/fileLocation` entry and the same root key as the cache: Windows drive roots/ordinary UNC ignore case, POSIX/WSL UNC retain case. SSH host/remote-root semantics are unchanged. Model URI root identities are double-encoded because Monaco decodes a single layer before path normalization; distinct root/file splits must not collide.
+- Regressions: `editorModelResidency.test.mjs`, `fileContentResidency.test.mjs`, `fileContentDemandStore.test.mjs`.
+
 > Concrete Tauri command contracts for browsing and editing files inside a configured project root.
 
 ---
@@ -60,6 +71,7 @@ ProjectFilesChangedPayload { project_path: String, changed_paths: Vec<String> }
 - For WSL UNC roots, `file_list_dir` must avoid Windows Plan 9 directory enumeration and use `wsl.exe -d <distro> --exec find -H <path> -mindepth 1 -maxdepth 1 -printf "%f\0%y\0%Y\0%s\0%T@\0"` so command-line symlink roots are traversable and child directory symlinks can be reported as `kind="directory", is_symlink=true`.
 - The project-creation WSL symlink picker must filter entries to `kind === "directory" && isSymlink === true`; ordinary directories remain visible in the normal project file browser but are not shown in the symlink picker.
 - `file_read_text` only returns UTF-8 text and rejects files larger than 1 MiB; known video extensions are rejected before reading bytes. This stable command remains the internal Replay/sync file contract.
+- Actual reads use a limit-plus-one sentinel and report the actual byte count, not stale metadata. Internal sync/preview still uses the 1 MiB contract; Replay patch loading uses `file_read_replay_patch(relative_path)` from the explicit `commands::fs::replay_patch` registry path, restricted to managed `replay-snapshots/*.patch` paths and 4 MiB. Both validate canonical root containment and UTF-8; never accept a frontend-supplied root for the larger allowance.
 - `file_read_project_text` is the user-project editor command. It detects UTF-8/BOM, UTF-16 BOM, and common legacy encodings, rejects binary/undecodable content, and returns canonical encoding plus BOM metadata.
 - Video-extension eligibility is mirrored by the frontend precheck, local file command, and SSH Agent. The three lists must stay semantically aligned: TypeScript `.ts` is source text for project preview and must reach normal decoding rather than return `video_preview_unsupported`; a genuinely binary `.ts` payload is still handled by the existing binary/decode guard.
 - `file_write_text` keeps its existing UTF-8 signature and behavior for internal data.

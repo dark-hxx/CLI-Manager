@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { buildAndInstallHelperBinaries, helperTargetRoot } from "./prepare-helper-binaries.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tauriRoot = path.join(repoRoot, "src-tauri");
@@ -346,15 +347,31 @@ async function main() {
     return;
   }
 
+  if (process.platform === "win32" && tauriArgs[0] === "dev") {
+    console.log("[tauri-dev] Preparing helper binaries before Tauri starts its dev-server readiness wait...");
+    try {
+      // Cold helper builds can exceed Tauri's finite frontend wait. Prebuild
+      // here; the standalone Vite command keeps its existing cached build check.
+      buildAndInstallHelperBinaries({ targetRoot: helperTargetRoot(), profile: "debug" });
+    } catch (error) {
+      console.error(`[tauri-dev] Helper binary prebuild failed: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log("[tauri-dev] Helper binaries ready; starting Tauri with cached frontend prerequisites.");
+  }
+
   const runTauri = () =>
     new Promise((resolve) => {
       let output = "";
       let settled = false;
       let child;
+      let exitDrainTimer;
 
       const finish = (result) => {
         if (settled) return;
         settled = true;
+        clearTimeout(exitDrainTimer);
         resolve(result);
       };
 
@@ -376,7 +393,7 @@ async function main() {
         if (!stream) return;
         stream.setEncoding("utf8");
         stream.on("data", (chunk) => {
-          output += chunk;
+          output = (output + chunk).slice(-64 * 1024);
           target.write(chunk);
         });
       };
@@ -387,8 +404,23 @@ async function main() {
       child.on("error", (error) => {
         const message = `Failed to start Tauri CLI: ${error.message}`;
         console.error(message);
-        output += message;
+        output = (output + message).slice(-64 * 1024);
         finish({ code: 1, output });
+      });
+
+      child.on("exit", (code, signal) => {
+        if (settled) return;
+        if (code !== 0 || signal) {
+          console.error(`[tauri-dev] Tauri CLI exited (code ${code ?? "unavailable"}, signal ${signal ?? "none"}).`);
+        }
+        // Vite descendants may inherit the pipes after the CLI exits; close is
+        // not a process-liveness signal. Allow final errors to drain, then stop waiting.
+        exitDrainTimer = setTimeout(() => {
+          console.error("[tauri-dev] Tauri CLI has exited, but descendant output pipes remain open; releasing the startup wait.");
+          child.stdout?.destroy();
+          child.stderr?.destroy();
+          finish({ code: code ?? 1, output });
+        }, 250);
       });
 
       child.on("close", (code) => finish({ code: code ?? 1, output }));

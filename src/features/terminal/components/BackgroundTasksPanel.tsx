@@ -10,6 +10,7 @@ import { useTerminalStore, type TabNotificationState } from "../state";
 import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
 import { Activity, AlertTriangle, Check, Copy, Layers, RefreshCw, X } from "../../../shared/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../shared/ui/popover";
+import { useDaemonTaskInventory } from "../api/daemonTaskInventory";
 
 export interface BackgroundTaskMeta {
   sessionId: string;
@@ -99,6 +100,7 @@ function resolveTaskStatus(task: BackgroundTaskMeta): BackgroundTaskDisplayStatu
 export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverSide = "left", popoverStyle }: Props) {
   const { t, language } = useI18n();
   const [open, setOpen] = useState(false);
+  const inventory = useDaemonTaskInventory(open);
   const [discardIntent, setDiscardIntent] = useState<BackgroundTaskMeta | null>(null);
   const [discardPending, setDiscardPending] = useState(false);
   const persistedSessions = useSessionStore((state) => state.sessions);
@@ -200,7 +202,15 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverSide =
           )}
         </div>
         <div className="background-tasks-panel__list">
-          {!hasAnyTask ? (
+          {inventory.status !== "fresh" && (
+            <div role="status" className="px-3 py-2 text-[11px] text-text-muted">
+              {t(inventory.status === "stale" ? "terminal.backgroundTasks.stale" : "terminal.backgroundTasks.unknown")}
+              <button type="button" className="ui-flat-action ml-2" onClick={() => void onRefresh()} aria-label={t("common.refresh")}>
+                <RefreshCw size={11} />
+              </button>
+            </div>
+          )}
+          {!hasAnyTask && inventory.status === "fresh" ? (
             <div className="background-tasks-panel__empty flex min-h-32 flex-col items-center justify-center gap-1 rounded-lg px-4 py-6 text-center">
               <div className="text-xs font-medium text-text-primary">
                 {t("terminal.backgroundTasks.empty")}

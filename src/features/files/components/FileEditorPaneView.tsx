@@ -3,10 +3,13 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogTitle } f
 import { FileEditorContent } from "./FileEditorContent";
 import { FileEditorHeader } from "./FileEditorHeader";
 import { FileEditorTabs } from "./FileEditorTabs";
+import { usePaneResidency } from "../../../shared/lib/usePaneResidency";
 import type { useFileEditorController } from "../hooks/useFileEditorController";
 type FileEditorPaneViewProps = ReturnType<typeof useFileEditorController>;
 
 export function FileEditorPaneView(props: FileEditorPaneViewProps) {
+  const resident = usePaneResidency(props.isVisible || Boolean(props.activeDiff)
+    || props.pendingAction !== null || Boolean(props.pendingMarkdownNavigation));
   const {
     activeDiff, t, visibleFile, session, project, dirty, previewMode, setPreviewMode,
     copyActiveAiPath, copyActiveAiContext, save, requestClose, visibleFiles, activeFilePath,
@@ -41,7 +44,7 @@ export function FileEditorPaneView(props: FileEditorPaneViewProps) {
         onActivateFile={setActiveFilePath}
         onCloseFiles={requestCloseFiles}
       />
-      <FileEditorContent
+      {resident && <FileEditorContent
         file={visibleFile}
         activeDiff={activeDiff}
         project={editorProject}
@@ -58,7 +61,7 @@ export function FileEditorPaneView(props: FileEditorPaneViewProps) {
           ? { id: pendingMarkdownNavigation.id, fragment: pendingMarkdownNavigation.fragment }
           : null}
         onMarkdownFragmentHandled={handleMarkdownFragmentHandled}
-      />
+      />}
 
       <Dialog open={pendingAction !== null} onOpenChange={(open) => { if (!open) setPendingAction(null); }}>
         <DialogContent className="max-w-[420px]">

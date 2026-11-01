@@ -60,7 +60,8 @@ test("old-daemon fallback requires exact saved-snapshot identity and leaves raw 
 test("all snapshot producers and explicit restore boundaries use the production helpers", () => {
   const controller = read("src/features/terminal/hooks/useXTermController.ts");
   assert.doesNotMatch(controller, /serializeAddon\.serialize\(/);
-  assert.equal((controller.match(/serializeTerminalSnapshot\(terminal, serializeAddon\)/g) ?? []).length, 2);
+  assert.equal((controller.match(/serializeTerminalSnapshot\(terminal, serializeAddon\)/g) ?? []).length, 1);
+  assert.equal((controller.match(/serializeTerminalSnapshot\(terminal, serializeAddon, 2000\)/g) ?? []).length, 2);
   assert.match(controller, /restoreTerminalSnapshot\(initialTerminalOutput\)/);
   const display = read("src/features/terminal/hooks/useTerminalDisplay.ts");
   assert.match(display, /payload\.kind === "replay"\s*\? restoreKnownTerminalCheckpoint/);

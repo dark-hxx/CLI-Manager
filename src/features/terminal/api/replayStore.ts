@@ -7,6 +7,7 @@ import { translateCurrent } from "../../../shared/i18n/index";
 import { logError, logWarn } from "../../../shared/platform/logger";
 import type { CliHookPayload, CliHookEventName } from "../state";
 import { resolveCliHookStatus } from "../lib/terminalStatus";
+import { ReplayPatchCache, retainReplayEvents } from "./replayMemory";
 
 export type ReplayEventKind =
   | "session"
@@ -111,11 +112,13 @@ interface ReplayStore {
   loadRecentSessions: (limit?: number, preferredSessionKey?: string | null) => Promise<void>;
   loadSession: (sessionKey: string) => Promise<void>;
   selectSession: (sessionKey: string) => Promise<void>;
+  loadSnapshotPatch: (event: ReplayEvent) => Promise<string>;
   recordCliHookEvent: (payload: CliHookPayload) => Promise<void>;
   captureCodeSnapshot: (sessionKey: string, projectPath: string, reason?: string) => Promise<ReplayEvent | null>;
 }
 
 let initPromise: Promise<void> | null = null;
+let selectionGeneration = 0;
 
 const OOM_PAYLOAD_WARN_BYTES = 512 * 1024;
 const OOM_PATCH_WARN_BYTES = 1024 * 1024;
@@ -270,21 +273,19 @@ async function writeSnapshotPatchFile(sessionKey: string, checkpointId: string, 
   return relativePath;
 }
 
-async function readSnapshotPatchFile(relativePath: string): Promise<string | null> {
-  const paths = await getCliManagerDataPaths();
-  const result = await invoke<TextFilePayload>("file_read_text", {
-    rootPath: paths.dataDir,
-    relativePath,
-  });
+async function readSnapshotPatchFile(relativePath: string): Promise<string> {
+  const result = await invoke<TextFilePayload>("file_read_replay_patch", { relativePath });
   return result.content;
 }
+
+const snapshotPatchCache = new ReplayPatchCache(readSnapshotPatchFile);
 
 async function hydrateSnapshotPayload(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (typeof payload.patch === "string" && payload.patch.length > 0) return payload;
   const patchPath = typeof payload.patchPath === "string" ? payload.patchPath : "";
   if (!patchPath) return payload;
   try {
-    const patch = await readSnapshotPatchFile(patchPath);
+    const patch = await snapshotPatchCache.load(patchPath);
     return patch ? { ...payload, patch } : payload;
   } catch (err) {
     logWarn("Failed to read AI replay snapshot patch file", { patchPath, err });
@@ -307,11 +308,9 @@ function mapSession(row: ReplaySessionRow): ReplaySession {
   };
 }
 
-async function mapEvent(row: ReplayEventRow): Promise<ReplayEvent> {
+function mapEvent(row: ReplayEventRow): ReplayEvent {
   const parsedPayload = parseJsonObject(row.payload_json);
-  const payload = row.kind === "snapshot"
-    ? await hydrateSnapshotPayload(parsedPayload)
-    : parsedPayload;
+  const payload = parsedPayload;
   return {
     id: row.id,
     sessionKey: row.session_key,
@@ -558,7 +557,7 @@ async function fetchEvents(sessionKey: string): Promise<ReplayEvent[]> {
     "SELECT * FROM ai_replay_events WHERE session_key = $1 ORDER BY event_index DESC LIMIT $2",
     [sessionKey, REPLAY_EVENTS_IN_MEMORY_LIMIT]
   );
-  const events = await Promise.all(rows.reverse().map(mapEvent));
+  const events = rows.reverse().map(mapEvent);
   const payloadBytes = rows.reduce((sum, row) => sum + stringByteLength(row.payload_json), 0);
   const maxPayloadBytes = rows.reduce((max, row) => Math.max(max, stringByteLength(row.payload_json)), 0);
   const patchStats = getEventsPatchStats(events);
@@ -717,10 +716,9 @@ async function persistReplayEvent(
 function applyPersistedEvent(session: ReplaySession, event: ReplayEvent) {
   useReplayStore.setState((state) => ({
     sessions: [session, ...state.sessions.filter((item) => item.sessionKey !== session.sessionKey)].slice(0, 12),
-    eventsBySession: {
-      ...state.eventsBySession,
-      [session.sessionKey]: [...(state.eventsBySession[session.sessionKey] ?? []), event].slice(-REPLAY_EVENTS_IN_MEMORY_LIMIT),
-    },
+    eventsBySession: retainReplayEvents(state.eventsBySession, session.sessionKey,
+      [...(state.eventsBySession[session.sessionKey] ?? []), event].slice(-REPLAY_EVENTS_IN_MEMORY_LIMIT),
+      state.selectedSessionKey ?? session.sessionKey),
     selectedSessionKey: state.selectedSessionKey ?? session.sessionKey,
     ready: true,
     error: null,
@@ -803,10 +801,12 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
   },
 
   loadSession: async (sessionKey) => {
+    const generation = ++selectionGeneration;
     set({ loading: true });
     try {
       await ensureTables();
       const [session, events] = await Promise.all([fetchSession(sessionKey), fetchEvents(sessionKey)]);
+      if (generation !== selectionGeneration) return;
       const patchStats = getEventsPatchStats(events);
       logReplayOomDiagnostic("loadSession", {
         sessionKey,
@@ -822,13 +822,14 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         sessions: session
           ? [session, ...state.sessions.filter((item) => item.sessionKey !== session.sessionKey)].slice(0, 12)
           : state.sessions,
-        eventsBySession: { ...state.eventsBySession, [sessionKey]: events },
+        eventsBySession: retainReplayEvents(state.eventsBySession, sessionKey, events, sessionKey),
         selectedSessionKey: sessionKey,
         loading: false,
         ready: true,
         error: null,
       }));
     } catch (err) {
+      if (generation !== selectionGeneration) return;
       logError("Failed to load AI replay session", { sessionKey, err });
       set({ loading: false, error: String(err) });
     }
@@ -839,7 +840,16 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
       await get().loadSession(sessionKey);
       return;
     }
-    set({ selectedSessionKey: sessionKey });
+    selectionGeneration++;
+    set((state) => ({ selectedSessionKey: sessionKey, loading: false,
+      eventsBySession: retainReplayEvents(state.eventsBySession, sessionKey, state.eventsBySession[sessionKey], sessionKey) }));
+  },
+
+  loadSnapshotPatch: async (event) => {
+    if (typeof event.payload.patch === "string") return event.payload.patch;
+    const path = typeof event.payload.patchPath === "string" ? event.payload.patchPath : "";
+    if (!path) throw new Error("replay_patch_unavailable");
+    return snapshotPatchCache.load(path);
   },
 
   recordCliHookEvent: async (payload) => {
@@ -986,7 +996,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
             durationMs: null,
             status: "saved",
             tags: ["snapshot", "git", "rollback"],
-            payload,
+            payload: persistedPayload,
             persistedPayload,
           }
         );

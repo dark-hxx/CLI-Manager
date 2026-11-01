@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import data from "@emoji-mart/data";
 import {
   NODE_ACCENT_TOKENS,
   NODE_BRAND_ICON_DEFINITIONS,
@@ -44,7 +43,14 @@ interface EmojiMartData {
   emojis: Record<string, EmojiMartEmoji>;
 }
 
-const EMOJI_DATA = data as unknown as EmojiMartData;
+let emojiDataPromise: Promise<EmojiMartData> | null = null;
+function loadEmojiData(): Promise<EmojiMartData> {
+  if (!emojiDataPromise) {
+    emojiDataPromise = import("@emoji-mart/data").then(module => module.default as unknown as EmojiMartData)
+      .catch(err => { emojiDataPromise = null; throw err; });
+  }
+  return emojiDataPromise;
+}
 
 interface NodeAppearancePanelProps {
   /** 当前 `icon` 列的值（可能是单字符标记或内置图标 key）。 */
@@ -65,6 +71,9 @@ export function NodeAppearancePanel({ icon, color, onChange, onAfterPick }: Node
   const { language, t } = useI18n();
   const [markDraft, setMarkDraft] = useState(icon);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [emojiData, setEmojiData] = useState<EmojiMartData | null>(null);
+  const [emojiLoadError, setEmojiLoadError] = useState(false);
+  const [emojiRetry, setEmojiRetry] = useState(0);
   const [activeEmojiCategory, setActiveEmojiCategory] = useState<EmojiCategoryId>("people");
   const [emojiQuery, setEmojiQuery] = useState("");
   const selectedBrand = isNodeBrandIconKey(markDraft) ? markDraft : null;
@@ -73,6 +82,15 @@ export function NodeAppearancePanel({ icon, color, onChange, onAfterPick }: Node
   useEffect(() => {
     setMarkDraft(icon);
   }, [icon]);
+
+  useEffect(() => {
+    if (!pickerOpen || emojiData) return;
+    let cancelled = false;
+    setEmojiLoadError(false);
+    void loadEmojiData().then(value => { if (!cancelled) setEmojiData(value); })
+      .catch(() => { if (!cancelled) setEmojiLoadError(true); });
+    return () => { cancelled = true; };
+  }, [pickerOpen, emojiData, emojiRetry]);
 
   const commitMark = () => {
     const next = markDraft.trim();
@@ -91,11 +109,12 @@ export function NodeAppearancePanel({ icon, color, onChange, onAfterPick }: Node
   };
 
   const visibleEmoji = useMemo(() => {
+    if (!pickerOpen || !emojiData) return [];
     const query = emojiQuery.trim().toLocaleLowerCase(language === "zh-CN" ? "zh-CN" : "en-US");
-    const category = EMOJI_DATA.categories.find((item) => item.id === activeEmojiCategory);
+    const category = emojiData.categories.find((item) => item.id === activeEmojiCategory);
     const source = query
-      ? Object.values(EMOJI_DATA.emojis)
-      : (category?.emojis ?? []).map((emojiId) => EMOJI_DATA.emojis[emojiId]).filter(Boolean);
+      ? Object.values(emojiData.emojis)
+      : (category?.emojis ?? []).map((emojiId) => emojiData.emojis[emojiId]).filter(Boolean);
 
     return source.filter((emoji) => {
       const native = emoji.skins[0]?.native;
@@ -106,7 +125,7 @@ export function NodeAppearancePanel({ icon, color, onChange, onAfterPick }: Node
         .toLocaleLowerCase(language === "zh-CN" ? "zh-CN" : "en-US")
         .includes(query);
     });
-  }, [activeEmojiCategory, emojiQuery, language]);
+  }, [activeEmojiCategory, emojiQuery, language, pickerOpen, emojiData]);
 
   const pickColor = (token: string) => {
     if (token !== color) onChange({ color: token });
@@ -235,6 +254,10 @@ export function NodeAppearancePanel({ icon, color, onChange, onAfterPick }: Node
                         <img src={nodeBrandIconSource(brand.key)} alt="" aria-hidden="true" />
                       </button>
                     ))}
+                  </div>
+                ) : !emojiData ? (
+                  <div role="status" className="ui-appearance-picker-empty">
+                    {emojiLoadError ? <button type="button" onClick={() => setEmojiRetry(value => value + 1)}>{t("common.retry")}</button> : t("common.loading")}
                   </div>
                 ) : visibleEmoji.length > 0 ? (
                   <div className="ui-appearance-picker-grid">

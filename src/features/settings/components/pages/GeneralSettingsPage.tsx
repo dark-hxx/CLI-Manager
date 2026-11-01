@@ -45,6 +45,7 @@ import { getOsPlatform } from "../../../../shared/platform/shell";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../../shared/ui/dialog";
 import { FontFamilySelect } from "../FontFamilySelect";
 import { DataStorageSection } from "./DataStorageSection";
+import { PerformanceSettingsSection } from "./PerformanceSettingsSection";
 
 const WSL_BUN_INSTALL_COMMAND = "curl -fsSL https://bun.net.cn/install | bash";
 const WSL_CCUSAGE_INSTALL_COMMAND = "~/.bun/bin/bun install -g ccusage";
@@ -955,6 +956,7 @@ export function GeneralSettingsPage() {
         </Stack>
       </section>
 
+      <PerformanceSettingsSection />
       <DataStorageSection />
 
       <Dialog open={ccusageWslDialogOpen} onOpenChange={setCcusageWslDialogOpen}>

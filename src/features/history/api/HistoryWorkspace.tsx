@@ -195,6 +195,8 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   const loadingSessions = useHistoryStore((s) => s.loadingSessions);
   const loadingMoreSessions = useHistoryStore((s) => s.loadingMoreSessions);
   const loadingSessionDetail = useHistoryStore((s) => s.loadingSessionDetail);
+  const loadMoreMessages = useHistoryStore((s) => s.loadMoreMessages);
+  const ensureCompleteSession = useHistoryStore((s) => s.ensureCompleteSession);
   const searching = useHistoryStore((s) => s.searching);
   const sourceFilter = useHistoryStore((s) => s.sourceFilter);
   const projectPathFilter = useHistoryStore((s) => s.projectPathFilter);
@@ -624,7 +626,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
 
   const matchIndices = useMemo(() => {
     const query = debouncedSessionQuery.trim();
-    if (!query || !activeSession) return [];
+    if (!query || !activeSession || activeSession.message_page) return [];
     const matcher = new RegExp(escapeRegExp(query), "i");
     const indices: number[] = [];
     for (let i = 0; i < activeSession.messages.length; i++) {
@@ -639,6 +641,13 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   const detailSortDirection: HistoryDetailSortDirection = isHistorySortableDetailView(detailView)
     ? historyDetailSortDirections[detailView]
     : "ascending";
+  useEffect(() => {
+    if (!activeSession?.message_page || !(debouncedSessionQuery.trim() || detailSortDirection === "descending"
+      || (detailView !== "conversation" && detailView !== "transcript"))) return;
+    void ensureCompleteSession().catch((error) => {
+      toast.error(t("history.toast.detailLoadFailed"), { description: String(error) });
+    });
+  }, [activeSession?.message_page, debouncedSessionQuery, detailSortDirection, detailView, ensureCompleteSession, t]);
   const orderedMatchIndices = useMemo(
     () => detailSortDirection === "descending" ? [...matchIndices].reverse() : matchIndices,
     [detailSortDirection, matchIndices]
@@ -674,7 +683,9 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   );
 
   const processModel = useMemo(() => {
+    if (processModelCacheRef.current?.session !== activeSession) processModelCacheRef.current = null;
     if (!activeSession) return EMPTY_PROCESS_MODEL;
+    if (activeSession.message_page) return EMPTY_PROCESS_MODEL;
     if (detailView === "conversation" || detailView === "transcript" || detailView === "context") return EMPTY_PROCESS_MODEL;
     const cached = processModelCacheRef.current;
     if (cached?.session === activeSession && cached.language === language) {
@@ -685,7 +696,20 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     return model;
   }, [activeSession, detailView, language, t]);
 
-  const hasMoreMessages = visibleMessageCount < (activeSession?.messages.length ?? 0);
+  const hasMoreMessages = visibleMessageCount < (activeSession?.message_count ?? 0);
+  const handleLoadMoreMessages = useCallback(() => {
+    if (activeSession?.message_page && visibleMessageCount >= activeSession.messages.length) {
+      void loadMoreMessages().then(() => {
+        const loaded = useHistoryStore.getState().activeSession;
+        if (loaded?.session_id !== activeSession.session_id || loaded.file_path !== activeSession.file_path) return;
+        setVisibleMessageCount((prev) => Math.min(loaded.messages.length, prev + MESSAGE_PAGE_SIZE));
+      }).catch((error) => {
+        toast.error(t("history.toast.detailLoadFailed"), { description: String(error) });
+      });
+      return;
+    }
+    setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE));
+  }, [activeSession, visibleMessageCount, loadMoreMessages, t]);
 
   const ensureMessageRendered = useCallback(
     (index: number) => {
@@ -737,8 +761,8 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     if (!container || !hasMoreMessages) return;
     const remaining = container.scrollHeight - container.scrollTop - container.clientHeight;
     if (remaining > LOAD_MORE_THRESHOLD_PX) return;
-    setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE));
-  }, [activeSession?.messages.length, hasMoreMessages]);
+    handleLoadMoreMessages();
+  }, [handleLoadMoreMessages, hasMoreMessages]);
 
   const handleToggleSortDirection = useCallback(() => {
     if (!isHistorySortableDetailView(detailView)) return;
@@ -1468,7 +1492,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
             visibleMessageEntries={visibleMessageEntries}
             visibleMessageCount={visibleMessageCount}
             hasMoreMessages={hasMoreMessages}
-            totalMessageCount={activeSession?.messages.length ?? 0}
+            totalMessageCount={activeSession?.message_count ?? 0}
             processModel={processModel}
             detailView={detailView}
             sortDirection={detailSortDirection}
@@ -1509,9 +1533,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
             onToggleStar={() => {
               void toggleStar();
             }}
-            onLoadMoreMessages={() =>
-              setVisibleMessageCount((prev) => Math.min(activeSession?.messages.length ?? 0, prev + MESSAGE_PAGE_SIZE))
-            }
+            onLoadMoreMessages={handleLoadMoreMessages}
             canEditMessages={canEditMessages}
             onRequestMessageEdit={confirmMessageEditAllowed}
             onSaveMessageEdit={handleSaveMessageEdit}

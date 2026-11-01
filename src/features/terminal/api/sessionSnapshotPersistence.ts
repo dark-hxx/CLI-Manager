@@ -23,6 +23,7 @@ const SNAPSHOT_THROTTLE_MS = 10_000;
 const SNAPSHOT_MAX_LINES = 2000;
 const SNAPSHOT_OPERATION_TIMEOUT_MS = 3000;
 const SNAPSHOT_PASS_TIMEOUT_MS = 10_000;
+const CHECKPOINT_THROTTLE_MS = 30_000;
 
 interface SnapshotSource {
   /** 返回当前终端画面的完整序列化文本（含 scrollback）。 */
@@ -30,6 +31,10 @@ interface SnapshotSource {
   checkpoint?: (serialized: string) => Promise<void>;
   lifetime: AbortController;
   checkpointInFlight?: Promise<void>;
+  serializeLocal?: (signal: AbortSignal) => string | Promise<string>;
+  checkpointDirty?: boolean;
+  lastCheckpointAt?: number;
+  outputRevision: number;
   /** 自上次落盘后是否收到过新 PTY 输出。 */
   dirty: boolean;
 }
@@ -113,9 +118,10 @@ export function registerTerminalSnapshotSource(
   sessionId: string,
   serialize: (signal: AbortSignal) => string | Promise<string>,
   checkpoint?: (serialized: string) => Promise<void>,
+  serializeLocal?: (signal: AbortSignal) => string | Promise<string>,
 ): () => void {
   sources.get(sessionId)?.lifetime.abort();
-  const source = { serialize, checkpoint, dirty: false, lifetime: new AbortController() };
+  const source: SnapshotSource = { serialize, checkpoint, serializeLocal, dirty: false, checkpointDirty: false, outputRevision: 0, lifetime: new AbortController() };
   sources.set(sessionId, source);
   ensureTimerRunning();
   return () => {
@@ -129,7 +135,7 @@ export function registerTerminalSnapshotSource(
 /** 标记某终端收到新输出（脏）。在 PTY 输出到达时调用，成本仅一次 Map 查找。 */
 export function markTerminalSnapshotDirty(sessionId: string): void {
   const source = sources.get(sessionId);
-  if (source) source.dirty = true;
+  if (source) { source.dirty = true; source.checkpointDirty = true; source.outputRevision++; }
 }
 
 function ensureTimerRunning(): void {
@@ -195,28 +201,41 @@ async function flushSnapshotPass(force: boolean): Promise<void> {
   const updated = new Map<string, SnapshotSource>();
   const deadline = performance.now() + SNAPSHOT_PASS_TIMEOUT_MS;
 
-  for (const [sessionId, source] of sources) {
-    if (!force && !source.dirty) continue;
+  // Freeze this pass and rotate attempted owners; stalled sources must not
+  // consume every subsequent deadline before later healthy terminals run.
+  for (const [sessionId, source] of [...sources]) {
+    if (sources.get(sessionId) !== source) continue;
+    const checkpointDue = Boolean(source.checkpoint && !source.checkpointInFlight
+      && (force || (!source.serializeLocal && source.dirty) || (source.checkpointDirty
+        && performance.now() - (source.lastCheckpointAt ?? -CHECKPOINT_THROTTLE_MS) >= CHECKPOINT_THROTTLE_MS)));
+    if (!force && !source.dirty && !checkpointDue) continue;
     if (performance.now() >= deadline) {
       source.dirty = true;
       continue;
     }
+    sources.delete(sessionId);
+    sources.set(sessionId, source);
     source.dirty = false;
+    const outputRevision = source.outputRevision;
     try {
-      const serialized = await runSnapshotAttempt(source, deadline, signal => source.serialize(signal));
+      const serialize = checkpointDue || !source.serializeLocal ? source.serialize : source.serializeLocal;
+      const serialized = await runSnapshotAttempt(source, deadline, signal => serialize(signal));
       if (sources.get(sessionId) !== source) continue;
-      if (source.checkpoint) {
+      if (source.checkpoint && (checkpointDue || !source.serializeLocal)) {
         try {
           // A timed-out upload is not cancelled remotely; never start an overlapping checkpoint.
           if (source.checkpointInFlight) throw new Error("Terminal checkpoint still pending");
           const pending = Promise.resolve().then(() => source.checkpoint!(serialized));
+          source.checkpointDirty = source.outputRevision !== outputRevision;
           source.checkpointInFlight = pending;
           const clear = () => { if (source.checkpointInFlight === pending) source.checkpointInFlight = undefined; };
           void pending.then(clear, clear);
           await runSnapshotAttempt(source, deadline, () => pending);
+          source.lastCheckpointAt = performance.now();
         } catch (err) {
           if (sources.get(sessionId) === source) {
             source.dirty = true;
+            source.checkpointDirty = true;
             logError("Failed to upload terminal checkpoint", { sessionId, err });
           }
         }

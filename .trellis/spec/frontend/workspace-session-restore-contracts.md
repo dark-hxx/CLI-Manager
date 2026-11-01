@@ -1,5 +1,14 @@
 # Workspace Session Restore Contracts
 
+## Protected display and snapshot residency (TEMP, 2026-11-01)
+
+- Hidden desktop xterms remain the live parser/protocol responder and committed-write ACK owner. Only the WebGL renderer is reclaimed: default 30 seconds hidden, low-memory/constrained mode 10 seconds. Showing a pane restores renderer/layout without terminal reset, scrollback reduction or input-mode loss.
+- The snapshot source has a full serializer plus an optional local serializer. Production local persistence/dispose passes `scrollback: 2000` to the public SerializeAddon API; keyboard stack and mouse modes use the same production helpers.
+- Complete daemon checkpoints are independent, debt-tracked and throttled to 30 seconds. Exit/handoff forces a fresh full checkpoint, not the local tail. Output revisions arriving during serialization retain checkpoint debt; overlapping/timed-out uploads remain single-flight. Legacy source registrations retain previous behavior.
+- Each snapshot pass freezes its source list and rotates attempted owners afterward. A set of stalled sources cannot repeatedly consume the deadline before healthy sources are attempted; deadlines and upload single-flight protection remain unchanged.
+- This reduces full synchronous serialization frequency, not the cost of one explicitly required complete checkpoint. Parser/scrollback/image residency remains protected; no headless terminal migration or unsafe cold-buffer eviction is claimed.
+- Regressions: `terminalSnapshotPersistence.test.mjs`, `terminalSnapshotMouse.test.mjs`, existing terminal ACK/query/input-mode suites.
+
 > 关闭后恢复终端工作区会话（Issue #123）的可执行契约。与 `history-session-contracts.md`（外部 CLI 历史浏览，SQLite `session_meta`）是**两套独立数据**：本契约面向 `tauri-plugin-store` 的工作区 live 终端标签。
 
 ## Scenario: Restore Terminal Workspace Sessions on Startup

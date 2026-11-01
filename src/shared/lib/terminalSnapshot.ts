@@ -7,7 +7,7 @@ const TRACKING_MODES = { none: "", x10: "9", vt200: "1000", drag: "1002", any: "
 const ENCODINGS = { DEFAULT: "", SGR: "\x1b[?1006h", SGR_PIXELS: "\x1b[?1016h" };
 
 /** SerializeAddon omits mouse encoding and disabled modes; both are part of a checkpoint. */
-export function serializeTerminalSnapshot(terminal: Terminal, addon: Pick<SerializeAddon, "serialize">): string {
+export function serializeTerminalSnapshot(terminal: Terminal, addon: Pick<SerializeAddon, "serialize">, scrollback?: number): string {
   // xterm 6.1 exposes tracking but not encoding publicly. Keep this pinned-version
   // read-only adapter isolated; an incompatible upgrade must not publish a corrupt checkpoint.
   const core = (terminal as unknown as {
@@ -22,7 +22,7 @@ export function serializeTerminalSnapshot(terminal: Terminal, addon: Pick<Serial
   const mouseState = RESET_MOUSE_TRACKING + encodingState + (mode ? `\x1b[?${mode}h` : "");
   // Encoding precedes the addon's tracking enable. Repeat the full state at the
   // tail so the persisted scrollback limit cannot discard it.
-  return RESET_MOUSE_TRACKING + encodingState + addon.serialize() + mouseState;
+  return RESET_MOUSE_TRACKING + encodingState + addon.serialize(scrollback === undefined ? undefined : { scrollback }) + mouseState;
 }
 
 /** Only for a known serialized snapshot, never for ordinary PTY output. */

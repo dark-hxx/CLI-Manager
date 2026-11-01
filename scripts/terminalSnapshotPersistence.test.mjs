@@ -22,6 +22,45 @@ const deferred = () => {
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+test("local bounded serialization is frequent but never replaces full daemon checkpoints", async () => {
+  const h = harness(), checkpoints = [];
+  let full = 0, local = 0;
+  h.registerTerminalSnapshotSource("bounded", () => { full++; return "complete"; },
+    value => checkpoints.push(value), () => { local++; return "local-tail"; });
+  h.markTerminalSnapshotDirty("bounded");
+  await h.tick();
+  await h.advance(10_000);
+  h.markTerminalSnapshotDirty("bounded");
+  await h.tick();
+  assert.equal(local, 1);
+  assert.equal(full, 1);
+  assert.deepEqual(checkpoints, ["complete"]);
+  await h.advance(20_000);
+  await h.tick();
+  assert.equal(full, 2, "checkpoint debt must be serviced even without another output frame");
+  assert.deepEqual(checkpoints, ["complete", "complete"]);
+  await h.tick();
+  assert.equal(full, 2, "idle source does not serialize");
+  await h.flushTerminalSnapshotsNow();
+  assert.equal(full, 3, "handoff/exit still takes a fresh full checkpoint");
+});
+
+test("output arriving during full serialization retains checkpoint debt after local persistence", async () => {
+  const h = harness(), serialized = deferred(), checkpoints = [];
+  let full = 0;
+  h.registerTerminalSnapshotSource("race", () => ++full === 1 ? serialized.promise : "new-complete",
+    value => checkpoints.push(value), () => "local-tail");
+  h.markTerminalSnapshotDirty("race");
+  const flushing = h.tick();
+  await settle();
+  h.markTerminalSnapshotDirty("race");
+  serialized.resolve("old-complete");
+  await flushing;
+  await h.advance(30_000);
+  await h.tick();
+  assert.deepEqual(checkpoints, ["old-complete", "new-complete"]);
+});
+
 function harness(save = async () => {}) {
   const exports = {}, timers = new Set(), updates = [], errors = [], saves = [];
   const deadlines = new Map();
@@ -110,6 +149,19 @@ test("many stalled sources share a bounded pass rather than multiplying the exit
   await flush;
   assert.equal(attempts, 4);
   assert.equal(h.terminalSnapshotDiagnostics().dirtySources, 50);
+  assert.equal(h.deadlines.size, 0);
+});
+
+test("timed-out sources rotate so later healthy terminals cannot starve across snapshot passes", async () => {
+  const h = harness();
+  for (let i = 0; i < 4; i++) h.registerTerminalSnapshotSource(`stalled-${i}`, () => new Promise(() => {}));
+  h.registerTerminalSnapshotSource("healthy-later", () => "current");
+  const first = h.flushTerminalSnapshotsNow();
+  await settle(); await h.advance(10_000); await first;
+  assert.equal(h.updates.length, 0);
+  const second = h.tick();
+  await settle(); await h.advance(10_000); await second;
+  assert.ok(h.updates.some(update => update.id === "healthy-later"));
   assert.equal(h.deadlines.size, 0);
 });
 

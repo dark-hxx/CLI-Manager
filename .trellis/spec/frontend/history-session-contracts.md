@@ -1,5 +1,14 @@
 # History Session Contracts
 
+## Demand-loaded detail (TEMP, 2026-11-01)
+
+- Normal local/WSL selection invokes `history_get_session_page`, receiving `{detail, offset, revision, complete}`. Indexed pages contain at most 160 messages and only their parts; usage totals remain available, while tool events, file-change payloads and detailed usage series are deferred.
+- `detail.message_count` is the total; `messages.length` is the loaded contiguous prefix. Original JSONL `line_index` and global message positions are never renumbered. `message_page` marks incomplete heavy detail even after the last message page.
+- Store continuation is single-flight and validates source/session/path/project, revision, expected offset and total count before appending. Changed source/catalog versions reload complete detail instead of mixing anchors. Failed reads retain the prefix and retry; late results cannot replace a new selection.
+- Session search, descending display and analysis views explicitly complete the detail. Deep global-search hits retain the complete existing adapter. Favorite snapshots and title generation cannot save/use a partial detail; editing remains anchored by the source line. Resume uses existing session identity and does not depend on loaded page length.
+- SSH, unindexed/dirty file sources and old favorite snapshots retain full-detail compatibility. Paging limits the normal indexed path, not every source parser or explicit whole-session operation. Loaded pages are retained until selection changes; no sparse-array/page-eviction semantics are claimed.
+- Regressions: `historyDetailPaging.test.mjs`, `historyDetailDemandStore.test.mjs`, catalog `normalized_mcp_survives_catalog_materialization`.
+
 ## Scenario: Source-aware session deletion (V1.4.2)
 
 ### 1. Scope / Trigger

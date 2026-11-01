@@ -221,7 +221,6 @@ export function useTerminalDisplay({
   fitAddonRef,
   isVisibleRef,
   isComposingRef,
-  lowMemoryMode,
   disableHardwareAcceleration,
   disableWebglForSessionRef,
   linuxGraphicsDisableWebgl,
@@ -323,7 +322,7 @@ export function useTerminalDisplay({
     if (!canUseWebglRenderer(theme)) {
       return disposeWebglRenderer();
     }
-    if (lowMemoryMode && !isVisibleRef.current) return false;
+    if (!isVisibleRef.current) return false;
     if (webglAddonRef.current) return false;
     try {
       const addon = createWebglAddon();
@@ -337,7 +336,7 @@ export function useTerminalDisplay({
 
   const scheduleHiddenWebglDispose = (enabled: boolean) => {
     clearHiddenWebglDisposeTimer();
-    if (!enabled || !webglAddonRef.current) return;
+    if (!webglAddonRef.current) return;
     webglDisposeTimerRef.current = window.setTimeout(() => {
       webglDisposeTimerRef.current = null;
       if (isVisibleRef.current) return;
@@ -345,7 +344,7 @@ export function useTerminalDisplay({
         needsViewportRefreshRef.current = true;
         onViewportRefreshNeeded?.();
       }
-    }, HIDDEN_WEBGL_DISPOSE_DELAY_MS);
+    }, enabled ? HIDDEN_WEBGL_DISPOSE_DELAY_MS : 30_000);
   };
 
   const clearWebglTextureAtlas = () => {

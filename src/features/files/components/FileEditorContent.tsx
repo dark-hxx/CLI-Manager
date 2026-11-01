@@ -1,4 +1,4 @@
-import Editor, { type OnMount } from "@monaco-editor/react";
+import { type OnMount } from "@monaco-editor/react";
 import { useEffect, useRef, useState, type CSSProperties, type WheelEvent as ReactWheelEvent } from "react";
 import { useI18n } from "../../../shared/i18n/index";
 import { normalizeFontFamilyStack } from "../../../shared/platform/systemFonts";
@@ -15,6 +15,8 @@ import { FileCode, Image } from "../../../shared/ui/icons";
 import { FontSizeControl, useFontSizeControlVisibility } from "../../../shared/ui/FontSizeControl";
 import { MarkdownContent } from "../../../shared/ui/MarkdownContent";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { ResidentFileEditor } from "./ResidentFileEditor";
+import { editorModelPath, editorProjectRoot } from "../api/fileEditorModels";
 
 const FILE_PREVIEW_FONT_SIZE_MIN = 8;
 const FILE_PREVIEW_FONT_SIZE_MAX = 32;
@@ -125,7 +127,7 @@ export function FileEditorContent({
           </div>
         </div>
       )}
-      {file && (file.previewKind === "text" || file.previewKind === "markdown") && (
+      {file && !file.dehydrated && (file.previewKind === "text" || file.previewKind === "markdown") && (
         file.previewKind === "markdown" && previewMode === "preview" ? (
           <div
             ref={markdownPreviewRef}
@@ -144,8 +146,8 @@ export function FileEditorContent({
             />
           </div>
         ) : (
-          <Editor
-            path={file.path}
+          <ResidentFileEditor
+            path={editorModelPath(project ? editorProjectRoot(project) : "unbound", file.path)}
             value={file.content}
             language={language}
             theme={editorTheme}

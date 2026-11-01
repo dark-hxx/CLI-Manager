@@ -30,6 +30,7 @@ export const zh = {
   "history.toast.convertUnsupported": "仅支持 Claude 与 Codex 会话互转",
   "history.convert.lossyConfirm": "将从 {source} 转换到 {target}。目标格式可能无法完整保留 tool call、usage、diff、附件或来源私有字段。确认继续？",
   "history.toast.refreshFailed": "刷新失败",
+  "history.toast.detailLoadFailed": "会话详情加载失败，请重试。",
   "history.tree.childCount": "{count} 个子会话",
   "history.tree.expandChildren": "展开 {count} 个子会话",
   "history.tree.collapseChildren": "折叠 {count} 个子会话",

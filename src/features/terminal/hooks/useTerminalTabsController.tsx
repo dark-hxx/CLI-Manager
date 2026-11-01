@@ -23,7 +23,7 @@ import {
 import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
 import { collectPaneLeaves, filterPaneTreeBySessionIds, findFirstSessionId } from "../api/terminalPaneTree";
 import { collectWorkspanSessionIds } from "../api/terminalWorkspan";
-import { type BackgroundTaskMeta } from "../components/BackgroundTasksPanel";
+import { refreshDaemonTaskInventory, useDaemonTaskInventory } from "../api/daemonTaskInventory";
 import {
   TERMINAL_SIDE_PANEL_TAB_ORDER, type TerminalSidePanelTab,
 } from "../components/TerminalSidePanel";
@@ -199,7 +199,7 @@ export function useTerminalTabsController({
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [splitPicker, setSplitPicker] = useState<SplitPickerState>(null);
   const [closeConfirm, setCloseConfirm] = useState<TerminalCloseConfirmState>(null);
-  const [daemonTasks, setDaemonTasks] = useState<BackgroundTaskMeta[]>([]);
+  const { tasks: daemonTasks } = useDaemonTaskInventory();
   const [activeDropPreview, setActiveDropPreview] = useState<PaneDropPreview>(null);
   const [workspanDetachPreview, setWorkspanDetachPreview] = useState({
     left: 0,
@@ -1684,19 +1684,8 @@ export function useTerminalTabsController({
   }, []);
 
   const refreshBackgroundTasks = useCallback(async () => {
-    try {
-      const tasks = await invoke<BackgroundTaskMeta[]>("pty_daemon_sessions");
-      setDaemonTasks(tasks);
-    } catch {
-      setDaemonTasks([]);
-    }
+    await refreshDaemonTaskInventory();
   }, []);
-
-  useEffect(() => {
-    void refreshBackgroundTasks();
-    const timer = window.setInterval(() => void refreshBackgroundTasks(), 3000);
-    return () => window.clearInterval(timer);
-  }, [refreshBackgroundTasks]);
 
   const backgroundTasks = useMemo(() => {
     const openIds = new Set(sessions.map((session) => session.id));

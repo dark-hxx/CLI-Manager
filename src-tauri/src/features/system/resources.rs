@@ -878,18 +878,30 @@ fn current_epoch_millis() -> u64 {
 }
 
 static COLLECTOR: OnceLock<Mutex<ResourceCollector>> = OnceLock::new();
+static SAMPLING_SLOT: OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = OnceLock::new();
 
 #[tauri::command]
 // IPC 惰性初始化全局采集器并持锁同步采样，复用刷新缓存；锁中毒时返回明确错误。
-pub fn system_resources_get_snapshot(
+pub async fn system_resources_get_snapshot(
     full_detail: Option<bool>,
     options: Option<SystemResourceSnapshotOptions>,
 ) -> Result<SystemResourceSnapshot, String> {
-    let collector = COLLECTOR.get_or_init(|| Mutex::new(ResourceCollector::new()));
-    let mut collector = collector
-        .lock()
-        .map_err(|_| "system_resource_collector_poisoned".to_string())?;
-    Ok(collector.snapshot(SamplingOptions::from_args(full_detail, options)))
+    let permit = SAMPLING_SLOT
+        .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| "system_resource_collector_busy".to_string())?;
+    // Keep the permit inside the worker: canceling IPC must not allow overlapping samplers.
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let collector = COLLECTOR.get_or_init(|| Mutex::new(ResourceCollector::new()));
+        let mut collector = collector
+            .lock()
+            .map_err(|_| "system_resource_collector_poisoned".to_string())?;
+        Ok(collector.snapshot(SamplingOptions::from_args(full_detail, options)))
+    })
+    .await
+    .map_err(|err| format!("system_resource_worker_failed: {err}"))?
 }
 
 #[cfg(target_os = "windows")]

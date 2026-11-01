@@ -1,4 +1,5 @@
 import type { Project, TerminalSession, WorktreeRecord } from "../../../shared/types/index";
+import { fileOperationRootKey } from "../../files/api/fileLocation.ts";
 
 export function normalizeProjectPath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -58,7 +59,7 @@ export function isSameProjectFileLocation(
       && normalizeRemoteProjectPath(left.remote_path) === normalizeRemoteProjectPath(right.remote_path);
   }
 
-  return normalizeProjectPath(left.path) === normalizeProjectPath(right.path);
+  return fileOperationRootKey(left.path) === fileOperationRootKey(right.path);
 }
 
 export function findWorktreeByPath(worktrees: WorktreeRecord[], path: string | null | undefined): WorktreeRecord | null {
