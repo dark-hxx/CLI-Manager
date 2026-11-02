@@ -91,12 +91,6 @@ if (currentServer.available) {
   process.exit(1);
 }
 
-const helperTarget = process.platform === "win32" ? helperTargetRoot() : null;
-const helperProfileName = process.platform === "win32" ? helperProfile({ TAURI_ENV_DEBUG: "true" }) : null;
-if (helperTarget && helperProfileName) {
-  buildAndInstallHelperBinaries({ targetRoot: helperTarget, profile: helperProfileName });
-}
-
 const server = await createServer({
   server: {
     host: DEV_HOST,
@@ -107,6 +101,21 @@ const server = await createServer({
 await server.listen();
 server.printUrls();
 server.bindCLIShortcuts({ print: true });
+
+// helper 编译必须在 Vite 监听之后进行：Tauri CLI 只轮询 devUrl 180s，
+// 若把 cargo 构建放在 listen() 之前，冷态编译（实测 >5min）必然拖到超时。
+// 这里不 await：让 dev server 先完成握手，编译在后台继续，完成后由下方 watcher 热替换。
+const helperTarget = process.platform === "win32" ? helperTargetRoot() : null;
+const helperProfileName = process.platform === "win32" ? helperProfile({ TAURI_ENV_DEBUG: "true" }) : null;
+
+if (helperTarget && helperProfileName) {
+  buildAndInstallHelperBinaries({ targetRoot: helperTarget, profile: helperProfileName }).catch(
+    (error) => {
+      // 构建失败不再拖垮 dev server：主应用会回落到 __daemon 自派发路径。
+      console.error(`[helper-binaries] build failed: ${error.message}`);
+    },
+  );
+}
 
 let helperWatch;
 if (helperTarget && helperProfileName) {

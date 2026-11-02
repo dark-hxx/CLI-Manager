@@ -15,7 +15,7 @@ const isWindowsTarget = process.env.TAURI_ENV_PLATFORM
   : process.platform === "win32";
 
 if (isWindowsTarget) {
-  buildAndInstallHelperBinaries({
+  await buildAndInstallHelperBinaries({
     targetRoot: helperTargetRoot(),
     profile: helperProfile(),
   });
