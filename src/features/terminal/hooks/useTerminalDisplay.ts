@@ -180,7 +180,6 @@ interface UseTerminalDisplayOptions {
   fitAddonRef: RefObject<FitAddon | null>;
   isVisibleRef: RefObject<boolean>;
   isComposingRef: RefObject<boolean>;
-  lowMemoryMode: boolean;
   disableHardwareAcceleration: boolean;
   disableWebglForSessionRef: RefObject<boolean>;
   linuxGraphicsDisableWebgl: boolean;

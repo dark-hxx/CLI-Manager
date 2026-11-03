@@ -440,7 +440,7 @@ pub async fn pty_daemon_upgrade_if_idle(
 /// daemon 中的会话列表（启动恢复时优先 attach 的依据）。
 #[tauri::command]
 // 等待守护进程后返回会话元数据，日志仅记录总量和存活数量。
-// 从已连接守护进程获取全部 PTY 进程状态，桥接不可用时报错。
+// 前端每 3s 轮询此命令，只等待已有连接，不拉起 daemon。
 pub async fn pty_daemon_sessions(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Vec<SessionMeta>, String> {

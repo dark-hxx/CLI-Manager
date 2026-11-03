@@ -38,3 +38,7 @@ test("live, remote and favorite full-detail adapters remain explicit complete de
   assert.equal(paging.normalizeHistoryPage(full).message_page, undefined);
   assert.throws(() => paging.normalizeHistoryPage({ ...full, offset: -1 }), /page_invalid/);
 });
+test("prompt jumps beyond the loaded page complete the session before focusing", () => {
+  const store = readFileSync(new URL("../src/features/history/store/historyStore.ts", import.meta.url), "utf8");
+  assert.match(store, /openSessionAtMessage: async \(sessionKey, messageIndex\) => \{[\s\S]*?message_page[\s\S]*?normalizedIndex >= loaded\.messages\.length[\s\S]*?await get\(\)\.ensureCompleteSession\(\);[\s\S]*?focusedMessageIndex: normalizedIndex/);
+});

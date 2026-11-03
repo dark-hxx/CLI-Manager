@@ -1492,6 +1492,12 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       await get().openSession(sessionKey);
     }
     const normalizedIndex = Number.isFinite(messageIndex) && messageIndex >= 0 ? messageIndex : 0;
+    // 跳转索引按完整会话计算；分页详情尚未加载到该位置时先补全，否则定位会静默失效。
+    const loaded = get().activeSession;
+    if (get().activeSessionKey === sessionKey && loaded?.message_page
+      && normalizedIndex >= loaded.messages.length) {
+      await get().ensureCompleteSession();
+    }
     set((state) => ({
       focusedMessageIndex: normalizedIndex,
       focusedMessageSeq: state.focusedMessageSeq + 1,

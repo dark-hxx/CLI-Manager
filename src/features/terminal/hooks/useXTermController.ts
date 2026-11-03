@@ -412,7 +412,6 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     fitAddonRef,
     isVisibleRef,
     isComposingRef,
-    lowMemoryMode,
     disableHardwareAcceleration,
     disableWebglForSessionRef: codexSessionDetectedRef,
     linuxGraphicsDisableWebgl,

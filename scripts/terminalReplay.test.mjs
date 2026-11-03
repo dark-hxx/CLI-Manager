@@ -319,7 +319,6 @@ function createDisplay(
     fitAddonRef: { current: { proposeDimensions: () => proposedDimensions } },
     isVisibleRef: { current: isVisible },
     isComposingRef: { current: false },
-    lowMemoryMode: false,
     disableHardwareAcceleration: true,
     linuxGraphicsDisableWebgl: true,
     isTransparentRef: { current: false },

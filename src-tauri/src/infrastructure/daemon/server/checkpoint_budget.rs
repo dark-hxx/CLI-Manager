@@ -18,7 +18,7 @@ impl CheckpointBudget {
     // Reserve replacement bytes atomically across sessions; rejection leaves the old snapshot intact.
     pub(super) fn replace(&self, old: usize, new: usize) -> Result<(), String> {
         self.bytes
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |bytes| {
                 bytes
                     .checked_sub(old)?
                     .checked_add(new)
