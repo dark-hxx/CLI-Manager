@@ -19,7 +19,7 @@ import {
 } from "@mantine/core";
 import { AlertTriangle, Check, KeyRound, LoaderCircle } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
-import { FLUXION_REGISTER_URL } from "../../lib/sponsors";
+import { FLUXION_REGISTER_URL, SPONSORS_ENABLED } from "../../lib/sponsors";
 import { useModelPricingStore } from "../../../stats/api/modelPricingStore";
 import { NativeProviderButton as Button } from "./NativeProviderButton";
 import { NativeClaudeConfigSection } from "./NativeClaudeConfigSection";
@@ -395,7 +395,7 @@ export function NativeProviderFormModal({
   };
 
   const withFluxionKeyDescription = (description: ReactNode): ReactNode => {
-    if (!isFluxionProvider) return description;
+    if (!isFluxionProvider || !SPONSORS_ENABLED) return description;
     return (
       <Stack gap={2}>
         <Text component="span" size="xs">{description}</Text>

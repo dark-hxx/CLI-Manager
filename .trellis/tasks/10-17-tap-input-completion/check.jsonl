@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "验证范围、终端与 UI 质量约束"}
-{"file": ".trellis/spec/frontend/ai-architecture-contracts.md", "reason": "架构、代码长度和严格检查"}
-{"file": ".trellis/spec/backend/web-service-contracts.md", "reason": "能力契约、PTY 所有权和网页输入边界"}

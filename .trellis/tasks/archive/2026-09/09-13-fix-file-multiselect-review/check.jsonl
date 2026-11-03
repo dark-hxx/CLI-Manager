@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端文件浏览器状态、路径操作和定向测试必须遵循现有 UI/路径格式与人工验证边界。"}
-{"file":".trellis/spec/backend/project-file-command-contracts.md","reason":"后端路径校验、覆盖语义和文件命令测试清单是本次 Rust 安全修复的验收依据。"}

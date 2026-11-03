@@ -655,7 +655,7 @@ export function ProjectTree({
 
   if (initialLoading) {
     return (
-      <div className="h-full overflow-y-auto overflow-x-hidden px-1.5 pb-2 pt-1">
+      <div className="ui-autohide-scroll h-full overflow-y-auto overflow-x-hidden px-1.5 pb-2 pt-1">
         <SidebarSkeleton />
       </div>
     );
@@ -665,7 +665,7 @@ export function ProjectTree({
     const buttonSize = density === "compact" ? "h-7 w-7" : "h-8 w-8";
     const collapsedTree = pinnedFilterActive ? [] : tree;
     return (
-      <div className={`h-full overflow-y-auto overflow-x-hidden ${density === "compact" ? "px-0.5 pb-1.5 pt-0.5" : "px-1 pb-2 pt-1"}`}>
+      <div className={`ui-autohide-scroll h-full overflow-y-auto overflow-x-hidden ${density === "compact" ? "px-0.5 pb-1.5 pt-0.5" : "px-1 pb-2 pt-1"}`}>
         {collapsedTree.length === 0 && visiblePinnedProjects.length === 0 ? (
           <div className={`flex flex-col items-center text-text-muted ${density === "compact" ? "gap-1.5 py-2.5" : "gap-2 py-3"}`}>
             <Terminal size={20} strokeWidth={1.2} className="opacity-50" />
@@ -716,11 +716,11 @@ export function ProjectTree({
   return (
     <div className={`${embedded ? "" : "flex h-full flex-col overflow-hidden"} overflow-x-hidden ${density === "compact" ? "px-1 pb-1.5 pt-0.5" : "px-1.5 pb-2 pt-1"}`}>
       {/* 置顶区：独立滚动容器，上限占可用高度 30%，超出部分在此区域内滚动。 */}
-      {splitPinnedRegion && <div className="ui-sidebar-pinned-scroll">{pinnedSection}</div>}
+      {splitPinnedRegion && <div className="ui-autohide-scroll ui-sidebar-pinned-scroll">{pinnedSection}</div>}
       {splitPinnedRegion && <div className="ui-sidebar-region-divider" role="separator" />}
 
       {/* 列表区：独立滚动容器，分区时至少占 70%；未分区时承载置顶区与列表的全部内容。 */}
-      <div className={embedded ? undefined : "ui-sidebar-main-scroll"}>
+      <div className={embedded ? undefined : "ui-autohide-scroll ui-sidebar-main-scroll"}>
         {!splitPinnedRegion && pinnedSection}
         {!splitPinnedRegion && pinnedEmptyState}
 

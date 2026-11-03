@@ -41,6 +41,7 @@ import { NativeProviderSettingsPage } from "../components/pages/NativeProviderSe
 import { ModelPricingSettingsPage } from "../components/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "../components/pages/AboutSettingsPage";
 import { SponsorsSettingsPage } from "../components/pages/SponsorsSettingsPage";
+import { SPONSORS_ENABLED } from "../lib/sponsors";
 import { DesktopPetSettingsPage } from "../components/pages/DesktopPetSettingsPage";
 import { RemoteConnectionsSettingsPage } from "../components/pages/RemoteConnectionsSettingsPage";
 import { SshHostsSettingsPage } from "../components/pages/SshHostsSettingsPage";
@@ -97,7 +98,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "sidebar",
   "desktop-pet",
   "developer",
-  "sponsors",
+  ...(SPONSORS_ENABLED ? (["sponsors"] as const) : []),
   "about",
 ];
 
@@ -287,7 +288,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {
-      if (initialTab) setActiveTab(initialTab);
+      if (initialTab) setActiveTab(initialTab === "sponsors" && !SPONSORS_ENABLED ? "general" : initialTab);
       setMounted(true);
       setClosing(false);
     }
@@ -345,7 +346,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "shortcuts") return <ShortcutSettingsPage searchValue={searchValue} />;
     if (activeTab === "templates") return <TemplateSettingsPage searchValue={searchValue} />;
     if (activeTab === "native-providers") return <NativeProviderSettingsPage searchValue={searchValue} />;
-    if (activeTab === "sponsors") return <SponsorsSettingsPage />;
+    if (activeTab === "sponsors" && SPONSORS_ENABLED) return <SponsorsSettingsPage />;
     if (activeTab === "model-pricing") return <ModelPricingSettingsPage searchValue={searchValue} />;
     if (activeTab === "cc-connect") return <RemoteConnectionsSettingsPage />;
     if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;

@@ -1,5 +1,11 @@
 # Changelog
 
+## [TEMP] - 2026-11-03
+
+### Codex 启动命令在 cmd 终端出现 `^L`
+
+- 修复终端类型为 cmd 时启动 Codex 项目，命令行显示为 `^Lcodex --no-daemon` 的问题。直启 Codex 前用于清屏的 Ctrl+L（`\x0c`）依赖 Shell 行编辑器的清屏绑定，cmd.exe 没有该绑定，会把它回显并拼进命令行；cmd 现改为 `cls & codex ...`，PowerShell、pwsh、Git Bash、WSL 等其余 Shell 保持原有 Ctrl+L 清屏。补充按 Shell 区分的启动输入回归测试。
+
 ## [TEMP] - 2026-11-01
 
 ### 开发启动等待修复
