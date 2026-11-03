@@ -879,7 +879,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         )}
       />
 
-      <div data-stats-screenshot-scroll className="ui-thin-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
+      <div data-stats-screenshot-scroll className="ui-thin-scroll ui-autohide-scroll flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
         {!displayProjectPath ? (
           <EmptyHint text={t("termStats.noProject")} />
         ) : !displaySession ? (

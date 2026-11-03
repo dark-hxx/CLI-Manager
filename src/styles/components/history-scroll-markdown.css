@@ -188,6 +188,30 @@
   scrollbar-gutter: stable;
 }
 
+/* 滚动条默认隐藏，仅在滚动期间显示；data-scrolling 由 shared/ui/autoHideScrollbar.ts 维护。 */
+.ui-autohide-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.ui-autohide-scroll[data-scrolling="true"] {
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 40%, transparent) transparent;
+}
+
+.ui-autohide-scroll::-webkit-scrollbar-button {
+  display: none;
+}
+
+.ui-autohide-scroll::-webkit-scrollbar-thumb,
+.ui-autohide-scroll:hover::-webkit-scrollbar-thumb {
+  background-color: transparent;
+}
+
+.ui-autohide-scroll[data-scrolling="true"]::-webkit-scrollbar-thumb,
+.ui-autohide-scroll[data-scrolling="true"]:hover::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--text-muted) 40%, transparent);
+}
+
 .ui-terminal-bg-layer .xterm .xterm-scrollable-element
   > .xterm-scrollbar.xterm-vertical
   > .xterm-slider {

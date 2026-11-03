@@ -2,8 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { initLogging, installGlobalCrashHandlers, reportFrontendCrash } from "./shared/platform/logger";
+import { installAutoHideScrollbars } from "./shared/ui/autoHideScrollbar";
 
 installGlobalCrashHandlers();
+installAutoHideScrollbars();
 
 // 禁用 WebView 默认右键菜单；组件自定义的 onContextMenu 不受影响
 window.addEventListener("contextmenu", (e) => {
