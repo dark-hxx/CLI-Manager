@@ -21,35 +21,6 @@ A multi-project AI CLI workspace for local terminals, SSH hosts, and mobile-assi
 
 ---
 
-## ❤️ Sponsor
-
-<p align="center">
-<a href="https://fluxionai.space/register?source=github&campaign=climanager">
-<img src="docs/img/sponsor/fluxion-ai-banner.png" width="100%" alt="Fluxion AI — unified access and management for mainstream AI models" />
-</a>
-</p>
-
-<table>
-<tr>
-<td width="18%" align="center">
-<a href="https://fluxionai.space/register?source=github&campaign=climanager">
-<img src="docs/img/sponsor/fluxion-ai-logo.jpg" width="96" alt="Fluxion AI logo" />
-</a>
-</td>
-<td width="82%">
-
-### [Fluxion AI](https://fluxionai.space/register?source=github&campaign=climanager)
-
-**One entry, access and manage mainstream AI models worldwide**
-
-Fluxion AI is an AI model unified access and management platform for individual developers, technical teams, and enterprises. Through a unified API, it connects to mainstream AI models worldwide, improves availability through multi-route scheduling, and centrally manages model quality, usage, and costs. Flexible routing and billing plans offer more competitive calling costs, while real-time prices and every transaction's spending are publicly queryable.
-
-[Visit Fluxion AI →](https://fluxionai.space/register?source=github&campaign=climanager)
-
-</td>
-</tr>
-</table>
-
 ## 💡 Overview
 
 CLI-Manager is a desktop app focused on **AI CLI workflow enhancement**. It combines local and SSH terminals, multi-project management, deep Claude Code / Codex integration, multi-source history, Git Worktree isolation, and mobile-assisted conversations.
