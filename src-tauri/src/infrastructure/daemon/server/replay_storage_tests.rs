@@ -1,5 +1,158 @@
 use super::*;
 
+fn failed_compaction_with_empty_memory() -> (tempfile::TempDir, SessionBuffer) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("session.bin");
+    let mut buffer = SessionBuffer::with_spool(Some(path.clone()));
+    buffer
+        .accept_checkpoint(80, 24, 0, b"checkpoint".to_vec())
+        .unwrap();
+    let frames: Vec<_> = (1..=22)
+        .map(|sequence| ReplayFrame {
+            cols: 80,
+            rows: 24,
+            sequence,
+            data: vec![b'x'; 512 * 1024],
+        })
+        .collect();
+    buffer.write_spooled_frames(&frames).unwrap();
+    // A directory at the replacement path fails compaction without relying on real disk exhaustion.
+    std::fs::create_dir(path.with_extension("tmp")).unwrap();
+    buffer.enforce_spool_cap();
+    assert!(buffer.frames.is_empty());
+    assert!(buffer.truncated);
+    assert!(buffer.spool_failed);
+    assert!(buffer.checkpoint.is_none());
+    assert!(buffer.live_frames().is_empty());
+    (dir, buffer)
+}
+
+#[test]
+fn failed_spool_compaction_with_empty_memory_requires_attach_replay_reset() {
+    use super::super::{
+        ClientHandle, ClientTransport, ClientWriter, DaemonHost, DaemonServer, SessionEntry,
+    };
+    use crate::daemon::protocol::{DaemonFrame, SessionMeta};
+    use std::collections::{HashMap, HashSet};
+    use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::AtomicU64;
+
+    let (_dir, buffer) = failed_compaction_with_empty_memory();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let _peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+    let (stream, _) = listener.accept().unwrap();
+    let session_id = "compaction-failure";
+    let host = Arc::new(DaemonHost::new());
+    host.sessions.lock().unwrap().insert(
+        session_id.to_string(),
+        Arc::new(Mutex::new(SessionEntry {
+            meta: SessionMeta {
+                session_id: session_id.to_string(),
+                cwd: None,
+                shell: None,
+                environment_type: None,
+                ssh_host_id: None,
+                remote_path: None,
+                alive: true,
+                task_status: None,
+                task_updated_at_ms: None,
+                created_at_ms: 1,
+                process_traits: None,
+                replay_available: buffer.replay_available(),
+                replay_truncated: buffer.truncated,
+            },
+            buffer,
+            cols: 80,
+            rows: 24,
+            next_sequence: 23,
+            ssh_hook_binding: None,
+            hook_goal_key: None,
+            hook_goal_status: None,
+        })),
+    );
+    host.clients.lock().unwrap().insert(
+        1,
+        ClientHandle {
+            writer: ClientWriter::new(ClientTransport::Ndjson(Mutex::new(stream))),
+            attached: HashSet::new(),
+            unacknowledged_chars: HashMap::new(),
+            flow_control_paused: HashSet::new(),
+            last_sent_sequence: HashMap::new(),
+            last_acknowledged_sequence: HashMap::new(),
+            attaching: HashMap::new(),
+        },
+    );
+    let server = DaemonServer {
+        host,
+        next_client_id: AtomicU64::new(2),
+        token: String::new(),
+        version: String::new(),
+        info_path: PathBuf::new(),
+    };
+    for cursor in [None, Some(0), Some(21), Some(22)] {
+        match server.attach_session(1, 1, session_id.to_string(), cursor) {
+            DaemonFrame::Attached {
+                replay,
+                replay_reset,
+                replay_truncated,
+                oldest_sequence,
+                ..
+            } => {
+                assert!(replay.is_empty());
+                assert!(replay_truncated);
+                assert_eq!(replay_reset, cursor != Some(22));
+                assert_eq!(oldest_sequence, 23);
+            }
+            other => panic!("unexpected attach reply: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn failed_spool_compaction_recovers_disk_replay_after_successful_append() {
+    let (dir, mut buffer) = failed_compaction_with_empty_memory();
+    std::fs::remove_dir(dir.path().join("session.tmp")).unwrap();
+    let data = vec![b'y'; 512 * 1024];
+    for sequence in 23..=27 {
+        buffer.push_output(80, 24, sequence, &data);
+    }
+    assert!(!buffer.spool_failed);
+    assert!(buffer.truncated);
+    assert_eq!(buffer.frames.front().unwrap().sequence, 24);
+    let replay = buffer.live_frames_after(22, 1);
+    assert_eq!(replay.len(), 1);
+    assert_eq!(replay[0].sequence, 23);
+    assert_eq!(replay[0].data, data);
+    assert_eq!(buffer.live_frames().len(), 5);
+}
+
+#[cfg(windows)]
+#[test]
+fn failed_spool_compaction_marks_empty_unreadable_replay_as_truncated() {
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("unreadable.bin");
+    let mut file = File::create(&path).unwrap();
+    let mut header = [0u8; 16];
+    header[12..].copy_from_slice(&((MAX_FRAME_BYTES + 1) as u32).to_be_bytes());
+    file.write_all(&header).unwrap();
+    file.set_len(SESSION_SPOOL_MAX_BYTES as u64 + 1).unwrap();
+    drop(file);
+    // Denying delete sharing makes replacement fail even when unreadable frames yield an empty suffix.
+    let lock = OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&path)
+        .unwrap();
+    let mut buffer = SessionBuffer::with_spool(Some(path));
+    buffer.enforce_spool_cap();
+    drop(lock);
+    assert!(buffer.frames.is_empty());
+    assert!(buffer.spool_failed);
+    assert!(buffer.truncated);
+}
+
 #[test]
 fn cursor_index_replay_matches_sequential_bytes_after_append_and_compaction() {
     let dir = tempfile::tempdir().unwrap();

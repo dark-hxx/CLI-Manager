@@ -9,7 +9,7 @@ const source = readFileSync(
 
 test("terminal remount snapshots the buffer during layout cleanup", () => {
   assert.match(source, /useLayoutEffect\(\(\) => \(\) => \{[\s\S]*?snapshotBeforeUnmountRef\.current\?\.\(\);[\s\S]*?snapshotBeforeUnmountRef\.current = null;/);
-  assert.match(source, /const finishInitialDisplayRestore = \(hasSnapshot: boolean\) => \{[\s\S]*?snapshotBeforeUnmountRef\.current = \(\) => \{[\s\S]*?updateSessionTerminalSnapshot\(\s*sessionId, serializeTerminalWithKeyboardState\(terminal, \(\) => serializeTerminalSnapshot\(terminal, serializeAddon\)\),\s*\)[\s\S]*?markInitialDisplayReady\(\);/);
+  assert.match(source, /const finishInitialDisplayRestore = \(hasSnapshot: boolean\) => \{[\s\S]*?snapshotBeforeUnmountRef\.current = \(\) => \{[\s\S]*?updateSessionTerminalSnapshot\(\s*sessionId, serializeTerminalWithKeyboardState\(terminal, \(\) => serializeTerminalSnapshot\(terminal, serializeAddon, 2000\)\),\s*\)[\s\S]*?markInitialDisplayReady\(\);/);
   assert.equal(source.match(/snapshotBeforeUnmountRef\.current = \(\) =>/g)?.length, 1);
 });
 

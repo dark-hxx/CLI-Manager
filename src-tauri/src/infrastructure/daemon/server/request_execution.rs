@@ -27,7 +27,15 @@ impl DaemonServer {
             Err(_) => return err_frame(id, "session state unavailable"),
         };
         stage(Stage::ReplayRead);
-        let oldest_sequence = entry.buffer.oldest_sequence().unwrap_or(0);
+        // An empty lost window must still invalidate cursors behind the last produced output.
+        let oldest_sequence = entry
+            .buffer
+            .oldest_sequence()
+            .unwrap_or(if entry.buffer.truncated {
+                entry.next_sequence
+            } else {
+                0
+            });
         let replay_reset = after_sequence
             .map(|sequence| sequence.saturating_add(1) < oldest_sequence)
             .unwrap_or(true);
@@ -62,7 +70,7 @@ impl DaemonServer {
             latest_sequence,
             meta: entry.meta.clone(),
             replay_reset,
-            replay_truncated: false,
+            replay_truncated: entry.buffer.truncated,
             oldest_sequence,
         }
     }

@@ -4,7 +4,7 @@ use crate::daemon::protocol::{
     ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
 };
 use crate::provider::scope::{self, ProviderLaunchConfig};
-use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
+use crate::pty::manager::PtyOrphanCleanupSummary;
 use crate::ssh_launch::SshLaunchPlan;
 use log::{debug, warn};
 use serde::Serialize;
@@ -262,7 +262,6 @@ pub struct PreparedPtyCreate {
 #[tauri::command]
 // 将前端活动会话列表交给守护进程协调孤儿会话，并解析其清理摘要；保护和关闭策略由守护进程负责。
 pub async fn pty_reconcile_active_sessions(
-    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
     active_session_ids: Vec<String>,
 ) -> Result<PtyOrphanCleanupSummary, String> {
@@ -270,21 +269,12 @@ pub async fn pty_reconcile_active_sessions(
         "pty_reconcile_active_sessions requested: active_count={}",
         active_session_ids.len()
     );
-    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
+    let client = wait_for_daemon(&daemon_bridge)
+        .await
+        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
     let summary = daemon_control(move || client.reconcile(active_session_ids)).await?;
     serde_json::from_value(summary)
         .map_err(|err| format!("daemon reconcile summary parse failed: {err}"))
-}
-
-#[tauri::command]
-// 从已连接守护进程获取全部 PTY 进程状态，桥接不可用时报错。
-pub async fn pty_status(
-    app_handle: AppHandle,
-    daemon_bridge: tauri::State<'_, DaemonBridge>,
-) -> Result<HashMap<String, PtyProcessStatus>, String> {
-    debug!("pty_status requested");
-    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
-    daemon_control(move || client.status_all()).await
 }
 
 /// daemon 是否可用（前端"转入后台=真退出"分支判定）。
@@ -329,10 +319,11 @@ pub async fn pty_daemon_shutdown_if_idle(
 
 #[tauri::command]
 pub async fn pty_daemon_force_shutdown(
-    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<bool, String> {
-    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
+    let Some(client) = daemon_bridge.get() else {
+        return Ok(false);
+    };
     daemon_control(move || client.force_shutdown()).await?;
     Ok(true)
 }
@@ -449,14 +440,13 @@ pub async fn pty_daemon_upgrade_if_idle(
 /// daemon 中的会话列表（启动恢复时优先 attach 的依据）。
 #[tauri::command]
 // 等待守护进程后返回会话元数据，日志仅记录总量和存活数量。
+// 从已连接守护进程获取全部 PTY 进程状态，桥接不可用时报错。
 pub async fn pty_daemon_sessions(
-    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Vec<SessionMeta>, String> {
-    let client = match wait_for_daemon(&daemon_bridge).await {
-        Some(client) => client,
-        None => ensure_daemon(&app_handle, &daemon_bridge).await?,
-    };
+    let client = wait_for_daemon(&daemon_bridge)
+        .await
+        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
     let sessions = daemon_control(move || client.list()).await?;
     let alive_count = sessions.iter().filter(|session| session.alive).count();
     debug!(

@@ -106,6 +106,10 @@ impl SessionBuffer {
                 self.total_bytes = self.total_bytes.saturating_sub(front.data.len());
                 continue;
             }
+            if self.spool_failed {
+                // Only the newly committed suffix is safe to replay after a spool failure.
+                self.minimum_sequence = front.sequence;
+            }
             self.spool_failed = false;
             self.total_bytes = self.total_bytes.saturating_sub(front.data.len());
             self.enforce_spool_cap();
@@ -417,6 +421,7 @@ impl SessionBuffer {
         }
         if let Err(err) = self.write_spooled_frames(frames.make_contiguous()) {
             log::warn!("daemon session spool compaction failed: {err}");
+            self.truncated = true;
             self.minimum_sequence = self.frames.front().map_or(u64::MAX, |frame| frame.sequence);
             self.discard_checkpoint();
             self.spool_failed = true;

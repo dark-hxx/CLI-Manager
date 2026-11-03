@@ -181,11 +181,21 @@ const hookOutput = ts.transpileModule(
 async function captureCapabilityRequest(input, probe = false) {
   const requests = [];
   const exports = {};
+  class AgentCapabilityCache {
+    entries = new Map();
+    get(key) { return this.entries.get(key)?.snapshot; }
+    baseline(key) { return this.entries.get(key)?.baseline ?? null; }
+    set(key, snapshot) {
+      const baseline = this.baseline(key) ?? snapshot.configFingerprint;
+      this.entries.set(key, { snapshot, baseline });
+    }
+  }
   runInNewContext(hookOutput, {
     exports,
     require(name) {
       if (name === "react") return React;
       if (name === "./agentCapabilities") return capabilityHelpers;
+      if (name === "./agentCapabilityCache") return { AgentCapabilityCache };
       if (name === "../../remote/api/sshAgentHistory") {
         return { buildSshAgentProjectLaunch: async () => ({ clientInstanceId: "client", hostId: "host" }) };
       }

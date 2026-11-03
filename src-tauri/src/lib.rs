@@ -642,7 +642,6 @@ pub fn run() {
             commands::opencode_hook::opencode_hook_uninstall,
             commands::terminal::pty_prepare_create,
             commands::terminal::pty_reconcile_active_sessions,
-            commands::terminal::pty_status,
             commands::terminal::pty_daemon_active,
             commands::terminal::pty_daemon_shutdown_if_idle,
             commands::terminal::pty_daemon_force_shutdown,
