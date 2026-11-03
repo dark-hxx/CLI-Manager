@@ -23,4 +23,10 @@
 
 ## 打包
 - 先提交再构建 1.4.4 NSIS；主 exe 重新编译嵌入前端。三个 helper 与已验证 `93a158ca` 包的 SHA256 一致且后端源码无差异，经本地构建钩子再次校验后复用。
-- 安装包解包/哈希及资源清单核对结果在构建完成后补充。不安装、不合并 master、不推送。
+- 构建代码提交 `deb00765`；NSIS 已生成，未安装、未合并 master、未推送。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.4_x64-setup.exe`，31642318 字节，2026-11-03 20:06:24 +08:00。
+- SHA256：`8A1E9F7456BD37856BF1E9DE3748C6DDACC89351826505213B2EDDB3A9366902`。
+- 7-Zip 归档检测/解包通过；19 个 Web 文件（含 15 个 Tap 文件）与构建产物逐项匹配，447 个桌面资源 key 确认嵌入新主程序，11 处 HTML/CSS/manifest 资源引用有效；三个 helper 与已验证旧包逐字节一致。主程序与 raw exe 仅有 Tauri NSIS 的 NSS/UNK 三字节标记差异。
+- 初次 beforeBundle 安全校验发现主 crate 的 cargo build 覆盖了 release 目录中的 helper，因此主动阻断打包；本地钩子改为从已核验的 helper-binaries 缓存复制三份独立 helper 后重新封装。未修改正式打包配置；重试构建成功。
+- 验证记录：`.codex/subagent-conversation-package-verification.json`；构建与浏览器日志、深浅色/窄屏截图均在 `.codex/subagent-conversation-*`。隔离浏览器及测试 HTTP 服务已退出。
+- 任务进入 review，等待用户安装验收；不提前归档。

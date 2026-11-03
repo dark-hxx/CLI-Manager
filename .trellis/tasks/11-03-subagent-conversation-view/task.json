@@ -3,7 +3,7 @@
   "name": "subagent-conversation-view",
   "title": "子代理对话视图与执行详情分层",
   "description": "子代理默认对话展示，任务与回复明确分层，工具和注入上下文折叠；保留只读行为、增量解析及 Web 兼容。版本 1.4.4，先提交再 NSIS，不合并主干、不推送。",
-  "status": "in_progress",
+  "status": "review",
   "dev_type": "frontend",
   "scope": "terminal",
   "package": null,
@@ -15,12 +15,12 @@
   "branch": "feat/subagent-conversation-view",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "deb00765cb4a6ca00c766fd3795b26ae97ab457e",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "1.4.4 NSIS 已验证，等待用户测试；不合并 master、不推送、不安装。",
   "meta": {}
 }
