@@ -1,5 +1,6 @@
-import { parseTranscriptLines, type RenderedMessage } from "../../../shared/lib/subagentTranscriptMessages";
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { parseTranscriptLines, type RenderedMessage, type TranscriptParserState } from "../../../shared/lib/subagentTranscriptMessages";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { SubagentConversation, type ConversationLabel } from "../../../shared/ui/SubagentConversation";
 import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
 import { useI18n } from "../../../shared/i18n/index";
 import { useTerminalPreviewTheme } from "../api/useTerminalPreviewTheme";
@@ -24,21 +25,8 @@ interface TranscriptParseCache {
   /** 因渲染上限从头裁剪掉的消息条数（累计）。 */
   omittedCount: number;
   messages: RenderedMessage[];
+  state: TranscriptParserState;
 }
-
-// 角色配色与统计面板一致：user 绿 / assistant 蓝 / 其余暗色。
-const ROLE_COLOR: Record<string, string> = {
-  user: TERM.green,
-  assistant: TERM.blue,
-  tool: TERM.yellow,
-};
-
-const SOURCE_LABEL = {
-  pending: "Pending",
-  "child-jsonl": "Child JSONL",
-  "parent-jsonl": "Parent JSONL",
-  "lifecycle-only": "Lifecycle only",
-} as const;
 
 const SOURCE_COLOR = {
   pending: TERM.blue,
@@ -60,7 +48,7 @@ interface ScrollbarMetrics {
 }
 
 /** 全量解析累积的 jsonl 文本（超过 2MB 仅解析尾部并记录诊断日志）。 */
-function parseTranscript(content: string): { messages: RenderedMessage[]; nextId: number } {
+function parseTranscript(content: string): ReturnType<typeof parseTranscriptLines> {
   const parseContent = content.length > TRANSCRIPT_PARSE_MAX_CHARS
     ? content.slice(-TRANSCRIPT_PARSE_MAX_CHARS)
     : content;
@@ -83,31 +71,6 @@ function capRenderedMessages(messages: RenderedMessage[]): { messages: RenderedM
   return { messages: overflow > 0 ? messages.slice(overflow) : messages, overflow };
 }
 
-interface TranscriptMessageRowProps {
-  message: RenderedMessage;
-  terminalCodeTheme: "light" | "dark";
-}
-
-/** 单条消息行：message 对象跨渲染引用稳定，memo 避免历史消息重复走 Markdown 解析。 */
-const TranscriptMessageRow = memo(function TranscriptMessageRow({ message, terminalCodeTheme }: TranscriptMessageRowProps) {
-  return (
-    <li className="subagent-transcript-message" data-role={message.role}>
-      <div
-        className="subagent-transcript-role"
-        style={{ color: ROLE_COLOR[message.role] ?? TERM.dim }}
-      >
-        {message.role}
-      </div>
-      <MarkdownContent
-        content={message.text}
-        variant="terminal"
-        terminalCodeTheme={terminalCodeTheme}
-        className="subagent-transcript-markdown"
-      />
-    </li>
-  );
-});
-
 /**
  * 子 Agent 转录只读视图：渲染由后端 tail 推送、累积在 store 的转录内容。
  * 仅当用户停在底部时自动跟随滚动，避免打断向上翻阅。
@@ -117,6 +80,9 @@ const TranscriptMessageRow = memo(function TranscriptMessageRow({ message, termi
 export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
   const { t } = useI18n();
   const { tone: terminalCodeTheme, panelStyle } = useTerminalPreviewTheme();
+  const label = useCallback((key: ConversationLabel) => t(`subagentTranscript.${key}`), [t]);
+  const renderMarkdown = useCallback((text: string) => <MarkdownContent content={text} variant="terminal"
+    terminalCodeTheme={terminalCodeTheme} className="subagent-transcript-markdown" />, [terminalCodeTheme]);
   // 隐藏时返回 undefined（稳定值）：转录追加不再触发本组件重渲染。
   const transcript = useTerminalStore((s) => (isVisible ? s.subagentTranscripts[sessionId] : undefined));
   // header 状态用独立原始值 selector 订阅，隐藏时也保持正确。
@@ -144,10 +110,11 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
         nextId: parsed.nextId,
         omittedCount: capped.overflow,
         messages: capped.messages,
+        state: parsed.state,
       };
     } else if (content.length > cache.contentLen) {
       // 纯尾部追加：仅解析新增部分（Rust tail 保证推送为完整行），id 续号。
-      const appended = parseTranscriptLines(content.slice(cache.contentLen), cache.nextId);
+      const appended = parseTranscriptLines(content.slice(cache.contentLen), cache.nextId, undefined, cache.state);
       const merged = appended.messages.length > 0 ? [...cache.messages, ...appended.messages] : cache.messages;
       const capped = capRenderedMessages(merged);
       nextCache = {
@@ -157,6 +124,7 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
         nextId: appended.nextId,
         omittedCount: cache.omittedCount + capped.overflow,
         messages: capped.messages,
+        state: appended.state,
       };
     }
 
@@ -165,7 +133,7 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
     setParseSnapshot(nextCache);
   }, [isVisible, sessionId, transcript]);
 
-  const messages = parseSnapshot?.messages ?? EMPTY_MESSAGES;
+  const messages = parseSnapshot?.sessionId === sessionId ? parseSnapshot.messages : EMPTY_MESSAGES;
   const omittedCount = parseSnapshot?.omittedCount ?? 0;
 
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -291,57 +259,56 @@ export function SubagentTranscriptView({ sessionId, title, isVisible }: Props) {
         className="flex items-center gap-2 px-3 py-1.5"
         style={{ borderBottom: `1px solid ${TERM.border}`, color: TERM.dim }}
       >
-        <span className="truncate text-[11px]">{title ?? "子 Agent 转录"}</span>
+        <span className="truncate text-[11px]">{title ?? t("subagentTranscript.title")}</span>
         {sourceKind && (
           <span
             className="shrink-0 rounded-full border px-1.5 py-0.5 text-[9px] uppercase tracking-wide"
             style={{ borderColor: SOURCE_COLOR[sourceKind], color: SOURCE_COLOR[sourceKind] }}
           >
-            {SOURCE_LABEL[sourceKind]}
+            {t(`subagentTranscript.source.${sourceKind}`)}
           </span>
         )}
         <span
           className="ml-auto shrink-0 text-[10px]"
           style={{ color: ended ? TERM.dim : TERM.green }}
         >
-          {ended ? "已结束" : "● 运行中"}
+          {t(ended ? "subagentTranscript.ended" : "subagentTranscript.running")}
         </span>
       </div>
       <div className="relative min-h-0 flex-1">
         <div ref={scrollRef} onScroll={handleScroll} className="ui-terminal-native-scroll h-full min-h-0 overflow-x-hidden overflow-y-auto px-3 py-2">
           <div ref={scrollContentRef}>
+            {((transcript?.truncatedBytes ?? 0) > 0 || (transcript?.content.length ?? 0) > TRANSCRIPT_PARSE_MAX_CHARS) && (
+              <div className="py-1 text-center text-[10px]" style={{ color: TERM.dim }}>{t("subagentTranscript.truncated")}</div>
+            )}
             {messages.length === 0 ? (
               <div className="mx-auto flex max-w-md flex-col items-center gap-2 py-10 text-center text-[11px]" style={{ color: TERM.dim }}>
                 {sourceKind === "pending" ? (
                   <>
-                    <div style={{ color: TERM.blue }}>已捕获子 Agent 事件，正在等待独立 transcript。</div>
-                    <div>CLI-Manager 只会按当前父会话关联发现对应 transcript，不会扫描无关终端输出。</div>
+                    <div style={{ color: TERM.blue }}>{t("subagentTranscript.pending")}</div>
                   </>
                 ) : sourceKind === "parent-jsonl" ? (
                   <>
-                    <div style={{ color: TERM.yellow }}>Claude Code 未暴露独立子 Agent transcript。</div>
-                    <div>当前只检测到父会话 transcript；为避免重复显示主会话内容，此视图仅保留子任务状态。</div>
+                    <div style={{ color: TERM.yellow }}>{t("subagentTranscript.parentOnly")}</div>
                   </>
                 ) : sourceKind === "lifecycle-only" ? (
                   <>
-                    <div>Claude Code 当前没有暴露可读取的子 Agent transcript。</div>
-                    <div>此视图仅显示启动、运行、完成或失败状态。</div>
+                    <div>{t("subagentTranscript.lifecycleOnly")}</div>
                   </>
                 ) : (
-                  <div>等待子 Agent 输出…</div>
+                  <div>{t("subagentTranscript.waiting")}</div>
                 )}
               </div>
             ) : (
-              <ul className="subagent-transcript-list">
+              <>
                 {omittedCount > 0 && (
-                  <li className="py-1 text-center text-[10px]" style={{ color: TERM.dim }}>
+                  <div className="py-1 text-center text-[10px]" style={{ color: TERM.dim }}>
                     {t("subagentTranscript.omittedMessages", { count: omittedCount })}
-                  </li>
+                  </div>
                 )}
-                {messages.map((m) => (
-                  <TranscriptMessageRow key={m.id} message={m} terminalCodeTheme={terminalCodeTheme} />
-                ))}
-              </ul>
+                <SubagentConversation key={`${sessionId}:${parseSnapshot?.resetSeq}`} messages={messages}
+                  label={label} renderMarkdown={renderMarkdown} />
+              </>
             )}
           </div>
         </div>
