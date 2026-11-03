@@ -1,7 +1,0 @@
-{
-  "name": "web-pairing-origin-expiry",
-  "title": "Fix Web pairing expiry and listener-origin drift",
-  "status": "completed",
-  "branch": "fix/web-pairing-origin-expiry",
-  "created_at": "2026-09-18"
-}

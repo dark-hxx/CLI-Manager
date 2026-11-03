@@ -1,2 +1,0 @@
-{"file":".trellis/spec/frontend/state-management.md","reason":"文件编辑器工作区与文件树刷新必须保持项目位置、异步状态和草稿隔离；重命名后的选择状态属于同一状态提交边界。"}
-{"file":".trellis/spec/backend/project-file-command-contracts.md","reason":"Rust 是项目路径和文件系统副作用的最终边界；移动祖先保护必须在覆盖目标删除前执行。"}

@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/guides/fix-triage-guide.md", "reason": "根因分诊、发现清单和场景矩阵"}
-{"file": ".trellis/spec/backend/web-service-contracts.md", "reason": "现有文件能力和终端协议"}
-{"file": ".trellis/spec/frontend/ai-architecture-contracts.md", "reason": "前端边界和模块大小限制"}

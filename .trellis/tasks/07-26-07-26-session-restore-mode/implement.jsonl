@@ -1,5 +1,0 @@
-{"file":".trellis/spec/guides/fix-triage-guide.md","reason":"新功能与行为回归的场景矩阵和根因修复要求"}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"设置持久化、启动编排、PTY 恢复跨层数据流检查"}
-{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"工作区快照、CLI resume、daemon attach、分屏恢复的主契约"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"Zustand 设置与终端状态的项目约定"}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"CHANGELOG、功能清单与交付验证要求"}
