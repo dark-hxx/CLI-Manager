@@ -4,6 +4,7 @@ import { codexHookNeedsReview, type CodexHookReadiness } from "../../settings/ap
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BarChart3, Handshake, Settings } from "../../../shared/ui/icons";
+import { SPONSORS_ENABLED } from "../../settings/lib/sponsors";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../../settings/api/SettingsModal";
 import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../../settings/api/hookErrors";
@@ -269,7 +270,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     </button>
   );
 
-  const tokenStationButton = (
+  const tokenStationButton = SPONSORS_ENABLED ? (
     <button
       type="button"
       onClick={() => onOpenSettings("sponsors")}
@@ -279,7 +280,7 @@ export function SidebarFooter({ collapsed, onOpenSettings, onOpenStats, toolbarV
     >
       <Handshake size={14} strokeWidth={1.7} aria-hidden="true" />
     </button>
-  );
+  ) : null;
 
   if (collapsed) {
     return (

@@ -11,7 +11,7 @@ import type {
   NativeProviderGlobalPreview,
 } from "../../api/nativeProviderTypes";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";
-import { FLUXION_REGISTER_URL } from "../../lib/sponsors";
+import { FLUXION_REGISTER_URL, SPONSORS_ENABLED } from "../../lib/sponsors";
 import {
   formatJsonDocument,
   nativeProviderConfigFormat,
@@ -183,7 +183,7 @@ export function NativeProviderEditor({
           <Stack gap={4} miw={0}>
             <Group gap="xs" wrap="wrap">
               <Text fw={700} size="lg" truncate>{card.name}</Text>
-              {isFluxionProvider && (
+              {isFluxionProvider && SPONSORS_ENABLED && (
                 <Badge size="sm" variant="light" color="orange">
                   {t("providerCatalog.fluxion.sponsorBadge")}
                 </Badge>
@@ -191,7 +191,7 @@ export function NativeProviderEditor({
               {card.isCurrent && <Badge color="cliPrimary">{t("providerCatalog.current")}</Badge>}
             </Group>
             <Text size="sm" c="dimmed">{category}</Text>
-            {isFluxionProvider && (
+            {isFluxionProvider && SPONSORS_ENABLED && (
               <Stack gap={2}>
                 <Text size="xs" c="dimmed" maw={760}>
                   {t("providerCatalog.fluxion.providerDescription")}
@@ -226,8 +226,8 @@ export function NativeProviderEditor({
               type="button"
               onClick={openWebsite}
               size="compact-sm"
-              variant={isFluxionProvider ? "filled" : "subtle"}
-              color={isFluxionProvider ? "indigo" : "gray"}
+              variant={isFluxionProvider && SPONSORS_ENABLED ? "filled" : "subtle"}
+              color={isFluxionProvider && SPONSORS_ENABLED ? "indigo" : "gray"}
               leftSection={<ExternalLink size={14} />}
             >
               {t("providerCatalog.website")}

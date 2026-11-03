@@ -2,7 +2,6 @@ use crate::app_paths;
 use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteConnection, SqliteJournalMode};
 use sqlx::{Connection, Row};
-use std::collections::HashSet;
 use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
@@ -13,20 +12,14 @@ const PROVIDER_BASE_SCHEMA_VERSION: i64 = 1;
 const PROVIDER_DB_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 const PROVIDER_SCHEMA_DESCRIPTION: &str = "create_ccs_provider_domain";
 const PROVIDER_ROUTING_SCHEMA_DESCRIPTION: &str = "add_routing_settings_and_request_logs";
-const FLUXION_REGISTER_URL: &str =
-    "https://fluxionai.space/register?source=github&campaign=climanager";
-const FLUXION_CLAUDE_BASE_URL: &str = "https://www.fluxionai.space";
-const FLUXION_OPENAI_BASE_URL: &str = "https://www.fluxionai.space/v1";
-/// `(app_type, provider_id)` of every built-in provider the initializer seeds.
-const BUILTIN_FLUXION_IDENTITIES: [(&str, &str); 3] = [
+/// `(app_type, provider_id)` of the Fluxion providers older builds seeded.
+/// Seeding was removed; unused leftovers are cleaned up on startup, see
+/// `remove_unused_legacy_fluxion_providers`.
+const LEGACY_FLUXION_IDENTITIES: [(&str, &str); 3] = [
     ("claude", "builtin-fluxion-claude"),
     ("codex", "builtin-fluxion-codex"),
     ("grokbuild", "builtin-fluxion-grokbuild"),
 ];
-/// Built-in providers the user deleted. Persisted so the seed stops recreating
-/// them; see `ensure_builtin_fluxion_providers`.
-const BUILTIN_DISMISSAL_SETTING_KEY: &str = "builtin_provider_dismissals.v1";
-const BUILTIN_DISMISSAL_SCHEMA_VERSION: i64 = 1;
 
 /// The provider domain is intentionally independent from the historical
 /// provider tables in `cli-manager.db`. Keep this schema CCS-shaped for the
@@ -311,182 +304,33 @@ async fn initialize_at(path: PathBuf) -> Result<(), String> {
         ensure_routing_settings(&mut connection).await?;
     }
 
-    ensure_builtin_fluxion_providers(&mut connection).await?;
+    remove_unused_legacy_fluxion_providers(&mut connection).await?;
 
     verify_required_tables(&mut connection).await
 }
 
-/// Add the built-in Fluxion entry for each supported native provider type.
-///
-/// The IDs are stable and the insert is intentionally `OR IGNORE`: users may
-/// rename, reorder, disable, select, or add keys to the provider later, and a
-/// subsequent startup must not overwrite any of those choices.
-///
-/// A deleted built-in must stay deleted too. `initialize_at` runs on every
-/// `open_connection`, so without the dismissal list the very next provider
-/// query would reseed the row with the default name, URL, order and meta —
-/// which is exactly how deleting the built-in provider looked like a no-op
-/// that also reset every customization (issue #242).
-// 过滤已登记删除的内置身份，在事务中按类型前置排序插入缺失项；OR IGNORE 保留已有记录及用户修改。
-async fn ensure_builtin_fluxion_providers(connection: &mut SqliteConnection) -> Result<(), String> {
-    let dismissed = load_builtin_dismissals(connection).await?;
-    let pending: Vec<(&str, &str)> = BUILTIN_FLUXION_IDENTITIES
-        .into_iter()
-        .filter(|(app_type, id)| !dismissed.contains(&builtin_dismissal_token(app_type, id)))
-        .collect();
-    if pending.is_empty() {
-        return Ok(());
-    }
-
-    let mut transaction = connection
-        .begin()
-        .await
-        .map_err(|err| format!("provider_db_builtin_seed_begin_failed: {err}"))?;
-    for (app_type, id) in pending {
-        let sort_index: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MIN(sort_index), 0) - 1 FROM providers WHERE app_type = ?1",
-        )
-        .bind(app_type)
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|err| format!("provider_db_builtin_seed_failed: {err}"))?;
-        let meta = serde_json::json!({
-            "enabled": true,
-            "commonConfigEnabled": true,
-            "builtin": "fluxion"
-        })
-        .to_string();
+/// Remove the Fluxion providers older builds seeded, unless the user put them
+/// to use: a row that is current or holds API keys is user data and stays.
+// 仅删除旧版预置且未被选为当前、未录入密钥的 Fluxion 行；已使用的保留，重复执行幂等。
+async fn remove_unused_legacy_fluxion_providers(
+    connection: &mut SqliteConnection,
+) -> Result<(), String> {
+    for (app_type, id) in LEGACY_FLUXION_IDENTITIES {
         sqlx::query(
-            "INSERT OR IGNORE INTO providers
-             (id, app_type, name, settings_config, website_url, category, created_at,
-              sort_index, notes, icon, icon_color, meta, is_current)
-             VALUES (?1, ?2, 'Fluxion AI', ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 0)",
+            "DELETE FROM providers
+             WHERE id = ?1 AND app_type = ?2 AND is_current = 0
+               AND NOT EXISTS (
+                   SELECT 1 FROM provider_api_keys
+                   WHERE provider_id = ?1 AND app_type = ?2
+               )",
         )
         .bind(id)
         .bind(app_type)
-        .bind(builtin_fluxion_settings_config(app_type))
-        .bind(FLUXION_REGISTER_URL)
-        .bind("AI模型统一接入与管理平台")
-        .bind(unix_timestamp_millis())
-        .bind(sort_index)
-        .bind("")
-        .bind("sparkles")
-        .bind("#6366f1")
-        .bind(meta)
-        .execute(&mut *transaction)
+        .execute(&mut *connection)
         .await
-        .map_err(|err| format!("provider_db_builtin_seed_failed: {err}"))?;
+        .map_err(|err| format!("provider_db_legacy_fluxion_cleanup_failed: {err}"))?;
     }
-
-    transaction
-        .commit()
-        .await
-        .map_err(|err| format!("provider_db_builtin_seed_commit_failed: {err}"))
-}
-
-/// Seed `settings_config` for one built-in provider type.
-// 生成 Claude/Codex 内置端点配置，其他类型返回空 JSON；不生成或读取 API Key。
-fn builtin_fluxion_settings_config(app_type: &str) -> String {
-    match app_type {
-        "claude" => serde_json::json!({
-            "env": {"ANTHROPIC_BASE_URL": FLUXION_CLAUDE_BASE_URL},
-            "api_format": "anthropic"
-        })
-        .to_string(),
-        "codex" => serde_json::json!({
-            "base_url": FLUXION_OPENAI_BASE_URL,
-            "config": format!(
-                r#"model_provider = "custom"
-
-[model_providers.custom]
-name = "custom"
-wire_api = "responses"
-requires_openai_auth = true
-base_url = "{FLUXION_OPENAI_BASE_URL}"
-"#
-            )
-        })
-        .to_string(),
-        // Grok Build ships an empty document; the user fills it in.
-        _ => "{}".to_string(),
-    }
-}
-
-/// True when the identity belongs to a provider the initializer seeds.
-// 按类型与 ID 的精确组合匹配固定内置身份，不根据元数据或 ID 前缀推断。
-pub(crate) fn is_builtin_provider(app_type: &str, provider_id: &str) -> bool {
-    BUILTIN_FLUXION_IDENTITIES
-        .iter()
-        .any(|(seed_app_type, seed_id)| *seed_app_type == app_type && *seed_id == provider_id)
-}
-
-/// Record that the user deleted a built-in provider. Callers must run this in
-/// the same transaction as the `DELETE`, so a failed dismissal rolls the
-/// deletion back instead of leaving a row the seed will resurrect.
-// 在调用方事务内合并、去重并排序删除标记后写回；调用方负责内置身份校验及与删除操作共同提交。
-pub(crate) async fn dismiss_builtin_provider(
-    transaction: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    app_type: &str,
-    provider_id: &str,
-) -> Result<(), String> {
-    let mut items: Vec<String> = load_builtin_dismissals(&mut **transaction)
-        .await?
-        .into_iter()
-        .collect();
-    let token = builtin_dismissal_token(app_type, provider_id);
-    if !items.contains(&token) {
-        items.push(token);
-    }
-    items.sort();
-    let value = serde_json::json!({
-        "schemaVersion": BUILTIN_DISMISSAL_SCHEMA_VERSION,
-        "items": items
-    })
-    .to_string();
-    sqlx::query("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)")
-        .bind(BUILTIN_DISMISSAL_SETTING_KEY)
-        .bind(value)
-        .execute(&mut **transaction)
-        .await
-        .map(|_| ())
-        .map_err(|err| format!("provider_db_builtin_dismissal_write_failed: {err}"))
-}
-
-// 用冒号拼接类型与供应商 ID，生成删除标记的内部标识。
-fn builtin_dismissal_token(app_type: &str, provider_id: &str) -> String {
-    format!("{app_type}:{provider_id}")
-}
-
-// 查询内置项删除设置并解析集合；查询错误向上传播，内容损坏由解析器按空集合处理。
-async fn load_builtin_dismissals(
-    connection: &mut SqliteConnection,
-) -> Result<HashSet<String>, String> {
-    let raw = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?1")
-        .bind(BUILTIN_DISMISSAL_SETTING_KEY)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(|err| format!("provider_db_builtin_dismissal_read_failed: {err}"))?;
-    Ok(parse_builtin_dismissals(raw.as_deref()))
-}
-
-/// An unreadable dismissal row is treated as "nothing dismissed": one corrupt
-/// setting must not permanently block the built-in provider seed.
-// 从 JSON 的 items 数组收集字符串并去重；缺失或无效内容返回空集合，不校验 schemaVersion 或身份。
-fn parse_builtin_dismissals(raw: Option<&str>) -> HashSet<String> {
-    raw.and_then(|value| serde_json::from_str::<serde_json::Value>(value).ok())
-        .and_then(|value| {
-            value
-                .get("items")
-                .and_then(|items| items.as_array())
-                .map(|items| {
-                    items
-                        .iter()
-                        .filter_map(|item| item.as_str())
-                        .map(str::to_string)
-                        .collect()
-                })
-        })
-        .unwrap_or_default()
+    Ok(())
 }
 
 // 为指定 SQLite 文件启用缺失时创建、WAL、五秒锁等待及外键约束。
@@ -1053,220 +897,48 @@ mod tests {
                 .await
                 .unwrap();
         assert!(service_config.contains("\"preferredPort\":15721"));
-        let builtin_rows = sqlx::query(
-            "SELECT id, app_type, name, website_url, category, sort_index, is_current, meta
-             FROM providers ORDER BY app_type",
-        )
-        .fetch_all(&mut connection)
-        .await
-        .unwrap();
-        assert_eq!(builtin_rows.len(), 3);
-        for (row, expected_type) in builtin_rows.iter().zip(["claude", "codex", "grokbuild"]) {
-            assert_eq!(
-                row.get::<String, _>("id"),
-                format!("builtin-fluxion-{expected_type}")
-            );
-            assert_eq!(row.get::<String, _>("app_type"), expected_type);
-            assert_eq!(row.get::<String, _>("name"), "Fluxion AI");
-            assert_eq!(row.get::<String, _>("website_url"), FLUXION_REGISTER_URL);
-            assert_eq!(row.get::<String, _>("category"), "AI模型统一接入与管理平台");
-            assert_eq!(row.get::<i64, _>("sort_index"), -1);
-            assert_eq!(row.get::<i64, _>("is_current"), 0);
-            let meta: serde_json::Value =
-                serde_json::from_str(&row.get::<String, _>("meta")).unwrap();
-            assert_eq!(
-                meta.get("builtin").and_then(serde_json::Value::as_str),
-                Some("fluxion")
-            );
-        }
-        let key_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM provider_api_keys")
-            .fetch_one(&mut connection)
-            .await
-            .unwrap();
-        assert_eq!(key_count, 0);
-        let claude_settings: String = sqlx::query_scalar(
-            "SELECT settings_config FROM providers WHERE id = 'builtin-fluxion-claude'",
-        )
-        .fetch_one(&mut connection)
-        .await
-        .unwrap();
-        assert!(claude_settings.contains(FLUXION_CLAUDE_BASE_URL));
-        let codex_settings: serde_json::Value = serde_json::from_str(
-            &sqlx::query_scalar::<_, String>(
-                "SELECT settings_config FROM providers WHERE id = 'builtin-fluxion-codex'",
-            )
-            .fetch_one(&mut connection)
-            .await
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(codex_settings["base_url"], FLUXION_OPENAI_BASE_URL);
-        assert!(codex_settings["config"]
-            .as_str()
-            .unwrap()
-            .contains("wire_api = \"responses\""));
-        assert!(!temp.path().join("backups").exists());
-    }
-
-    #[tokio::test]
-    // 验证重复初始化保留内置供应商的自定义名称、排序、当前状态和已有测试密钥，不重复插入记录。
-    async fn builtin_fluxion_seed_is_idempotent_and_preserves_existing_data() {
-        let temp = tempdir().unwrap();
-        let path = temp.path().join("providers.db");
-        initialize_at(path.clone()).await.unwrap();
-
-        let mut connection = open_test_connection(&path).await;
-        sqlx::query(
-            "UPDATE providers
-             SET name = 'My Fluxion', sort_index = 27, is_current = 1
-             WHERE id = 'builtin-fluxion-claude' AND app_type = 'claude'",
-        )
-        .execute(&mut connection)
-        .await
-        .unwrap();
-        sqlx::query(
-            "INSERT INTO provider_api_keys
-             (id, provider_id, app_type, label, api_key, created_at, updated_at)
-             VALUES ('fluxion-test-key', 'builtin-fluxion-claude', 'claude', 'test', 'secret', 1, 1)",
-        )
-        .execute(&mut connection)
-        .await
-        .unwrap();
-        connection.close().await.unwrap();
-
-        initialize_at(path.clone()).await.unwrap();
-        let mut connection = open_test_connection(&path).await;
-        let row = sqlx::query(
-            "SELECT name, sort_index, is_current FROM providers
-             WHERE id = 'builtin-fluxion-claude' AND app_type = 'claude'",
-        )
-        .fetch_one(&mut connection)
-        .await
-        .unwrap();
-        assert_eq!(row.get::<String, _>("name"), "My Fluxion");
-        assert_eq!(row.get::<i64, _>("sort_index"), 27);
-        assert_eq!(row.get::<i64, _>("is_current"), 1);
-        let key_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM provider_api_keys
-             WHERE provider_id = 'builtin-fluxion-claude' AND app_type = 'claude'",
-        )
-        .fetch_one(&mut connection)
-        .await
-        .unwrap();
-        assert_eq!(key_count, 1);
         let provider_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM providers")
             .fetch_one(&mut connection)
             .await
             .unwrap();
-        assert_eq!(provider_count, 3);
-    }
-
-    #[test]
-    // 验证只有三个固定类型与 ID 组合属于内置项，跨类型和自建 ID 均不匹配。
-    fn builtin_identity_matches_only_seeded_pairs() {
-        assert!(is_builtin_provider("codex", "builtin-fluxion-codex"));
-        assert!(is_builtin_provider("claude", "builtin-fluxion-claude"));
-        assert!(is_builtin_provider(
-            "grokbuild",
-            "builtin-fluxion-grokbuild"
-        ));
-        // 跨类型或用户自建的 ID 都不是内置项，不能被登记退订。
-        assert!(!is_builtin_provider("claude", "builtin-fluxion-codex"));
-        assert!(!is_builtin_provider("codex", "my-provider"));
-    }
-
-    #[test]
-    // 验证缺失或损坏的删除设置按空集合处理，合法数组中仅收集字符串。
-    fn corrupt_dismissal_setting_is_treated_as_no_dismissal() {
-        assert!(parse_builtin_dismissals(None).is_empty());
-        assert!(parse_builtin_dismissals(Some("not-json")).is_empty());
-        assert!(parse_builtin_dismissals(Some(r#"{"schemaVersion":1}"#)).is_empty());
-        assert_eq!(
-            parse_builtin_dismissals(Some(
-                r#"{"schemaVersion":1,"items":["codex:builtin-fluxion-codex",7]}"#
-            )),
-            HashSet::from(["codex:builtin-fluxion-codex".to_string()])
-        );
+        assert_eq!(provider_count, 0);
+        assert!(!temp.path().join("backups").exists());
     }
 
     #[tokio::test]
-    // 在临时数据库事务中删除并登记内置项，验证连续初始化不会重建该项且标记保留。
-    async fn deleted_builtin_fluxion_provider_is_not_reseeded() {
+    // 验证启动清理删除旧版预置且未使用的 Fluxion 行，保留当前选中或已录入密钥的行及用户自建项。
+    async fn unused_legacy_fluxion_providers_are_removed_on_startup() {
         let temp = tempdir().unwrap();
         let path = temp.path().join("providers.db");
         initialize_at(path.clone()).await.unwrap();
 
         let mut connection = open_test_connection(&path).await;
-        let mut transaction = connection.begin().await.unwrap();
+        insert_provider(&mut connection, "builtin-fluxion-claude", "claude", 0).await;
+        insert_provider(&mut connection, "builtin-fluxion-codex", "codex", 1).await;
+        insert_provider(&mut connection, "builtin-fluxion-grokbuild", "grokbuild", 0).await;
+        insert_provider(&mut connection, "user-claude", "claude", 0).await;
         sqlx::query(
-            "DELETE FROM providers WHERE id = 'builtin-fluxion-codex' AND app_type = 'codex'",
+            "INSERT INTO provider_api_keys
+             (id, provider_id, app_type, label, api_key, created_at, updated_at)
+             VALUES ('fluxion-key', 'builtin-fluxion-grokbuild', 'grokbuild', 'k', 'secret', 1, 1)",
         )
-        .execute(&mut *transaction)
+        .execute(&mut connection)
         .await
         .unwrap();
-        dismiss_builtin_provider(&mut transaction, "codex", "builtin-fluxion-codex")
-            .await
-            .unwrap();
-        transaction.commit().await.unwrap();
-        connection.close().await.unwrap();
-
-        // 每次打开连接都会重跑种子，所以这里连开两次以覆盖启动与后续查询两条路径。
-        initialize_at(path.clone()).await.unwrap();
-        initialize_at(path.clone()).await.unwrap();
-
-        let mut connection = open_test_connection(&path).await;
-        let remaining: Vec<String> =
-            sqlx::query_scalar("SELECT app_type FROM providers ORDER BY app_type")
-                .fetch_all(&mut connection)
-                .await
-                .unwrap();
-        assert_eq!(remaining, vec!["claude", "grokbuild"]);
-        let dismissed = load_builtin_dismissals(&mut connection).await.unwrap();
-        assert_eq!(
-            dismissed,
-            HashSet::from(["codex:builtin-fluxion-codex".to_string()])
-        );
-    }
-
-    #[tokio::test]
-    // 验证累计删除两个类型的内置项后只保留未登记类型，自建供应商删除不会新增内置项。
-    async fn dismissing_one_builtin_keeps_the_other_types_seeded() {
-        let temp = tempdir().unwrap();
-        let path = temp.path().join("providers.db");
-        initialize_at(path.clone()).await.unwrap();
-
-        let mut connection = open_test_connection(&path).await;
-        for (app_type, id) in [
-            ("codex", "builtin-fluxion-codex"),
-            ("grokbuild", "builtin-fluxion-grokbuild"),
-        ] {
-            let mut transaction = connection.begin().await.unwrap();
-            sqlx::query("DELETE FROM providers WHERE id = ?1 AND app_type = ?2")
-                .bind(id)
-                .bind(app_type)
-                .execute(&mut *transaction)
-                .await
-                .unwrap();
-            dismiss_builtin_provider(&mut transaction, app_type, id)
-                .await
-                .unwrap();
-            transaction.commit().await.unwrap();
-        }
-        // 用户自建的 Claude 供应商删除后不写退订，重开连接不受影响。
-        insert_provider(&mut connection, "user-claude", "claude", 0).await;
-        sqlx::query("DELETE FROM providers WHERE id = 'user-claude' AND app_type = 'claude'")
-            .execute(&mut connection)
-            .await
-            .unwrap();
         connection.close().await.unwrap();
 
         initialize_at(path.clone()).await.unwrap();
+        initialize_at(path.clone()).await.unwrap();
+
         let mut connection = open_test_connection(&path).await;
         let remaining: Vec<String> = sqlx::query_scalar("SELECT id FROM providers ORDER BY id")
             .fetch_all(&mut connection)
             .await
             .unwrap();
-        assert_eq!(remaining, vec!["builtin-fluxion-claude"]);
+        assert_eq!(
+            remaining,
+            vec!["builtin-fluxion-codex", "builtin-fluxion-grokbuild", "user-claude"]
+        );
     }
 
     #[tokio::test]

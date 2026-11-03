@@ -395,11 +395,6 @@ pub(crate) async fn delete_provider(app_type: String, provider_id: String) -> Re
         .execute(&mut *transaction)
         .await
         .map_err(|err| map_database_error("provider_delete_failed", err))?;
-    // 内置供应商的种子在每次打开 providers.db 时都会跑一遍，所以删除必须同时登记
-    // 退订，否则下一次查询就会用默认名称/URL/排序把它重新插回来（issue #242）。
-    if database::is_builtin_provider(&app_type, &provider.id) {
-        database::dismiss_builtin_provider(&mut transaction, &app_type, &provider.id).await?;
-    }
     transaction
         .commit()
         .await
