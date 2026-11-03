@@ -1,13 +1,18 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { parseTranscriptLines } from "../../../src/shared/lib/subagentTranscriptMessages";
+import { SubagentConversation, type ConversationLabel } from "../../../src/shared/ui/SubagentConversation";
 import type { WebSubagentSnapshot } from "./domain";
 import type { TranslationKey } from "./i18n";
 
 type T = (key: TranslationKey) => string;
 
 export function SubagentPanel({ agents, active, t }: { agents: WebSubagentSnapshot[]; active: boolean; t: T }) {
+  const label = useCallback((key: ConversationLabel) => t(`subagentTranscript.${key}`), [t]);
+  const renderMarkdown = useCallback((text: string) => <Markdown remarkPlugins={[remarkGfm]}
+    components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>,
+      img: ({ alt }) => <span>{alt}</span> }}>{text}</Markdown>, []);
   const [expanded, setExpanded] = useState(() => typeof matchMedia !== "undefined" && matchMedia("(min-width: 900px)").matches);
   const [selectedId, setSelectedId] = useState<string>();
   const id = useId();
@@ -55,10 +60,8 @@ export function SubagentPanel({ agents, active, t }: { agents: WebSubagentSnapsh
         const next = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
         followingRef.current = next; setFollowing(next);
       }}>
-        {messages.length ? messages.map((message) => <article key={`${selected.sessionId}:${message.id}`} className="web-subagent-message">
-          <strong>{t(message.role === "user" ? "subagentUser" : message.role === "assistant" ? "assistant" : "subagentTool")}</strong>
-          <Markdown remarkPlugins={[remarkGfm]} components={{ a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>, img: ({ alt }) => <span>{alt}</span> }}>{message.text}</Markdown>
-        </article>) : <p className="web-subagent-empty">{t(selected.ended ? "subagentNoContent" : selected.sourceKind === "lifecycle-only" ? "subagentLifecycleOnly" : "subagentWaiting")}</p>}
+        {messages.length ? <SubagentConversation key={selected.sessionId} messages={messages} label={label} renderMarkdown={renderMarkdown} />
+          : <p className="web-subagent-empty">{t(selected.ended ? "subagentNoContent" : selected.sourceKind === "lifecycle-only" ? "subagentLifecycleOnly" : "subagentWaiting")}</p>}
       </div>
       {!following && <button type="button" className="web-subagent-follow" onClick={() => {
         followingRef.current = true; setFollowing(true);

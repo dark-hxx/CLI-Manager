@@ -79,6 +79,16 @@ await executeHistoryDeletion(plan.sessionKeys, () => useHistoryStore.getState().
 
 ## Scenario: Conversation View and Structured Message Parts
 
+### Read-only live subagent presentation (1.4.4)
+
+- Live child panes use `shared/lib/subagentTranscriptMessages` and `shared/ui/SubagentConversation`, not the history Workspace or its editing actions. `PaneLeafView` and classic Web `SubagentPanel` are the actual entry points; ordinary PTYs and Tap remain unchanged.
+- JSONL parts retain source order and separate text/context/tool call/tool result/reasoning/unknown records. Codex `event_msg` contributes turn attribution only, not a second copy of response text. Final-answer phase is not identity evidence by itself.
+- Main/child labels require child-session evidence plus matching child turn metadata. Older timestamps or mismatching turns are inherited context; missing evidence (including tail-only/reset fragments and older Claude records) uses neutral labels. Never infer parent identity from `role=user` alone or synthesize absent parent messages.
+- Default conversation groups consecutive execution/context records behind a closed disclosure; closed groups do not mount Markdown. Execution records remain inspectable, long text expands without modifying source, and binaries are not embedded into the view.
+- Desktop incremental parsing carries bounded evidence state; reset/head trim discards it. Hidden panes do not parse append events. Preserve the 2 Mi-character parse window, 300 rendered-part cap and scroll-follow rules.
+- Classic Web snapshots retain legacy `type/message` JSONL with optional `cliManagerSubagent` v1 metadata (`kind`, `actor`, `phase`, `timestamp`, `sourceId`). Older clients read the wrapper; newer clients validate the metadata. Keep the 120-part/32 KiB child and 128 KiB total budgets, truncation notice and no local transcript-path fields. Source coordinates preserve disclosure state as the snapshot budget slides.
+- Tests: `node --test scripts/subagentConversation.test.mjs`; after Web build, `node scripts/subagentConversation.browser.mjs` mounts the real desktop and classic Web components in an isolated browser without launching Tauri or modifying user sessions.
+
 ### 1. Scope / Trigger
 
 - Trigger: changing history message parsing, V2 catalog materialization, SSH detail payloads, favorite snapshots, session detail tabs, search jumps, or list-row open behavior.
