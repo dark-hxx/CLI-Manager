@@ -93,8 +93,6 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "sync",
   "history-sources",
   "hooks",
-  "statusline",
-  "command-suggestions",
   "sidebar",
   "desktop-pet",
   "developer",
