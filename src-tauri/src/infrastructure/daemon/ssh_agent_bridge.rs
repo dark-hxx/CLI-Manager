@@ -185,7 +185,7 @@ impl BridgeControl {
     fn release_request(&self) {
         let released =
             self.pending_requests
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |pending| {
                     pending.checked_sub(1)
                 });
         debug_assert!(released.is_ok());
