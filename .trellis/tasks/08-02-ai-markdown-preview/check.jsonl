@@ -1,4 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"检查 Markdown 共享渲染、安全策略、隐藏终端和稳定分屏身份。"}
-{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"检查本地/SSH history detail、刷新、恢复和 session 绑定验收场景。"}
-{"file":".trellis/spec/backend/history-index-contracts.md","reason":"检查 catalog freshness、单文件最新读取和远端 detail 边界。"}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"检查 Hook 完成事件的 retry、dedupe、WSL/Worktree/分屏绑定场景。"}

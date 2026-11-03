@@ -140,7 +140,8 @@ test("desktop releases before input teardown and both snapshot sites use the key
   const release = source.indexOf("      keyRouting.release();");
   const detach = source.indexOf("      disposeTerminalSubsystem(inputDisposables);");
   assert.ok(release >= 0 && detach > release);
-  assert.equal(source.match(/serializeTerminalWithKeyboardState\(terminal, \(\) => serializeTerminalSnapshot\(terminal, serializeAddon\)\)/g)?.length, 2);
+  assert.equal(source.match(/serializeTerminalWithKeyboardState\(terminal, \(\) => serializeTerminalSnapshot\(terminal, serializeAddon\)\)/g)?.length, 1);
+  assert.equal(source.match(/serializeTerminalWithKeyboardState\(terminal, \(\) => serializeTerminalSnapshot\(terminal, serializeAddon, 2000\)\)/g)?.length, 1);
   assert.match(source, /serializeTerminalAfterWrite\([\s\S]*serializeTerminalWithKeyboardState/);
   assert.match(source, /if \(kind === "legacy"\)[\s\S]*terminalProcessManager\.write\(sessionId, data\)/);
 });

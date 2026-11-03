@@ -10,6 +10,8 @@ use queries::{
 pub(super) use queries::{list_sessions, search_sessions};
 mod session_detail;
 pub(super) use session_detail::get_session_detail_from_v2;
+pub(super) use session_detail::{get_session_page_from_v2, HistoryDetailWindow};
+pub(crate) use session_detail::HistorySessionPage;
 #[cfg(test)]
 use session_detail::get_session_detail_from_v2_with_conn;
 mod remote_sync;

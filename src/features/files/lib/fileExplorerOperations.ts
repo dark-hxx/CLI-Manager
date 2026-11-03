@@ -19,7 +19,7 @@ export function filePathKey(path: string, ignoreCase = false): string {
 export function fileOperationRootKey(path: string): string {
   const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
   const wsl = /^\/\/wsl(?:\$|\.localhost)\//i.test(normalized);
-  return !wsl && (/^[a-z]:\//i.test(normalized) || normalized.startsWith("//"))
+  return !wsl && (/^[a-z]:(?:\/|$)/i.test(normalized) || normalized.startsWith("//"))
     ? normalized.toLowerCase() : normalized;
 }
 

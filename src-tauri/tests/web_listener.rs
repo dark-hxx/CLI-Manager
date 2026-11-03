@@ -78,6 +78,7 @@ fn managed_runtime_releases_port_with_a_live_helper_ten_times() {
             admin_username: "admin".into(),
             admin_password: "test-password".into(),
             cookie_secure: false,
+            trusted_network: false,
             allowed_origin: None,
         };
         let (stop, stopped) = tokio::sync::oneshot::channel();

@@ -15,7 +15,7 @@ use crate::pty::manager::PtyProcessStatus;
 use crate::ssh_launch::SshLaunchPlan;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{sync_channel, SyncSender};
@@ -41,6 +41,7 @@ fn windows_daemon_creation_flags() -> u32 {
 pub struct DaemonClient {
     info: DaemonInfo,
     writer: Mutex<TcpStream>,
+    shutdown_stream: TcpStream,
     pending: Mutex<HashMap<u64, SyncSender<DaemonFrame>>>,
     next_id: AtomicU64,
     connected: Arc<AtomicBool>,
@@ -99,6 +100,8 @@ impl DaemonClient {
     /// endpoint.
     pub fn mark_disconnected(&self) {
         self.connected.store(false, Ordering::SeqCst);
+        // A dedicated handle interrupts reader/write waits without taking the potentially busy writer lock.
+        let _ = self.shutdown_stream.shutdown(Shutdown::Both);
         if let Ok(mut pending) = self.pending.lock() {
             pending.clear();
         }
@@ -157,6 +160,7 @@ impl DaemonClient {
 
         let client = Arc::new(DaemonClient {
             info,
+            shutdown_stream: writer.try_clone().map_err(|err| format!("daemon shutdown handle failed: {err}"))?,
             writer: Mutex::new(writer),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
@@ -610,6 +614,54 @@ fn read_line_bounded(reader: &mut BufReader<TcpStream>) -> Option<String> {
 #[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
+
+    fn synthetic_control_pair() -> (DaemonClient, TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let stream = TcpStream::connect(address).unwrap();
+        let (peer, _) = listener.accept().unwrap();
+        let client = DaemonClient {
+            info: DaemonInfo { port: address.port(), ws_port: 0, hook_port: 0, token: "synthetic".into(), pid: 0,
+                version: "test".into(), protocol_version: 0, binary_protocol_version: 0, features: vec![] },
+            shutdown_stream: stream.try_clone().unwrap(),
+            writer: Mutex::new(stream), pending: Mutex::new(HashMap::new()), next_id: AtomicU64::new(1),
+            connected: Arc::new(AtomicBool::new(true)),
+        };
+        (client, peer)
+    }
+
+    #[test]
+    fn timeout_closes_the_control_socket_and_wakes_other_requests() {
+        let (client, peer) = synthetic_control_pair();
+        peer.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        let (tx, other) = sync_channel(1);
+        client.pending.lock().unwrap().insert(99, tx);
+        let error = client.request_with_timeout(1, &ClientFrame::List { id: 1 }, Duration::from_millis(10)).unwrap_err();
+        assert!(error.contains("timeout"));
+        assert!(!client.is_connected());
+        assert!(matches!(other.recv_timeout(Duration::from_millis(50)), Err(std::sync::mpsc::RecvTimeoutError::Disconnected)));
+        let mut reader = BufReader::new(peer);
+        let mut request = String::new();
+        reader.read_line(&mut request).unwrap();
+        let mut byte = [0];
+        // EOF, not a still-open socket with an orphaned reader thread.
+        assert_eq!(reader.read(&mut byte).unwrap(), 0);
+    }
+
+    #[test]
+    fn disconnect_interrupts_io_without_waiting_for_the_writer_mutex() {
+        let (client, mut peer) = synthetic_control_pair();
+        let guard = client.writer.lock().unwrap();
+        let (done, received) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| { client.mark_disconnected(); done.send(()).unwrap(); });
+            let outcome = received.recv_timeout(Duration::from_millis(500));
+            drop(guard);
+            assert!(outcome.is_ok(), "disconnect must not wait for the writer mutex");
+        });
+        peer.set_read_timeout(Some(Duration::from_millis(200))).unwrap();
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
+    }
 
     #[test]
     // 验证 Windows daemon 不启用 detached 或新进程组标志。

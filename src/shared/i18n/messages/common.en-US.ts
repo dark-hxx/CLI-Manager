@@ -7,6 +7,8 @@ export const en: Record<keyof typeof zh, string> = {
   "app.exitProgress.syncConflict": "Both cloud and local data changed. Exit sync was skipped; resolve it in Sync settings after the next launch.",
   "app.exitProgress.syncFailed": "Exit auto sync failed and was skipped. Check your WebDAV configuration or network connection.",
   "app.exitProgress.syncTimeout": "Exit auto sync took longer than 8 seconds and was skipped.",
+  "app.exitProgress.cleanupFailed": "Exit cleanup failed or timed out. The window stays open. Check the logs and wait for pending operations to finish before retrying.",
+  "app.exitProgress.cleanupPending": "The previous exit operation is still pending. Do not force-close the app; wait for it to finish before retrying.",
   "app.init.failedTitle": "Startup failed",
   "app.init.failedDescription": "The app hit an error during startup. The details below should tell us what failed.",
   "app.init.loading": "Starting CLI-Manager",

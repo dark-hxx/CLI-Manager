@@ -412,7 +412,6 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     fitAddonRef,
     isVisibleRef,
     isComposingRef,
-    lowMemoryMode,
     disableHardwareAcceleration,
     disableWebglForSessionRef: codexSessionDetectedRef,
     linuxGraphicsDisableWebgl,
@@ -1092,11 +1091,13 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
           serialized,
         );
       },
+      (signal) => serializeTerminalAfterWrite(terminal, () => serializeTerminalWithKeyboardState(
+        terminal, () => serializeTerminalSnapshot(terminal, serializeAddon, 2000)), signal),
     );
     baseDisposables.push(searchAddon.onDidChangeResults(handleSearchResults));
 
     const initialWebglReady = syncWebglRenderer(terminal, baseTheme);
-    if (initialWebglReady) {
+    if (initialWebglReady || !isVisibleRef.current) {
       if (!canUseTerminalImageAddonWasm()) {
         if (!terminalImageAddonFallbackLogged) {
           terminalImageAddonFallbackLogged = true;
@@ -1153,7 +1154,7 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         snapshotBeforeUnmountRef.current = () => {
           try {
             useTerminalStore.getState().updateSessionTerminalSnapshot(
-              sessionId, serializeTerminalWithKeyboardState(terminal, () => serializeTerminalSnapshot(terminal, serializeAddon)),
+              sessionId, serializeTerminalWithKeyboardState(terminal, () => serializeTerminalSnapshot(terminal, serializeAddon, 2000)),
             );
           } catch (err) {
             logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });

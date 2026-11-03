@@ -764,6 +764,7 @@ export interface HistorySessionUsage {
 }
 
 export interface HistorySessionDetail extends HistorySessionSummary {
+  message_page?: { revision: string };
   cwd?: string | null;
   usage?: HistorySessionUsage;
   tool_events?: HistoryToolEvent[];

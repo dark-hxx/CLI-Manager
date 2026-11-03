@@ -8,6 +8,7 @@ import { buildSshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
 import { ensureHistorySourceSettingsLoaded, getHistoryPathArgs } from "../api/historyPathArgs";
 import { assertHistorySessionDeletable, executeHistoryDeletion, historyDeletedSessionKeys, type HistoryDeletionCandidate } from "../lib/historyDeletion";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
+import { normalizeHistoryPage, appendHistoryPage } from "../lib/historyDetailPaging";
 import { extractHistoryTitleCandidate, resolveHistoryDisplayTitle } from "../lib/historyTitle";
 import { useProjectStore } from "../../projects/api/projectStore";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
@@ -177,7 +178,7 @@ export function requireMessageLocator(message: HistoryMessage): { lineIndex: num
 
 export async function loadDetailForSnapshot(sessionKey: string, session: HistorySessionView): Promise<HistorySessionDetail> {
   const active = useHistoryStore.getState().activeSession;
-  if (useHistoryStore.getState().activeSessionKey === sessionKey && active) {
+  if (useHistoryStore.getState().activeSessionKey === sessionKey && active && !active.message_page) {
     return active;
   }
   if (session.session_ref?.transportKind === "ssh") {
@@ -314,6 +315,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
   loadingSessions: false,
   loadingMoreSessions: false,
   loadingSessionDetail: false,
+  loadingMoreMessages: false,
   deletingSessions: false,
   searching: false,
   loadingPrompts: false,
@@ -951,6 +953,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       activeSessionKey: sessionKey,
       activeSession: null,
       loadingSessionDetail: true,
+      loadingMoreMessages: false,
       focusedMessageIndex: null,
     });
     let detailFromSnapshot = false;
@@ -970,13 +973,14 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
               remoteTranscriptRef: null,
             })
             : await Promise.reject(new Error("history_remote_online_required"))
-          : await invoke<unknown>("history_get_session", {
+          : await invoke<unknown>(options.requireLiveDetail ? "history_get_session" : "history_get_session_page", {
             filePath: target.file_path,
             ...(await getHistoryPathArgs()),
             source: target.source,
             projectKey: target.project_key,
           });
-        const detail = normalizeDetail(detailRaw);
+        const detail = target.session_ref?.transportKind === "ssh" || options.requireLiveDetail
+          ? normalizeDetail(detailRaw) : normalizeHistoryPage(detailRaw);
         if (!sameHistorySessionIdentity(target, detail)) {
           throw new Error("history_session_identity_mismatch");
         }
@@ -1002,6 +1006,50 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
     }
   },
 
+  loadMoreMessages: async () => {
+    const current = get().activeSession;
+    const sessionKey = get().activeSessionKey;
+    if (!current?.message_page || !sessionKey || get().loadingMoreMessages || get().loadingSessionDetail
+      || current.messages.length >= current.message_count) return;
+    const seq = sessionDetailRequestSeq;
+    const offset = current.messages.length;
+    set({ loadingMoreMessages: true });
+    try {
+      const raw = await invoke<{ offset: number }>("history_get_session_page", {
+        filePath: current.file_path, source: current.source, projectKey: current.project_key,
+        ...(await getHistoryPathArgs()), offset, revision: current.message_page.revision,
+      });
+      if (seq !== sessionDetailRequestSeq || get().activeSession !== current) return;
+      if (raw.offset !== offset) throw new Error("history_page_changed");
+      set({ activeSession: appendHistoryPage(current, normalizeHistoryPage(raw), offset) });
+    } catch (error) {
+      if (seq !== sessionDetailRequestSeq) return;
+      if (String(error).includes("history_page_changed")) {
+        await get().openSession(sessionKey, { requireLiveDetail: true });
+      } else { throw error; }
+    } finally {
+      if (seq === sessionDetailRequestSeq) set({ loadingMoreMessages: false });
+    }
+  },
+
+  ensureCompleteSession: async () => {
+    const current = get().activeSession;
+    if (!current?.message_page || get().loadingSessionDetail) return;
+    const seq = ++sessionDetailRequestSeq;
+    set({ loadingSessionDetail: true, loadingMoreMessages: false });
+    try {
+      const raw = await invoke<unknown>("history_get_session", {
+        filePath: current.file_path, source: current.source, projectKey: current.project_key,
+        ...(await getHistoryPathArgs()),
+      });
+      const detail = normalizeDetail(raw);
+      if (!sameHistorySessionIdentity(current, detail)) throw new Error("history_session_identity_mismatch");
+      if (seq === sessionDetailRequestSeq) set({ activeSession: detail });
+    } finally {
+      if (seq === sessionDetailRequestSeq) set({ loadingSessionDetail: false });
+    }
+  },
+
   openSearchHit: async (hit) => {
     const requestSeq = ++sessionDetailRequestSeq;
     const sessionKey = hitSessionKey(hit);
@@ -1010,6 +1058,7 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       activeSessionKey: sessionKey,
       activeSession: null,
       loadingSessionDetail: true,
+      loadingMoreMessages: false,
       focusedMessageIndex: null,
     });
     try {
@@ -1443,6 +1492,12 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
       await get().openSession(sessionKey);
     }
     const normalizedIndex = Number.isFinite(messageIndex) && messageIndex >= 0 ? messageIndex : 0;
+    // 跳转索引按完整会话计算；分页详情尚未加载到该位置时先补全，否则定位会静默失效。
+    const loaded = get().activeSession;
+    if (get().activeSessionKey === sessionKey && loaded?.message_page
+      && normalizedIndex >= loaded.messages.length) {
+      await get().ensureCompleteSession();
+    }
     set((state) => ({
       focusedMessageIndex: normalizedIndex,
       focusedMessageSeq: state.focusedMessageSeq + 1,
@@ -1583,8 +1638,8 @@ export const useHistoryStore = create<HistoryStore>((set, get) => ({
         throw new Error("history_title_remote_online_required");
       }
       const requireLiveDetail = identity.transportKind === "ssh";
-      if (requireLiveDetail || get().activeSessionKey !== sessionKey || !get().activeSession) {
-        await get().openSession(sessionKey, { requireLiveDetail });
+      if (requireLiveDetail || get().activeSessionKey !== sessionKey || !get().activeSession || get().activeSession?.message_page) {
+        await get().openSession(sessionKey, { requireLiveDetail: true });
       }
       const detail = get().activeSessionKey === sessionKey ? get().activeSession : null;
       if (!detail) throw new Error("history_title_detail_missing");

@@ -22,22 +22,173 @@ const deferred = () => {
 };
 const settle = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+test("local bounded serialization is frequent but never replaces full daemon checkpoints", async () => {
+  const h = harness(), checkpoints = [];
+  let full = 0, local = 0;
+  h.registerTerminalSnapshotSource("bounded", () => { full++; return "complete"; },
+    value => checkpoints.push(value), () => { local++; return "local-tail"; });
+  h.markTerminalSnapshotDirty("bounded");
+  await h.tick();
+  await h.advance(10_000);
+  h.markTerminalSnapshotDirty("bounded");
+  await h.tick();
+  assert.equal(local, 1);
+  assert.equal(full, 1);
+  assert.deepEqual(checkpoints, ["complete"]);
+  await h.advance(20_000);
+  await h.tick();
+  assert.equal(full, 2, "checkpoint debt must be serviced even without another output frame");
+  assert.deepEqual(checkpoints, ["complete", "complete"]);
+  await h.tick();
+  assert.equal(full, 2, "idle source does not serialize");
+  await h.flushTerminalSnapshotsNow();
+  assert.equal(full, 3, "handoff/exit still takes a fresh full checkpoint");
+});
+
+test("output arriving during full serialization retains checkpoint debt after local persistence", async () => {
+  const h = harness(), serialized = deferred(), checkpoints = [];
+  let full = 0;
+  h.registerTerminalSnapshotSource("race", () => ++full === 1 ? serialized.promise : "new-complete",
+    value => checkpoints.push(value), () => "local-tail");
+  h.markTerminalSnapshotDirty("race");
+  const flushing = h.tick();
+  await settle();
+  h.markTerminalSnapshotDirty("race");
+  serialized.resolve("old-complete");
+  await flushing;
+  await h.advance(30_000);
+  await h.tick();
+  assert.deepEqual(checkpoints, ["old-complete", "new-complete"]);
+});
+
 function harness(save = async () => {}) {
   const exports = {}, timers = new Set(), updates = [], errors = [], saves = [];
+  const deadlines = new Map();
+  let now = 0;
   const state = {
     sessions: [],
     updateSessionTerminalSnapshot(id, text) { updates.push({ id, text }); },
   };
   runInNewContext(compiled, {
     exports, AbortController, preserveTerminalKeyboardSnapshotPrefix,
+    Date: class extends Date { static now() { return now; } },
+    performance: { now: () => now },
+    setTimeout: (callback, delay) => { const token = {}; deadlines.set(token, { callback, at: now + delay }); return token; },
+    clearTimeout: token => deadlines.delete(token),
     useTerminalStore: { getState: () => state },
     useSessionStore: { getState: () => ({ saveSessions: async rows => { saves.push(rows); await save(rows); } }) },
     logError: (...args) => errors.push(args),
     setInterval: callback => { timers.add(callback); return callback; },
     clearInterval: timer => timers.delete(timer),
   });
-  return { ...exports, timers, updates, errors, saves };
+  // Advance only operation deadlines, keeping the periodic snapshot tick explicit.
+  const advance = async (ms) => {
+    const end = now + ms;
+    for (;;) {
+      const next = [...deadlines].filter(([, value]) => value.at <= end).sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) break;
+      now = next[1].at; deadlines.delete(next[0]); next[1].callback(); await settle();
+    }
+    now = end;
+    await settle();
+  };
+  return { ...exports, timers, updates, errors, saves, advance, deadlines };
 }
+
+test("an alive xterm with a missing write callback releases the flush and ignores late serialization", async () => {
+  const h = harness();
+  let callback, serialized = 0, completed = false;
+  h.registerTerminalSnapshotSource("stalled", signal => h.serializeTerminalAfterWrite(
+    { write: (_, ready) => { callback = ready; } }, () => { serialized++; return "stale"; }, signal,
+  ));
+  h.registerTerminalSnapshotSource("healthy", () => "current");
+  const flush = h.flushTerminalSnapshotsNow().then(() => { completed = true; });
+  await settle();
+  await h.advance(3000);
+  assert.equal(completed, true, "a missing callback must not occupy the flush forever");
+  await flush;
+  callback();
+  assert.equal(serialized, 0);
+  assert.deepEqual(h.updates.map(item => item.id), ["healthy"]);
+  assert.equal(h.terminalSnapshotDiagnostics().dirtySources, 1);
+  assert.equal(h.terminalSnapshotDiagnostics().flushing, false);
+  assert.equal(h.deadlines.size, 0);
+});
+
+test("a stalled checkpoint releases other sources and cannot overlap a later upload", async () => {
+  const h = harness(), remote = deferred(), checkpoints = [];
+  let text = "first";
+  h.registerTerminalSnapshotSource("slow", () => text, value => { checkpoints.push(value); return remote.promise; });
+  h.registerTerminalSnapshotSource("healthy", () => "ok");
+  const flush = h.flushTerminalSnapshotsNow();
+  await settle();
+  await h.advance(3000);
+  await flush;
+  assert.deepEqual(h.updates.map(item => item.id), ["slow", "healthy"]);
+  assert.equal(h.terminalSnapshotDiagnostics().dirtySources, 1);
+  text = "newer";
+  await h.tick();
+  assert.deepEqual(checkpoints, ["first"]);
+  assert.equal(h.updates.at(-1).text, "newer");
+  remote.resolve();
+  await settle();
+  await h.tick();
+  assert.deepEqual(checkpoints, ["first", "newer"]);
+  assert.equal(h.terminalSnapshotDiagnostics().dirtySources, 0);
+  assert.equal(h.deadlines.size, 0);
+});
+
+test("many stalled sources share a bounded pass rather than multiplying the exit delay", async () => {
+  const h = harness();
+  let attempts = 0, completed = false;
+  for (let i = 0; i < 50; i++) h.registerTerminalSnapshotSource(`stalled-${i}`, () => { attempts++; return new Promise(() => {}); });
+  const flush = h.flushTerminalSnapshotsNow().then(() => { completed = true; });
+  await settle();
+  await h.advance(10_000);
+  assert.equal(completed, true);
+  await flush;
+  assert.equal(attempts, 4);
+  assert.equal(h.terminalSnapshotDiagnostics().dirtySources, 50);
+  assert.equal(h.deadlines.size, 0);
+});
+
+test("timed-out sources rotate so later healthy terminals cannot starve across snapshot passes", async () => {
+  const h = harness();
+  for (let i = 0; i < 4; i++) h.registerTerminalSnapshotSource(`stalled-${i}`, () => new Promise(() => {}));
+  h.registerTerminalSnapshotSource("healthy-later", () => "current");
+  const first = h.flushTerminalSnapshotsNow();
+  await settle(); await h.advance(10_000); await first;
+  assert.equal(h.updates.length, 0);
+  const second = h.tick();
+  await settle(); await h.advance(10_000); await second;
+  assert.ok(h.updates.some(update => update.id === "healthy-later"));
+  assert.equal(h.deadlines.size, 0);
+});
+
+test("exit suspension drains prior writes and pauses only periodic snapshots until released", async () => {
+  const save = deferred(), h = harness(() => save.promise);
+  h.registerTerminalSnapshotSource("live", () => "screen");
+  h.markTerminalSnapshotDirty("live");
+  const tick = h.tick();
+  await settle();
+  const lease = h.suspendTerminalSnapshots();
+  let drained = false;
+  void lease.pending.then(() => { drained = true; });
+  h.markTerminalSnapshotDirty("live");
+  await h.tick();
+  assert.equal(h.saves.length, 1);
+  assert.equal(drained, false);
+  save.resolve();
+  await Promise.all([tick, lease.pending]);
+  await h.tick();
+  assert.equal(h.saves.length, 1);
+  await h.flushTerminalSnapshotsNow();
+  assert.equal(h.saves.length, 2, "forced exit snapshots still work while periodic ticks are suspended");
+  h.markTerminalSnapshotDirty("live");
+  lease.resume(); lease.resume();
+  await h.tick();
+  assert.equal(h.saves.length, 3);
+});
 
 test("idle sources do not serialize and unregister stops the timer", async () => {
   const h = harness();

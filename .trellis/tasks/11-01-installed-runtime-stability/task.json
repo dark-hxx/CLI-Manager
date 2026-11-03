@@ -1,0 +1,39 @@
+{
+  "id": "installed-runtime-stability",
+  "name": "installed-runtime-stability",
+  "title": "Installed runtime stability: exit, daemon recovery and OOM diagnostics",
+  "description": "Root-cause runtime hardening for bounded exit preparation, nonblocking diagnostics and daemon control, and native Windows commit-memory evidence. Preserve background tasks and existing session recovery.",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "runtime-stability",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/app/App.tsx",
+    "src/features/terminal/api/sessionSnapshotPersistence.ts",
+    "src/features/terminal/api/terminalExitCleanup.ts",
+    "src/features/terminal/hooks/useXTermController.ts",
+    "src/features/sync/api/syncStore.ts",
+    "src-tauri/src/features/terminal/commands.rs",
+    "src-tauri/src/infrastructure/daemon/client.rs",
+    "src-tauri/src/infrastructure/diagnostics/crash_reporter.rs",
+    "scripts/terminalExitCleanup.test.mjs",
+    "scripts/terminalSnapshotPersistence.test.mjs"
+  ],
+  "notes": "Task creation and implementation approved on 2026-11-01. Source hardening and scoped regressions implemented; see implement.md and research/verification.md for completed checks and remaining installed-app/manual acceptance. No install replacement, commit or release performed. Changelog version remains TEMP; task remains in_progress until acceptance closes.",
+  "meta": {
+    "changelog_version": "TEMP"
+  }
+}

@@ -4,12 +4,12 @@ use crate::daemon::protocol::{
     ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
 };
 use crate::provider::scope::{self, ProviderLaunchConfig};
-use crate::pty::manager::{PtyOrphanCleanupSummary, PtyProcessStatus};
+use crate::pty::manager::PtyOrphanCleanupSummary;
 use crate::ssh_launch::SshLaunchPlan;
 use log::{debug, warn};
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tauri::AppHandle;
 use uuid::Uuid;
@@ -18,6 +18,23 @@ const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
 const DAEMON_READY_WAIT_INTERVAL: Duration = Duration::from_millis(100);
 static DAEMON_UPGRADE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DAEMON_RECOVERY_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static CONTROL_WORKERS: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+
+// The blocking worker owns its permit even if its IPC future is cancelled; socket waits never occupy async workers.
+async fn daemon_control<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let permit = Arc::clone(CONTROL_WORKERS.get_or_init(|| Arc::new(tokio::sync::Semaphore::new(4))))
+        .acquire_owned()
+        .await
+        .map_err(|_| "daemon_control_workers_closed".to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+        .await
+        .map_err(|err| format!("daemon control worker failed: {err}"))?
+}
 
 // SSH 启动丢弃全部本机供应商快照配置，本机启动则原样保留各应用配置。
 fn provider_launch_configs(
@@ -96,17 +113,20 @@ async fn upgrade_daemon_if_idle(
     if daemon_is_current(&client) {
         return Ok(Some((client, false)));
     }
-    if client.list()?.iter().any(|session| session.alive) {
+    let sessions = daemon_control({
+        let client = client.clone();
+        move || client.list()
+    }).await?;
+    if sessions.iter().any(|session| session.alive) {
         return Ok(None);
     }
-    client.shutdown_if_idle()?;
+    daemon_control(move || client.shutdown_if_idle()).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
     let data_dir = crate::app_paths::cli_manager_data_dir()?;
-    let replacement = crate::daemon::client::connect_or_spawn(
-        app_handle.clone(),
-        &data_dir,
-        cfg!(debug_assertions),
-    )?;
+    let handle = app_handle.clone();
+    let replacement = daemon_control(move || {
+        crate::daemon::client::connect_or_spawn(handle, &data_dir, cfg!(debug_assertions))
+    }).await?;
     if !daemon_is_current(&replacement) {
         return Err("pty_host_upgrade_failed".to_string());
     }
@@ -249,24 +269,12 @@ pub async fn pty_reconcile_active_sessions(
         "pty_reconcile_active_sessions requested: active_count={}",
         active_session_ids.len()
     );
-    let summary = daemon_bridge
-        .get()
-        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?
-        .reconcile(active_session_ids)?;
+    let client = wait_for_daemon(&daemon_bridge)
+        .await
+        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
+    let summary = daemon_control(move || client.reconcile(active_session_ids)).await?;
     serde_json::from_value(summary)
         .map_err(|err| format!("daemon reconcile summary parse failed: {err}"))
-}
-
-#[tauri::command]
-// 从已连接守护进程获取全部 PTY 进程状态，桥接不可用时报错。
-pub async fn pty_status(
-    daemon_bridge: tauri::State<'_, DaemonBridge>,
-) -> Result<HashMap<String, PtyProcessStatus>, String> {
-    debug!("pty_status requested");
-    daemon_bridge
-        .get()
-        .ok_or_else(|| "PtyHost daemon unavailable".to_string())?
-        .status_all()
 }
 
 /// daemon 是否可用（前端"转入后台=真退出"分支判定）。
@@ -287,6 +295,7 @@ pub async fn pty_daemon_shutdown_if_idle(
         return Ok(false);
     };
 
+    daemon_control(move || {
     let status_id = client.next_request_id();
     if let Ok(DaemonFrame::RoutingEvent { event }) =
         client.request(status_id, &ClientFrame::RoutingStatus { id: status_id })
@@ -304,15 +313,18 @@ pub async fn pty_daemon_shutdown_if_idle(
     }
     client.shutdown_if_idle()?;
     Ok(true)
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn pty_daemon_force_shutdown(
-    app_handle: AppHandle,
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<bool, String> {
-    let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
-    client.force_shutdown()?;
+    let Some(client) = daemon_bridge.get() else {
+        return Ok(false);
+    };
+    daemon_control(move || client.force_shutdown()).await?;
     Ok(true)
 }
 
@@ -407,7 +419,7 @@ pub async fn pty_legacy_request(
         .map_err(|err| format!("invalid legacy PtyHost request: {err}"))?;
     let id = legacy_client_frame_id(&frame).map_err(str::to_string)?;
     let client = ensure_daemon(&app_handle, &daemon_bridge).await?;
-    let reply = client.request(id, &frame)?;
+    let reply = daemon_control(move || client.request(id, &frame)).await?;
     serde_json::to_value(reply).map_err(|err| err.to_string())
 }
 
@@ -428,13 +440,14 @@ pub async fn pty_daemon_upgrade_if_idle(
 /// daemon 中的会话列表（启动恢复时优先 attach 的依据）。
 #[tauri::command]
 // 等待守护进程后返回会话元数据，日志仅记录总量和存活数量。
+// 前端每 3s 轮询此命令，只等待已有连接，不拉起 daemon。
 pub async fn pty_daemon_sessions(
     daemon_bridge: tauri::State<'_, DaemonBridge>,
 ) -> Result<Vec<SessionMeta>, String> {
     let client = wait_for_daemon(&daemon_bridge)
         .await
         .ok_or_else(|| "PtyHost daemon unavailable".to_string())?;
-    let sessions = client.list()?;
+    let sessions = daemon_control(move || client.list()).await?;
     let alive_count = sessions.iter().filter(|session| session.alive).count();
     debug!(
         "pty_daemon_sessions requested: count={}, alive_count={}",
@@ -447,12 +460,27 @@ pub async fn pty_daemon_sessions(
 #[cfg(test)]
 mod tests {
     use super::{
-        daemon_contract_is_current, legacy_client_frame_id, provider_launch_configs,
+        daemon_contract_is_current, daemon_control, legacy_client_frame_id, provider_launch_configs,
         ProviderLaunchConfig,
     };
     use crate::daemon::protocol::{
         ClientFrame, FEATURE_WS_BINARY_OUTPUT, ROUTING_ERROR_PROTOCOL_UNSUPPORTED,
     };
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn daemon_control_waits_leave_the_async_runtime_responsive() {
+        use std::sync::mpsc::channel;
+        use std::time::Duration;
+        let (progressed, observed) = channel();
+        let (result, ()) = tokio::join!(
+            daemon_control(move || Ok(observed.recv_timeout(Duration::from_secs(2)).is_ok())),
+            async {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+                let _ = progressed.send(());
+            }
+        );
+        assert!(result.unwrap(), "a daemon socket wait must not block unrelated async tasks");
+    }
 
     // 构造三种供应商启动配置测试值，仅用于检查 SSH 分支是否保留输入。
     fn configs() -> (

@@ -29,6 +29,10 @@ use clipboard_files::read_clipboard_file_paths;
 #[path = "commands/clipboard_import.rs"]
 pub mod clipboard_import;
 use path_guards::{move_paths_ignore_case, path_components_equal, path_starts_with_components};
+#[path = "commands/bounded_read.rs"]
+mod bounded_read;
+#[path = "commands/replay_patch.rs"]
+pub mod replay_patch;
 
 const TEXT_FILE_MAX_BYTES: u64 = 1024 * 1024;
 const IMAGE_FILE_MAX_BYTES: u64 = 5 * 1024 * 1024;
@@ -670,8 +674,10 @@ fn read_text_file_bytes(root_path: &str, relative_path: &str) -> Result<(Vec<u8>
     if metadata.len() > TEXT_FILE_MAX_BYTES {
         return Err("file_too_large".into());
     }
-    let bytes = fs::read(&path).map_err(|err| format!("read_file_failed: {err}"))?;
-    Ok((bytes, metadata.len()))
+    let file = fs::File::open(&path).map_err(|err| format!("read_file_failed: {err}"))?;
+    let bytes = bounded_read::read_bounded(file, TEXT_FILE_MAX_BYTES)?;
+    let size_bytes = bytes.len() as u64;
+    Ok((bytes, size_bytes))
 }
 // 解析目标并校验父目录和已有目标，随后写入文本字节。
 fn write_text_file_bytes(

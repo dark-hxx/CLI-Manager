@@ -35,12 +35,12 @@ impl DaemonHost {
         let mut exited = Vec::new();
         for (id, session) in handles {
             if let Ok(entry) = session.try_lock() {
-                total = total.saturating_add(entry.buffer.total_bytes);
+                total = total.saturating_add(entry.buffer.resident_bytes());
                 if !entry.meta.alive {
                     exited.push((id, entry.meta.created_at_ms, Arc::clone(&session)));
                 }
             } else {
-                total = total.saturating_add(SESSION_BUFFER_MAX_BYTES);
+                total = total.saturating_add(SESSION_BUFFER_MAX_BYTES + MAX_FRAME_BYTES);
             }
         }
         exited.sort_by_key(|(_, created, _)| *created);
@@ -62,7 +62,7 @@ impl DaemonHost {
                 .is_some_and(|current| Arc::ptr_eq(current, &session))
             {
                 sessions.remove(&id);
-                total = total.saturating_sub(entry.buffer.total_bytes);
+                total = total.saturating_sub(entry.buffer.resident_bytes());
             }
         }
     }

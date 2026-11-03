@@ -5,6 +5,8 @@ export const zh = {
   "app.exitProgress.syncConflict": "云端与本地都有更新，本次退出未同步，可下次启动后在同步设置中手动处理。",
   "app.exitProgress.syncFailed": "退出自动同步失败，已跳过。请检查 WebDAV 配置或网络连接。",
   "app.exitProgress.syncTimeout": "退出自动同步超过 8 秒，已跳过并继续退出。",
+  "app.exitProgress.cleanupFailed": "退出清理失败或超时，窗口保持打开。请检查日志，并等待未结束的操作完成后重试。",
+  "app.exitProgress.cleanupPending": "上一次退出操作仍在等待，请勿强制关闭应用，待操作结束后再重试。",
   "app.init.failedTitle": "启动失败",
   "app.init.failedDescription": "应用启动时遇到错误，下面是本次启动的异常信息。先看这段报错，我们就能更快定位问题。",
   "app.init.loading": "正在启动 CLI-Manager",

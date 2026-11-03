@@ -1,3 +1,0 @@
-{"file":".trellis/spec/frontend/workspace-session-restore-contracts.md","reason":"验证 ask/auto、每进程一次、daemon/CLI/shell/布局恢复契约"}
-{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"前端类型与质量检查规范"}
-{"file":".trellis/spec/guides/task-delivery-checklist.md","reason":"验证 CHANGELOG、功能清单、diff 和交付范围"}

@@ -1,5 +1,0 @@
-{"file":".trellis/spec/frontend/component-guidelines.md","reason":"复用共享 MarkdownContent、SessionTranscriptContent，并遵守终端分屏组件身份与拖动性能约定。"}
-{"file":".trellis/spec/frontend/history-session-contracts.md","reason":"覆盖历史 detail、后台刷新、SSH 远端历史和 session 作用域边界。"}
-{"file":".trellis/spec/backend/history-index-contracts.md","reason":"确认 catalog 快路径、history_refresh_index 以及本地/远端最新历史读取约束。"}
-{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"确认 turn 完成事件的重试、去重和安全 session/Tab 绑定要求。"}
-{"file":".trellis/spec/frontend/state-management.md","reason":"确认 terminalStore 中 transient session state、稳定 selector 和 pane identity 约定。"}

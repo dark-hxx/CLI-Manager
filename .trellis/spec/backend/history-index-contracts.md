@@ -1,5 +1,13 @@
 # History List and Search Index Contracts
 
+## Detail page IPC (TEMP, 2026-11-01)
+
+- `commands::history::detail_page::history_get_session_page` is registered at its command macro owner, not via a function re-export. Existing `history_get_session` remains complete and unchanged.
+- The v2 detail reader accepts an optional offset/limit/revision window. Messages and parts use the same ordered SQL window; heavy usage/tool/file-change rows are not fetched on the paged path. No schema migration or persisted format change.
+- Metadata/messages/parts share one read transaction, also for the existing v2 complete adapter, so background materialization cannot mix catalog revisions between SELECTs. Success/failure rolls back the read-only transaction; nested callers use SQLx savepoint semantics.
+- The page revision includes catalog row identity, indexed fingerprint and update time. Every request also verifies the current source fingerprint/deletion as before. Continuation cannot fall back to live parsing; mismatches return `history_page_changed`. Initial uncached reads keep the complete legacy/remote adapter.
+- Bounded offset validation and at most 160 messages per page do not constitute a byte cap on one unusually large message. Explicit complete detail requests and legacy parsers retain existing allocation semantics.
+
 ## Scenario: Cached history list and full-text search
 
 ### 1. Scope / Trigger

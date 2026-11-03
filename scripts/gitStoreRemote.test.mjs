@@ -75,7 +75,7 @@ test("opening the same file location preserves the loaded tree", () => {
   const locationComparison = terminalProjectSource.slice(locationStart, locationEnd);
   assert.doesNotMatch(locationComparison, /left\.id !== right\.id/);
   assert.match(locationComparison, /left\.ssh_host_id === right\.ssh_host_id/);
-  assert.match(locationComparison, /normalizeProjectPath\(left\.path\)/);
+  assert.match(locationComparison, /fileOperationRootKey\(left\.path\)/);
 
   const openProjectStart = fileStoreSource.indexOf("openProject: async");
   const openProjectEnd = fileStoreSource.indexOf("closeProject:", openProjectStart);

@@ -196,9 +196,12 @@ export function getDeepSeekTuiLaunchSessionId(launch: ResolvedPtyLaunch): string
   return id || undefined;
 }
 
-export function buildDirectCodexLaunchCommand(command: string): string {
+// 直启 Codex 前先清屏，避免旧 Shell 输出残留导致 TUI 只在下半屏滚动。
+// Ctrl+L（\x0c）依赖行编辑器的清屏绑定（PSReadLine/readline/zle/fish）；cmd.exe 没有该绑定，
+// 会把它回显成 ^L 并拼进命令行，所以 cmd 改用内置 cls 链式清屏。
+export function buildDirectCodexLaunchCommand(command: string, shell?: ShellKey | null): string {
   const normalized = normalizeDirectCodexStartupCommand(command) ?? command.trim();
-  return `\x0c${normalized}`;
+  return shell === "cmd" ? `cls & ${normalized}` : `\x0c${normalized}`;
 }
 
 // PTY 写入前再次规范化，兼容手动调用和旧会话延迟重放；已准备的单行命令不会重复修改。
@@ -206,7 +209,7 @@ export function buildDirectCodexLaunchCommand(command: string): string {
 export function formatStartupInputForPty(command: string, shell?: ShellKey | null): string {
   const singleLineCommand = joinStartupCommandLines(command, shell ?? null);
   if (!isDirectCodexStartupCommand(singleLineCommand)) return `${singleLineCommand}\r`;
-  return `${buildDirectCodexLaunchCommand(singleLineCommand)}\r`;
+  return `${buildDirectCodexLaunchCommand(singleLineCommand, shell)}\r`;
 }
 
 export function formatManualDirectCodexInputForPty(command: string, shell?: ShellKey | null): string {

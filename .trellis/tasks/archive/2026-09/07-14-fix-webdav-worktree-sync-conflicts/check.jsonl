@@ -1,3 +1,0 @@
-{"file": ".trellis/spec/backend/webdav-sync-contracts.md", "reason": "Check remote snapshot compatibility, conflict resolution semantics, and required tsc/cargo validation."}
-{"file": ".trellis/spec/frontend/state-management.md", "reason": "Check store updates refresh project and worktree state without persisting transient conflict state incorrectly."}
-{"file": ".trellis/spec/backend/worktree-isolation-contracts.md", "reason": "Check worktree records remain durable project state and are not tied to terminal sessions."}

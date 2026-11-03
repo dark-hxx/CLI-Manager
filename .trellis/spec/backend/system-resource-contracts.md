@@ -16,6 +16,7 @@
 - `physicalCoreCount` is the physical CPU core count from `System::physical_core_count()`.
 - `logicalProcessorCount` is `System::cpus().len()` and matches the per-logical-processor `cpuCores` entries.
 - If the physical core count is unavailable or zero, fall back to `logicalProcessorCount`.
+- The command is asynchronous. Collector initialization, locking and sampling run in a blocking worker, with one shared permit acquired before spawning; concurrent callers (resource panel + toolbar CPU meter) wait asynchronously for that permit instead of failing, so no blocking-thread queue builds up and the UI never shows a transient busy error. Each frontend poller keeps its own in-flight guard, bounding waiters by mounted instances. The worker owns the permit even if its IPC waiter is canceled. Existing per-section cache clocks and response fields are unchanged.
 - UI topology text must distinguish cores from threads in both `zh-CN` and `en-US`.
 
 ### 4. Validation & Error Matrix

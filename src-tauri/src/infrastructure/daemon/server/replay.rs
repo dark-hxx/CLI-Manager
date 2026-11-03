@@ -1,14 +1,25 @@
 use super::super::protocol::{ReplayEntry, MAX_FRAME_BYTES};
+use super::checkpoint_budget::CheckpointBudget;
+#[cfg(test)]
+use super::checkpoint_budget::CHECKPOINT_MEMORY_MAX_BYTES;
 use super::{SESSION_BUFFER_MAX_BYTES, SESSION_SPOOL_MAX_BYTES};
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::Mutex;
+#[path = "spool_cursor_index.rs"]
+mod spool_cursor_index;
+use spool_cursor_index::SpoolCursorIndex;
 
 #[path = "mouse_snapshot.rs"]
 mod mouse_snapshot;
+#[cfg(test)]
+#[path = "replay_storage_tests.rs"]
+mod storage_tests;
 
 #[derive(Clone)]
 pub(super) struct ReplayFrame {
@@ -27,6 +38,10 @@ pub(super) struct SessionBuffer {
     pub(super) spool_bytes: usize,
     pub(super) checkpoint: Option<ReplayFrame>,
     pub(super) truncated: bool,
+    checkpoint_budget: Arc<CheckpointBudget>,
+    minimum_sequence: u64,
+    spool_failed: bool,
+    spool_index: Mutex<SpoolCursorIndex>,
 }
 
 impl SessionBuffer {
@@ -36,8 +51,19 @@ impl SessionBuffer {
         Self::with_spool(None)
     }
 
+    #[cfg(test)]
     // 初始化空内存缓冲及可选 spool 路径；不创建文件，也不恢复已有文件的字节计数。
     pub(super) fn with_spool(spool_path: Option<PathBuf>) -> Self {
+        Self::with_budget(
+            spool_path,
+            Arc::new(CheckpointBudget::new(CHECKPOINT_MEMORY_MAX_BYTES)),
+        )
+    }
+
+    pub(super) fn with_budget(
+        spool_path: Option<PathBuf>,
+        checkpoint_budget: Arc<CheckpointBudget>,
+    ) -> Self {
         Self {
             frames: VecDeque::new(),
             total_bytes: 0,
@@ -45,6 +71,10 @@ impl SessionBuffer {
             spool_bytes: 0,
             checkpoint: None,
             truncated: false,
+            checkpoint_budget,
+            minimum_sequence: 0,
+            spool_failed: false,
+            spool_index: Mutex::new(SpoolCursorIndex::default()),
         }
     }
 
@@ -58,15 +88,29 @@ impl SessionBuffer {
             sequence,
             data: data.to_vec(),
         });
-        while self.total_bytes > SESSION_BUFFER_MAX_BYTES {
+        while self.total_bytes > SESSION_BUFFER_MAX_BYTES || self.frames.len() > 16_384 {
             let Some(front) = self.frames.pop_front() else {
                 break;
             };
-            if let Err(err) = self.append_spooled_frame(&front) {
-                log::warn!("daemon session spool write failed, retaining frame in memory: {err}");
-                self.frames.push_front(front);
-                break;
+            if self.spool_bytes > SESSION_SPOOL_MAX_BYTES {
+                self.enforce_spool_cap();
             }
+            if let Err(err) = self.append_spooled_frame(&front) {
+                if !self.spool_failed {
+                    log::warn!("daemon session spool unavailable; keeping bounded replay tail, marking truncation: {err}");
+                }
+                self.spool_failed = true;
+                self.truncated = true;
+                self.minimum_sequence = front.sequence.saturating_add(1);
+                self.discard_checkpoint();
+                self.total_bytes = self.total_bytes.saturating_sub(front.data.len());
+                continue;
+            }
+            if self.spool_failed {
+                // Only the newly committed suffix is safe to replay after a spool failure.
+                self.minimum_sequence = front.sequence;
+            }
+            self.spool_failed = false;
             self.total_bytes = self.total_bytes.saturating_sub(front.data.len());
             self.enforce_spool_cap();
         }
@@ -120,10 +164,31 @@ impl SessionBuffer {
     /// 只能通过 replay/reset 边界消费，不能拼接到现有 live terminal。
     // 按磁盘记录在前、内存帧在后的顺序收集原始事件，不包含检查点也不重新排序。
     pub(super) fn live_frames(&self) -> Vec<ReplayFrame> {
-        self.read_spooled_frames()
-            .into_iter()
-            .chain(self.frames.iter().cloned())
-            .collect()
+        self.live_frames_after(0, usize::MAX)
+    }
+
+    pub(super) fn live_frames_after(
+        &self,
+        after_sequence: u64,
+        max_bytes: usize,
+    ) -> Vec<ReplayFrame> {
+        let mut frames = self.read_spooled_frames_after(after_sequence, max_bytes);
+        let mut bytes = frames
+            .iter()
+            .map(|frame| frame.data.len() + 16)
+            .sum::<usize>();
+        for frame in self
+            .frames
+            .iter()
+            .filter(|frame| frame.sequence > after_sequence)
+        {
+            if bytes >= max_bytes {
+                break;
+            }
+            bytes = bytes.saturating_add(frame.data.len() + 16);
+            frames.push(frame.clone());
+        }
+        frames
     }
 
     // 从给定帧快照中借用游标之后的非空输出，排除仅改变尺寸的空事件。
@@ -152,7 +217,7 @@ impl SessionBuffer {
             .as_ref()
             .map(|frame| frame.sequence)
             .or_else(|| {
-                self.read_spooled_frames()
+                self.read_spooled_frames_after(0, 1)
                     .first()
                     .map(|frame| frame.sequence)
             })
@@ -175,6 +240,19 @@ impl SessionBuffer {
         {
             return Ok(());
         }
+        if data.len() > MAX_FRAME_BYTES {
+            return Err("checkpoint_exceeds_frame_limit".into());
+        }
+        let previous_bytes = self.checkpoint.as_ref().map_or(0, |frame| frame.data.len());
+        let reserved = data.len().saturating_sub(previous_bytes);
+        self.checkpoint_budget.replace(0, reserved)?;
+        let retained = self.read_spooled_frames_after(sequence, usize::MAX);
+        if let Err(err) = self.write_spooled_frames(&retained) {
+            self.checkpoint_budget.release(reserved);
+            return Err(err);
+        }
+        self.checkpoint_budget
+            .release(previous_bytes.saturating_sub(data.len()));
         self.checkpoint = Some(ReplayFrame {
             cols,
             rows,
@@ -190,12 +268,24 @@ impl SessionBuffer {
                 self.total_bytes = self.total_bytes.saturating_sub(frame.data.len());
             }
         }
-        let retained: Vec<ReplayFrame> = self
-            .read_spooled_frames()
-            .into_iter()
-            .filter(|frame| frame.sequence > sequence)
-            .collect();
-        self.write_spooled_frames(&retained)
+        Ok(())
+    }
+
+    fn discard_checkpoint(&mut self) {
+        if let Some(frame) = self.checkpoint.take() {
+            self.checkpoint_budget.release(frame.data.len());
+        }
+    }
+
+    pub(super) fn resident_bytes(&self) -> usize {
+        self.total_bytes
+            .saturating_add(self.checkpoint.as_ref().map_or(0, |frame| frame.data.len()))
+            .saturating_add(self.frames.len() * std::mem::size_of::<ReplayFrame>())
+            .saturating_add(
+                self.spool_index
+                    .lock()
+                    .map_or(0, |index| index.resident_bytes()),
+            )
     }
 
     // 根据检查点、缓存的 spool 字节数或内存帧判断可回放性，不探测磁盘是否仍可读。
@@ -216,12 +306,37 @@ impl SessionBuffer {
             .append(true)
             .open(path)
             .map_err(|err| err.to_string())?;
-        file.write_all(&frame.cols.to_be_bytes())
+        let mut previous_len = file.metadata().map_err(|err| err.to_string())?.len();
+        if previous_len > self.spool_bytes as u64 {
+            // Retry rollback before appending if a prior failed write left a partial tail.
+            file.set_len(self.spool_bytes as u64)
+                .map_err(|err| format!("spool_tail_invalid: {err}"))?;
+            previous_len = self.spool_bytes as u64;
+        }
+        if previous_len > SESSION_SPOOL_MAX_BYTES as u64 {
+            return Err("spool_capacity_unavailable".into());
+        }
+        let result = file
+            .write_all(&frame.cols.to_be_bytes())
             .and_then(|_| file.write_all(&frame.rows.to_be_bytes()))
             .and_then(|_| file.write_all(&frame.sequence.to_be_bytes()))
             .and_then(|_| file.write_all(&(frame.data.len() as u32).to_be_bytes()))
             .and_then(|_| file.write_all(&frame.data))
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| err.to_string());
+        if let Err(err) = result {
+            // A partial record must not corrupt every later append after storage recovers.
+            file.set_len(previous_len)
+                .map_err(|rollback| format!("{err}; spool_rollback_failed: {rollback}"))?;
+            return Err(err);
+        }
+        if let Ok(mut index) = self.spool_index.lock() {
+            index.append(
+                frame.sequence,
+                previous_len,
+                previous_len + 16 + frame.data.len() as u64,
+                file.metadata().ok().and_then(|m| m.modified().ok()),
+            );
+        }
         Ok(())
     }
 
@@ -230,16 +345,23 @@ impl SessionBuffer {
     pub(super) fn write_spooled_frames(&mut self, frames: &[ReplayFrame]) -> Result<(), String> {
         let Some(path) = self.spool_path.as_ref() else {
             self.spool_bytes = 0;
+            self.spool_index = Mutex::new(SpoolCursorIndex::default());
             return Ok(());
         };
         if frames.is_empty() {
-            let _ = std::fs::remove_file(path);
+            if let Err(err) = std::fs::remove_file(path) {
+                if err.kind() != std::io::ErrorKind::NotFound {
+                    return Err(err.to_string());
+                }
+            }
             self.spool_bytes = 0;
+            self.spool_index = Mutex::new(SpoolCursorIndex::default());
             return Ok(());
         }
         let temp_path = path.with_extension("tmp");
         let mut file = File::create(&temp_path).map_err(|err| err.to_string())?;
         let mut bytes = 0usize;
+        let mut next_index = SpoolCursorIndex::default();
         for frame in frames {
             file.write_all(&frame.cols.to_be_bytes())
                 .and_then(|_| file.write_all(&frame.rows.to_be_bytes()))
@@ -247,14 +369,29 @@ impl SessionBuffer {
                 .and_then(|_| file.write_all(&(frame.data.len() as u32).to_be_bytes()))
                 .and_then(|_| file.write_all(&frame.data))
                 .map_err(|err| err.to_string())?;
-            bytes = bytes.saturating_add(16 + frame.data.len());
+            let end = bytes.saturating_add(16 + frame.data.len());
+            next_index.append(frame.sequence, bytes as u64, end as u64, None);
+            bytes = end;
         }
         file.flush().map_err(|err| err.to_string())?;
-        if path.exists() {
-            std::fs::remove_file(path).map_err(|err| err.to_string())?;
+        drop(file);
+        let backup_path = path.with_extension("bak");
+        let had_original = path.exists();
+        if had_original {
+            std::fs::rename(path, &backup_path).map_err(|err| err.to_string())?;
         }
-        std::fs::rename(&temp_path, path).map_err(|err| err.to_string())?;
+        if let Err(err) = std::fs::rename(&temp_path, path) {
+            if had_original {
+                let _ = std::fs::rename(&backup_path, path);
+            }
+            return Err(err.to_string());
+        }
+        if had_original {
+            let _ = std::fs::remove_file(backup_path);
+        }
         self.spool_bytes = bytes;
+        next_index.set_modified(std::fs::metadata(path).ok().and_then(|m| m.modified().ok()));
+        self.spool_index = Mutex::new(next_index);
         Ok(())
     }
 
@@ -270,31 +407,53 @@ impl SessionBuffer {
         if actual <= SESSION_SPOOL_MAX_BYTES {
             return;
         }
-        let mut frames = self.read_spooled_frames();
+        let mut frames: VecDeque<ReplayFrame> = self.read_spooled_frames().into();
         let mut bytes = frames
             .iter()
             .map(|frame| 16 + frame.data.len())
             .sum::<usize>();
-        while bytes > SESSION_SPOOL_MAX_BYTES && !frames.is_empty() {
-            let removed = frames.remove(0);
+        // Reclaim a batch, not one frame per append once the cap is reached.
+        let target = SESSION_SPOOL_MAX_BYTES * 4 / 5;
+        while bytes > target && !frames.is_empty() {
+            let removed = frames.pop_front().unwrap();
             bytes = bytes.saturating_sub(16 + removed.data.len());
             self.truncated = true;
         }
-        if let Err(err) = self.write_spooled_frames(&frames) {
+        if let Err(err) = self.write_spooled_frames(frames.make_contiguous()) {
             log::warn!("daemon session spool compaction failed: {err}");
+            self.truncated = true;
+            self.minimum_sequence = self.frames.front().map_or(u64::MAX, |frame| frame.sequence);
+            self.discard_checkpoint();
+            self.spool_failed = true;
         }
     }
 
     // 顺序读取有界负载记录；路径不可用返回空，头部 EOF 或坏记录终止读取并保留已读前缀。
     pub(super) fn read_spooled_frames(&self) -> Vec<ReplayFrame> {
+        self.read_spooled_frames_after(0, usize::MAX)
+    }
+
+    fn read_spooled_frames_after(&self, after_sequence: u64, max_bytes: usize) -> Vec<ReplayFrame> {
         let Some(path) = self.spool_path.as_ref() else {
             return Vec::new();
         };
         let Ok(mut file) = File::open(path) else {
             return Vec::new();
         };
+        if let Ok(metadata) = file.metadata() {
+            let offset = self.spool_index.lock().map_or(0, |index| {
+                index.seek_offset(after_sequence, metadata.len(), metadata.modified().ok())
+            });
+            if file.seek(SeekFrom::Start(offset)).is_err() {
+                return Vec::new();
+            }
+        }
         let mut frames = Vec::new();
+        let mut bytes = 0usize;
         loop {
+            if bytes >= max_bytes {
+                break;
+            }
             let mut header = [0u8; 16];
             match file.read_exact(&mut header) {
                 Ok(()) => {}
@@ -312,6 +471,12 @@ impl SessionBuffer {
                 log::warn!("daemon session spool frame exceeds protocol limit: {data_len}");
                 break;
             }
+            if sequence <= after_sequence || sequence < self.minimum_sequence {
+                if file.seek(SeekFrom::Current(data_len as i64)).is_err() {
+                    break;
+                }
+                continue;
+            }
             let mut data = vec![0u8; data_len];
             if let Err(err) = file.read_exact(&mut data) {
                 log::warn!("daemon session spool payload read failed: {err}");
@@ -323,6 +488,7 @@ impl SessionBuffer {
                 sequence,
                 data,
             });
+            bytes = bytes.saturating_add(16 + data_len);
         }
         frames
     }
@@ -331,8 +497,11 @@ impl SessionBuffer {
 impl Drop for SessionBuffer {
     // 缓冲销毁时尽力删除其 spool 文件，清理失败不会在析构中传播。
     fn drop(&mut self) {
+        self.discard_checkpoint();
         if let Some(path) = self.spool_path.as_ref() {
             let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path.with_extension("tmp"));
+            let _ = std::fs::remove_file(path.with_extension("bak"));
         }
     }
 }
@@ -344,13 +513,18 @@ mod mouse_snapshot_tests {
     #[test]
     fn old_checkpoint_disables_unknown_mouse_but_never_rewrites_live_frames() {
         let mut buffer = SessionBuffer::new();
-        buffer.accept_checkpoint(80, 24, 10, b"screen\x1b[?1003h".to_vec()).unwrap();
+        buffer
+            .accept_checkpoint(80, 24, 10, b"screen\x1b[?1003h".to_vec())
+            .unwrap();
         let live = b"\x1b[?1003h";
         buffer.push_output(80, 24, 11, live);
         let replay = buffer.replay_frames();
         assert!(replay[0].data.ends_with(b"\x1b[?9;1000;1002;1003l"));
         assert_eq!(replay[1].data, live);
-        assert_eq!(buffer.checkpoint.as_ref().unwrap().data, b"screen\x1b[?1003h");
+        assert_eq!(
+            buffer.checkpoint.as_ref().unwrap().data,
+            b"screen\x1b[?1003h"
+        );
     }
 
     #[test]
@@ -364,7 +538,9 @@ mod mouse_snapshot_tests {
             b"partial\x1b[?1003".as_slice(),
         ] {
             let mut buffer = SessionBuffer::new();
-            buffer.accept_checkpoint(80, 24, 1, snapshot.to_vec()).unwrap();
+            buffer
+                .accept_checkpoint(80, 24, 1, snapshot.to_vec())
+                .unwrap();
             assert_eq!(buffer.replay_frames()[0].data, snapshot);
         }
     }

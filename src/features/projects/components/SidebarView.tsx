@@ -198,7 +198,7 @@ export function SidebarView({
           <FileExplorerSidebar onBackToProjects={handleBackToProjectTree} />
         ) : (
           <TreeContext.Provider value={treeActions}>
-            <div className="ui-sidebar-combined-list h-full min-h-0 overflow-y-auto overflow-x-hidden">
+            <div className="ui-autohide-scroll ui-sidebar-combined-list h-full min-h-0 overflow-y-auto overflow-x-hidden">
               <ProjectTree
                 tree={displayedTree}
                 initialLoading={initialLoading}

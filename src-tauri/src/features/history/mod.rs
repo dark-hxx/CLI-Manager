@@ -89,6 +89,7 @@ pub(crate) use index_cache::{
 };
 mod session_detail;
 mod session_query;
+pub mod detail_page;
 mod codex_lookup;
 pub(crate) use session_detail::build_session_detail;
 use session_detail::{

@@ -21,35 +21,6 @@
 
 ---
 
-## ❤️ 赞助商
-
-<p align="center">
-<a href="https://fluxionai.space/register?source=github&campaign=climanager">
-<img src="docs/img/sponsor/fluxion-ai-banner.png" width="100%" alt="Fluxion AI：AI 模型统一接入与管理平台" />
-</a>
-</p>
-
-<table>
-<tr>
-<td width="18%" align="center">
-<a href="https://fluxionai.space/register?source=github&campaign=climanager">
-<img src="docs/img/sponsor/fluxion-ai-logo.jpg" width="96" alt="Fluxion AI 标志" />
-</a>
-</td>
-<td width="82%">
-
-### [Fluxion AI](https://fluxionai.space/register?source=github&campaign=climanager)
-
-**一个入口，接入并管理全球主流 AI 模型**
-
-Fluxion AI 面向个人开发者、技术团队与企业，通过统一 API 接入全球主流 AI 模型，以多线路调度提升可用性，并集中管理模型质量、使用情况与费用。灵活的线路与计费方案带来更具竞争力的调用成本，实时价格与每笔消费公开可查。
-
-[访问 Fluxion AI →](https://fluxionai.space/register?source=github&campaign=climanager)
-
-</td>
-</tr>
-</table>
-
 ## 💡 项目简介
 
 CLI-Manager 是一款专注于 **AI CLI 工作流增强**的桌面应用，将本地与 SSH 终端、多项目管理、Claude Code / Codex 深度集成、多来源历史、Git Worktree 隔离和手机协作连接到同一工作台。

@@ -16,7 +16,6 @@ import {
   deriveDesktopPetSnapshot,
   desktopPetScale,
   normalizeDesktopPetSizePercent,
-  type BackgroundPetTask,
   type DesktopPetConfigPayload,
   type DesktopPetOpenTargetPayload,
   type DesktopPetPositionPayload,
@@ -25,7 +24,6 @@ import {
 } from "./desktopPet";
 import {
   desktopPetSnapshotFingerprint,
-  sameBackgroundPetTasks,
 } from "../lib/desktopPetTransport";
 import { debugConsoleInfo } from "../../../shared/platform/debugConsole";
 import { useI18n } from "../../../shared/i18n/index";
@@ -34,6 +32,7 @@ import { useProjectStore } from "../../projects/api/projectStore";
 import { useSessionStore } from "../../terminal/api/sessionStore";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useTerminalStore } from "../../terminal/state";
+import { useDaemonTaskInventory } from "../../terminal/api/daemonTaskInventory";
 
 interface UseDesktopPetCoordinatorOptions {
   appReady: boolean;
@@ -69,12 +68,12 @@ export function useDesktopPetCoordinator({
       ptyOutputActivityAt: state.ptyOutputActivityAt,
     }))
   );
-  const [backgroundTasks, setBackgroundTasks] = useState<BackgroundPetTask[]>([]);
   const [activityExpiryRevision, setActivityExpiryRevision] = useState(0);
   const petWindowVisible = appReady
     && settingsLoaded
     && desktopPet.enabled
     && !(desktopPet.autoHideFullscreen && terminalFullscreen);
+  const { tasks: backgroundTasks } = useDaemonTaskInventory(petWindowVisible);
 
   useEffect(() => {
     if (!petWindowVisible) return;
@@ -243,33 +242,6 @@ export function useDesktopPetCoordinator({
     }
   }, []);
 
-  useEffect(() => {
-    if (!petWindowVisible) {
-      setBackgroundTasks((current) => (current.length === 0 ? current : []));
-      return;
-    }
-    let disposed = false;
-    const refresh = async () => {
-      try {
-        const tasks = await invoke<BackgroundPetTask[]>("pty_daemon_sessions");
-        if (!disposed) {
-          setBackgroundTasks((current) => (
-            sameBackgroundPetTasks(current, tasks) ? current : tasks
-          ));
-        }
-      } catch {
-        if (!disposed) {
-          setBackgroundTasks((current) => (current.length === 0 ? current : []));
-        }
-      }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 3000);
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [petWindowVisible]);
 
   useEffect(() => {
     if (!appReady || !settingsLoaded) return;

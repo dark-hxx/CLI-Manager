@@ -206,6 +206,7 @@ export function PaneLeafView({
                 <FileEditorPane
                   session={session}
                   isActive={!historyActive && isLayoutVisible && session.id === activeSessionId}
+                  isVisible={!historyActive && isLayoutVisible && session.id === effectivePaneActiveSessionId}
                   terminalThemeBackground={terminalThemeBackground}
                   onClose={() => onCloseSessions([session.id])}
                 />

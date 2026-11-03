@@ -29,7 +29,7 @@ test("terminal image addon probes the actual WebAssembly CSP gate before loading
   assert.match(terminalSource, /if \(!canUseTerminalImageAddonWasm\(\)\) \{/);
   assert.match(
     terminalSource,
-    /if \(initialWebglReady\) \{[\s\S]*?if \(!canUseTerminalImageAddonWasm\(\)\) \{[\s\S]*?\} else \{[\s\S]*?terminal\.loadAddon\(imageAddon\);/,
+    /if \(initialWebglReady \|\| !isVisibleRef\.current\) \{[\s\S]*?if \(!canUseTerminalImageAddonWasm\(\)\) \{[\s\S]*?\} else \{[\s\S]*?terminal\.loadAddon\(imageAddon\);/,
   );
   assert.match(terminalSource, /terminalRef\.current = terminal;/);
 });

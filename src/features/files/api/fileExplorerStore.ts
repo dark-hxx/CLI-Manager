@@ -17,6 +17,7 @@ import { isSameProjectFileContext, isSameProjectFileLocation } from "../../termi
 import { projectSupportsCapability } from "../../projects/api/projectCapabilities";
 import { activateProjectFileSurface } from "../../git/api/gitDiffWorkspaceStore";
 import { isFileExplorerIgnoreCaseInsensitive } from "../lib/fileExplorerIgnore";
+import { fileContentKey, protectFileSave } from "../lib/fileContentResidency";
 import {
   fileActionEntries, fileOperationRootKey, filePathContains, normalizeFileOperationEntries, runFileOperationBatch, selectFileEntries,
   type FileBatchResult, type FileOperationEntry, type FileOperationMode,
@@ -57,6 +58,7 @@ interface NativeClipboardSnapshot {
 }
 
 export interface ActiveProjectFile {
+  dehydrated?: boolean;
   path: string;
   name: string;
   previewKind: ProjectFilePreviewKind;
@@ -341,6 +343,7 @@ const SEARCH_DEBOUNCE_MS = 220;
 let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let searchRequestSeq = 0;
 let openProjectRequestSeq = 0;
+let openFileRequestSeq = 0;
 const inFlightGitChangeRequests = new Map<string, Promise<GitFileChange[]>>();
 const nonGitProjectPaths = new Set<string>();
 let refreshVisibleStateInFlight: Promise<void> | null = null;
@@ -940,6 +943,10 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         return;
       }
       set({ tree, gitChanges, loading: false });
+      const active = get().activeFile;
+      if (active?.dehydrated) void get().openFile({ ...active, kind: "file" }).catch(err => {
+        toast.error(translateCurrent("files.toast.previewFailed"), { description: fileReadErrorMessage(err) });
+      });
     } catch (err) {
       if (requestSeq !== openProjectRequestSeq || !isSameProjectFileContext(get().project, project)) return;
       if (get().remoteFileContext === remoteContext) {
@@ -1124,7 +1131,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
         const changed = file.modifiedMs !== (latestEntry.modifiedMs ?? null)
           || file.sizeBytes !== latestEntry.sizeBytes;
-        if (!changed) {
+        if (!changed || file.dehydrated) {
           nextOpenFiles.push(baseFile);
           continue;
         }
@@ -1343,7 +1350,9 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       previewKind: isImage(entry.path) ? "image" : isMarkdown(entry.path) ? "markdown" : "text",
     });
     const existing = get().openFiles.find((file) => file.path === entry.path);
-    if (existing) {
+    const requestSeq = ++openFileRequestSeq;
+    const projectSeq = openProjectRequestSeq;
+    if (existing && !existing.dehydrated) {
       set({ activeFilePath: existing.path, activeFile: existing });
       return;
     }
@@ -1352,18 +1361,29 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     set({ loading: true });
     try {
       const { file, errorMessage } = await loadProjectFile(project, entry, remoteFileContext);
+      if (existing?.dehydrated && projectSeq !== openProjectRequestSeq) return;
+      if (existing?.dehydrated && errorMessage) {
+        if (isSameProjectFileLocation(get().project, project)) set({ loading: false });
+        toast.warning(translateCurrent("files.toast.previewFailed"), { description: errorMessage });
+        return;
+      }
       set((state) => {
         if (isSameProjectFileLocation(state.project, project)) {
+          if (existing?.dehydrated && !state.openFiles.some(item => item.path === file.path)) return { loading: false };
           const openFiles = state.openFiles.some((item) => item.path === file.path)
-            ? state.openFiles
+            ? state.openFiles.map(item => item.path === file.path && item.dehydrated ? file : item)
             : [...state.openFiles, file];
+          if (projectSeq !== openProjectRequestSeq || requestSeq !== openFileRequestSeq) {
+            return { openFiles, loading: false };
+          }
           const activeFile = openFiles.find((item) => item.path === file.path) ?? file;
           return { loading: false, openFiles, activeFilePath: activeFile.path, activeFile };
         }
         const workspace = findEditorWorkspace(state.editorWorkspaces, project);
         if (!workspace) return state;
+        if (existing?.dehydrated && !workspace.openFiles.some(item => item.path === file.path)) return state;
         const openFiles = workspace.openFiles.some((item) => item.path === file.path)
-          ? workspace.openFiles
+          ? workspace.openFiles.map(item => item.path === file.path && item.dehydrated ? file : item)
           : [...workspace.openFiles, file];
         return {
           editorWorkspaces: upsertEditorWorkspace(state.editorWorkspaces, project, openFiles, file.path),
@@ -1373,20 +1393,22 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
         toast.warning(translateCurrent("files.toast.previewFailed"), { description: errorMessage });
       }
     } catch (err) {
-      if (isSameProjectFileLocation(get().project, project)) set({ loading: false });
+      if (projectSeq === openProjectRequestSeq && isSameProjectFileLocation(get().project, project)) set({ loading: false });
       throw err;
     }
   },
 
   openFileAtSearchMatch: async (match) => {
     const project = get().project;
+    const projectSeq = openProjectRequestSeq;
     await get().openFile({
       name: match.name,
       path: match.path,
       kind: "file",
       sizeBytes: 0,
     });
-    if (!isSameProjectFileLocation(get().project, project)) return;
+    if (projectSeq !== openProjectRequestSeq || !isSameProjectFileLocation(get().project, project)
+      || get().activeFilePath !== match.path) return;
     set({
       searchNavigationTarget: {
         path: match.path,
@@ -1399,6 +1421,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
   revealPath: async (path, options) => {
     const project = get().project;
+    const projectSeq = openProjectRequestSeq;
     if (!project) return false;
     const normalizedPath = path.replace(/\\/g, "/").replace(/^\/+|\/+$/gu, "");
     if (!normalizedPath || normalizedPath.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
@@ -1441,7 +1464,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       await resolveChildren(target.path);
     }
 
-    if (!isSameProjectFileLocation(get().project, project)) return false;
+    if (projectSeq !== openProjectRequestSeq || !isSameProjectFileLocation(get().project, project)) return false;
 
     set((state) => ({
       tree: loadedDirs.reduce(
@@ -1462,7 +1485,8 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
 
     if (target.kind === "directory") return true;
     await get().openFile(target);
-    if (options?.lineNumber && isSameProjectFileLocation(get().project, project)) {
+    if (options?.lineNumber && projectSeq === openProjectRequestSeq
+      && isSameProjectFileLocation(get().project, project) && get().activeFilePath === target.path) {
       set({
         searchNavigationTarget: {
           path: target.path,
@@ -1482,6 +1506,13 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
   setActiveFilePath: (path) => {
     const file = get().openFiles.find((item) => item.path === path) ?? null;
     if (!file) return;
+    if (file.dehydrated) {
+      void get().openFile({ ...file, kind: "file" }).catch(err => {
+        toast.error(translateCurrent("files.toast.previewFailed"), { description: fileReadErrorMessage(err) });
+      });
+      return;
+    }
+    openFileRequestSeq++;
     set({ activeFilePath: file.path, activeFile: file });
   },
 
@@ -1511,6 +1542,9 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
     if (project?.environment_type === "ssh") throw new Error("remote_project_read_only");
     const file = get().openFiles.find((item) => item.path === path);
     if (!project || !file || file.previewKind === "image" || !file.encoding) return;
+    if (file.dehydrated) return;
+    const saveKey = fileContentKey(project, file.path);
+    const releaseSave = protectFileSave(saveKey);
     try {
       await invoke("file_write_project_text", {
         rootPath: project.path,
@@ -1524,6 +1558,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       toast.error(translateCurrent("files.toast.saveFailed"), {
         description: fileSaveErrorMessage(err),
       });
+      releaseSave();
       throw err;
     }
     const markSaved = (files: ActiveProjectFile[]) => files.map((candidate) => (
@@ -1547,12 +1582,14 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       };
     });
     if (isSameProjectFileLocation(get().project, project)) {
+      releaseSave();
       try {
         await get().refreshGitChanges();
       } catch (err) {
         logError("Failed to refresh Git changes after saving project file", err);
       }
     }
+    releaseSave();
     toast.success(translateCurrent("files.toast.saved"));
   },
 
