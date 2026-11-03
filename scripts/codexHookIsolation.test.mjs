@@ -47,6 +47,8 @@ function loadLaunch(light = false) {
 
 const launch = loadLaunch();
 const isolated = (args = "") => `codex --no-daemon${args}`;
+// cmd.exe 没有 Ctrl+L 清屏绑定（会回显 ^L），改用内置 cls；其余 Shell 的行编辑器绑定 Ctrl+L。
+const clearBeforeCodex = (shell) => (shell === "cmd" ? "cls & " : "\x0c");
 
 test("local and SSH startup plans join multiline text before applying Codex isolation", async () => {
   for (const command of ["npm\nrun\ndev", "codex\n--yolo"]) {
@@ -55,7 +57,7 @@ test("local and SSH startup plans join multiline text before applying Codex isol
       const local = await launch.resolvePtyLaunch({ shell, startupCmd: command }, "windows");
       assert.equal(local.startupCmd, expected, shell);
       const input = launch.formatStartupInputForPty(local.startupCmd, shell);
-      assert.equal(input, `${command.startsWith("codex") ? "\x0c" : ""}${expected}\r`, shell);
+      assert.equal(input, `${command.startsWith("codex") ? clearBeforeCodex(shell) : ""}${expected}\r`, shell);
       assert.equal(launch.prepareStartupCommandForPty(local.startupCmd, shell), expected, shell);
     }
     const remote = await launch.resolvePtyLaunch({ sshHostId: "host", cwd: "/repo", startupCmd: command }, "windows");
@@ -68,7 +70,8 @@ test("local and SSH startup plans join multiline text before applying Codex isol
 test("PTY formatting preserves literal escape pairs and joins legacy deferred startup text", () => {
   const command = ["printf '%s\\n' \\", "C:\\\\"].join("\n");
   assert.equal(launch.formatStartupInputForPty(command, "bash"), "printf '%s\\n' C:\\\\\r");
-  assert.equal(launch.formatStartupInputForPty("codex\n--yolo", "cmd"), "\x0ccodex --yolo\r");
+  assert.equal(launch.formatStartupInputForPty("codex\n--yolo", "cmd"), "cls & codex --yolo\r");
+  assert.equal(launch.formatStartupInputForPty("codex\n--yolo", "powershell"), "\x0ccodex --yolo\r");
   assert.equal(launch.formatStartupInputForPty("npm\nrun\ndev", "powershell"), "npm run dev\r");
 });
 
@@ -76,8 +79,18 @@ test("automatic local and WSL Codex launches opt out of the first terminal's sha
   for (const shell of ["powershell", "pwsh", "cmd", "gitbash", "wsl", "bash", "zsh", "fish"]) {
     const result = await launch.resolvePtyLaunch({ cwd: "F:/repo", shell, startupCmd: "codex --yolo" }, "windows");
     assert.equal(result.startupCmd, isolated(" --yolo"), shell);
-    assert.equal(launch.formatStartupInputForPty(result.startupCmd, shell), `\x0c${isolated(" --yolo")}\r`);
+    assert.equal(launch.formatStartupInputForPty(result.startupCmd, shell), `${clearBeforeCodex(shell)}${isolated(" --yolo")}\r`);
   }
+});
+
+test("cmd Codex launch never sends a form feed that cmd.exe would echo as ^L", () => {
+  for (const command of ["codex", "codex --yolo", "codex.exe resume --last"]) {
+    const input = launch.formatStartupInputForPty(command, "cmd");
+    assert.ok(!input.includes("\x0c"), command);
+    assert.ok(input.startsWith("cls & codex"), command);
+  }
+  // 未指定 Shell 时后端回落 PowerShell，沿用 Ctrl+L。
+  assert.ok(launch.formatStartupInputForPty("codex", null).startsWith("\x0c"));
 });
 
 test("SSH bootstrap receives the same isolated Codex startup command", async () => {

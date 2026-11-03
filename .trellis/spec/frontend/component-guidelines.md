@@ -1450,22 +1450,29 @@ terminal.options.theme = isTransparent ? applyTransparency(theme) : theme;
 
 **Cause**: Codex is launched from the current shell cursor position instead of a clean viewport. The problem is the pre-launch screen state, not xterm scrollbar CSS, Codex `--no-alt-screen`, `TERM=dumb`, or terminal recreation.
 
-**Fix**: Before direct Codex launches, send form feed (`\x0c`, Ctrl+L) to the PTY, then execute the command. Apply this to both automatic startup commands and manually typed direct `codex` commands on Enter. Keep the match narrow: direct commands such as `codex`, `codex.cmd`, `codex.exe`, and `codex.ps1` only.
+**Fix**: Before direct Codex launches, clear the screen through a mechanism the target shell actually supports, then execute the command. Apply this to both automatic startup commands and manually typed direct `codex` commands on Enter. Keep the match narrow: direct commands such as `codex`, `codex.cmd`, `codex.exe`, and `codex.ps1` only.
+
+- Shells with a line-editor Ctrl+L binding (PowerShell/PSReadLine, pwsh, Git Bash/bash, zsh, fish, WSL): send form feed (`\x0c`) before the command.
+- `cmd.exe` has **no** Ctrl+L binding — it echoes the byte as `^L` and splices it into the command line (`^Lcodex --no-daemon`). Chain the built-in instead: `cls & codex ...`.
+- Unspecified shell (`null`) is safe: the backend falls back to PowerShell on Windows (`pty/manager.rs` `default_shell_key`), not to the `defaultShell` setting.
 
 **Wrong**:
 
 ```typescript
-invoke("pty_write", { sessionId, data: `${command}\r` });
+invoke("pty_write", { sessionId, data: `${command}\r` });            // old output stays above the TUI
+invoke("pty_write", { sessionId, data: `\x0c${command}\r` });        // unconditional: shows ^L in cmd
 ```
 
 **Correct**:
 
 ```typescript
-const clearBeforeLaunch = isDirectCodexStartupCommand(command) ? "\x0c" : "";
+const clearBeforeLaunch = isDirectCodexStartupCommand(command)
+  ? (shell === "cmd" ? "cls & " : "\x0c")
+  : "";
 invoke("pty_write", { sessionId, data: `${clearBeforeLaunch}${command}\r` });
 ```
 
-**Prevention**: When a TUI appears to scroll inside a partial screen, reproduce with prior shell output still visible. If old output remains above the TUI, fix the launch input sequence before changing scrollbar styles, TERM, alternate-screen flags, or xterm construction.
+**Prevention**: When a TUI appears to scroll inside a partial screen, reproduce with prior shell output still visible. If old output remains above the TUI, fix the launch input sequence before changing scrollbar styles, TERM, alternate-screen flags, or xterm construction. Never send a bare control byte as input to "clear" without checking every supported shell (the scenario matrix's "Runtime environment" row) interprets it — a shell without that binding turns it into visible, executable command text.
 
 ### Common Mistake: Making user-facing clear screen depend on only one side of the PTY boundary
 
