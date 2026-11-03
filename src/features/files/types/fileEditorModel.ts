@@ -4,6 +4,7 @@ import type { TerminalSession } from "../../../shared/types/index";
 export interface FileEditorPaneProps {
   session: TerminalSession;
   isActive: boolean;
+  isVisible?: boolean;
   terminalThemeBackground: string;
   onClose: () => void;
 }

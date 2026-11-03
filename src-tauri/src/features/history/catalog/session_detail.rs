@@ -1,8 +1,42 @@
 use super::super::*;
 use super::open_catalog;
-use sqlx::{Row, SqliteConnection};
+use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::HashMap;
 use std::path::Path;
+
+#[derive(Clone)]
+pub(crate) struct HistoryDetailWindow {
+    pub offset: usize,
+    pub limit: usize,
+    pub revision: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct HistorySessionPage {
+    pub detail: HistorySessionDetail,
+    pub offset: usize,
+    pub revision: String,
+    pub complete: bool,
+}
+
+pub(crate) async fn get_session_page_from_v2(
+    roots: &HistoryRoots,
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    window: HistoryDetailWindow,
+) -> Result<Option<HistorySessionPage>, String> {
+    let mut conn = open_catalog().await?;
+    get_session_detail_window_with_conn(
+        &mut conn,
+        roots,
+        file_path,
+        source,
+        project_key,
+        Some(window),
+    )
+    .await
+}
 
 // 解析原始指针数组并取首个有效行索引。
 pub(super) fn v2_raw_pointer_line_index(raw_pointers_json: Option<String>) -> Option<usize> {
@@ -33,6 +67,39 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
     source: &str,
     project_key: &str,
 ) -> Result<Option<HistorySessionDetail>, String> {
+    Ok(
+        get_session_detail_window_with_conn(conn, roots, file_path, source, project_key, None)
+            .await?
+            .map(|page| page.detail),
+    )
+}
+
+pub(super) async fn get_session_detail_window_with_conn(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    window: Option<HistoryDetailWindow>,
+) -> Result<Option<HistorySessionPage>, String> {
+    // Metadata, messages and parts must observe the same catalog revision even
+    // when the background materializer commits between individual SELECTs.
+    let mut transaction = conn.begin().await.map_err(|err| err.to_string())?;
+    let result = read_session_detail_window(
+        &mut transaction, roots, file_path, source, project_key, window,
+    ).await;
+    transaction.rollback().await.map_err(|err| err.to_string())?;
+    result
+}
+
+async fn read_session_detail_window(
+    conn: &mut SqliteConnection,
+    roots: &HistoryRoots,
+    file_path: &str,
+    source: &str,
+    project_key: &str,
+    window: Option<HistoryDetailWindow>,
+) -> Result<Option<HistorySessionPage>, String> {
     // A dirty/mid-refresh catalog can still contain a deleted transcript.
     // File sources must remain backed by the source; OpenCode is a DB locator.
     if !source.eq_ignore_ascii_case("opencode") && !Path::new(file_path).is_file() {
@@ -95,6 +162,20 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
     let indexed_fingerprint: Option<String> = row
         .try_get("fingerprint_value")
         .map_err(|err| err.to_string())?;
+    let revision = format!(
+        "{}:{}:{}",
+        session_row_id,
+        indexed_fingerprint.as_deref().unwrap_or(""),
+        row.try_get::<i64, _>("updated_at")
+            .map_err(|err| err.to_string())?
+    );
+    if window
+        .as_ref()
+        .and_then(|w| w.revision.as_deref())
+        .is_some_and(|expected| expected != revision)
+    {
+        return Err("history_page_changed".to_string());
+    }
     if source_path.exists()
         && indexed_fingerprint.as_deref().map_or(true, |fingerprint| {
             v2_fingerprint_value(session_file_fingerprint(source_path)) != fingerprint
@@ -124,14 +205,18 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
     let dominant_model: Option<String> = row
         .try_get("dominant_model")
         .map_err(|err| err.to_string())?;
+    let page_offset = window.as_ref().map_or(0, |w| w.offset);
+    let page_limit = window.as_ref().map_or(-1, |w| w.limit.clamp(1, 160) as i64);
+    let paged = i64::from(window.is_some());
     let mut token_trend = Vec::new();
     let usage_rows = sqlx::query(
         "SELECT model, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens
          FROM history_usage_events
-         WHERE session_id = ?1
+         WHERE session_id = ?1 AND ?2 = 0
          ORDER BY event_index ASC",
     )
     .bind(session_row_id)
+    .bind(paged)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
@@ -187,9 +272,11 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
                 editable, raw_pointers_json
          FROM history_messages
          WHERE session_id = ?1
-         ORDER BY message_index ASC",
+         ORDER BY message_index ASC LIMIT ?2 OFFSET ?3",
     )
     .bind(session_row_id)
+    .bind(page_limit)
+    .bind(page_offset as i64)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
@@ -197,10 +284,13 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
         "SELECT p.message_id, p.kind, p.text_content, p.tool_name, p.tool_call_id
          FROM history_message_parts p
          INNER JOIN history_messages m ON m.id = p.message_id
-         WHERE m.session_id = ?1
+         WHERE m.id IN (SELECT id FROM history_messages WHERE session_id = ?1
+             ORDER BY message_index ASC LIMIT ?2 OFFSET ?3)
          ORDER BY m.message_index ASC, p.part_index ASC",
     )
     .bind(session_row_id)
+    .bind(page_limit)
+    .bind(page_offset as i64)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
@@ -288,10 +378,11 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
                 te.status, te.duration_ms, te.input_summary, te.output_summary, te.source_extension_json
          FROM history_tool_events te
          LEFT JOIN history_messages hm ON hm.id = te.message_id
-         WHERE te.session_id = ?1
+         WHERE te.session_id = ?1 AND ?2 = 0
          ORDER BY te.event_index ASC",
     )
     .bind(session_row_id)
+    .bind(paged)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
@@ -304,23 +395,34 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
         let category: String = tool_row
             .try_get("category")
             .map_err(|err| err.to_string())?;
-        let evidence = tool_row.try_get::<Option<String>, _>("source_extension_json")
+        let evidence = tool_row
+            .try_get::<Option<String>, _>("source_extension_json")
             .map_err(|err| err.to_string())?
-            .and_then(|raw| serde_json::from_str::<super::super::types::HistoryToolEvidence>(&raw).ok());
+            .and_then(|raw| {
+                serde_json::from_str::<super::super::types::HistoryToolEvidence>(&raw).ok()
+            });
         let inferred = evidence.as_ref().is_some_and(|e| e.kind == "inferred");
         match category.as_str() {
-            _ if inferred => {},
+            _ if inferred => {}
             category if category.starts_with("mcp:") => {
                 *mcp_calls.entry(category[4..].to_string()).or_insert(0) += 1;
-            },
+            }
             "mcp" => *mcp_calls.entry(name.clone()).or_insert(0) += 1,
             "skill" => {
-                let skill = tool_row.try_get::<Option<String>, _>("input_summary").ok().flatten()
+                let skill = tool_row
+                    .try_get::<Option<String>, _>("input_summary")
+                    .ok()
+                    .flatten()
                     .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-                    .and_then(|value| value.get("skill").and_then(Value::as_str).map(str::to_string))
+                    .and_then(|value| {
+                        value
+                            .get("skill")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                    })
                     .unwrap_or_else(|| name.clone());
                 *skill_calls.entry(skill).or_insert(0) += 1;
-            },
+            }
             _ => *builtin_calls.entry(name.clone()).or_insert(0) += 1,
         }
         let timestamp_ms = tool_row
@@ -354,10 +456,11 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
         "SELECT change_index, source_kind, tool_name, file_path, old_text, new_text,
                 patch, additions, deletions, timestamp_ms
          FROM history_file_changes
-         WHERE session_id = ?1
+         WHERE session_id = ?1 AND ?2 = 0
          ORDER BY change_index ASC",
     )
     .bind(session_row_id)
+    .bind(paged)
     .fetch_all(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
@@ -401,54 +504,65 @@ pub(super) async fn get_session_detail_from_v2_with_conn(
         });
     }
 
-    Ok(Some(HistorySessionDetail {
-        session_id,
-        source,
-        project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
-        title,
-        file_path,
-        cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
-        created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
-        updated_at: match current_file_updated_at {
-            Some(value) => value,
-            None => row.try_get("updated_at").map_err(|err| err.to_string())?,
+    Ok(Some(HistorySessionPage {
+        offset: page_offset,
+        revision,
+        complete: window.is_none(),
+        detail: HistorySessionDetail {
+            session_id,
+            source,
+            project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
+            title,
+            file_path,
+            cwd: row.try_get("cwd").map_err(|err| err.to_string())?,
+            created_at: row.try_get("created_at").map_err(|err| err.to_string())?,
+            updated_at: match current_file_updated_at {
+                Some(value) => value,
+                None => row.try_get("updated_at").map_err(|err| err.to_string())?,
+            },
+            message_count: if window.is_some() {
+                row.try_get::<i64, _>("message_count")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as usize
+            } else {
+                messages.len()
+            },
+            branch: row.try_get("branch").map_err(|err| err.to_string())?,
+            usage: HistorySessionUsage {
+                input_tokens,
+                output_tokens,
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_cost_usd: row
+                    .try_get("total_cost_usd")
+                    .map_err(|err| err.to_string())?,
+                dominant_model,
+                current_model: row
+                    .try_get("current_model")
+                    .map_err(|err| err.to_string())?,
+                context_window: row
+                    .try_get::<Option<i64>, _>("context_window")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                last_context_tokens: row
+                    .try_get::<Option<i64>, _>("last_context_tokens")
+                    .map_err(|err| err.to_string())?
+                    .map(|value| value.max(0) as u64),
+                reasoning_effort: row
+                    .try_get("reasoning_effort")
+                    .map_err(|err| err.to_string())?,
+                token_trend,
+                tool_call_count: row
+                    .try_get::<i64, _>("tool_call_count")
+                    .map_err(|err| err.to_string())?
+                    .max(0) as u64,
+                mcp_calls: sorted_tool_counts(&mcp_calls),
+                skill_calls: sorted_tool_counts(&skill_calls),
+                builtin_calls: sorted_tool_counts(&builtin_calls),
+            },
+            tool_events,
+            file_changes: summarize_file_change_operations(operations),
+            messages,
         },
-        message_count: messages.len(),
-        branch: row.try_get("branch").map_err(|err| err.to_string())?,
-        usage: HistorySessionUsage {
-            input_tokens,
-            output_tokens,
-            cache_read_tokens,
-            cache_creation_tokens,
-            total_cost_usd: row
-                .try_get("total_cost_usd")
-                .map_err(|err| err.to_string())?,
-            dominant_model,
-            current_model: row
-                .try_get("current_model")
-                .map_err(|err| err.to_string())?,
-            context_window: row
-                .try_get::<Option<i64>, _>("context_window")
-                .map_err(|err| err.to_string())?
-                .map(|value| value.max(0) as u64),
-            last_context_tokens: row
-                .try_get::<Option<i64>, _>("last_context_tokens")
-                .map_err(|err| err.to_string())?
-                .map(|value| value.max(0) as u64),
-            reasoning_effort: row
-                .try_get("reasoning_effort")
-                .map_err(|err| err.to_string())?,
-            token_trend,
-            tool_call_count: row
-                .try_get::<i64, _>("tool_call_count")
-                .map_err(|err| err.to_string())?
-                .max(0) as u64,
-            mcp_calls: sorted_tool_counts(&mcp_calls),
-            skill_calls: sorted_tool_counts(&skill_calls),
-            builtin_calls: sorted_tool_counts(&builtin_calls),
-        },
-        tool_events,
-        file_changes: summarize_file_change_operations(operations),
-        messages,
     }))
 }

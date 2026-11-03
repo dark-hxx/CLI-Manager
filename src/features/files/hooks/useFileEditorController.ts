@@ -19,7 +19,7 @@ import { isDarkHexColor } from "../lib/fileEditorTheme";
 import { useFileEditorMarkdownNavigation } from "./useFileEditorMarkdownNavigation";
 configureMonaco();
 
-export function useFileEditorController({ session, isActive, terminalThemeBackground, onClose }: FileEditorPaneProps) {
+export function useFileEditorController({ session, isActive, isVisible = isActive, terminalThemeBackground, onClose }: FileEditorPaneProps) {
   const { language: appLanguage, t } = useI18n();
   const editorRef = useRef<MonacoEditor | null>(null);
   const searchDecorationIdsRef = useRef<string[]>([]);
@@ -32,6 +32,9 @@ export function useFileEditorController({ session, isActive, terminalThemeBackgr
   const [editorReadyNonce, setEditorReadyNonce] = useState(0);
   const copyAiShortcut = useSettingsStore((s) => s.keyboardShortcuts.copyAi);
   const project = useFileExplorerStore((s) => s.project);
+  const editorLoading = useFileExplorerStore((s) => s.loading);
+  const remoteFilesReady = useFileExplorerStore((s) => s.project?.environment_type !== "ssh" || Boolean(s.remoteFileContext));
+  const attemptedHydrationsRef = useRef(new WeakSet<ActiveProjectFile>());
 
   useEffect(() => {
     configureMonacoLocale(appLanguage);
@@ -87,8 +90,18 @@ export function useFileEditorController({ session, isActive, terminalThemeBackgr
     [terminalThemeBackground]
   );
 
+  useEffect(() => {
+    // Closing/deleting the active tab can select a cold fallback without using
+    // the tab click handler. Try that payload once, not on every failure render.
+    if (!isVisible || editorLoading || !remoteFilesReady || !visibleFile?.dehydrated
+      || attemptedHydrationsRef.current.has(visibleFile)) return;
+    attemptedHydrationsRef.current.add(visibleFile);
+    setActiveFilePath(visibleFile.path);
+  }, [isVisible, editorLoading, remoteFilesReady, visibleFile, setActiveFilePath]);
+
   const handleEditorMount = useCallback<OnMount>((editor) => {
     editorRef.current = editor;
+    editor.onDidDispose(() => { if (editorRef.current === editor) editorRef.current = null; });
     markdownMouseDisposableRef.current?.dispose();
     markdownMouseDisposableRef.current = editor.onMouseDown((event) => {
       if (!event.event.ctrlKey || !event.event.rightButton || !event.target.position) return;
@@ -253,6 +266,6 @@ export function useFileEditorController({ session, isActive, terminalThemeBackgr
     diffContext, diffWorkspace, setActiveFilePath, requestCloseFiles, editorProject, language,
     editorTheme, handleEditorMount, setActiveContent, handleMarkdownLinkActivate,
     pendingMarkdownNavigation, handleMarkdownFragmentHandled, pendingAction, setPendingAction,
-    discardAndRun, saveAndRun,
+    discardAndRun, saveAndRun, isVisible,
   };
 }

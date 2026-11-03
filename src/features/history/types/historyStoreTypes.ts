@@ -43,6 +43,7 @@ export interface HistoryStore {
   loadingSessions: boolean;
   loadingMoreSessions: boolean;
   loadingSessionDetail: boolean;
+  loadingMoreMessages: boolean;
   /** 当前 WebView 的会话删除执行状态；不随历史组件卸载清除，不持久化。 */
   deletingSessions: boolean;
   searching: boolean;
@@ -92,6 +93,8 @@ export interface HistoryStore {
   refreshIndex: () => Promise<void>;
   addConvertedSession: (summary: unknown, detail: unknown) => string;
   openSession: (sessionKey: string, options?: OpenSessionOptions) => Promise<void>;
+  loadMoreMessages: () => Promise<void>;
+  ensureCompleteSession: () => Promise<void>;
   openSearchHit: (hit: HistorySearchHit) => Promise<void>;
   deleteSession: (sessionKey: string) => Promise<string[]>;
   /** null 表示已有删除任务，本次未执行；只有取得执行权的调用报告最终结果。 */

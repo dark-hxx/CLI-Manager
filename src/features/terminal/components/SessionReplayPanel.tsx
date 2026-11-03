@@ -306,13 +306,15 @@ function SnapshotActions({
     ? event.payload.changedFiles.filter((item): item is string => typeof item === "string")
     : [];
   const canRollback = Boolean(
-    getStringPayload(event.payload, "patch") &&
+    !event.payload.patchTruncated &&
+      (getStringPayload(event.payload, "patch") || getStringPayload(event.payload, "patchPath")) &&
       getStringPayload(event.payload, "head") &&
       getStringPayload(event.payload, "projectPath") &&
       latestSnapshot &&
-      getStringPayload(latestSnapshot.payload, "patch")
+      !latestSnapshot.payload.patchTruncated &&
+      (getStringPayload(latestSnapshot.payload, "patch") || getStringPayload(latestSnapshot.payload, "patchPath"))
   );
-  const canView = Boolean(getStringPayload(event.payload, "patch"));
+  const canView = Boolean(getStringPayload(event.payload, "patch") || getStringPayload(event.payload, "patchPath"));
 
   return (
     <div className="space-y-2.5">
@@ -736,6 +738,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   const loadSession = useReplayStore((state) => state.loadSession);
   const selectSession = useReplayStore((state) => state.selectSession);
   const captureCodeSnapshot = useReplayStore((state) => state.captureCodeSnapshot);
+  const loadSnapshotPatch = useReplayStore((state) => state.loadSnapshotPatch);
   const projects = useProjectStore((state) => state.projects);
   const [viewMode, setViewMode] = useState<ReplayViewMode>("progress");
   const [rollbackPending, setRollbackPending] = useState(false);
@@ -748,6 +751,13 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
   const historyDetailRef = useRef<{ sessionKey: string; detail: HistorySessionDetail } | null>(null);
   const remoteHistoryContextRef = useRef<SshAgentHistoryContext | null>(null);
   const panelActive = open && visible;
+  const patchAction = useRef({ generation: 0, busy: false });
+
+  useEffect(() => {
+    patchAction.current = { generation: patchAction.current.generation + 1, busy: false };
+    setDiffState(null);
+    return () => { patchAction.current.generation++; };
+  }, [panelActive, selectedSessionKey]);
 
   useEffect(() => {
     if (!panelActive) return;
@@ -887,29 +897,48 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     await selectSession(activeSessionId);
   };
 
-  const handleRollback = (event: ReplayEvent, latest: ReplayEvent) => {
-    const projectPath = getStringPayload(event.payload, "projectPath");
-    const targetPatch = getStringPayload(event.payload, "patch");
-    const expectedCurrentPatch = getStringPayload(latest.payload, "patch");
-    const targetHead = getStringPayload(event.payload, "head");
-    if (!selectedSessionKey || !projectPath || targetPatch === null || expectedCurrentPatch === null || !targetHead) return;
-    setPendingAction({ kind: "rollback", sessionKey: selectedSessionKey, projectPath, targetPatch, expectedCurrentPatch, targetHead });
+  const withSnapshotPatches = async (event: ReplayEvent, latest: ReplayEvent | null,
+    action: (patch: string, current: string) => void) => {
+    if (patchAction.current.busy) return;
+    const generation = patchAction.current.generation;
+    patchAction.current.busy = true;
+    try {
+      const [patch, current] = await Promise.all([
+        loadSnapshotPatch(event), latest ? loadSnapshotPatch(latest) : Promise.resolve(""),
+      ]);
+      if (generation === patchAction.current.generation) action(patch, current);
+    } catch (err) {
+      if (generation === patchAction.current.generation) {
+        toast.error(t("aiReplay.snapshot.readFailed"), { description: String(err) });
+      }
+    } finally {
+      if (generation === patchAction.current.generation) patchAction.current.busy = false;
+    }
   };
 
-  const handleFork = (event: ReplayEvent, latest: ReplayEvent) => {
+  const handleRollback = async (event: ReplayEvent, latest: ReplayEvent) => {
     const projectPath = getStringPayload(event.payload, "projectPath");
-    const targetPatch = getStringPayload(event.payload, "patch");
-    const expectedCurrentPatch = getStringPayload(latest.payload, "patch");
     const targetHead = getStringPayload(event.payload, "head");
-    if (!selectedSessionKey || !projectPath || targetPatch === null || expectedCurrentPatch === null || !targetHead) return;
-    setPendingAction({
-      kind: "fork",
-      sessionKey: selectedSessionKey,
-      projectPath,
-      targetPatch,
-      expectedCurrentPatch,
-      targetHead,
-      branchName: buildSnapshotForkBranchName(event),
+    if (!selectedSessionKey || !projectPath || !targetHead || event.payload.patchTruncated || latest.payload.patchTruncated) return;
+    await withSnapshotPatches(event, latest, (targetPatch, expectedCurrentPatch) => {
+      setPendingAction({ kind: "rollback", sessionKey: selectedSessionKey, projectPath, targetPatch, expectedCurrentPatch, targetHead });
+    });
+  };
+
+  const handleFork = async (event: ReplayEvent, latest: ReplayEvent) => {
+    const projectPath = getStringPayload(event.payload, "projectPath");
+    const targetHead = getStringPayload(event.payload, "head");
+    if (!selectedSessionKey || !projectPath || !targetHead || event.payload.patchTruncated || latest.payload.patchTruncated) return;
+    await withSnapshotPatches(event, latest, (targetPatch, expectedCurrentPatch) => {
+      setPendingAction({
+        kind: "fork",
+        sessionKey: selectedSessionKey,
+        projectPath,
+        targetPatch,
+        expectedCurrentPatch,
+        targetHead,
+        branchName: buildSnapshotForkBranchName(event),
+      });
     });
   };
 
@@ -958,18 +987,18 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true }: Se
     }
   };
 
-  const handleViewSnapshot = (event: ReplayEvent) => {
-    const patch = getStringPayload(event.payload, "patch");
-    if (!patch) return;
-    const patchBytes = stringByteLength(patch);
-    logReplayPanelOomDiagnostic("viewSnapshotDiff", {
-      sessionKey: event.sessionKey,
-      eventIndex: event.eventIndex,
-      patchBytes,
-      currentEvents: events.length,
-      thresholdExceeded: patchBytes >= OOM_PATCH_WARN_BYTES || events.length >= OOM_REPLAY_EVENTS_WARN_COUNT,
-    }, patchBytes >= OOM_PATCH_WARN_BYTES || events.length >= OOM_REPLAY_EVENTS_WARN_COUNT);
-    setDiffState({ messages: [{ role: "assistant", content: patch, timestamp: event.timestamp }] });
+  const handleViewSnapshot = async (event: ReplayEvent) => {
+    await withSnapshotPatches(event, null, (patch) => {
+      const patchBytes = stringByteLength(patch);
+      logReplayPanelOomDiagnostic("viewSnapshotDiff", {
+        sessionKey: event.sessionKey,
+        eventIndex: event.eventIndex,
+        patchBytes,
+        currentEvents: events.length,
+        thresholdExceeded: patchBytes >= OOM_PATCH_WARN_BYTES || events.length >= OOM_REPLAY_EVENTS_WARN_COUNT,
+      }, patchBytes >= OOM_PATCH_WARN_BYTES || events.length >= OOM_REPLAY_EVENTS_WARN_COUNT);
+      setDiffState({ messages: [{ role: "assistant", content: patch, timestamp: event.timestamp }] });
+    });
   };
 
   if (!panelActive) return null;

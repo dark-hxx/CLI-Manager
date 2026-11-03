@@ -32,6 +32,7 @@ export const en: Record<keyof typeof zh, string> = {
   "history.toast.convertUnsupported": "Only Claude and Codex sessions can be converted",
   "history.convert.lossyConfirm": "Convert from {source} to {target}. The target format may not fully preserve tool calls, usage, diffs, attachments, or source-specific fields. Continue?",
   "history.toast.refreshFailed": "Refresh failed",
+  "history.toast.detailLoadFailed": "Failed to load session details. Try again.",
   "history.tree.childCount": "{count} child sessions",
   "history.tree.expandChildren": "Expand {count} child sessions",
   "history.tree.collapseChildren": "Collapse {count} child sessions",

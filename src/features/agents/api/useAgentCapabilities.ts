@@ -11,9 +11,9 @@ import {
 } from "./agentCapabilities";
 import { buildSshAgentProjectLaunch, type SshAgentProjectLaunch } from "../../remote/api/sshAgentHistory";
 import type { HistorySessionDetail, Project, ProjectEnvironmentType, TerminalSession } from "../../../shared/types/index";
+import { AgentCapabilityCache } from "./agentCapabilityCache";
 
-const snapshotCache = new Map<string, AgentCapabilitySnapshot>();
-const baselineFingerprints = new Map<string, string>();
+const snapshotCache = new AgentCapabilityCache();
 
 function markSnapshotChecking(snapshot: AgentCapabilitySnapshot): AgentCapabilitySnapshot {
   const mcp = snapshot.mcp.map((item) => item.activation === "active"
@@ -137,7 +137,7 @@ export function useAgentCapabilities({
       cwd: effectiveCwd,
       configRoot: project?.cli_config_root?.trim() || null,
       launchArgs: project?.cli_args ?? "",
-      baselineConfigFingerprint: baselineFingerprints.get(scopeKey) ?? null,
+      baselineConfigFingerprint: snapshotCache.baseline(scopeKey),
       runtimeEvidence: buildSessionMcpEvidence(exactBoundSession),
       wslDistroName,
     };
@@ -178,9 +178,6 @@ export function useAgentCapabilities({
       );
       if (generation !== requestGeneration.current || requestScope !== scopeKey) return;
       snapshotCache.set(requestScope, value);
-      if (!baselineFingerprints.has(requestScope)) {
-        baselineFingerprints.set(requestScope, value.configFingerprint);
-      }
       setSnapshotState({ scopeKey: requestScope, value });
     } catch (error) {
       if (generation === requestGeneration.current && requestScope === scopeKey) {

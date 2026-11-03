@@ -4,7 +4,9 @@
 //! 线程已按 ANSI/UTF-8 安全边界切好，本层只整帧存储/透传（契约禁止再分片）。
 //! 增量 3 待办：Windows Job Object 兜底、hook 上报转发、exited 会话宽限自灭。
 
+mod checkpoint_budget;
 mod replay;
+use checkpoint_budget::{CheckpointBudget, CHECKPOINT_MEMORY_MAX_BYTES};
 use replay::{ReplayFrame, SessionBuffer};
 mod client_transport;
 use client_transport::{frame_payload_bytes, ClientTransport, ClientWriter};
@@ -123,6 +125,7 @@ pub struct DaemonHost {
     ssh_agent_bridges: SshAgentBridgeManager,
     routing: Mutex<RoutingRuntime>,
     spool_dir: PathBuf,
+    checkpoint_budget: Arc<CheckpointBudget>,
     requests: request_queue::RequestQueue,
 }
 
@@ -150,6 +153,7 @@ impl DaemonHost {
             ssh_agent_bridges: SshAgentBridgeManager::default(),
             routing: Mutex::new(RoutingRuntime::new()),
             spool_dir,
+            checkpoint_budget: Arc::new(CheckpointBudget::new(CHECKPOINT_MEMORY_MAX_BYTES)),
         }
     }
 
@@ -396,7 +400,10 @@ impl DaemonHost {
                     replay_available: false,
                     replay_truncated: false,
                 },
-                buffer: SessionBuffer::with_spool(Some(self.session_spool_path(session_id))),
+                buffer: SessionBuffer::with_budget(
+                    Some(self.session_spool_path(session_id)),
+                    Arc::clone(&self.checkpoint_budget),
+                ),
                 cols: 80,
                 rows: 24,
                 next_sequence: 1,
@@ -690,7 +697,17 @@ impl DaemonHost {
         // lock. In particular, never perform disk I/O while holding the global
         // clients lock: another session must remain able to enqueue output.
         request_queue::stage(request_queue::Stage::ReplayRead);
-        let retained_frames = entry.buffer.live_frames();
+        let after_sequence = self
+            .clients
+            .lock()
+            .ok()
+            .and_then(|clients| {
+                clients
+                    .get(&client_id)
+                    .and_then(|client| client.last_sent_sequence.get(session_id).copied())
+            })
+            .unwrap_or(0);
+        let retained_frames = entry.buffer.live_frames_after(after_sequence, 512 * 1024);
         let Ok(mut clients) = self.clients.lock() else {
             return;
         };

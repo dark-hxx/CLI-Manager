@@ -53,6 +53,29 @@ sizes are bounded in both the frontend and backend.
   distinct `crash-emergency-*.log` file.
 - Crash logs reuse the existing 10 MiB rolling writer and seven-day archive
   retention behavior.
+- Normal context IPC updates are sanitized in memory, coalesced to the latest
+  value, and persisted by one blocking worker. Disk waits do not hold the marker
+  mutex; no unbounded queue of breadcrumb payloads or writers is allowed.
+- Frontend error writes have four admission slots and one owned I/O gate.
+  Overload returns `crash_report_queue_full`; cancellation does not release an
+  active worker's slot early. Panic/emergency writes retain their sync path.
+- Graceful stop does not wait for the persistence gate. Writers check stop both
+  before and after writing so late writes cannot recreate a graceful marker.
+
+## Native memory evidence
+
+- The existing 15-second native heartbeat records optional `nativeMemory` in
+  runtime markers and crash events; recovered events retain it under
+  `previousRuntime`. Old markers without this field remain readable.
+- Windows `GetPerformanceInfo` commit total/limit/peak are pages, multiplied by
+  `PageSize` into bytes with checked arithmetic. Available commit is a saturating
+  limit-minus-total, not physical RAM availability.
+- `GetProcessMemoryInfo` records only the current PID's private commit and
+  working-set bytes. No process enumeration, command lines or terminal contents.
+- Every sample includes `sampledAtMs`, availability status and nullable system/
+  process measurements. Failed or unsupported counters never fabricate zero.
+- A marker may lack a sample before its first heartbeat. This evidence is
+  diagnostic, not an OOM/leak cure, and does not require frontend polling.
 
 ## Scenario matrix
 

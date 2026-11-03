@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const tauriCliPath = path.join(repoRoot, "scripts", "tauri-cli.mjs");
@@ -17,6 +17,25 @@ const temporaryDirectory = mkdtempSync(path.join(os.tmpdir(), "cli-manager-tauri
 const logPath = path.join(temporaryDirectory, "commands.log");
 const environmentLogPath = path.join(temporaryDirectory, "cargo-environment.log");
 const retryMarkerPath = path.join(temporaryDirectory, "locked-binary-retry.marker");
+const helperTarget = path.join(temporaryDirectory, "target");
+const helperSource = path.join(helperTarget, "helper-binaries", "debug");
+const helperSpawnHook = path.join(temporaryDirectory, "helper-spawn-hook.mjs");
+mkdirSync(helperSource, { recursive: true });
+for (const name of ["cli-manager-daemon", "cli-manager-web-daemon", "cli-manager-codex-proxy"]) {
+  writeFileSync(path.join(helperSource, `${name}.exe`), "synthetic helper fixture");
+}
+writeFileSync(helperSpawnHook, `
+import cp from "node:child_process";
+import { syncBuiltinESMExports } from "node:module";
+import { appendFileSync } from "node:fs";
+const original = cp.spawnSync;
+cp.spawnSync = (command, args, options) => {
+  if (command !== "cargo") return original(command, args, options);
+  appendFileSync(process.env.TAURI_CLI_DEV_PROXY_TEST_LOG, "cargo " + args.join(" ") + "\\n");
+  return { status: Number(process.env.TAURI_CLI_DEV_HELPER_EXIT_CODE || 0) };
+};
+syncBuiltinESMExports();
+`, "utf8");
 const lockedBinaryPath = path.join(
   repoRoot,
   "src-tauri",
@@ -38,6 +57,8 @@ function runTauriCli(args, cargoExitCode = 0, extraEnv = {}) {
     env: {
       ...process.env,
       PATH: `${temporaryDirectory}${path.delimiter}${process.env.PATH ?? ""}`,
+      CARGO_TARGET_DIR: helperTarget,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--import=${pathToFileURL(helperSpawnHook).href}`].filter(Boolean).join(" "),
       TAURI_CLI_DEV_PROXY_TEST_LOG: logPath,
       TAURI_CLI_DEV_PROXY_TEST_ENV_LOG: environmentLogPath,
       TAURI_CLI_DEV_PROXY_TEST_CARGO_EXIT_CODE: String(cargoExitCode),
@@ -78,12 +99,13 @@ try {
 
   const dev = runTauriCli(["dev", "--target", "x86_64-pc-windows-msvc"]);
   assert.equal(dev.status, 0, "tauri dev must succeed after the proxy build succeeds");
-  assert.equal(dev.lines.length, 2, "proxy build must finish before Tauri starts");
+  assert.equal(dev.lines.length, 3, "proxy and helper builds must finish before Tauri starts its finite dev-server wait");
   assert.match(dev.lines[0], /cargo build --locked/);
   assert.match(dev.lines[0], /--no-default-features/);
   assert.match(dev.lines[0], /--bin cli-manager --bin cli-manager-codex-proxy/);
   assert.match(dev.lines[0], /--target x86_64-pc-windows-msvc/);
-  assert.match(dev.lines[1], /^tauri dev --config /);
+  assert.match(dev.lines[1], /cargo build --manifest-path .*helpers[\\/]Cargo\.toml/);
+  assert.match(dev.lines[2], /^tauri dev --config /);
   assert.equal(dev.environment.length, 1);
   assert.equal(
     dev.environment[0],
@@ -207,11 +229,17 @@ try {
   assert.equal(failedBuild.lines.length, 1);
   assert.match(failedBuild.lines[0], /^cargo build --locked/);
 
+  const failedHelpers = runTauriCli(["dev"], 0, { TAURI_CLI_DEV_HELPER_EXIT_CODE: "27" });
+  assert.equal(failedHelpers.status, 1, "helper build failure must stop before Tauri starts");
+  assert.equal(failedHelpers.lines.length, 2);
+  assert.ok(failedHelpers.lines.every(line => line.startsWith("cargo ")));
+
   const build = runTauriCli(["build"]);
   assert.equal(build.status, 0);
   assert.deepEqual(build.lines, ["tauri build"]);
 
   console.log("tauri dev proxy preparation test: checks passed");
 } finally {
+  assert.ok(path.resolve(temporaryDirectory).startsWith(path.join(path.resolve(os.tmpdir()), "cli-manager-tauri-dev-proxy-")));
   rmSync(temporaryDirectory, { recursive: true, force: true });
 }

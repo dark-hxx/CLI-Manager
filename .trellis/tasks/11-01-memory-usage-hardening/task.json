@@ -1,0 +1,29 @@
+{
+  "id": "memory-usage-hardening",
+  "name": "memory-usage-hardening",
+  "title": "Full project memory and usability hardening",
+  "description": "Root-cause replay, sampling, daemon spool and bounded-cache repairs from the 2026-11-01 project memory audit; protected pane residency and history pagination remain separate children.",
+  "status": "in_progress",
+  "dev_type": "fullstack",
+  "scope": "memory-usage",
+  "package": null,
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-01",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "master",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "11-01-protected-pane-residency",
+    "11-01-history-detail-demand-loading"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "All planned source hardening and both child implementations are complete. Original final 149 Node + 83 Rust regressions, tsc/Vite production build, all-target Rust check and ordinary/strict architecture passed. Development-startup feedback adds Windows helper preflight ordering and exited-child/inherited-pipe lifecycle repair with red-green production launcher regressions; final 10 Node tests plus proxy assertions, syntax, ordinary/strict architecture, comment preservation and diff checks passed. No installation change, commit or release. Parent and children stay in_progress for installed GUI, language switching, controlled long-run acceptance and user restart of the existing development terminal. See research/verification.md and research/dev-startup.md.",
+  "meta": { "changelog_version": "TEMP" }
+}

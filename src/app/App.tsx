@@ -1,5 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
+import { createExitStageRunner, requireExitStage, runExitBackup } from "./exitStages";
+import { reportTerminalExitCleanup } from "./terminalExitReport";
 import { toast, Toaster } from "sonner";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -36,7 +38,7 @@ import {
 } from "../shared/preferences/settingsStore";
 import { useProjectStore } from "../features/projects/api/projectStore";
 import { useSessionStore } from "../features/terminal/api/sessionStore";
-import { flushTerminalSnapshotsNow } from "../features/terminal/api/sessionSnapshotPersistence";
+import { flushTerminalSnapshotsNow, suspendTerminalSnapshots } from "../features/terminal/api/sessionSnapshotPersistence";
 import { useSyncStore } from "../features/sync/api/syncStore";
 import { syncHistoryRequestLogs, useHistoryStore } from "../features/history/index";
 import { useExternalSessionSyncStore } from "../features/history/api/externalSessionSyncStore";
@@ -680,6 +682,8 @@ function App() {
   const [runningTasksCount, setRunningTasksCount] = useState(0);
   const [exitPhase, setExitPhase] = useState<ExitPhase | null>(null);
   const [exitNotice, setExitNotice] = useState<string | null>(null);
+  const exitStagesRef = useRef(createExitStageRunner(event => logInfo("exit: stage", event)));
+  const exitActiveRef = useRef(false);
   const [terminalFullscreen, setTerminalFullscreen] = useState(false);
   const [terminalScope, setTerminalScope] = useState<TerminalScope>(ALL_TERMINALS_SCOPE);
   const [isMacOs, setIsMacOs] = useState(isLikelyMacOs);
@@ -805,27 +809,22 @@ function App() {
       await new Promise((resolve) => setTimeout(resolve, EXIT_NOTICE_DISPLAY_MS));
     };
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<"timeout">((resolve) => {
-      timeoutId = setTimeout(() => resolve("timeout"), CLOSE_SYNC_TIMEOUT_MS);
-    });
     try {
-      await useSyncStore.getState().load();
-      const result = await Promise.race([useSyncStore.getState().runCloseAutoBackup(), timeoutPromise]);
-      if (result === "timeout") {
+      const result = await runExitBackup(exitStagesRef.current, {
+        load: () => useSyncStore.getState().load(), backup: () => useSyncStore.getState().runCloseAutoBackup(),
+      }, CLOSE_SYNC_TIMEOUT_MS);
+      if (result.outcome === "timeout" || result.outcome === "pending") {
         logWarn("Close auto sync timed out, continuing exit", { timeoutMs: CLOSE_SYNC_TIMEOUT_MS });
         await showExitNotice(t("app.exitProgress.syncTimeout"));
         return;
       }
-      if (result === "error") {
+      if (result.outcome === "failed" || result.value === "error") {
         logWarn("Close auto backup failed, continuing exit");
         await showExitNotice(t("app.exitProgress.syncFailed"));
       }
     } catch (err) {
       logWarn("Close auto sync threw, continuing exit", err);
       await showExitNotice(t("app.exitProgress.syncFailed"));
-    } finally {
-      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
   }, [t]);
 
@@ -1455,6 +1454,13 @@ function App() {
     source: string,
     options?: { closePty?: boolean; discardSessions?: boolean; closeAllPty?: boolean }
   ) => {
+    const stages = exitStagesRef.current;
+    if (exitActiveRef.current || stages.isPending("snapshots") || stages.isPending("terminals") || stages.isPending("discard")) {
+      toast.error(t("app.exitProgress.cleanupPending"));
+      return;
+    }
+    exitActiveRef.current = true;
+    const snapshots = suspendTerminalSnapshots();
     const closePty = options?.closePty ?? true;
     const discardSessions = options?.discardSessions ?? false;
     const closeAllPty = options?.closeAllPty ?? true;
@@ -1483,11 +1489,13 @@ function App() {
       // 必须在 PtyHost closeAll 之前，避免关闭 PTY 触发的重绘/清屏影响 serialize 结果；
       // 此处不再 clear() 工作区快照——那会让"关闭后恢复"永远拿不到数据。
       if (!discardSessions) {
-        await flushTerminalSnapshotsNow();
+        await requireExitStage(stages, "snapshots", flushTerminalSnapshotsNow, 25_000);
+      } else {
+        await requireExitStage(stages, "snapshots", () => snapshots.pending, 25_000);
       }
       // Phase 2：daemon 模式"转入后台"时 closePty=false——PTY 留在守护进程里继续跑，
       // 快照仍落盘作为 daemon 也挂掉时的最终兜底。
-      const terminalCleanup = await cleanupTerminalProcessesForExit(
+      const terminalCleanup = await requireExitStage(stages, "terminals", () => cleanupTerminalProcessesForExit(
         {
           closePty,
           closeAllPty,
@@ -1500,54 +1508,30 @@ function App() {
           shutdownDaemonIfIdle: () => invoke<boolean>("pty_daemon_shutdown_if_idle"),
           forceShutdownDaemon: () => invoke<boolean>("pty_daemon_force_shutdown"),
         },
-      );
-      if (terminalCleanup.closeAllError) {
-        logWarn("Failed to close all PTY sessions before exit", {
-          source,
-          err: terminalCleanup.closeAllError,
-        });
-      }
-      for (const failure of terminalCleanup.foregroundCloseErrors) {
-        logWarn("Failed to close foreground PTY session before exit", {
-          source,
-          sessionId: failure.sessionId,
-          err: failure.error,
-        });
-      }
-      if (closePty) {
-        logInfo("exit: PTY cleanup completed", {
-          source,
-          closeAllPty,
-          requestedCount: ptySessionIds.length,
-          failedForegroundCount: terminalCleanup.foregroundCloseErrors.length,
-          daemonStopped: terminalCleanup.daemonStopped,
-        });
-      }
-      if (!terminalCleanup.canExit) {
-        logWarn("exit: daemon shutdown failed, keeping application open", {
-          source,
-          err: terminalCleanup.shutdownError,
-        });
+      ), 30_000);
+      if (!reportTerminalExitCleanup(terminalCleanup, source, closePty, closeAllPty, ptySessionIds.length)) {
+        toast.error(t("app.exitProgress.cleanupFailed"));
         return;
       }
       if (discardSessions) {
-        await useSessionStore.getState().clear().catch((err) => {
-          logWarn("Failed to clear discarded terminal sessions", err);
-        });
+        await requireExitStage(stages, "discard", () => useSessionStore.getState().clear(), 8000);
         logInfo("exit: persisted sessions discarded", { source });
       }
       canExit = true;
     } catch (err) {
       logWarn("exit: cleanup failed, keeping application open", { source, err });
+      toast.error(t("app.exitProgress.cleanupFailed"));
     } finally {
+      exitActiveRef.current = false;
       logInfo("exit: cleanup finished", { source, closePty, discardSessions, canExit });
       if (canExit && await exitApp(source)) return;
+      void stages.waitFor("discard").then(snapshots.resume);
       flushSync(() => {
         setExitPhase(null);
         setExitNotice(null);
       });
     }
-  }, [exitApp, runCloseAutoSync]);
+  }, [exitApp, runCloseAutoSync, t]);
 
   // Issue #123 Phase 1/2：转入后台。
   // daemon 可用 → 真退出应用，任务由守护进程续跑（下次启动 attach 回放）；
