@@ -218,28 +218,6 @@ function visibleTreeEntries(entries: ProjectFileEntry[]): ProjectFileEntry[] {
     : entries;
 }
 
-/**
- * 被忽略的条目原位淡化，但排到同层末尾，不再穿插在正常条目之间；
- * 两组内部保持 store 原有顺序（稳定分区）。父级已被忽略时整层都淡化，无需重排。
- */
-function orderTreeEntries(
-  entries: ProjectFileEntry[],
-  state: FileIgnoreState,
-  inheritedIgnored: boolean,
-): ProjectFileEntry[] {
-  const visible = visibleTreeEntries(entries);
-  if (inheritedIgnored) return visible;
-  const normal: ProjectFileEntry[] = [];
-  const ignored: ProjectFileEntry[] = [];
-  for (const entry of visible) {
-    // 与 FileNode 的淡化判定一致：紧凑目录链的链尾被忽略时，整行也算忽略。
-    const isIgnored = isEntryIgnored(entry, state)
-      || (entry.kind === "directory" && isEntryIgnored(collectCompactDirectoryChain(entry).leaf, state));
-    (isIgnored ? ignored : normal).push(entry);
-  }
-  return ignored.length === 0 ? visible : [...normal, ...ignored];
-}
-
 function parentPath(path: string): string {
   const index = path.lastIndexOf("/");
   return index === -1 ? "" : path.slice(0, index);
@@ -746,7 +724,7 @@ function FileTreeRows({
 }) {
   return (
     <div>
-      {orderTreeEntries(entries, ignoreState, inheritedIgnored).map((entry) => (
+      {visibleTreeEntries(entries).map((entry) => (
         <FileNode
           key={entry.path}
           entry={entry}
