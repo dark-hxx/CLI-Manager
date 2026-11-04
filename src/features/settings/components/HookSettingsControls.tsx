@@ -4,6 +4,7 @@ import { Folder, FileCode, Copy, Check, Bell, BellOff } from "lucide-react";
 import { useI18n } from "../../../shared/i18n/index";
 import { type HookInstallStatus, STATUS_LABELS, STATUS_COLORS, pickText, formatPath } from "../lib/hookSettingsModel";
 import { SettingsRow, SettingsSection } from "./SettingsPrimitives";
+import { debugConsoleError } from "../../../shared/platform/debugConsole";
 
 export function PathRow({ label, value }: { label: string; value: string | null }) {
   const { language } = useI18n();
@@ -18,7 +19,7 @@ export function PathRow({ label, value }: { label: string; value: string | null 
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy:', err);
+      debugConsoleError('Failed to copy:', err);
     }
   };
 

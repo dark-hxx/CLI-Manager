@@ -17,6 +17,7 @@ import { useProjectStore } from "../../projects/api/projectStore";
 import { useTerminalStore } from "../state";
 import { useSettingsStore, type TerminalStatsCardKey } from "../../../shared/preferences/settingsStore";
 import { useWorktreeStore } from "../../projects/api/worktreeStore";
+import { debugConsoleError } from "../../../shared/platform/debugConsole";
 import {
   TERM,
   StatCard,
@@ -315,7 +316,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   const handleOpenFolder = useCallback(() => {
     if (!canOpenFolder) return;
     void invoke("open_folder_in_explorer", { path: projectPath }).catch((err) => {
-      console.error("Failed to open folder:", err);
+      debugConsoleError("Failed to open folder:", err);
     });
   }, [canOpenFolder, projectPath]);
 

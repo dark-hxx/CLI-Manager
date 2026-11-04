@@ -6,6 +6,7 @@ import type { Project, ProjectFileEntry } from "../../../shared/types/index";
 import { createLiveServerStore } from "../store/liveServerStore";
 import { CircleStop, Globe } from "../../../shared/ui/icons";
 import { ContextMenuItem, ContextMenuSeparator } from "../../../shared/ui/context-menu";
+import { debugConsoleError } from "../../../shared/platform/debugConsole";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -59,7 +60,7 @@ export function LiveServerStatusBridge({ project }: { readonly project: Project 
   useEffect(() => {
     if (project.environment_type !== "local") return;
     void hydrate(project.path).catch((error) => {
-      console.error("[live_server] status hydration failed", error);
+      debugConsoleError("[live_server] status hydration failed", error);
     });
   }, [hydrate, project.environment_type, project.path]);
 
