@@ -1,10 +1,11 @@
-import type { LucideIcon } from "lucide-react";
 import { useI18n } from "../../../shared/i18n/index";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import type { SettingsIconComponent } from "./SettingsIcons";
 
 export interface SettingsNavTab<T extends string> {
   id: T;
   label: string;
-  icon: LucideIcon;
+  icon: SettingsIconComponent;
 }
 
 interface SettingsNavProps<T extends string> {
@@ -15,6 +16,8 @@ interface SettingsNavProps<T extends string> {
 
 export function SettingsNav<T extends string>({ tabs, activeTab, onChange }: SettingsNavProps<T>) {
   const { t } = useI18n();
+  const iconStyle = useSettingsStore((s) => s.settingsIconStyle);
+  const refined = iconStyle === "refined";
 
   return (
     <aside className="ui-settings-nav settings-nav">
@@ -32,9 +35,14 @@ export function SettingsNav<T extends string>({ tabs, activeTab, onChange }: Set
               onClick={() => onChange(tab.id)}
               className="settings-nav-item"
               data-selected={active}
+              data-icon-style={iconStyle}
               aria-pressed={active}
             >
-              <Icon size={17} strokeWidth={1.65} className="shrink-0" aria-hidden="true" />
+              {refined ? (
+                <Icon size={18} className="shrink-0" aria-hidden="true" />
+              ) : (
+                <Icon size={17} strokeWidth={1.65} className="shrink-0" aria-hidden="true" />
+              )}
               <span>{tab.label}</span>
             </button>
           );

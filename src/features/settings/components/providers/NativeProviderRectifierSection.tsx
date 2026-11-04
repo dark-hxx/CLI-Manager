@@ -1,5 +1,6 @@
 import { Accordion, Alert, Stack, Switch, Text } from "@mantine/core";
 import { BrainCircuit } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useI18n } from "../../../../shared/i18n/index";
 import type { UseNativeProviderRoutingResult } from "./useNativeProviderRouting";
 
@@ -16,7 +17,7 @@ export function NativeProviderRectifierSection({ state }: NativeProviderRectifie
 
   return (
     <Accordion.Item value="rectifier">
-      <Accordion.Control icon={<BrainCircuit size={16} />}>
+      <Accordion.Control icon={<SettingsGlyph name="brain" classic={BrainCircuit} size={16} />}>
         {t("providerCatalog.routing.rectifier.title")}
       </Accordion.Control>
       <Accordion.Panel>

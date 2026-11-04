@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { Alert, Badge, Box, Button, Card, Group, Loader, Stack, Text } from "@mantine/core";
 import { AlertTriangle, FolderOpen, HardDrive, Info, RotateCcw } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import { getOsPlatform } from "../../../../shared/platform/shell";
@@ -195,7 +196,7 @@ export function DataStorageSection() {
           <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
             <Group gap="sm" align="flex-start" wrap="nowrap" style={{ minWidth: 0 }}>
               <Box mt={2} c="var(--primary)">
-                <HardDrive size={18} />
+                <SettingsGlyph name="hardDrive" classic={HardDrive} size={18} />
               </Box>
               <Box style={{ minWidth: 0 }}>
                 <Text size="sm" fw={600} c="var(--on-surface)">

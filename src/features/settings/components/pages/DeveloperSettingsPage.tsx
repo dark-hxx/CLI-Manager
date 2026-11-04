@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { Box, Group, Select, Stack, Switch, Text } from "@mantine/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { Bug, Copy, Cpu, EyeOff, GitBranch, HardDrive, History, Link2, MonitorCog } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import {
   LINUX_GRAPHICS_MODES,
@@ -145,7 +146,7 @@ export function DeveloperSettingsPage() {
   }[] = [
     {
       key: "terminalSessionRestoreEnabled",
-      icon: <History size={16} />,
+      icon: <SettingsGlyph name="history" classic={History} size={16} />,
       titleKey: "settings.developer.terminalSessionRestore",
       descriptionKey: "settings.developer.terminalSessionRestoreDescription",
       checked: terminalSessionRestoreEnabled,
@@ -155,7 +156,7 @@ export function DeveloperSettingsPage() {
     },
     {
       key: "projectWorktreeConfigEnabled",
-      icon: <GitBranch size={16} />,
+      icon: <SettingsGlyph name="gitBranch" classic={GitBranch} size={16} />,
       titleKey: "settings.developer.projectWorktreeConfig",
       descriptionKey: "settings.developer.projectWorktreeConfigDescription",
       checked: projectWorktreeConfigEnabled,
@@ -165,7 +166,7 @@ export function DeveloperSettingsPage() {
     },
     {
       key: "symlinkCompatibilityEnabled",
-      icon: <Link2 size={16} />,
+      icon: <SettingsGlyph name="link" classic={Link2} size={16} />,
       titleKey: "settings.general.symlinkCompatibility",
       descriptionKey: "settings.general.symlinkCompatibilityDescription",
       checked: symlinkCompatibilityEnabled,
@@ -175,7 +176,7 @@ export function DeveloperSettingsPage() {
     },
     {
       key: "lowMemoryMode",
-      icon: <HardDrive size={16} />,
+      icon: <SettingsGlyph name="hardDrive" classic={HardDrive} size={16} />,
       titleKey: "settings.general.lowMemoryMode",
       descriptionKey: "settings.general.lowMemoryModeDescription",
       checked: lowMemoryMode,
@@ -185,7 +186,7 @@ export function DeveloperSettingsPage() {
     },
     {
       key: "disableHardwareAcceleration",
-      icon: <Cpu size={16} />,
+      icon: <SettingsGlyph name="cpu" classic={Cpu} size={16} />,
       titleKey: "settings.general.disableHardwareAcceleration",
       descriptionKey: "settings.general.disableHardwareAccelerationDescription",
       checked: disableHardwareAcceleration,
@@ -195,7 +196,7 @@ export function DeveloperSettingsPage() {
     },
     {
       key: "debugMode",
-      icon: <Bug size={16} />,
+      icon: <SettingsGlyph name="bug" classic={Bug} size={16} />,
       titleKey: "settings.general.debugMode",
       descriptionKey: "settings.developer.debugModeDescription",
       checked: debugMode,
@@ -214,7 +215,7 @@ export function DeveloperSettingsPage() {
           {osPlatform === "windows" && (
             <>
               <SettingSwitchCard
-                icon={<MonitorCog size={16} />}
+                icon={<SettingsGlyph name="monitorCog" classic={MonitorCog} size={16} />}
                 title={t("settings.developer.windowsConptyCompatibilityFix")}
                 description={t("settings.developer.windowsConptyCompatibilityFixDescription")}
                 checked={windowsConptyCompatibilityFixEnabled}
@@ -226,7 +227,7 @@ export function DeveloperSettingsPage() {
                 }
               />
               <SettingSwitchCard
-                icon={<EyeOff size={16} />}
+                icon={<SettingsGlyph name="eyeOff" classic={EyeOff} size={16} />}
                 title={t("settings.developer.hideCodexRuntimeCursor")}
                 description={t("settings.developer.hideCodexRuntimeCursorDescription")}
                 checked={hideCodexRuntimeCursor}

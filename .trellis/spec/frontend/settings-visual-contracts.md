@@ -10,6 +10,7 @@
 - Focus traversal must exclude controls hidden by an ancestor. A child's computed `display` alone cannot establish visibility: check layout rectangles and visibility on entry and each Tab event. Keep the shell fallback when no controls are visible.
 - Keep settings opaque when workspace backgrounds are active. Use inherited system/user fonts, 400/500/600 weights and font-size tokens; no remote font requirement.
 - Sponsors configuration shared with the project sidebar lives in the narrow `features/settings/api/sponsors` module, without UI/state imports.
+- Settings icon style is a user preference (`settingsIconStyle`, default `refined`). `refined` renders hand-drawn 24-grid SVG: category tiles are fixed-color rounded squares with white glyphs (never `currentColor`, so selection coloring must be exempted), while in-page structure icons go through `SettingsGlyph` with a lucide fallback. `classic` keeps the original lucide icons at 17px/1.65 stroke. Do not hand-replace action icons (save/refresh/trash/copy) or brand icons.
 
 ## Validation
 

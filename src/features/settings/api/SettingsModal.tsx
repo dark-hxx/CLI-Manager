@@ -19,13 +19,13 @@ import {
   Terminal,
   Webhook,
   PanelsTopLeft,
-  type LucideIcon,
 } from "lucide-react";
 import "@mantine/core/styles.css";
 import { useFocusTrap } from "../../../shared/hooks/useFocusTrap";
 import { AppMantineThemeProvider } from "../../../shared/ui/MantineThemeProvider";
 import { SettingsLayout } from "../components/SettingsLayout";
 import { SettingsThemeProvider } from "../components/SettingsThemeProvider";
+import { SETTINGS_NAV_ICONS, type SettingsIconComponent } from "../components/SettingsIcons";
 import { useWorkspaceBackground } from "../../workspace/api/WorkspaceBackground";
 import { GeneralSettingsPage } from "../components/pages/GeneralSettingsPage";
 import { DeveloperSettingsPage } from "../components/pages/DeveloperSettingsPage";
@@ -77,7 +77,7 @@ interface SettingsTabConfig {
   label: TranslationKey;
   title: TranslationKey;
   description: TranslationKey;
-  icon: LucideIcon;
+  icon: SettingsIconComponent;
   searchPlaceholder?: TranslationKey;
 }
 
@@ -279,6 +279,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const wasOpenRef = useRef(open);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
+  const settingsIconStyle = useSettingsStore((s) => s.settingsIconStyle);
   const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
   const { t } = useI18n();
   const { active: workspaceBackgroundActive } = useWorkspaceBackground();
@@ -336,7 +337,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const tabs = SETTINGS_TAB_ORDER.map((id) => ({
     id,
     label: t(SETTINGS_TAB_CONFIG[id].label),
-    icon: SETTINGS_TAB_CONFIG[id].icon,
+    icon: settingsIconStyle === "refined" ? SETTINGS_NAV_ICONS[id] : SETTINGS_TAB_CONFIG[id].icon,
   }));
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
   const activeContent = (() => {

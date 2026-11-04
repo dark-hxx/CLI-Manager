@@ -23,6 +23,7 @@ import {
   RotateCcw,
   Save,
 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import { useHistorySourceSettingsStore } from "../../../history/api/historySourceSettingsStore";
 import { useSettingsStore } from "../../../../shared/preferences/settingsStore";
@@ -390,21 +391,21 @@ function buildHomePathItems(
       {
         key: "claude-directory",
         agentIcon: <CliToolIcon icon="claude-code" size={15} />,
-        icon: <Folder className="text-blue-500" size={14} />,
+        icon: <SettingsGlyph name="folder" classic={Folder} className="text-blue-500" size={14} />,
         label: t("providerCatalog.home.claude"),
         path: home.targets.claudeConfigDir,
       },
       {
         key: "claude-settings",
         agentIcon: <CliToolIcon icon="claude-code" size={15} />,
-        icon: <FileCog className="text-violet-500" size={14} />,
+        icon: <SettingsGlyph name="fileCode" classic={FileCog} className="text-violet-500" size={14} />,
         label: t("providerCatalog.home.claudeSettings"),
         path: appendPath(home.targets.claudeConfigDir, "settings.json"),
       },
       {
         key: "claude-history",
         agentIcon: <CliToolIcon icon="claude-code" size={15} />,
-        icon: <FolderClock className="text-teal-500" size={14} />,
+        icon: <SettingsGlyph name="folderClock" classic={FolderClock} className="text-teal-500" size={14} />,
         label: t("providerCatalog.home.claudeHistory"),
         path: home.targets.claudeHistoryRoot,
       },
@@ -416,28 +417,28 @@ function buildHomePathItems(
       {
         key: "codex-directory",
         agentIcon: <CliToolIcon icon="codex" size={15} />,
-        icon: <Folder className="text-blue-500" size={14} />,
+        icon: <SettingsGlyph name="folder" classic={Folder} className="text-blue-500" size={14} />,
         label: t("providerCatalog.home.codex"),
         path: home.targets.codexConfigDir,
       },
       {
         key: "codex-auth",
         agentIcon: <CliToolIcon icon="codex" size={15} />,
-        icon: <KeyRound className="text-amber-500" size={14} />,
+        icon: <SettingsGlyph name="keyRound" classic={KeyRound} className="text-amber-500" size={14} />,
         label: t("providerCatalog.home.codexAuth"),
         path: appendPath(home.targets.codexConfigDir, "auth.json"),
       },
       {
         key: "codex-config",
         agentIcon: <CliToolIcon icon="codex" size={15} />,
-        icon: <FileCog className="text-violet-500" size={14} />,
+        icon: <SettingsGlyph name="fileCode" classic={FileCog} className="text-violet-500" size={14} />,
         label: t("providerCatalog.home.codexConfig"),
         path: appendPath(home.targets.codexConfigDir, "config.toml"),
       },
       {
         key: "codex-history",
         agentIcon: <CliToolIcon icon="codex" size={15} />,
-        icon: <FolderClock className="text-teal-500" size={14} />,
+        icon: <SettingsGlyph name="folderClock" classic={FolderClock} className="text-teal-500" size={14} />,
         label: t("providerCatalog.home.codexHistory"),
         path: home.targets.codexHistoryRoot,
       },
@@ -448,21 +449,21 @@ function buildHomePathItems(
     {
       key: "grok-directory",
       agentIcon: <CliToolIcon icon="grok" size={15} />,
-      icon: <Folder className="text-blue-500" size={14} />,
+      icon: <SettingsGlyph name="folder" classic={Folder} className="text-blue-500" size={14} />,
       label: t("providerCatalog.home.grok"),
       path: home.targets.grokConfigDir,
     },
     {
       key: "grok-config",
       agentIcon: <CliToolIcon icon="grok" size={15} />,
-      icon: <FileCog className="text-violet-500" size={14} />,
+      icon: <SettingsGlyph name="fileCode" classic={FileCog} className="text-violet-500" size={14} />,
       label: t("providerCatalog.home.grokConfig"),
       path: appendPath(home.targets.grokConfigDir, "config.toml"),
     },
     {
       key: "grok-history",
       agentIcon: <CliToolIcon icon="grok" size={15} />,
-      icon: <FolderClock className="text-teal-500" size={14} />,
+      icon: <SettingsGlyph name="folderClock" classic={FolderClock} className="text-teal-500" size={14} />,
       label: t("providerCatalog.home.grokHistory"),
       path: home.targets.grokHistoryRoot,
     },

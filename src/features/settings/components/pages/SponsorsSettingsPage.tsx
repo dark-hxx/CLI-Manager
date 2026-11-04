@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button, Card, Group, Image, Stack, Text, ThemeIcon } from "@mantine/core";
 import { ExternalLink, Gift, Sparkles } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import fluxionBanner from "../../../../../docs/img/sponsor/fluxion-ai-banner.png";
 import fluxionLogo from "../../../../../docs/img/sponsor/fluxion-ai-logo.jpg";
@@ -58,7 +59,7 @@ export function SponsorsSettingsPage() {
             <Card withBorder radius="md" p="md" className="sponsor-card__benefit bg-surface-container-low">
               <Group gap="sm" align="flex-start" wrap="nowrap">
                 <ThemeIcon size={32} radius="md" variant="light" color="orange">
-                  <Gift size={16} aria-hidden="true" />
+                  <SettingsGlyph name="gift" classic={Gift} size={16} aria-hidden="true" />
                 </ThemeIcon>
                 <Stack gap={2}>
                   <Text size="xs" fw={600} c="dimmed">

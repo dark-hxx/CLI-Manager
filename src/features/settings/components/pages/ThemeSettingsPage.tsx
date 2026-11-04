@@ -1305,7 +1305,7 @@ export function ThemeSettingsPage() {
               aria-disabled={!terminalPaneMarker.enabled}
               className="m-0 min-w-0 border-0 p-0"
             >
-              <Stack gap="md" style={!terminalPaneMarker.enabled ? { opacity: 0.55 } : undefined}>
+              <Stack gap="md">
                 <SimpleGrid
                   cols={{ base: 1, sm: 2 }}
                   role="group"
