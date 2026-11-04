@@ -1,5 +1,6 @@
+import { SettingsSection } from "../SettingsPrimitives";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Box, Button, Card, Group, Kbd, Stack, Text } from "@mantine/core";
+import { Badge, Box, Button, Card, Group, Kbd, Stack, Switch, Text } from "@mantine/core";
 import {
   DEFAULT_KEYBOARD_SHORTCUTS,
   useSettingsStore,
@@ -136,16 +137,8 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
 
   return (
     <Stack gap="md">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.shortcuts.terminalKeys")} description={t("settings.shortcuts.terminalKeysDescription")}>
         <Stack gap="sm">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.shortcuts.terminalKeys")}
-            </Text>
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              {t("settings.shortcuts.terminalKeysDescription")}
-            </Text>
-          </Box>
           <Group gap="xs" aria-label={t("settings.shortcuts.terminalNewlineAria")}>
             {TERMINAL_NEWLINE_OPTIONS.map((opt) => {
               const active = terminalNewlineShortcut === opt.value;
@@ -167,96 +160,32 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
             })}
           </Group>
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.shortcuts.osc52ClipboardQuery")} description={t("settings.shortcuts.osc52ClipboardQueryDescription")}>
         <Stack gap="sm">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.shortcuts.osc52ClipboardQuery")}
-            </Text>
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              {t("settings.shortcuts.osc52ClipboardQueryDescription")}
-            </Text>
-          </Box>
-          <Group gap="xs" aria-label={t("settings.shortcuts.osc52ClipboardQueryAria")}>
-            <Button
-              type="button"
-              size="xs"
-              variant={osc52ClipboardQueryEnabled ? "light" : "default"}
-              color={osc52ClipboardQueryEnabled ? "cliPrimary" : "gray"}
-              onClick={() => {
-                if (!osc52ClipboardQueryEnabled) void update("osc52ClipboardQueryEnabled", true);
-              }}
-              aria-pressed={osc52ClipboardQueryEnabled}
-            >
-              {t("settings.shortcuts.osc52ClipboardOn")}
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={!osc52ClipboardQueryEnabled ? "light" : "default"}
-              color={!osc52ClipboardQueryEnabled ? "cliPrimary" : "gray"}
-              onClick={() => {
-                if (osc52ClipboardQueryEnabled) void update("osc52ClipboardQueryEnabled", false);
-              }}
-              aria-pressed={!osc52ClipboardQueryEnabled}
-            >
-              {t("settings.shortcuts.osc52ClipboardOff")}
-            </Button>
-          </Group>
+          <Switch
+            checked={osc52ClipboardQueryEnabled}
+            onChange={(event) => void update("osc52ClipboardQueryEnabled", event.currentTarget.checked)}
+            label={t(osc52ClipboardQueryEnabled ? "settings.shortcuts.osc52ClipboardOn" : "settings.shortcuts.osc52ClipboardOff")}
+            aria-label={t("settings.shortcuts.osc52ClipboardQueryAria")}
+          />
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.shortcuts.osc52Clipboard")} description={t("settings.shortcuts.osc52ClipboardDescription")}>
         <Stack gap="sm">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.shortcuts.osc52Clipboard")}
-            </Text>
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              {t("settings.shortcuts.osc52ClipboardDescription")}
-            </Text>
-          </Box>
-          <Group gap="xs" aria-label={t("settings.shortcuts.osc52ClipboardAria")}>
-            <Button
-              type="button"
-              size="xs"
-              variant={osc52ClipboardEnabled ? "light" : "default"}
-              color={osc52ClipboardEnabled ? "cliPrimary" : "gray"}
-              onClick={() => {
-                if (!osc52ClipboardEnabled) void update("osc52ClipboardEnabled", true);
-              }}
-              aria-pressed={osc52ClipboardEnabled}
-            >
-              {t("settings.shortcuts.osc52ClipboardOn")}
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={!osc52ClipboardEnabled ? "light" : "default"}
-              color={!osc52ClipboardEnabled ? "cliPrimary" : "gray"}
-              onClick={() => {
-                if (osc52ClipboardEnabled) void update("osc52ClipboardEnabled", false);
-              }}
-              aria-pressed={!osc52ClipboardEnabled}
-            >
-              {t("settings.shortcuts.osc52ClipboardOff")}
-            </Button>
-          </Group>
+          <Switch
+            checked={osc52ClipboardEnabled}
+            onChange={(event) => void update("osc52ClipboardEnabled", event.currentTarget.checked)}
+            label={t(osc52ClipboardEnabled ? "settings.shortcuts.osc52ClipboardOn" : "settings.shortcuts.osc52ClipboardOff")}
+            aria-label={t("settings.shortcuts.osc52ClipboardAria")}
+          />
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.shortcuts.tabSwitch")} description={t("settings.shortcuts.tabSwitchDescription")}>
         <Stack gap="sm">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.shortcuts.tabSwitch")}
-            </Text>
-            <Text mt={4} size="xs" c="var(--on-surface-variant)">
-              {t("settings.shortcuts.tabSwitchDescription")}
-            </Text>
-          </Box>
           <Group gap="xs">
             {TAB_SWITCH_OPTIONS.map((opt) => {
               const active = currentTabSwitchModifier === opt.value;
@@ -283,7 +212,7 @@ export function ShortcutSettingsPage({ searchValue }: ShortcutSettingsPageProps)
             </Text>
           )}
         </Stack>
-      </section>
+      </SettingsSection>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">

@@ -1,3 +1,4 @@
+import { SettingsSection, SettingsRow } from "../SettingsPrimitives";
 import { useEffect, useMemo, useState } from "react";
 import {
   Badge,
@@ -8,7 +9,6 @@ import {
   NumberInput,
   SegmentedControl,
   Select,
-  SimpleGrid,
   Slider,
   Stack,
   Switch,
@@ -17,6 +17,7 @@ import {
   UnstyledButton,
 } from "@mantine/core";
 import { toast } from "sonner";
+import { Check } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { debugConsoleWarn } from "../../../../shared/platform/debugConsole";
 import {
@@ -327,42 +328,13 @@ function PaletteCard({
     <UnstyledButton
       type="button"
       onClick={onClick}
-      className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
+      className="settings-choice"
       data-selected={active ? "true" : "false"}
       aria-pressed={active}
       w="100%"
-      style={{
-        display: "block",
-        minHeight: 108,
-        minWidth: 0,
-        overflow: "hidden",
-        whiteSpace: "normal",
-        backgroundColor: active
-          ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-          : "var(--surface-container-lowest)",
-        borderColor: active
-          ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
-          : "color-mix(in srgb, var(--border) 88%, transparent)",
-        boxShadow: active
-          ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
-          : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
-      }}
     >
-      {active && (
-        <Badge
-          className="absolute right-3 top-3"
-          size="xs"
-          variant="light"
-          style={{
-            backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-            border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-            color: "var(--primary)",
-          }}
-        >
-          {activeLabel}
-        </Badge>
-      )}
-      <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
+      {active && <span className="settings-choice-mark" role="img" aria-label={activeLabel}><Check size={16} aria-hidden="true" /></span>}
+      <Stack gap={8} pr={22} style={{ minWidth: 0 }}>
         <Group gap={8}>
           {swatches.map((color, index) => (
             <Box
@@ -594,14 +566,10 @@ export function GeneralSettingsPage() {
   const showDarkPalettes = theme === "dark" || theme === "system";
   return (
     <Stack gap="md">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.general.appearance")}>
         <Stack gap="md">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.general.appearance")}
-            </Text>
-
+            <SettingsRow title={t("settings.general.language")} description={t("settings.general.languageDescription")}>
             <Select<LanguagePreference>
-              label={t("settings.general.language")}
               value={language}
               onChange={(value) => {
                 if (value) void update("language", value);
@@ -610,13 +578,10 @@ export function GeneralSettingsPage() {
               allowDeselect={false}
               size="xs"
               aria-label={t("settings.general.language")}
-              description={t("settings.general.languageDescription")}
             />
+            </SettingsRow>
 
-            <Stack gap={6}>
-              <Text size="xs" c="var(--on-surface-variant)">
-                {t("settings.general.theme")}
-              </Text>
+            <SettingsRow title={t("settings.general.theme")}>
               <SegmentedControl<ThemeMode>
                 value={theme}
                 onChange={(value) => void setTheme(value)}
@@ -625,14 +590,14 @@ export function GeneralSettingsPage() {
                 fullWidth
                 aria-label={t("settings.general.theme")}
               />
-            </Stack>
+            </SettingsRow>
 
             {showLightPalettes && (
               <Stack gap="xs">
                 <Text size="xs" c="var(--on-surface-variant)">
                   {t("settings.general.lightTheme")}
                 </Text>
-                <SimpleGrid cols={{ base: 1, md: 3 }} spacing="xs">
+                <div className="settings-palette-grid">
                   {LIGHT_PALETTE_OPTIONS.map((option) => (
                     <PaletteCard
                       key={option.value}
@@ -644,7 +609,7 @@ export function GeneralSettingsPage() {
                       onClick={() => void update("lightThemePalette", option.value)}
                     />
                   ))}
-                </SimpleGrid>
+                </div>
               </Stack>
             )}
 
@@ -653,7 +618,7 @@ export function GeneralSettingsPage() {
                 <Text size="xs" c="var(--on-surface-variant)">
                   {t("settings.general.darkTheme")}
                 </Text>
-                <SimpleGrid cols={{ base: 1, md: 3 }} spacing="xs">
+                <div className="settings-palette-grid">
                   {DARK_PALETTE_OPTIONS.map((option) => (
                     <PaletteCard
                       key={option.value}
@@ -665,12 +630,15 @@ export function GeneralSettingsPage() {
                       onClick={() => void update("darkThemePalette", option.value)}
                     />
                   ))}
-                </SimpleGrid>
+                </div>
               </Stack>
             )}
 
+            <SettingsRow
+              title={t("settings.general.uiFont")}
+              description={systemFontsError ?? t("settings.general.uiFontDescription", { count: systemFonts.length })}
+            >
             <FontFamilySelect
-              label={t("settings.general.uiFont")}
               value={normalizedUiFontFamily}
               onChange={(value) => {
                 if (value) void update("uiFontFamily", normalizeFontFamilyStack(value, UI_FONT_FALLBACK));
@@ -680,11 +648,8 @@ export function GeneralSettingsPage() {
               nothingFoundMessage={systemFontsLoading ? t("settings.general.uiFontLoading") : t("settings.general.uiFontEmpty")}
               size="xs"
               aria-label={t("settings.general.uiFont")}
-              description={
-                systemFontsError ??
-                t("settings.general.uiFontDescription", { count: systemFonts.length })
-              }
             />
+            </SettingsRow>
 
             <Stack gap={6}>
               <Group justify="space-between" align="center">
@@ -724,7 +689,7 @@ export function GeneralSettingsPage() {
               <Text size="xs" c="var(--on-surface-variant)">
                 {t("settings.general.uiTextColor")}
               </Text>
-              <Group gap="xs" align="flex-start" wrap="nowrap">
+              <Group gap="xs" align="flex-start" wrap="wrap">
                 <TextInput
                   type="color"
                   value={colorPickerValue}
@@ -801,25 +766,16 @@ export function GeneralSettingsPage() {
               </Text>
             </Stack>
         </Stack>
-      </section>
+      </SettingsSection>
 
       {isWindows && (
-        <section className="ui-surface-card rounded-2xl border border-border p-4">
+        <SettingsSection title={t("settings.general.windowsIntegration")}>
           <Stack gap="sm">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.general.windowsIntegration")}
-            </Text>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.explorerContextMenu")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.explorerContextMenuDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.explorerContextMenu")}
+              description={t("settings.general.explorerContextMenuDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={windowsExplorerContextMenuEnabled}
                   onChange={(event) => {
@@ -838,28 +794,18 @@ export function GeneralSettingsPage() {
                       : "settings.general.enableExplorerContextMenu"
                   )}
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
           </Stack>
-        </section>
+        </SettingsSection>
       )}
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.general.usageAnalysis")}>
         <Stack gap="sm">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.general.usageAnalysis")}
-            </Text>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.ccusageDashboard")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.ccusageDashboardDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.ccusageDashboard")}
+              description={t("settings.general.ccusageDashboardDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={ccusageAnalyticsEnabled}
                   onChange={(event) => {
@@ -877,8 +823,7 @@ export function GeneralSettingsPage() {
                       : t("settings.general.enableCcusageDashboard")
                   }
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
                 <Box>
@@ -901,7 +846,7 @@ export function GeneralSettingsPage() {
                     aria-label={t("settings.general.ccusageWslButton")}
                   >
                     <Group gap={6} wrap="nowrap">
-                      <Text span size="11px" fw={700}>
+                      <Text span size="11px" fw={600}>
                         {t("settings.general.ccusageWslButton")}
                       </Text>
                       <Badge variant="light" color={wslStatusMeta.color} size="xs">
@@ -928,17 +873,11 @@ export function GeneralSettingsPage() {
                 </Text>
               )}
             </Card>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.showStatsButton")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.showStatsButtonDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.showStatsButton")}
+              description={t("settings.general.showStatsButtonDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={sidebarToolbarVisibility.stats}
                   onChange={(event) => void update("sidebarToolbarVisibility", {
@@ -951,16 +890,15 @@ export function GeneralSettingsPage() {
                       : t("settings.general.showStatsButtonAria")
                   }
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
         </Stack>
-      </section>
+      </SettingsSection>
 
       <PerformanceSettingsSection />
       <DataStorageSection />
 
       <Dialog open={ccusageWslDialogOpen} onOpenChange={setCcusageWslDialogOpen}>
-        <DialogContent className="max-w-[680px]">
+        <DialogContent className="settings-scope settings-radix-dialog max-w-[680px]">
           <DialogHeader>
             <DialogTitle>{t("settings.general.ccusageWslDialogTitle")}</DialogTitle>
             <DialogDescription>{t("settings.general.ccusageWslDialogDescription")}</DialogDescription>

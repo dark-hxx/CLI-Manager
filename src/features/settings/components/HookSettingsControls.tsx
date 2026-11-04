@@ -1,8 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { ActionIcon, Badge, Box, Button, Card, Group, Stack, Switch, Text } from "@mantine/core";
-import { ChevronDown, Folder, FileCode, Copy, Check, Bell, BellOff } from "lucide-react";
+import { Folder, FileCode, Copy, Check, Bell, BellOff } from "lucide-react";
 import { useI18n } from "../../../shared/i18n/index";
 import { type HookInstallStatus, STATUS_LABELS, STATUS_COLORS, pickText, formatPath } from "../lib/hookSettingsModel";
+import { SettingsRow, SettingsSection } from "./SettingsPrimitives";
 
 export function PathRow({ label, value }: { label: string; value: string | null }) {
   const { language } = useI18n();
@@ -115,8 +116,8 @@ export function HookCard({
         }
       } : undefined}
       style={{
-        borderColor: checked ? "var(--success)" : "var(--border)",
-        backgroundColor: checked ? "var(--success-container)" : "var(--surface-container-low)",
+        borderColor: checked ? "color-mix(in srgb, var(--success) 35%, var(--settings-line))" : "var(--settings-line)",
+        backgroundColor: checked ? "color-mix(in srgb, var(--success) 5%, var(--surface-container-lowest))" : "var(--surface-container-lowest)",
         cursor: interactive && !disabled ? "pointer" : "default",
         opacity: disabled ? 0.68 : 1,
       }}
@@ -187,51 +188,27 @@ export function SettingsSwitchRow({
   tools?: ("claude" | "codex")[];
 }) {
   return (
-    <Card className="border border-border bg-surface-container-low" p="sm" radius="lg">
-      <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-        <Group gap="sm" wrap="nowrap" className="min-w-0">
-          {Icon && (
-            <Box
-              style={{
-                color: checked ? "var(--primary)" : "var(--text-muted)",
-                marginTop: 2,
-                flexShrink: 0,
-              }}
-            >
-              <Icon size={18} />
-            </Box>
-          )}
-          <Box className="min-w-0">
-            <Group gap="xs" align="center" wrap="wrap">
-              <Text size="sm" fw={500} c="var(--on-surface)" className="whitespace-nowrap">
-                {title}
-              </Text>
-              {tools?.map((tool) => (
-                <Badge
-                  key={tool}
-                  variant="light"
-                  size="xs"
-                  color={tool === "claude" ? "orange" : "blue"}
-                  style={{ textTransform: "none" }}
-                >
-                  {tool === "claude" ? "Claude" : "Codex"}
-                </Badge>
-              ))}
-            </Group>
-            <Text mt={4} size="xs" c="var(--text-muted)">
-              {description}
-            </Text>
-          </Box>
+    <SettingsRow
+      leading={Icon && <Icon size={18} />}
+      description={description}
+      title={
+        <Group gap="xs" align="center" wrap="wrap">
+          <span>{title}</span>
+          {tools?.map((tool) => (
+            <Badge key={tool} variant="light" size="xs" color={tool === "claude" ? "orange" : "blue"}>
+              {tool === "claude" ? "Claude" : "Codex"}
+            </Badge>
+          ))}
         </Group>
-        <Switch
-          color="cliPrimary"
-          className="shrink-0"
-          checked={checked}
-          onChange={(event) => onCheckedChange(event.currentTarget.checked)}
-          aria-label={title}
-        />
-      </Group>
-    </Card>
+      }
+    >
+      <Switch
+        color="cliPrimary"
+        checked={checked}
+        onChange={(event) => onCheckedChange(event.currentTarget.checked)}
+        aria-label={title}
+      />
+    </SettingsRow>
   );
 }
 
@@ -254,55 +231,15 @@ export function CollapsibleHookSection({
   collapsible?: boolean;
   right?: ReactNode;
 }) {
-  const titleContent = (
-    <Box className="min-w-0">
-      <Text size="sm" fw={600} c="var(--on-surface)">
-        {title}
-      </Text>
-      {description && (
-        <Text mt={4} size="xs" c="var(--on-surface-variant)">
-          {description}
-        </Text>
-      )}
-    </Box>
-  );
-
   return (
-    <section className="ui-surface-card overflow-hidden rounded-2xl border border-border">
-      <div className="flex w-full items-center gap-3 p-4 transition-colors hover:bg-surface-container-highest/50">
-        {collapsible ? (
-          <button
-            type="button"
-            onClick={onToggle}
-            className="ui-focus-ring min-w-0 flex-1 text-left outline-none"
-            aria-expanded={open}
-          >
-            {titleContent}
-          </button>
-        ) : (
-          <div className="min-w-0 flex-1">{titleContent}</div>
-        )}
-        <Group gap="xs" wrap="nowrap">
-          {action}
-          {right}
-          {collapsible && (
-            <button
-              type="button"
-              onClick={onToggle}
-              className="ui-focus-ring rounded-md outline-none"
-              aria-label={title}
-              aria-expanded={open}
-            >
-              <ChevronDown
-                size={18}
-                strokeWidth={1.8}
-                className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-              />
-            </button>
-          )}
-        </Group>
-      </div>
-      {collapsible && open && <Box px="md" pt="sm" pb="md">{children}</Box>}
-    </section>
+    <SettingsSection
+      title={title}
+      description={description}
+      open={!collapsible || open}
+      onToggle={collapsible ? onToggle : undefined}
+      actions={(action || right) && <Group gap="xs" wrap="wrap">{action}{right}</Group>}
+    >
+      {children}
+    </SettingsSection>
   );
 }

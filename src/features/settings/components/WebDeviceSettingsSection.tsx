@@ -139,7 +139,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
     <Card className="border border-primary/25 bg-primary/5" p="md" radius="lg">
       <Group justify="space-between" align="flex-start" wrap="wrap">
         <div>
-          <Group gap="xs"><Link2 size={18} /><Text fw={700}>{t("settings.webDevice.title")}</Text></Group>
+          <Group gap="xs"><Link2 size={18} /><Text fw={600}>{t("settings.webDevice.title")}</Text></Group>
           <Text mt={4} size="xs" c="var(--text-muted)">{t("settings.webDevice.description")}</Text>
         </div>
         <Badge color={status?.connected && status.paired ? "green" : status?.running ? "yellow" : "gray"} variant="light">
@@ -160,7 +160,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
 
       <Divider my="md" />
       <Stack gap="xs">
-        <Text fw={700} size="sm">{t("settings.webDevice.connectionTitle")}</Text>
+        <Text fw={600} size="sm">{t("settings.webDevice.connectionTitle")}</Text>
         <Text size="xs" c="var(--text-muted)">{t("settings.webDevice.connectionDescription")}</Text>
       </Stack>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="sm">
@@ -172,7 +172,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
 
       <Divider my="md" />
       <Stack gap="xs">
-        <Text fw={700} size="sm">{t("settings.webDevice.identityTitle")}</Text>
+        <Text fw={600} size="sm">{t("settings.webDevice.identityTitle")}</Text>
         <Text size="xs" c="var(--text-muted)">{t("settings.webDevice.identityDescription")}</Text>
       </Stack>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="sm">
@@ -184,7 +184,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
       <UnstyledButton className="w-full rounded-md text-left" onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen}>
         <Group justify="space-between" wrap="nowrap">
           <div>
-            <Text fw={700} size="sm">{t("settings.webDevice.advancedTitle")}</Text>
+            <Text fw={600} size="sm">{t("settings.webDevice.advancedTitle")}</Text>
             <Text size="xs" c="var(--text-muted)">{t("settings.webDevice.advancedDescription")}</Text>
           </div>
           {advancedOpen ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
@@ -215,7 +215,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
 
       <Divider my="md" />
       <Stack gap="xs">
-        <Text fw={700} size="sm">{t("settings.webDevice.pairingTitle")}</Text>
+        <Text fw={600} size="sm">{t("settings.webDevice.pairingTitle")}</Text>
         <Text size="xs" c="var(--text-muted)">{t("settings.webDevice.pairingDescription")}</Text>
       </Stack>
       {status?.pairingCode && (
@@ -223,7 +223,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
           <Group justify="space-between" wrap="wrap">
             <div>
               <Text size="xs" c="var(--text-muted)">{t("settings.webDevice.pairingCode")}</Text>
-              <Text ff="monospace" fw={800} size="xl" style={{ letterSpacing: "0.18em" }}>{status.pairingCode}</Text>
+              <Text ff="monospace" fw={600} size="xl" style={{ letterSpacing: "0.18em" }}>{status.pairingCode}</Text>
             </div>
             <Button size="xs" variant="light" leftSection={<Copy size={14} />} onClick={() => void navigator.clipboard.writeText(status.pairingCode ?? "")}>{t("common.copy")}</Button>
           </Group>

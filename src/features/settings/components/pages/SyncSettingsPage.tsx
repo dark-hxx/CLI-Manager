@@ -1,3 +1,4 @@
+import { SettingsSection } from "../SettingsPrimitives";
 import { useEffect, useMemo, useState } from "react";
 import {
   Button,
@@ -262,9 +263,8 @@ export function SyncSettingsPage() {
         </Text>
       </Card>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.sync.backup.modeTitle")}>
         <Stack gap="md">
-          <Text fw={600}>{t("settings.sync.backup.modeTitle")}</Text>
           <Select<BackupMode>
             value={store.backupMode}
             allowDeselect={false}
@@ -280,13 +280,12 @@ export function SyncSettingsPage() {
             label={t("settings.sync.backup.autoOnClose")}
           />
         </Stack>
-      </section>
+      </SettingsSection>
 
       {store.backupMode === "cloud" ? (
         <>
-          <section className="ui-surface-card rounded-2xl border border-border p-4">
+          <SettingsSection title={t("settings.sync.backup.webdavTitle")}>
             <Stack gap="md">
-              <Text fw={600}>{t("settings.sync.backup.webdavTitle")}</Text>
               <TextInput
                 label="WebDAV URL"
                 value={url}
@@ -335,7 +334,7 @@ export function SyncSettingsPage() {
                 )}
               </Group>
             </Stack>
-          </section>
+          </SettingsSection>
 
           <section className="ui-surface-card rounded-2xl border border-border p-4">
             <Stack gap="md">
@@ -420,9 +419,8 @@ export function SyncSettingsPage() {
           </section>
         </>
       ) : (
-        <section className="ui-surface-card rounded-2xl border border-border p-4">
+        <SettingsSection title={t("settings.sync.backup.localTitle")}>
           <Stack gap="md">
-            <Text fw={600}>{t("settings.sync.backup.localTitle")}</Text>
             <Group wrap="nowrap">
               <TextInput
                 className="flex-1"
@@ -456,7 +454,7 @@ export function SyncSettingsPage() {
               </Button>
             </Group>
           </Stack>
-        </section>
+        </SettingsSection>
       )}
 
       <Button

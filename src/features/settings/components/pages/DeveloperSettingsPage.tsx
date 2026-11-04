@@ -1,6 +1,7 @@
+import { SettingsSection } from "../SettingsPrimitives";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Box, Card, Group, Select, Stack, Switch, Text } from "@mantine/core";
+import { Box, Group, Select, Stack, Switch, Text } from "@mantine/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { Bug, Copy, Cpu, EyeOff, GitBranch, HardDrive, History, Link2, MonitorCog } from "lucide-react";
 import { toast } from "sonner";
@@ -17,6 +18,7 @@ import {
   type LinuxGraphicsDiagnostics,
 } from "../../../../shared/platform/linuxGraphics";
 import { ConfirmDialog } from "../../../../shared/ui/ConfirmDialog";
+import { SettingsRow } from "../SettingsPrimitives";
 
 interface SettingSwitchCardProps {
   icon: ReactNode;
@@ -36,27 +38,14 @@ function SettingSwitchCard({
   ariaLabel,
 }: SettingSwitchCardProps) {
   return (
-    <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-      <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-        <Group gap="sm" align="flex-start" wrap="nowrap" style={{ minWidth: 0 }}>
-          <Box style={{ color: "var(--primary)", marginTop: 2 }}>{icon}</Box>
-          <Box style={{ minWidth: 0 }}>
-            <Text size="xs" c="var(--on-surface-variant)">
-              {title}
-            </Text>
-            <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-              {description}
-            </Text>
-          </Box>
-        </Group>
+    <SettingsRow title={title} description={description} leading={icon}>
         <Switch
           color="cliPrimary"
           checked={checked}
           onChange={(event) => onChange(event.currentTarget.checked)}
           aria-label={ariaLabel}
         />
-      </Group>
-    </Card>
+    </SettingsRow>
   );
 }
 
@@ -218,16 +207,9 @@ export function DeveloperSettingsPage() {
 
   return (
     <Stack gap="md">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.developer.compatibility")} description={t("settings.developer.compatibilityDescription")}>
         <Stack gap="sm">
-          <Box>
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.developer.compatibility")}
-            </Text>
-            <Text mt={4} size="xs" c="var(--text-muted)">
-              {t("settings.developer.compatibilityDescription")}
-            </Text>
-          </Box>
+
 
           {osPlatform === "windows" && (
             <>
@@ -318,9 +300,10 @@ export function DeveloperSettingsPage() {
             />
           ))}
         </Stack>
-      </section>
+      </SettingsSection>
 
       <ConfirmDialog
+        contentClassName="settings-scope settings-radix-dialog"
         open={restartConfirmOpen}
         title={t("settings.developer.restartRequiredTitle")}
         message={t(restartMessageKey)}

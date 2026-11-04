@@ -175,7 +175,7 @@ export function SshHostEditor(props: Props) {
   return (
     <>
       <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-        <DialogContent className="flex h-[min(700px,calc(100vh-32px))] w-[min(900px,calc(100vw-32px))] max-w-[900px] flex-col overflow-hidden p-0">
+        <DialogContent className="settings-scope settings-radix-dialog flex h-[min(700px,calc(100vh-32px))] w-[min(900px,calc(100vw-32px))] max-w-[900px] flex-col overflow-hidden p-0">
           <DialogTitle className="shrink-0 border-b border-border px-5 py-3 text-base font-bold">
             {props.editingId ? t("settings.sshHosts.edit") : t("settings.sshHosts.add")}
           </DialogTitle>
@@ -810,7 +810,7 @@ function FieldRow({
   children: ReactNode;
 }) {
   return (
-    <div className="grid grid-cols-[minmax(180px,0.8fr)_minmax(280px,1.2fr)] gap-6 rounded-xl border border-border bg-surface-lowest px-4 py-3">
+    <div className="settings-ssh-field-row">
       <div>
         <div className="text-xs font-bold text-text-primary">
           {label}
@@ -1113,7 +1113,7 @@ function DiagnosticModal({
       <DialogContent
         showCloseButton={false}
         overlayClassName="z-[60]"
-        className="z-[60] flex h-[min(640px,calc(100vh-48px))] w-[min(720px,calc(100vw-48px))] max-w-[720px] flex-col overflow-hidden p-0"
+        className="settings-scope settings-radix-dialog z-[60] flex h-[min(640px,calc(100vh-48px))] w-[min(720px,calc(100vw-48px))] max-w-[720px] flex-col overflow-hidden p-0"
       >
         <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-5 py-3">
           <div className="min-w-0">

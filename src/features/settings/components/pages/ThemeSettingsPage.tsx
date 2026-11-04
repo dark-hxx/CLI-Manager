@@ -1,3 +1,4 @@
+import { SettingsRow, SettingsSection } from "../SettingsPrimitives";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import {
   ActionIcon,
@@ -20,7 +21,7 @@ import {
 } from "@mantine/core";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Check, ChevronDown, CircleHelp, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { Check, CircleHelp, Plus, RefreshCw, Trash2 } from "lucide-react";
 import {
   TERMINAL_THEME_GROUPS,
   TERMINAL_THEME_PRESETS,
@@ -248,48 +249,16 @@ function CollapsibleSettingsSection({
   className?: string;
   collapsible?: boolean;
 }) {
-  const headerContent = (
-    <>
-      <Box>
-        <Text size="sm" fw={600} c="var(--on-surface)">
-          {title}
-        </Text>
-        {description && (
-          <Text mt={4} size="xs" c="var(--on-surface-variant)">
-            {description}
-          </Text>
-        )}
-      </Box>
-      {collapsible && (
-        <ChevronDown
-          size={18}
-          strokeWidth={1.8}
-          className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      )}
-    </>
-  );
-
   return (
-    <section className={`ui-surface-card rounded-2xl border border-border overflow-hidden ${className}`}>
-      {collapsible ? (
-        <button
-          type="button"
-          onClick={onToggle}
-          className="ui-focus-ring flex w-full items-center justify-between gap-3 p-4 text-left outline-none transition-colors hover:bg-surface-container-highest/50"
-          aria-expanded={open}
-        >
-          {headerContent}
-        </button>
-      ) : (
-        <div className="p-4">{headerContent}</div>
-      )}
-      {collapsible ? (
-        open === true && <Box px="md" pt="sm" pb="md">{children}</Box>
-      ) : (
-        <Box px="md" pb="md">{children}</Box>
-      )}
-    </section>
+    <SettingsSection
+      title={title}
+      description={description}
+      open={!collapsible || open}
+      onToggle={collapsible ? onToggle : undefined}
+      className={className}
+    >
+      {children}
+    </SettingsSection>
   );
 }
 
@@ -1168,36 +1137,23 @@ export function ThemeSettingsPage() {
               }
             />
 
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.backgroundIncludeFinished")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.backgroundIncludeFinishedDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.backgroundIncludeFinished")}
+              description={t("settings.general.backgroundIncludeFinishedDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={backgroundIncludeFinishedTasks}
                   onChange={(event) => void update("backgroundIncludeFinishedTasks", event.currentTarget.checked)}
                   aria-label={t("settings.general.backgroundIncludeFinished")}
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
 
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.confirmCloseTab")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.confirmCloseTabDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.confirmCloseTab")}
+              description={t("settings.general.confirmCloseTabDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={confirmBeforeClosingTerminalTab}
                   onChange={(event) => void update("confirmBeforeClosingTerminalTab", event.currentTarget.checked)}
@@ -1207,20 +1163,13 @@ export function ThemeSettingsPage() {
                       : t("settings.general.enableCloseTabConfirm")
                   }
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
 
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.tabHoverInfo")}
-                  </Text>
-                  <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                    {t("settings.general.tabHoverInfoDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.tabHoverInfo")}
+              description={t("settings.general.tabHoverInfoDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={terminalTabHoverInfoEnabled}
                   onChange={(event) => void update("terminalTabHoverInfoEnabled", event.currentTarget.checked)}
@@ -1230,46 +1179,31 @@ export function ThemeSettingsPage() {
                       : t("settings.general.enableTabHoverInfo")
                   }
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
 
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {text("外部终端", "External terminal")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {text("启动项目时使用系统外部终端窗口。", "Use the system external terminal when launching projects.")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={<>{text("外部终端", "External terminal")}</>}
+              description={<>{text("启动项目时使用系统外部终端窗口。", "Use the system external terminal when launching projects.")}</>}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={useExternalTerminal}
                   onChange={(event) => void update("useExternalTerminal", event.currentTarget.checked)}
                   aria-label={useExternalTerminal ? text("关闭外部终端", "Disable external terminal") : text("开启外部终端", "Enable external terminal")}
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
 
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {text("通用 Shell 运行监控", "Generic Shell Runtime Monitoring")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {text("默认关闭；如需标签运行状态，可在此开启。开启后仅影响新建 PowerShell / pwsh 终端，并可能略微增加启动耗时。", "Off by default. Enable for tab runtime status. Only affects new PowerShell / pwsh terminals and may slightly increase startup time.")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={<>{text("通用 Shell 运行监控", "Generic Shell Runtime Monitoring")}</>}
+              description={<>{text("默认关闭；如需标签运行状态，可在此开启。开启后仅影响新建 PowerShell / pwsh 终端，并可能略微增加启动耗时。", "Off by default. Enable for tab runtime status. Only affects new PowerShell / pwsh terminals and may slightly increase startup time.")}</>}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={shellRuntimeMonitoringEnabled}
                   onChange={(event) => void update("shellRuntimeMonitoringEnabled", event.currentTarget.checked)}
                   aria-label={shellRuntimeMonitoringEnabled ? text("关闭通用 Shell 运行监控", "Disable generic Shell runtime monitoring") : text("开启通用 Shell 运行监控", "Enable generic Shell runtime monitoring")}
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
 
             <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
               <Group justify="space-between" align="center" gap="md" wrap="nowrap">
@@ -1307,17 +1241,11 @@ export function ThemeSettingsPage() {
                 </Group>
               )}
             </Card>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.projectScopedTerminalView")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {t("settings.general.projectScopedTerminalViewDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            <SettingsRow
+              title={t("settings.general.projectScopedTerminalView")}
+              description={t("settings.general.projectScopedTerminalViewDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={projectScopedTerminalViewEnabled}
                   onChange={(event) => void update("projectScopedTerminalViewEnabled", event.currentTarget.checked)}
@@ -1327,19 +1255,12 @@ export function ThemeSettingsPage() {
                       : t("settings.general.enableProjectScopedTerminalView")
                   }
                 />
-              </Group>
-            </Card>
-            <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-              <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-                <Box>
-                  <Text size="xs" c="var(--on-surface-variant)">
-                    {t("settings.general.workspanDevelopment")}
-                  </Text>
-                  <Text mt={4} size="xs" c="var(--text-muted)">
-                    {t("settings.general.workspanDevelopmentDescription")}
-                  </Text>
-                </Box>
-                <Switch
+            </SettingsRow>
+            <SettingsRow
+              title={t("settings.general.workspanDevelopment")}
+              description={t("settings.general.workspanDevelopmentDescription")}
+            >
+              <Switch
                   color="cliPrimary"
                   checked={workspanEnabled}
                   onChange={(event) => {
@@ -1352,8 +1273,7 @@ export function ThemeSettingsPage() {
                       : t("settings.general.enableWorkspanDevelopment")
                   }
                 />
-              </Group>
-            </Card>
+            </SettingsRow>
           </Stack>
         </CollapsibleSettingsSection>
 

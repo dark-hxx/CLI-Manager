@@ -1,0 +1,388 @@
+/* Settings owns these tokens, including its Portal surfaces. User theme/font tokens
+   remain the source of truth; workspace and terminal controls are unaffected. */
+.settings-scope {
+  --settings-font: var(--font-size-ui, 13px);
+  --settings-meta: var(--font-size-meta, 12px);
+  --settings-title: calc(var(--settings-font) + 7px);
+  --settings-line: color-mix(in srgb, var(--on-surface) 12%, transparent);
+  --settings-divider: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  --settings-muted: var(--on-surface-variant);
+  --settings-hover: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  --settings-selected: color-mix(in srgb, var(--primary) 9%, var(--surface-container-lowest));
+  --settings-selected-line: color-mix(in srgb, var(--primary) 50%, var(--settings-line));
+  --settings-field-bg: var(--surface-container-lowest);
+  --settings-floating-shadow: 0 8px 28px color-mix(in srgb, black 12%, transparent), 0 2px 6px color-mix(in srgb, black 6%, transparent);
+  font-family: var(--font-ui-sans);
+  font-size: var(--settings-font);
+  line-height: 1.5;
+  color: var(--on-surface);
+}
+
+.settings-scope .ui-settings-content { container-type: inline-size; }
+.settings-scope .settings-nav {
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px 12px 12px;
+  background: var(--surface-container-low);
+  border-right: 1px solid var(--settings-divider);
+}
+.settings-nav-title {
+  padding: 0 12px 18px;
+  font-size: calc(var(--settings-font) + 2px);
+  font-weight: 600;
+}
+.settings-nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow: hidden auto;
+  scrollbar-gutter: stable;
+  padding: 3px;
+}
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--settings-muted);
+  font-size: var(--settings-font);
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 150ms, color 150ms;
+}
+.settings-nav-item:hover { background: var(--settings-hover); }
+.settings-nav-item[data-selected="true"] {
+  background: var(--settings-selected);
+  color: var(--on-surface);
+  font-weight: 500;
+}
+.settings-nav-item[data-selected="true"] svg { color: var(--primary); }
+.settings-mobile-nav { display: none; }
+.settings-scope .settings-topbar {
+  padding: 26px 24px 18px;
+  background: var(--surface);
+  border: 0;
+  border-bottom: 1px solid var(--settings-divider);
+}
+.settings-topbar-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 14px 20px;
+}
+.settings-topbar-inner, .settings-page { width: 100%; max-width: 880px; margin-inline: auto; }
+.settings-topbar-inner[data-width="wide"], .settings-page[data-width="wide"] { max-width: 1200px; }
+.settings-page-title { margin: 0; font-size: var(--settings-title); font-weight: 600; line-height: 1.3; }
+.settings-page-description { margin: 6px 0 0; font-size: var(--settings-meta); color: var(--settings-muted); }
+.settings-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--settings-muted);
+  cursor: pointer;
+  transition: background-color 150ms;
+}
+.settings-close:hover { background: var(--settings-hover); color: var(--on-surface); }
+.settings-header-tools { grid-column: 1 / -1; min-width: 0; }
+.settings-page-search { grid-column: 1 / -1; width: min(100%, 320px); min-width: 0; }
+.settings-scroll { padding: 24px; scrollbar-gutter: stable; overflow-x: hidden; }
+.settings-page { min-width: 0; container: settings-page / inline-size; }
+.settings-page > .mantine-Stack-root { gap: 24px; }
+
+.settings-section { min-width: 0; }
+.settings-section-heading { padding: 0 2px 9px; }
+.settings-section-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-section-heading-row > :first-child { flex: 1; min-width: 0; }
+.settings-section-heading h3 { margin: 0; font: inherit; }
+.settings-section-title { font-size: var(--settings-font); font-weight: 600; color: var(--on-surface); }
+.settings-section-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.settings-section-toggle svg { flex-shrink: 0; color: var(--settings-muted); transition: transform 150ms; }
+.settings-section-body {
+  min-width: 0;
+  padding: 4px 16px;
+  border: 1px solid var(--settings-line);
+  border-radius: 10px;
+  background: var(--surface-container-lowest);
+}
+.settings-section-body > .mantine-Stack-root { gap: 0; }
+.settings-section-body > .mantine-Stack-root > * { padding-block: 14px; }
+.settings-section-body > .mantine-Stack-root > * + * { border-top: 1px solid var(--settings-divider); }
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  min-width: 0;
+  padding-block: 14px;
+}
+.settings-row + .settings-row { border-top: 1px solid var(--settings-divider); }
+.settings-row-copy { display: flex; align-items: flex-start; gap: 10px; min-width: 0; flex: 1 1 240px; }
+.settings-row-icon { display: inline-flex; flex-shrink: 0; margin-top: 2px; color: var(--settings-muted); }
+.settings-row-text { min-width: 0; }
+.settings-row-label { font-size: var(--settings-font); font-weight: 500; color: var(--on-surface); }
+.settings-description { margin-top: 4px; color: var(--settings-muted); font-size: var(--settings-meta); line-height: 1.55; overflow-wrap: anywhere; }
+.settings-row-control { flex: 0 1 280px; min-width: 0; max-width: 100%; }
+.settings-row-control:has(> .settings-switch) { flex-basis: auto; }
+.settings-row-control > .settings-field { width: 100%; }
+.settings-row[data-stacked] { flex-direction: column; align-items: stretch; }
+.settings-row[data-stacked] > * { flex-basis: auto; }
+
+/* Legacy complex groups keep their own composition; only their surface treatment
+   is shared. Semantic status borders and previews retain explicit colors. */
+.settings-scope .ui-surface-card {
+  outline: 0;
+  border: 1px solid var(--settings-line);
+  border-radius: 10px;
+  box-shadow: none;
+}
+.settings-scope .settings-card { border-radius: 10px; box-shadow: none; min-width: 0; }
+.settings-scope .settings-card:where(.border-border, .border-border\/50, [data-with-border]) { border-color: var(--settings-line); }
+.settings-scope :where(.settings-section-body, .ui-surface-card) .settings-card:where(.bg-surface-container-lowest) {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+}
+.settings-scope .settings-text { line-height: 1.5; }
+.settings-scope .settings-text[data-size="xs"] { font-size: var(--settings-meta); }
+.settings-scope .settings-text[data-size="sm"] { font-size: var(--settings-font); }
+.settings-scope .settings-text[data-size="md"] { font-size: calc(var(--settings-font) + 2px); }
+.settings-scope .settings-text[data-size="lg"] { font-size: calc(var(--settings-font) + 4px); }
+.settings-scope .settings-text[data-size="xl"] { font-size: calc(var(--settings-font) + 7px); }
+.settings-scope .settings-card .mantine-Group-root > :where(.mantine-Box-root, .mantine-Stack-root, div) { min-width: 0; }
+.settings-scope .settings-card .settings-switch { flex-shrink: 0; }
+
+.settings-field { min-width: 0; max-width: 100%; }
+.settings-field-label { font-size: var(--settings-font); font-weight: 500; color: var(--on-surface); margin-bottom: 5px; }
+.settings-field-description { font-size: var(--settings-meta); color: var(--settings-muted); line-height: 1.5; }
+.settings-field-error { font-size: var(--settings-meta); line-height: 1.5; }
+.settings-scope .settings-input {
+  min-height: max(34px, calc(var(--settings-font) + 20px));
+  border-radius: 8px;
+  background-color: var(--settings-field-bg);
+  border-color: var(--settings-line);
+  color: var(--on-surface);
+  font-size: var(--settings-font);
+  transition: border-color 150ms, background-color 150ms;
+}
+.settings-input::placeholder { color: var(--text-muted); }
+.settings-scope .settings-input:hover:not(:disabled):not([data-error]) { border-color: color-mix(in srgb, var(--on-surface) 25%, transparent); }
+.settings-scope .settings-input:focus:not([data-error]), .settings-scope .settings-input:focus-within:not([data-error]) { border-color: var(--primary); }
+.settings-scope .settings-input[data-error] { border-color: var(--mantine-color-error); color: var(--mantine-color-error); }
+.settings-scope .settings-input:disabled { background: var(--surface-container-low); opacity: 0.65; cursor: not-allowed; }
+.settings-scope .settings-button {
+  min-height: max(34px, calc(var(--settings-font) + 20px));
+  height: auto;
+  padding-block: 6px;
+  border-radius: 8px;
+  font-size: var(--settings-font);
+  font-weight: 500;
+  box-shadow: none;
+  transition: background-color 150ms, border-color 150ms;
+}
+.settings-button-label { white-space: normal; line-height: 1.35; text-align: center; }
+.settings-scope .settings-button[data-variant="default"] {
+  background: var(--surface-container-lowest);
+  border-color: var(--settings-line);
+  color: var(--on-surface);
+}
+.settings-scope .settings-button[data-variant="default"]:hover:not(:disabled) { background: var(--settings-hover); }
+.settings-scope .settings-button[aria-pressed="true"] { background: var(--settings-selected); border-color: var(--settings-selected-line); color: var(--on-surface); }
+.settings-scope .settings-action { min-width: 32px; min-height: 32px; border-radius: 8px; box-shadow: none; }
+.settings-switch-track { cursor: pointer; }
+.settings-switch[data-disabled] .settings-switch-track { cursor: not-allowed; }
+.settings-scope .settings-badge { font-weight: 500; letter-spacing: 0; text-transform: none; }
+.settings-scope .settings-segmented {
+  max-width: 100%;
+  padding: 3px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 8px;
+  background: var(--surface-container-low);
+  font-size: var(--settings-font);
+}
+.settings-scope .settings-segmented-indicator {
+  border-radius: 6px;
+  background: var(--surface-container-lowest);
+  box-shadow: 0 1px 3px color-mix(in srgb, black 9%, transparent);
+}
+.settings-scope .settings-segmented-label {
+  padding: 6px 12px;
+  font-size: var(--settings-font);
+  font-weight: 400;
+  color: var(--settings-muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.settings-scope .settings-segmented-label[data-active] { color: var(--on-surface); font-weight: 500; }
+.settings-scope .settings-table { font-size: var(--settings-font); }
+.settings-table-heading { font-size: var(--settings-meta); font-weight: 500; color: var(--settings-muted); }
+.settings-table-cell, .settings-table-heading { padding: 10px 12px; border-color: var(--settings-divider); }
+
+.settings-scope.settings-menu {
+  padding: 5px;
+  border: 1px solid var(--settings-line);
+  border-radius: 10px;
+  background: var(--surface-container-lowest);
+  box-shadow: var(--settings-floating-shadow);
+}
+.settings-menu-option { padding: 8px 10px; border-radius: 6px; font-size: var(--settings-font); overflow-wrap: anywhere; }
+.settings-menu-option[data-combobox-selected], .settings-menu-option[data-combobox-active] {
+  color: var(--on-surface);
+  background: var(--settings-selected);
+}
+.settings-menu-group { font-size: var(--settings-meta); font-weight: 500; color: var(--settings-muted); }
+.settings-scope.settings-modal, .settings-scope.settings-drawer, .settings-scope.settings-radix-dialog {
+  background: var(--surface-container-lowest);
+  border: 1px solid var(--settings-line);
+  outline: 0;
+  box-shadow: var(--settings-floating-shadow);
+  color: var(--on-surface);
+}
+.settings-scope.settings-modal, .settings-scope.settings-radix-dialog { border-radius: 12px; }
+.settings-scope.settings-radix-dialog { container: settings-dialog / inline-size; }
+.settings-modal-header { padding: 18px 20px 14px; background: var(--surface-container-lowest); border-bottom: 1px solid var(--settings-divider); }
+.settings-modal-title { font-size: calc(var(--settings-font) + 3px); font-weight: 600; }
+.settings-modal-body { padding: 20px; }
+.settings-tooltip { font-family: var(--font-ui-sans); font-size: var(--font-size-meta, 12px); border-radius: 6px; }
+
+.settings-scope .settings-choice {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 14px;
+  text-align: left;
+  border: 1px solid var(--settings-line);
+  border-radius: 8px;
+  background: var(--surface-container-lowest);
+  cursor: pointer;
+  transition: border-color 150ms, background-color 150ms;
+}
+.settings-scope .settings-choice:hover { background: var(--settings-hover); }
+.settings-scope .settings-choice[data-selected="true"] { background: var(--settings-selected); border-color: var(--settings-selected-line); }
+.settings-choice-mark { position: absolute; top: 12px; right: 12px; color: var(--primary); }
+.settings-palette-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 10px; }
+.settings-scope .settings-list-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
+.settings-scope .settings-list-item .settings-text { font-size: var(--settings-font); }
+.settings-scope .settings-list-item .settings-list-subtitle { font-size: var(--settings-meta); }
+.settings-template-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; }
+.settings-provider-row { border-color: var(--settings-line); border-radius: 8px; background: var(--surface-container-lowest); }
+.settings-provider-row:hover { background: var(--settings-hover); }
+.settings-provider-row[data-selected="true"] { background: var(--settings-selected); border-color: var(--settings-selected-line); }
+.settings-scope .ui-interactive[data-selected="true"], .settings-scope .ui-interactive[aria-selected="true"] {
+  background: var(--settings-selected);
+  border-color: var(--settings-selected-line);
+  box-shadow: none;
+}
+.settings-ssh-field-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px 24px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--settings-divider);
+}
+.settings-ssh-field-row > * { min-width: 0; }
+.settings-ssh-field-row:last-child { border-bottom: 0; }
+
+/* Existing SSH forms use native/shared inputs, so their Portal has the same
+   explicit scope as Mantine forms without changing shared input defaults. */
+.settings-scope.settings-radix-dialog :where(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+  min-height: 34px;
+  max-width: 100%;
+  border-radius: 8px;
+  font-size: var(--settings-font);
+}
+.settings-scope.settings-radix-dialog :where(h2, h3) { font-weight: 600; }
+.settings-scope.settings-radix-dialog .font-bold { font-weight: 500; }
+.settings-scope.settings-radix-dialog :where(h2, h3, h4).font-bold { font-weight: 600; }
+.settings-scope.settings-radix-dialog .ui-btn {
+  min-height: max(34px, calc(var(--settings-font) + 20px));
+  height: auto;
+  padding-block: 6px;
+  border-radius: 8px;
+  font-size: var(--settings-font);
+  font-weight: 500;
+  box-shadow: none;
+}
+.settings-scope.settings-radix-dialog .ui-btn-primary {
+  background-image: none;
+  background-color: var(--primary);
+  color: var(--on-primary);
+}
+.settings-scope.settings-radix-dialog .ui-select-popover { border-color: var(--settings-line); box-shadow: var(--settings-floating-shadow); }
+
+@container settings-dialog (max-width: 560px) {
+  .settings-ssh-field-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+@container settings-page (max-width: 720px) {
+  .settings-template-layout { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Selection is intentionally quieter than keyboard focus, which must stay visible.
+   Override the global ui-focus-ring reset only inside settings surfaces. */
+.settings-scope :where(button, a, [role="button"], [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 2px solid var(--primary) !important;
+  outline-offset: 2px !important;
+  box-shadow: none;
+}
+.settings-scope :where(input, textarea, select):focus-visible {
+  outline: 2px solid var(--primary) !important;
+  outline-offset: 1px !important;
+  box-shadow: none;
+}
+
+@container settings-page (max-width: 560px) {
+  .settings-row { flex-direction: column; align-items: stretch; gap: 10px; }
+  .settings-row-copy, .settings-row-control { flex-basis: auto; width: 100%; }
+  .settings-row-control:has(> .settings-switch) { width: auto; align-self: flex-end; }
+  .settings-section-body { padding-inline: 12px; }
+  .settings-page .settings-card > .mantine-Group-root { flex-wrap: wrap; }
+  .settings-page .ui-surface-card > .mantine-Group-root { flex-wrap: wrap; }
+  .settings-page .settings-card > .mantine-Group-root > .mantine-Group-root { max-width: 100%; flex-wrap: wrap; }
+  .settings-provider-row { flex-wrap: wrap; padding-block: 6px; }
+  .settings-provider-select { flex-basis: calc(100% - 36px); }
+  .settings-provider-row > .mantine-Group-root { max-width: 100%; flex-wrap: wrap; }
+}
+
+@media (max-width: 759px) {
+  .settings-scope .settings-nav { display: none; }
+  .settings-mobile-nav { display: block; flex-shrink: 0; padding: 12px 16px 0; }
+  .settings-scope .settings-topbar { padding: 18px 16px 14px; }
+  .settings-scroll { padding: 18px 16px; }
+  .settings-page-search { width: 100%; }
+  .settings-modal-header { padding-inline: 16px; }
+  .settings-modal-body { padding: 16px; }
+  .settings-scope.settings-radix-dialog { max-width: calc(100vw - 24px); }
+  .settings-scope .settings-field { max-width: 100%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-scope *, .settings-scope *::before, .settings-scope *::after { transition: none !important; animation: none !important; }
+}

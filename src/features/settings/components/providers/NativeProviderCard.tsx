@@ -102,11 +102,8 @@ export function NativeProviderCard({
     <div
       ref={setNodeRef}
       style={style}
-      className={`group/row relative flex items-center gap-1 rounded-xl border pl-1 pr-2 transition-colors ${
-        selected
-          ? "border-primary bg-primary/10"
-          : "border-border/60 bg-surface-container-low hover:border-border hover:bg-surface-container"
-      }`}
+      className="settings-provider-row group/row relative flex items-center gap-1 border pl-1 pr-2 transition-colors"
+      data-selected={selected}
     >
       <button
         ref={setActivatorNodeRef}
@@ -126,7 +123,7 @@ export function NativeProviderCard({
         type="button"
         aria-label={t("providerCatalog.selectProvider", { name: provider.name })}
         aria-current={selected ? "true" : undefined}
-        className="ui-focus-ring flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left"
+        className="settings-provider-select ui-focus-ring flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-2.5 py-2 text-left"
         onClick={onSelect}
       >
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-surface-container-lowest">
@@ -134,7 +131,7 @@ export function NativeProviderCard({
         </span>
         <Stack gap={0} className="min-w-0 flex-1">
           <Group gap={6} wrap="nowrap" className="min-w-0">
-            <Text size="sm" fw={600} truncate className="min-w-0" title={provider.name}>{provider.name}</Text>
+            <Text size="sm" fw={500} truncate className="min-w-0" title={provider.name}>{provider.name}</Text>
             {failoverProvider?.isCurrent ? (
               <Badge size="xs" color="cliPrimary" variant="filled" className="shrink-0">{t("providerCatalog.failover.current")}</Badge>
             ) : provider.isCurrent && (

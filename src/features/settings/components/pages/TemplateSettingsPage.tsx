@@ -217,7 +217,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
     || (mode === "create" && form.scope === "session" && !activeSessionId);
 
   return (
-    <div className="grid grid-cols-[280px_minmax(0,1fr)] gap-4">
+    <div className="settings-template-layout">
       <section className="ui-surface-card min-w-0 rounded-2xl border border-border p-3">
         <Stack gap="sm">
           <Group justify="space-between" align="center" gap="sm">
@@ -252,7 +252,7 @@ export function TemplateSettingsPage({ searchValue }: TemplateSettingsPageProps)
                     tabIndex={0}
                     aria-selected={active}
                     data-selected={active ? "true" : "false"}
-                    className="ui-interactive ui-focus-ring cursor-pointer rounded-2xl border border-border bg-surface-container-lowest px-3 py-3 transition-colors"
+                    className="settings-choice"
                     styles={{ itemWrapper: { display: "block" } }}
                     onClick={() => openEditor(template)}
                     onKeyDown={(event) => {

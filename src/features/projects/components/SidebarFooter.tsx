@@ -4,7 +4,7 @@ import { codexHookNeedsReview, type CodexHookReadiness } from "../../settings/ap
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { BarChart3, Handshake, Settings } from "../../../shared/ui/icons";
-import { SPONSORS_ENABLED } from "../../settings/lib/sponsors";
+import { SPONSORS_ENABLED } from "../../settings/api/sponsors";
 import { SyncStatusIndicator } from "./SyncStatusIndicator";
 import type { SettingsTab } from "../../settings/api/SettingsModal";
 import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../../settings/api/hookErrors";

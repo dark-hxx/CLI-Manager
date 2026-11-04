@@ -138,13 +138,13 @@ export function CommandSuggestionSettingsPage() {
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                 <Card className="border border-border bg-surface" p="sm" radius="md">
                   <Text size="xs" c="var(--text-muted)">{t("settings.commandSuggestions.storageCommandCount")}</Text>
-                  <Text size="lg" fw={700} c="var(--on-surface)">
+                  <Text size="lg" fw={600} c="var(--on-surface)">
                     {storageLoading ? "..." : formatMetricNumber(storageStats.commandCount)}
                   </Text>
                 </Card>
                 <Card className="border border-border bg-surface" p="sm" radius="md">
                   <Text size="xs" c="var(--text-muted)">{t("settings.commandSuggestions.storageUsage")}</Text>
-                  <Text size="lg" fw={700} c="var(--on-surface)">
+                  <Text size="lg" fw={600} c="var(--on-surface)">
                     {storageLoading ? "..." : formatStorageSize(storageStats.storageBytes)}
                   </Text>
                 </Card>
@@ -158,6 +158,7 @@ export function CommandSuggestionSettingsPage() {
         </Stack>
       </section>
       <ConfirmDialog
+        contentClassName="settings-scope settings-radix-dialog"
         open={clearConfirmOpen}
         title={t("settings.commandSuggestions.clearStorageTitle")}
         message={t("settings.commandSuggestions.clearStorageConfirm")}

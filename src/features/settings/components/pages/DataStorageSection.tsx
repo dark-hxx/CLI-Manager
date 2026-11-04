@@ -296,7 +296,7 @@ export function DataStorageSection() {
           if (!open && !switching) setSwitchRequest(null);
         }}
       >
-        <DialogContent className="max-w-[520px]" showCloseButton={false}>
+        <DialogContent className="settings-scope settings-radix-dialog max-w-[520px]" showCloseButton={false}>
           <DialogHeader>
             <DialogTitle>{t("settings.dataStorage.confirmTitle")}</DialogTitle>
             <DialogDescription>

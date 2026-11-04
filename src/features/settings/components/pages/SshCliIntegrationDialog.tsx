@@ -684,7 +684,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto p-0">
+        <DialogContent className="settings-scope settings-radix-dialog max-h-[calc(100vh-2rem)] w-[calc(100vw-2rem)] max-w-2xl overflow-y-auto p-0">
           <div className="border-b border-border px-5 py-4">
             <DialogTitle>{t("settings.sshHosts.cliIntegration.title", { name: host?.name ?? "" })}</DialogTitle>
             <DialogDescription>{t("settings.sshHosts.cliIntegration.description")}</DialogDescription>
@@ -1021,7 +1021,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       </Dialog>
 
       <Dialog open={installPreview !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setInstallPreview(null); }}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-xl p-0">
+        <DialogContent className="settings-scope settings-radix-dialog w-[calc(100vw-2rem)] max-w-xl p-0">
           <div className="border-b border-border px-5 py-4">
             <DialogTitle>{t("settings.sshHosts.cliIntegration.agent.previewTitle")}</DialogTitle>
             <DialogDescription>{t("settings.sshHosts.cliIntegration.agent.previewDescription")}</DialogDescription>
@@ -1067,7 +1067,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       </Dialog>
 
       <Dialog open={hookPreview !== null} onOpenChange={(nextOpen) => { if (!nextOpen && hookOperation?.action !== "apply") setHookPreview(null); }}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-xl p-0" showCloseButton={hookOperation?.action !== "apply"}>
+        <DialogContent className="settings-scope settings-radix-dialog w-[calc(100vw-2rem)] max-w-xl p-0" showCloseButton={hookOperation?.action !== "apply"}>
           <div className="border-b border-border px-5 py-4">
             <DialogTitle>{t("settings.sshHosts.cliIntegration.hook.previewTitle")}</DialogTitle>
             <DialogDescription>{t("settings.sshHosts.cliIntegration.hook.previewDescription")}</DialogDescription>
@@ -1121,6 +1121,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       </Dialog>
 
       <ConfirmDialog
+        contentClassName="settings-scope settings-radix-dialog"
         open={confirmAction !== null}
         title={confirmAction === "rollback" ? t("settings.sshHosts.cliIntegration.agent.rollbackTitle") : t("settings.sshHosts.cliIntegration.agent.uninstallTitle")}
         message={confirmAction === "rollback" ? t("settings.sshHosts.cliIntegration.agent.rollbackMessage") : t("settings.sshHosts.cliIntegration.agent.uninstallMessage")}
@@ -1133,7 +1134,7 @@ export function SshCliIntegrationDialog({ open, host, hosts, onOpenChange }: Pro
       />
 
       <Dialog open={pickerSource !== null} onOpenChange={(nextOpen) => { if (!nextOpen) closeDirectoryPicker(); }}>
-        <DialogContent className="w-[calc(100vw-2rem)] max-w-xl p-0">
+        <DialogContent className="settings-scope settings-radix-dialog w-[calc(100vw-2rem)] max-w-xl p-0">
           <div className="border-b border-border px-4 py-3">
             <DialogTitle>{t("settings.sshHosts.cliIntegration.pickerTitle")}</DialogTitle>
             <DialogDescription className="sr-only">{t("settings.sshHosts.cliIntegration.pickerDescription")}</DialogDescription>

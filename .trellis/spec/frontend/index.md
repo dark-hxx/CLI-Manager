@@ -18,6 +18,7 @@ Read the domain contract that owns the code being changed; do not load every gui
 | [AI Architecture Contracts](./ai-architecture-contracts.md) | 2000-line limit, feature boundaries, standalone checks, shrinking migration baseline | Active |
 | [Frontend Code Comment Contracts](./code-comment-contracts.md) | 前端函数与方法的必要注释、开发门禁及审查要求 | Active |
 | [Component Guidelines](./component-guidelines.md) | Component patterns, props, composition | Active |
+| [Settings Visual Contracts](./settings-visual-contracts.md) | Settings-only theme scope, Portal styling, grouped rows and compact navigation | Active |
 | [Hook Guidelines](./hook-guidelines.md) | Hook ordering around mounted-but-hidden UI | Active |
 | [State Management](./state-management.md) | Local state, global state, server state | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | Active |

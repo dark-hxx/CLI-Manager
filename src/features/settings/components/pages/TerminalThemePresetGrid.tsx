@@ -1,4 +1,5 @@
-import { Badge, Box, Card, Group, SimpleGrid, Stack, Text, UnstyledButton } from "@mantine/core";
+import { Check } from "lucide-react";
+import { Box, Card, Group, Stack, Text, UnstyledButton } from "@mantine/core";
 import type { TerminalThemeGroupId, TerminalThemePreset } from "../../../../shared/lib/terminalThemes";
 import { pickByLanguage, useI18n } from "../../../../shared/i18n/index";
 
@@ -66,49 +67,20 @@ export function TerminalThemePresetGrid({ groups, isSelected, onSelect }: Termin
               {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].description)}
             </Text>
           </Group>
-          <SimpleGrid cols={{ base: 1, sm: 2, xl: 3 }} spacing="xs">
+          <div className="settings-palette-grid">
             {group.presets.map((preset) => {
               const active = isSelected(preset);
               return (
                 <UnstyledButton
                   key={preset.id}
                   onClick={() => onSelect(preset)}
-                  className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border p-4 text-left transition-[transform,box-shadow,border-color,background-color]"
+                  className="settings-choice"
                   data-selected={active ? "true" : "false"}
                   aria-pressed={active}
                   w="100%"
-                  style={{
-                    display: "block",
-                    minHeight: 108,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    whiteSpace: "normal",
-                    backgroundColor: active
-                      ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-                      : "var(--surface-container-lowest)",
-                    borderColor: active
-                      ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
-                      : "color-mix(in srgb, var(--border) 88%, transparent)",
-                    boxShadow: active
-                      ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
-                      : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
-                  }}
                 >
-                  {active && (
-                    <Badge
-                      className="absolute right-3 top-3"
-                      size="xs"
-                      variant="light"
-                      style={{
-                        backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)",
-                        border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-                        color: "var(--primary)",
-                      }}
-                    >
-                      {text("当前", "Current")}
-                    </Badge>
-                  )}
-                  <Stack gap={8} pr={active ? 48 : 0} style={{ minWidth: 0, padding: "4px 8px 2px" }}>
+                  {active && <span className="settings-choice-mark" role="img" aria-label={t("common.current")}><Check size={16} aria-hidden="true" /></span>}
+                  <Stack gap={8} pr={22} style={{ minWidth: 0 }}>
                     <Stack gap={2}>
                       <Text
                         size="sm"
@@ -149,7 +121,7 @@ export function TerminalThemePresetGrid({ groups, isSelected, onSelect }: Termin
                 </UnstyledButton>
               );
             })}
-          </SimpleGrid>
+          </div>
         </section>
       ))}
       {groups.length === 0 && (

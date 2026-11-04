@@ -1,4 +1,5 @@
 import { TextInput } from "@mantine/core";
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Search } from "../../../shared/ui/icons";
 import { useI18n } from "../../../shared/i18n/index";
@@ -11,6 +12,7 @@ interface SettingsTopBarProps {
   onSearchChange: (nextValue: string) => void;
   onClose: () => void;
   searchReplacement?: ReactNode;
+  contentWidth?: "standard" | "wide";
 }
 
 export function SettingsTopBar({
@@ -21,29 +23,27 @@ export function SettingsTopBar({
   onSearchChange,
   onClose,
   searchReplacement,
+  contentWidth = "standard",
 }: SettingsTopBarProps) {
   const { t } = useI18n();
 
   return (
-    <header className="ui-settings-topbar ui-surface-base ui-glass shrink-0 z-10 border-b border-border px-4 py-3 min-[1280px]:px-6 min-[1280px]:py-4">
-      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-4 gap-y-3">
+    <header className="ui-settings-topbar shrink-0 settings-topbar">
+      <div className="settings-topbar-inner" data-width={contentWidth}>
         <div className="min-w-0">
-          <h2 className="truncate text-base font-medium text-on-surface min-[1280px]:text-lg">{title}</h2>
-          <p className="mt-1 line-clamp-2 text-xs text-on-surface-variant min-[1280px]:text-sm">{description}</p>
+          <h2 className="settings-page-title">{title}</h2>
+          <p className="settings-page-description">{description}</p>
         </div>
         <button
+          type="button"
           onClick={onClose}
-          className="ui-interactive shrink-0 rounded-xl border px-2.5 py-1.5 text-xs font-medium"
-          style={{
-            borderColor: "color-mix(in srgb, var(--primary) 38%, transparent)",
-            backgroundColor: "color-mix(in srgb, var(--primary) 8%, transparent)",
-            color: "var(--primary)",
-          }}
+          className="settings-close"
           aria-label={t("settings.closeLabel")}
+          title={t("common.close")}
         >
-          {t("common.close")}
+          <X size={18} strokeWidth={1.75} aria-hidden="true" />
         </button>
-        {searchReplacement ? <div className="col-span-2 min-w-0">{searchReplacement}</div> : searchPlaceholder && (
+        {searchReplacement ? <div className="settings-header-tools">{searchReplacement}</div> : searchPlaceholder && (
           <TextInput
             value={searchValue}
             onChange={(event) => onSearchChange(event.currentTarget.value)}
@@ -51,7 +51,7 @@ export function SettingsTopBar({
             size="xs"
             leftSection={<Search size={14} strokeWidth={1.75} />}
             aria-label={t("settings.searchLabel")}
-            className="col-span-2 min-w-0 min-[1280px]:ml-auto min-[1280px]:w-56"
+            className="settings-page-search"
           />
         )}
       </div>

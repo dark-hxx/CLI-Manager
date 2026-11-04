@@ -1,3 +1,4 @@
+import { SettingsSection, SettingsRow } from "../SettingsPrimitives";
 import {
   ActionIcon,
   Badge,
@@ -271,11 +272,8 @@ export function SidebarSettingsPage() {
 
   return (
     <Stack gap="md">
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.sidebar.behavior")}>
         <Stack gap="md">
-          <Text size="sm" fw={600} c="var(--on-surface)">
-            {t("settings.sidebar.behavior")}
-          </Text>
           <Card className="border border-primary bg-surface-container-low" p="md" radius="lg">
             <Group justify="space-between" align="center" gap="md" wrap="nowrap">
               <Box>
@@ -307,21 +305,10 @@ export function SidebarSettingsPage() {
                     key={opt.value}
                     type="button"
                     onClick={() => void update("sidebarDensity", opt.value)}
-                    className="ui-interactive ui-focus-ring ui-selection-card rounded-xl border px-4 py-3 text-left"
+                    className="settings-choice"
                     data-selected={active ? "true" : "false"}
                     aria-pressed={active}
                     w="100%"
-                    style={{
-                      display: "block",
-                      minHeight: 76,
-                      minWidth: 0,
-                      backgroundColor: active
-                        ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-                        : "var(--surface-container-lowest)",
-                      borderColor: active
-                        ? "color-mix(in srgb, var(--primary) 54%, var(--border))"
-                        : "color-mix(in srgb, var(--border) 92%, transparent)",
-                    }}
                   >
                     <Stack gap={4} style={{ minWidth: 0, padding: "6px 10px 4px" }}>
                       <Text size="sm" fw={600} c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}>
@@ -337,16 +324,10 @@ export function SidebarSettingsPage() {
             </SimpleGrid>
           </Stack>
 
-          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Box>
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.sidebar.projectFilterVisibility")}
-                </Text>
-                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                  {t("settings.sidebar.projectFilterVisibilityDescription")}
-                </Text>
-              </Box>
+          <SettingsRow
+              title={t("settings.sidebar.projectFilterVisibility")}
+              description={t("settings.sidebar.projectFilterVisibilityDescription")}
+            >
               <Switch
                 color="cliPrimary"
                 checked={sidebarProjectFilterVisible}
@@ -357,38 +338,24 @@ export function SidebarSettingsPage() {
                     : t("settings.sidebar.showProjectFilter")
                 }
               />
-            </Group>
-          </Card>
+            </SettingsRow>
 
-          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Box>
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.general.mergePanels")}
-                </Text>
-                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                  {t("settings.general.mergePanelsDescription")}
-                </Text>
-              </Box>
+          <SettingsRow
+              title={t("settings.general.mergePanels")}
+              description={t("settings.general.mergePanelsDescription")}
+            >
               <Switch
                 color="cliPrimary"
                 checked={terminalSidePanelMerged}
                 onChange={(event) => void update("terminalSidePanelMerged", event.currentTarget.checked)}
                 aria-label={terminalSidePanelMerged ? t("settings.general.disableMergePanels") : t("settings.general.enableMergePanels")}
               />
-            </Group>
-          </Card>
+            </SettingsRow>
 
-          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Box>
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.general.singleSidePanel")}
-                </Text>
-                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                  {t("settings.general.singleSidePanelDescription")}
-                </Text>
-              </Box>
+          <SettingsRow
+              title={t("settings.general.singleSidePanel")}
+              description={t("settings.general.singleSidePanelDescription")}
+            >
               <Switch
                 color="cliPrimary"
                 checked={terminalSidePanelSingleOpen}
@@ -399,19 +366,12 @@ export function SidebarSettingsPage() {
                     : t("settings.general.enableSingleSidePanel")
                 }
               />
-            </Group>
-          </Card>
+            </SettingsRow>
 
-          <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-            <Group justify="space-between" align="center" gap="md" wrap="nowrap">
-              <Box>
-                <Text size="xs" c="var(--on-surface-variant)">
-                  {t("settings.sidebar.systemResources")}
-                </Text>
-                <Text mt={4} size="xs" lh={1.55} c="var(--text-muted)">
-                  {t("settings.sidebar.systemResourcesDescription")}
-                </Text>
-              </Box>
+          <SettingsRow
+              title={t("settings.sidebar.systemResources")}
+              description={t("settings.sidebar.systemResourcesDescription")}
+            >
               <Switch
                 color="cliPrimary"
                 checked={systemResourceMonitoringEnabled}
@@ -422,16 +382,12 @@ export function SidebarSettingsPage() {
                     : t("settings.sidebar.enableSystemResources")
                 }
               />
-            </Group>
-          </Card>
+            </SettingsRow>
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.sidebar.panelSkin")}>
         <Stack gap="md">
-          <Text size="sm" fw={600} c="var(--on-surface)">
-            {t("settings.sidebar.panelSkin")}
-          </Text>
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
             {SIDE_PANEL_SKIN_OPTIONS.map((option) => {
               const active = terminalSidePanelSkin === option.value;
@@ -440,26 +396,10 @@ export function SidebarSettingsPage() {
                   key={option.value}
                   type="button"
                   onClick={() => void update("terminalSidePanelSkin", option.value)}
-                  className="ui-interactive ui-focus-ring ui-selection-card relative rounded-xl border px-4 py-3 text-left transition-[transform,box-shadow,border-color,background-color]"
+                  className="settings-choice"
                   data-selected={active ? "true" : "false"}
                   aria-pressed={active}
                   w="100%"
-                  style={{
-                    display: "block",
-                    minHeight: 76,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    whiteSpace: "normal",
-                    backgroundColor: active
-                      ? "color-mix(in srgb, var(--primary) 6%, var(--surface-container-lowest))"
-                      : "var(--surface-container-lowest)",
-                    borderColor: active
-                      ? "color-mix(in srgb, var(--primary) 56%, var(--border))"
-                      : "color-mix(in srgb, var(--border) 88%, transparent)",
-                    boxShadow: active
-                      ? "0 2px 8px color-mix(in srgb, var(--primary) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--primary) 24%, transparent)"
-                      : "0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent)",
-                  }}
                 >
                   <Group
                     justify="space-between"
@@ -502,7 +442,7 @@ export function SidebarSettingsPage() {
             })}
           </SimpleGrid>
         </Stack>
-      </section>
+      </SettingsSection>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="sm">
@@ -719,11 +659,8 @@ export function SidebarSettingsPage() {
         </Stack>
       </section>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection title={t("settings.general.toolbar")}>
         <Stack gap="sm">
-          <Text size="sm" fw={600} c="var(--on-surface)">
-            {t("settings.general.toolbar")}
-          </Text>
           <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="xs">
             {t("settings.general.terminalToolbar")}
           </Text>
@@ -749,7 +686,7 @@ export function SidebarSettingsPage() {
             ))}
           </SimpleGrid>
         </Stack>
-      </section>
+      </SettingsSection>
     </Stack>
   );
 }
