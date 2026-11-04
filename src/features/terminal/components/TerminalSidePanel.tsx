@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ArrowLeftRight, BarChart3, Cpu, Folder, GitBranch } from "../../../shared/ui/icons";
+import { Activity, ArrowLeftRight, BarChart3, Cpu, Folder, GitBranch } from "../../../shared/ui/homeIcons";
 import { TERM_PANEL, panelColorTint } from "../../stats/api/termStatsUi";
 import { ResizableTerminalPanelFrame } from "./ResizableTerminalPanelFrame";
 import { SystemResourcesPanel } from "./SystemResourcesPanel";

@@ -9,7 +9,7 @@ import { DND_SORTABLE_TRANSITION, WORKSPAN_DRAG_PREFIX } from "../../workspace/a
 import { type TerminalWorkspan } from "../api/terminalWorkspan";
 import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
 import { type CliToolIconKey } from "../../../shared/lib/cliTools";
-import { Terminal, X, Cloud } from "../../../shared/ui/icons";
+import { Terminal, X, Cloud } from "../../../shared/ui/homeIcons";
 import { WorktreeIcon } from "../../../shared/ui/WorktreeIcon";
 import { VendorIcon, type VendorKey } from "../../../shared/ui/VendorIcon";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";

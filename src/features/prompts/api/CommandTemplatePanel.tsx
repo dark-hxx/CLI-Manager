@@ -1,3 +1,4 @@
+import { Command as HomeCommand } from "../../../shared/ui/homeIcons";
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/shallow";
 import { useTemplateStore } from "./templateStore";
@@ -383,7 +384,7 @@ export function CommandTemplatePanel({
           title={popoverSide === "left" ? undefined : t("commandTemplate.title")}
           aria-label={t("commandTemplate.openPanel")}
         >
-          <TerminalSquare size={14} strokeWidth={1.5} />
+          <HomeCommand size={14} strokeWidth={1.5} />
         </button>
       </PopoverTrigger>
       <PopoverContent

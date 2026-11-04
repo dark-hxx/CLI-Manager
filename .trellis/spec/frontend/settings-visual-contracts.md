@@ -17,3 +17,13 @@
 Run `node --test scripts/settingsDialog.test.mjs scripts/settingsFocus.test.mjs scripts/settingsPresentation.test.mjs scripts/extensionsSettingsLayout.test.mjs scripts/extensionsMcpSaving.test.mjs scripts/nativeProviderCatalogSelection.test.mjs scripts/defaultThemeSettings.test.mjs scripts/workspaceBackgroundLayout.test.mjs`, frontend build, and strict architecture checks.
 
 Per quality-guidelines.md, agents do not start application services or the desktop app for visual verification. Human checks cover light/dark and zh-CN/en-US, 1200×800/900×600/350×600, UI font 13/18px, keyboard focus, nested menus/dialogs, dirty-leave confirmation and workspace images. Static rendering is not a substitute for desktop visual acceptance.
+
+## Homepage icon scope
+
+- `shared/ui/homeIcons.tsx` owns opt-in homepage function glyphs and reads the existing `settingsIconStyle` preference. Do not globally replace `shared/ui/icons` exports or import private settings UI from other features.
+- Refined glyphs use the Apple system palette: identity/tool icons carry a fixed `color`, while warning/check/sync/stop/filter/link glyphs keep `currentColor` so status styling still works. Caller-provided `style.color` overrides the palette.
+- Project folder glyphs derive their gradient from `var(--node-accent, fallback)` so per-project accent colors survive the switch; the terminal glyph keeps the fixed dark gradient from the design. Model/vendor/CLI/Shell identities and custom project marks remain outside the switch.
+- `shared/ui/CliToolIcon.tsx` frames every CLI brand logo in the same 18/24 safe area as the refined glyphs. Do not compensate icon sizes at call sites (`NodeAppearanceIcon` renders every branch at the requested `size`). Kimi uses the mono mark so the white-backed color variant does not disappear in light theme.
+- `NodeAppearanceIcon.homeStyle` only opts homepage fallback folder/terminal shapes in; history and stats defaults remain unchanged.
+- Preserve classic SVG props unchanged. Refined glyphs retain size, transforms, aria overrides and refs.
+- Toolbar triggers and drag overlays share the same icon components. Nested panel contents retain their existing icons.

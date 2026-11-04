@@ -11,7 +11,7 @@ import { TerminalWorkspaceFrame } from "./TerminalWorkspaceFrame";
 import { ProviderQuickSwitchPanel } from "./ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "../../projects/api/WorktreeFinishDialog";
 import { FileExplorerSidebar } from "../../files/api/FileExplorerSidebar";
-import { Terminal } from "../../../shared/ui/icons";
+import { Terminal } from "../../../shared/ui/homeIcons";
 import { EmptyState } from "../../../shared/ui/EmptyState";
 import { canSaveSessionToSidebar } from "../../projects/api/saveSessionToSidebar";
 import { ContextMenuItem } from "../../../shared/ui/context-menu";

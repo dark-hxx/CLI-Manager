@@ -5,7 +5,7 @@ import { CSS } from "@dnd-kit/utilities";
 import type { TreeNode as TNode } from "../../../shared/types/index";
 import { countProjectsInNode, type ProviderBadge } from "../api/projectStore";
 import { useTreeActions, worktreeListCollapseId } from "./TreeContext";
-import { ChevronRight, AlertTriangle, Link2, Pin, Play } from "../../../shared/ui/icons";
+import { ChevronRight, AlertTriangle, Link2, Pin, Play } from "../../../shared/ui/homeIcons";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
 import { WorktreeIcon } from "../../../shared/ui/WorktreeIcon";
 import { useI18n } from "../../../shared/i18n/index";
@@ -260,12 +260,12 @@ function TreeNodeItemImpl({
                   <Link2 size={11} strokeWidth={2} aria-hidden="true" />
                 </span>
               )}
-              <NodeAppearanceIcon
+              <NodeAppearanceIcon homeStyle
                 mark={appearance.emoji}
                 iconKey={appearance.iconKey}
                 cliTool={p.cli_tool}
                 fallback="terminal"
-                size={14}
+                size={19}
               />
             </span>
             <InlineRename initial={p.name} onConfirm={(name) => actions.onProjectRenameConfirm(p.id, name)} onCancel={actions.onCancelProjectRename} />
@@ -338,12 +338,12 @@ function TreeNodeItemImpl({
                 <Link2 size={11} strokeWidth={2} aria-hidden="true" />
               </span>
             )}
-            <NodeAppearanceIcon
+            <NodeAppearanceIcon homeStyle
               mark={appearance.emoji}
               iconKey={appearance.iconKey}
               cliTool={p.cli_tool}
               fallback="terminal"
-              size={14}
+              size={19}
             />
           </span>
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -507,11 +507,11 @@ function TreeNodeItemImpl({
             <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
           </span>
           <span className="ui-tree-leading-icon">
-            <NodeAppearanceIcon
+            <NodeAppearanceIcon homeStyle
               mark={groupAppearance.emoji}
               iconKey={groupAppearance.iconKey}
               fallback="folder"
-              size={16}
+              size={19}
             />
           </span>
           <span className="flex-1 text-left truncate">{g.name}</span>

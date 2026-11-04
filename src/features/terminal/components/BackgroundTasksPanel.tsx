@@ -1,3 +1,4 @@
+import { Layers as HomeLayers } from "../../../shared/ui/homeIcons";
 import { useMemo, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
@@ -8,7 +9,7 @@ import { useSshAgentIntegrationStore } from "../../remote/api/sshAgentIntegratio
 import { useSshHostStore } from "../../remote/api/sshHostStore";
 import { useTerminalStore, type TabNotificationState } from "../state";
 import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
-import { Activity, AlertTriangle, Check, Copy, Layers, RefreshCw, X } from "../../../shared/ui/icons";
+import { Activity, AlertTriangle, Check, Copy, RefreshCw, X } from "../../../shared/ui/icons";
 import { Popover, PopoverContent, PopoverTrigger } from "../../../shared/ui/popover";
 import { useDaemonTaskInventory } from "../api/daemonTaskInventory";
 
@@ -188,7 +189,7 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverSide =
           disabled={!hasAnyTask}
           aria-label={t("terminal.backgroundTasks.title")}
         >
-          <Layers size={14} strokeWidth={1.8} />
+          <HomeLayers size={14} strokeWidth={1.8} />
           {showText && <span>{t("terminal.backgroundTasks.shortTitle")}</span>}
         </button>
       </PopoverTrigger>

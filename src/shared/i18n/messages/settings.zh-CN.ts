@@ -276,7 +276,7 @@ export const zh = {
   "settings.general.uiFontSizeSlider": "应用字体大小滑杆",
   "settings.general.uiFontSizeDescription": "影响除内置终端外的应用界面；终端字号仍在「终端」中单独配置。",
   "settings.general.settingsIcons": "精致图标",
-  "settings.general.settingsIconsDescription": "使用自绘的彩色分类图标与精致线性图标；关闭后恢复经典图标。",
+  "settings.general.settingsIconsDescription": "首页与设置页使用精致功能图标，模型和品牌图标保持不变；关闭后恢复经典图标。",
   "settings.general.enableSettingsIcons": "开启精致图标",
   "settings.general.disableSettingsIcons": "关闭精致图标",
   "settings.general.uiTextColor": "应用字体颜色",

@@ -278,7 +278,7 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.general.uiFontSizeSlider": "UI font size slider",
   "settings.general.uiFontSizeDescription": "Affects the app UI except the built-in terminal. Terminal font size is configured in Terminal.",
   "settings.general.settingsIcons": "Refined icons",
-  "settings.general.settingsIconsDescription": "Use hand-drawn color category tiles and refined line icons. Turn off to restore classic icons.",
+  "settings.general.settingsIconsDescription": "Use refined function icons on the home and settings screens. Model and brand icons stay unchanged. Turn off to restore classic icons.",
   "settings.general.enableSettingsIcons": "Enable refined icons",
   "settings.general.disableSettingsIcons": "Disable refined icons",
   "settings.general.uiTextColor": "UI Text Color",
