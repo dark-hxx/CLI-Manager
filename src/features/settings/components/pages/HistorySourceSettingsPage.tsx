@@ -17,6 +17,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { debugConsoleWarn } from "../../../../shared/platform/debugConsole";
 import {
   HISTORY_SOURCE_DESCRIPTORS,
   createHistorySourceInstanceId,
@@ -219,7 +220,7 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
 
   useEffect(() => {
     void Promise.all([loadBackupStatus(), loadRestoreCandidates()]).catch((error) => {
-      console.warn("Failed to load history backup state", error);
+      debugConsoleWarn("Failed to load history backup state", error);
     });
   }, []);
 

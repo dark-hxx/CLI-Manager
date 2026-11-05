@@ -9,6 +9,7 @@ import { backgroundImageExists } from "../platform/assetUrl";
 import { defaultShellForOs, getOsPlatform, isWindowsOnlyShellKey } from "../platform/shell";
 import { getCliManagerDataPaths } from "../platform/appPaths";
 import { singleFlight } from "../lib/singleFlight";
+import { debugConsoleWarn } from "../platform/debugConsole";
 import {
   DEFAULT_TERMINAL_INPUT_SUGGESTION_USAGE,
   TERMINAL_INPUT_SUGGESTION_AI_MODEL,
@@ -1319,7 +1320,7 @@ async function applyDebugMode(enabled: boolean) {
     await invoke("set_debug_logging", { enabled });
   } catch (err) {
     if (enabled) {
-      console.warn("Failed to set debug logging:", err);
+      debugConsoleWarn("Failed to set debug logging:", err);
     }
   }
 }
@@ -1894,7 +1895,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
         await s.set("historyDetailSortDirections", next);
       })
       .catch((err) => {
-        console.warn("Failed to persist history detail sort directions:", err);
+        debugConsoleWarn("Failed to persist history detail sort directions:", err);
       });
   },
 

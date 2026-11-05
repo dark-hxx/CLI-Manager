@@ -18,6 +18,7 @@ import { useTerminalStore } from "../../terminal/state";
 import { useUpdateStore } from "../api/updateStore";
 import { MarkdownContent } from "../../../shared/ui/MarkdownContent";
 import { pickByLanguage, useI18n } from "../../../shared/i18n/index";
+import { debugConsoleError } from "../../../shared/platform/debugConsole";
 
 const REPOSITORY_URL = "https://github.com/dark-hxx/CLI-Manager";
 const MANUAL_URL = `${REPOSITORY_URL}/blob/master/docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md`;
@@ -42,7 +43,7 @@ async function openExternalUrl(url: string): Promise<void> {
   try {
     await openUrl(url);
   } catch (e) {
-    console.error("Failed to open URL:", e);
+    debugConsoleError("Failed to open URL:", e);
   }
 }
 
