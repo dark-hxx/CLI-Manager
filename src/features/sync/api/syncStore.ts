@@ -17,6 +17,7 @@ import { useProjectStore } from "../../projects/api/projectStore";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useSshHostStore } from "../../remote/api/sshHostStore";
 import { useWorktreeStore } from "../../projects/api/worktreeStore";
+import { debugConsoleError, debugConsoleWarn } from "../../../shared/platform/debugConsole";
 
 export type BackupStatus = "idle" | "backing_up" | "restoring" | "queued" | "success" | "error";
 export type BackupMode = "cloud" | "local";
@@ -668,7 +669,7 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
       await applySnapshot(snapshot, domains); set({ status: "success", lastBackupAt: snapshot.manifest.createdAt });
       useBackgroundOperationStore.getState().succeed(operationId);
     } catch (error) {
-      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Restore rollback failed", rollbackError));
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => debugConsoleError("Restore rollback failed", rollbackError));
       useBackgroundOperationStore.getState().fail(operationId, error);
       set({ status: "error" });
       throw error;
@@ -685,7 +686,7 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
       const snapshot = await normalizeImportedSnapshot(raw, state.deviceId, state.deviceName);
       await applySnapshot(snapshot, domains); set({ status: "success" });
     } catch (error) {
-      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Legacy restore rollback failed", rollbackError));
+      await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => debugConsoleError("Legacy restore rollback failed", rollbackError));
       set({ status: "error" }); throw error;
     }
   },
@@ -714,7 +715,7 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
       await applySnapshot(snapshot, domains); set({ status: "success" });
       useBackgroundOperationStore.getState().succeed(operationId);
     } catch (error) {
-      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => console.error("Import rollback failed", rollbackError));
+      if (safety) await applySnapshot(safety, ALL_DOMAINS).catch((rollbackError) => debugConsoleError("Import rollback failed", rollbackError));
       useBackgroundOperationStore.getState().fail(operationId, error);
       set({ status: "error" });
       throw error;
@@ -760,7 +761,7 @@ export const useSyncStore = create<BackupStore>((set, get) => ({
       try {
         await invoke("backup_upload", { config: webdavConfig(state), snapshot, remoteDir: state.remoteDir || undefined });
         await invoke("backup_outbox_remove", { targetHash, snapshotId: snapshot.manifest.snapshotId });
-      } catch (error) { console.warn("Backup outbox retry failed", error); break; }
+      } catch (error) { debugConsoleWarn("Backup outbox retry failed", error); break; }
     }
   },
   runCloseAutoBackup: async () => {

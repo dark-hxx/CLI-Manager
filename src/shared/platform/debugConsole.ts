@@ -18,3 +18,8 @@ export function debugConsoleWarn(...args: unknown[]): void {
   if (!isDebugConsoleEnabled()) return;
   console.warn(...args);
 }
+
+export function debugConsoleError(...args: unknown[]): void {
+  if (!isDebugConsoleEnabled()) return;
+  console.error(...args);
+}
