@@ -69,3 +69,11 @@
 - 底部：统计 14→17、设置 14→17、协作 14→17；同步云 14→17，行内同步云 12→15。
 - 28px 操作按钮容器与布局不变；项目树图标维持上一版 19px。
 - 验证：图标测试 7 项、`npx tsc --noEmit`、`npm run check:architecture -- --strict`、`npx vite build` 通过。
+
+## 第十版：分层渲染（Icon Study 03）
+
+- 重写 `src/shared/ui/homeIcons.tsx` 图形：新增 `Solid`（实心 + 顶部白色高光，按实例 `${uid}-sheen` 渐变）、`rect`、`panel` 辅助；对象类实心剪影 + 白色镂空，次级部件 40–60% 透明度，面板类外框 + 实心内嵌区，动作类线性几何统一圆角。
+- 终端/终端方块共用 `terminalBody`，渐变 id 改为按实例生成；文件渐变同理。
+- Copy 去掉固定蓝色（标题栏还原按钮与其他窗口按钮一致），Handshake 重画，Filter 改递减横线，Palette 四色颜料点。导出名与 props 不变，18 个导入点无需改动。
+- 新增 `docs/design/home-icons-apple-v3.html/.png`：由产品组件 `renderToStaticMarkup` 生成，稿件即产品。
+- 验证：`node --test scripts/homeIcons.test.mjs` 8 项通过（新增按实例渐变 id 测试，状态继承列表补 Copy/Minus/Square）、`npx tsc --noEmit`、`npm run check:architecture -- --strict`、`git diff --check` 通过；无头 Chrome 13/15/17/19/24/44/64px 明暗对照检查。桌面实际视觉待人工验收。
