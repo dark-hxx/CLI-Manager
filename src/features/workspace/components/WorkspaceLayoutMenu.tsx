@@ -13,7 +13,7 @@ import {
   PanelTopClose,
   PanelTopOpen,
   RotateCcw,
-} from "lucide-react";
+} from "../../../shared/ui/homeIcons";
 import { useI18n } from "../../../shared/i18n/index";
 import {
   Popover,

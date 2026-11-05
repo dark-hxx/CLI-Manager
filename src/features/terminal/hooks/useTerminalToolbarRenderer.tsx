@@ -10,7 +10,7 @@ import { BackgroundTasksPanel, type BackgroundTaskMeta } from "../components/Bac
 import {
   Activity, ArrowLeftRight, Plus, ListClockIcon, Maximize2, Minimize2, BarChart3, GitBranch, Folder,
   Cpu,
-} from "../../../shared/ui/icons";
+} from "../../../shared/ui/homeIcons";
 import type { Project } from "../../../shared/types/index";
 import { SortableToolbarButton, CpuCatIndicator } from "../components/TerminalToolbarControls";
 

@@ -383,6 +383,7 @@ export function GeneralSettingsPage() {
   const lightThemePalette = useSettingsStore((s) => s.lightThemePalette);
   const darkThemePalette = useSettingsStore((s) => s.darkThemePalette);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
+  const settingsIconStyle = useSettingsStore((s) => s.settingsIconStyle);
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
   const uiTextColor = useSettingsStore((s) => s.uiTextColor);
   const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
@@ -589,6 +590,24 @@ export function GeneralSettingsPage() {
                 color="cliPrimary"
                 fullWidth
                 aria-label={t("settings.general.theme")}
+              />
+            </SettingsRow>
+
+            <SettingsRow
+              title={t("settings.general.settingsIcons")}
+              description={t("settings.general.settingsIconsDescription")}
+            >
+              <Switch
+                color="cliPrimary"
+                checked={settingsIconStyle === "refined"}
+                onChange={(event) => {
+                  void update("settingsIconStyle", event.currentTarget.checked ? "refined" : "classic");
+                }}
+                aria-label={t(
+                  settingsIconStyle === "refined"
+                    ? "settings.general.disableSettingsIcons"
+                    : "settings.general.enableSettingsIcons"
+                )}
               />
             </SettingsRow>
 

@@ -67,6 +67,9 @@
   font-weight: 500;
 }
 .settings-nav-item[data-selected="true"] svg { color: var(--primary); }
+/* 自绘彩色砖自带底色与白色符号，不参与选中态染色。 */
+.settings-nav-item[data-icon-style="refined"][data-selected="true"] svg { color: inherit; }
+[data-theme="dark"] .settings-nav-item[data-icon-style="refined"] svg { filter: saturate(0.9) brightness(0.94); }
 .settings-mobile-nav { display: none; }
 .settings-scope .settings-topbar {
   padding: 26px 24px 18px;

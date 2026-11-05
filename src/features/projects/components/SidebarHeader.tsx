@@ -1,4 +1,4 @@
-import { ChevronRight, Filter, FolderPlus, Plus } from "../../../shared/ui/icons";
+import { ChevronRight, Filter, FolderPlus, Plus } from "../../../shared/ui/homeIcons";
 import { useI18n } from "../../../shared/i18n/index";
 import type { WorkspaceDockSide } from "../../../shared/lib/workspaceLayout";
 
@@ -57,7 +57,7 @@ export function SidebarHeader({
           title={t("sidebar.expand")}
           aria-label={t("sidebar.expand")}
         >
-          <ChevronRight size={14} strokeWidth={1.8} className={expandIconClassName} />
+          <ChevronRight size={17} strokeWidth={1.8} className={expandIconClassName} />
         </button>
         {showProjectFilter && (
           <button
@@ -69,7 +69,7 @@ export function SidebarHeader({
             aria-label={nextFilterTitle}
             data-filter={projectFilter}
           >
-            <Filter size={14} strokeWidth={1.7} />
+            <Filter size={17} strokeWidth={1.7} />
           </button>
         )}
         <button
@@ -78,7 +78,7 @@ export function SidebarHeader({
           title={t("sidebar.newGroup")}
           aria-label={t("sidebar.newGroup")}
         >
-          <FolderPlus size={14} strokeWidth={1.5} />
+          <FolderPlus size={17} strokeWidth={1.5} />
         </button>
         <button
           onClick={onCreateProject}
@@ -86,7 +86,7 @@ export function SidebarHeader({
           title={t("sidebar.newTerminal")}
           aria-label={t("sidebar.newTerminal")}
         >
-          <Plus size={13} strokeWidth={2} />
+          <Plus size={16} strokeWidth={2} />
         </button>
       </div>
     );
@@ -103,7 +103,7 @@ export function SidebarHeader({
             title={t("sidebar.collapse")}
             aria-label={t("sidebar.collapse")}
           >
-            <ChevronRight size={14} strokeWidth={1.8} className={collapseIconClassName} />
+            <ChevronRight size={17} strokeWidth={1.8} className={collapseIconClassName} />
           </button>
           <button
             onClick={onCreateGroup}
@@ -111,7 +111,7 @@ export function SidebarHeader({
             title={t("sidebar.newGroup")}
             aria-label={t("sidebar.newGroup")}
           >
-            <FolderPlus size={14} strokeWidth={1.5} />
+            <FolderPlus size={17} strokeWidth={1.5} />
           </button>
           <button
             onClick={onCreateProject}

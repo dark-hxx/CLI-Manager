@@ -80,7 +80,7 @@ test('desktop and compact navigation expose the same selected category; sections
   const html = renderLayout();
   assert.match(html, /settings-mobile-nav/);
   assert.match(html, /value="tools"/);
-  assert.match(html, /data-selected="true" aria-pressed="true"/);
+  assert.match(html, /data-selected="true"[^>]*aria-pressed="true"/);
   assert.match(html, /data-width="wide"/);
   assert.match(html, /aria-label="Host"/);
   assert.match(html, /aria-expanded="false"/);

@@ -22,6 +22,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { SettingsGlyph, type SettingsStructureGlyphName } from "../SettingsIcons";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import type {
   CreateSshHostInput,
@@ -72,12 +73,17 @@ interface Props {
   onPasswordChange: (password: string) => void;
 }
 
-const SECTIONS: Array<{ id: Section; icon: typeof Server; label: TranslationKey }> = [
-  { id: "basic", icon: Server, label: "settings.sshHosts.section.basic" },
-  { id: "auth", icon: KeyRound, label: "settings.sshHosts.section.auth" },
-  { id: "routing", icon: Route, label: "settings.sshHosts.section.routing" },
-  { id: "connection", icon: SlidersHorizontal, label: "settings.sshHosts.section.connection" },
-  { id: "startup", icon: Terminal, label: "settings.sshHosts.section.startup" },
+const SECTIONS: Array<{
+  id: Section;
+  icon: typeof Server;
+  glyph: SettingsStructureGlyphName;
+  label: TranslationKey;
+}> = [
+  { id: "basic", icon: Server, glyph: "server", label: "settings.sshHosts.section.basic" },
+  { id: "auth", icon: KeyRound, glyph: "keyRound", label: "settings.sshHosts.section.auth" },
+  { id: "routing", icon: Route, glyph: "route", label: "settings.sshHosts.section.routing" },
+  { id: "connection", icon: SlidersHorizontal, glyph: "plug", label: "settings.sshHosts.section.connection" },
+  { id: "startup", icon: Terminal, glyph: "terminal", label: "settings.sshHosts.section.startup" },
 ];
 
 const STAGE_LABELS: Record<string, TranslationKey> = {
@@ -185,7 +191,7 @@ export function SshHostEditor(props: Props) {
               role="tablist"
               aria-label={t("settings.sshHosts.sectionNavigation")}
             >
-              {SECTIONS.map(({ id, icon: Icon, label }) => (
+              {SECTIONS.map(({ id, icon: Icon, glyph, label }) => (
                 <button
                   key={id}
                   type="button"
@@ -194,7 +200,7 @@ export function SshHostEditor(props: Props) {
                   className={`ui-focus-ring flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-bold transition-colors ${activeSection === id ? "bg-primary/15 text-primary ring-1 ring-primary/40" : "text-text-muted hover:bg-surface-container-high hover:text-text-primary"}`}
                   onClick={() => scrollToSection(id)}
                 >
-                  <Icon className="h-3.5 w-3.5" />
+                  <SettingsGlyph name={glyph} classic={Icon} className="h-3.5 w-3.5" />
                   {t(label)}
                 </button>
               ))}

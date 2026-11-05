@@ -4,6 +4,7 @@ import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ArrowDown, ArrowLeftRight, ArrowUp, GripVertical, RotateCcw, Save } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useI18n } from "../../../../shared/i18n/index";
 import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "../../../workspace/api/dragInteraction";
 import { NativeProviderActionIcon as ActionIcon, NativeProviderButton as Button } from "./NativeProviderButton";
@@ -179,7 +180,7 @@ export function NativeProviderFailoverSection({ appType, state }: NativeProvider
 
   return (
     <Accordion.Item value="failover">
-      <Accordion.Control icon={<ArrowLeftRight size={16} />}>{t("providerCatalog.failover.title")}</Accordion.Control>
+      <Accordion.Control icon={<SettingsGlyph name="arrowsLeftRight" classic={ArrowLeftRight} size={16} />}>{t("providerCatalog.failover.title")}</Accordion.Control>
       <Accordion.Panel>
         <Stack gap="md">
           <Text size="sm" c="dimmed">{t("providerCatalog.failover.description")}</Text>

@@ -1,6 +1,6 @@
 import { useShallow } from "zustand/shallow";
 import { useSyncStore } from "../../sync/api/syncStore";
-import { Cloud } from "../../../shared/ui/icons";
+import { Cloud } from "../../../shared/ui/homeIcons";
 import type { SettingsTab } from "../../settings/api/SettingsModal";
 import { useI18n } from "../../../shared/i18n/index";
 
@@ -72,7 +72,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
         title={configured ? t("sidebar.sync.configuredTitle", { status: getStatusText() }) : t("sidebar.sync.unconfiguredTitle")}
         aria-label={configured ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
-        <Cloud size={14} strokeWidth={1.5} />
+        <Cloud size={17} strokeWidth={1.5} />
       </button>
     );
   }
@@ -85,7 +85,7 @@ export function SyncStatusIndicator({ collapsed, onOpenSettings }: SyncStatusInd
         title={configured ? t("sidebar.sync.openTitle") : t("sidebar.sync.configureTitle")}
         aria-label={configured ? t("sidebar.sync.openSettings") : t("sidebar.sync.configure")}
       >
-        <Cloud size={12} strokeWidth={1.5} />
+        <Cloud size={15} strokeWidth={1.5} />
         <span className="ui-sidebar-sync-link__label text-xs">{getStatusText()}</span>
       </button>
     </div>
