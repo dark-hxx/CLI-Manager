@@ -31,6 +31,11 @@ await build({
         useSettingsStore.setState({ settingsIconStyle: style });
         return renderToStaticMarkup(createElement(NodeAppearanceIcon, { mark: '', fallback: 'folder', homeStyle: true, ...props }));
       }
+      export function twice(name) {
+        useSettingsStore.setState({ settingsIconStyle: 'refined' });
+        const Icon = Home[name];
+        return renderToStaticMarkup(<><Icon /><Icon /></>);
+      }
       export function brand(style) {
         useSettingsStore.setState({ settingsIconStyle: style });
         return renderToStaticMarkup(<><CliToolIcon icon="codex" /><VendorIcon vendor="openai" /></>);
@@ -106,11 +111,12 @@ test("refined mode applies the Apple palette and keeps state icons inheriting co
   assert.match(mod.icon("Folder", "refined"), /style="color:var\(--node-accent, #4B95FB\)"/);
   assert.match(mod.icon("Folder", "refined"), /url\(#[^)]*folder-back\)/);
   assert.match(mod.icon("Terminal", "refined"), /style="color:#34C759"/);
-  assert.match(mod.icon("Terminal", "refined"), /url\(#home-terminal-body\)/);
+  assert.match(mod.icon("Terminal", "refined"), /url\(#[^)]*home-terminal-body\)/);
+  assert.match(mod.icon("Trash2", "refined"), /url\(#[^)]*-sheen\)/);
   assert.match(mod.icon("Command", "refined"), /style="color:#FF375F"/);
   assert.match(mod.icon("Trash2", "refined"), /style="color:#FF3B30"/);
   assert.match(mod.icon("Search", "refined"), /style="color:#7C8798"/);
-  for (const name of ["AlertTriangle", "Check", "Cloud", "CircleStop", "Filter", "Link2", "X"]) {
+  for (const name of ["AlertTriangle", "Check", "Cloud", "CircleStop", "Copy", "Filter", "Link2", "Minus", "Square", "X"]) {
     assert.doesNotMatch(mod.icon(name, "refined"), /style="color:/, name);
   }
 });
@@ -121,6 +127,14 @@ test("each folder instance owns its gradient id so project accents do not leak",
   assert.equal(ids.length, 2);
   assert.notEqual(ids[0], ids[1]);
   for (const id of ids) assert.match(html, new RegExp(`url\\(#${id}\\)`));
+});
+
+test("sheen and terminal gradients are scoped per instance", () => {
+  for (const name of ["Trash2", "Terminal", "FileCode"]) {
+    const ids = [...mod.twice(name).matchAll(/ id="([^"]+)"/g)].map((match) => match[1]);
+    assert.ok(ids.length >= 2, name);
+    assert.equal(new Set(ids).size, ids.length, name);
+  }
 });
 
 test("CLI logos are normalized into the same 18/24 safe area as function glyphs", () => {
