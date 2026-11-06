@@ -76,7 +76,7 @@ test("README Chinese preview link resolves to its real heading", () => {
   const sourceLine = repositoryReadme.split(/\r?\n/u)[17];
   const clickedColumn = sourceLine.indexOf("[界面预览]") + 2;
   assert.equal(navigation.findMarkdownLinkAtPosition(repositoryReadme, 18, clickedColumn), "#-界面预览");
-  assert.equal(navigation.findMarkdownHeadingLine(repositoryReadme, "-界面预览"), 453);
+  assert.equal(navigation.findMarkdownHeadingLine(repositoryReadme, "-界面预览"), 424);
 });
 
 test("source navigation recognizes inline, reference, image, autolink, and bare URL links", () => {
