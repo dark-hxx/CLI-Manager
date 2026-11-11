@@ -1,4 +1,5 @@
 export const zh = {
+  "subagentTranscript.encrypted": "该消息包含加密正文，无法从本地转录读取原文。",
   "history.resumeProject.unsupportedSource": "该来源尚未接入继续对话功能",
   "history.resumeProject.environmentUnavailable": "无法在原运行环境继续会话，请选择匹配的 WSL 项目并检查发行版和目录。错误：{code}",
   "subagentTranscript.omittedMessages": "已省略前 {count} 条消息",

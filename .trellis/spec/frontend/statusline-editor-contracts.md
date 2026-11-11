@@ -13,6 +13,7 @@
 
 ## 3. Contracts
 
+- Keep the `statusline` entry after Hooks in `SETTINGS_TAB_ORDER` and in `WIDE_SETTINGS_TABS`. Desktop navigation and the compact category selector share this existing page; restoring it must not unhide Command Suggestions or change configuration/install behavior.
 - Claude and Codex drafts, selected items and preview state are independent.
 - Claude catalog must not keep a separate target-line selector: clicking a catalog item adds it to the explicitly active line, while dragging derives the target line and position from the actual drop target; invalid drops are no-ops. Every placed widget has a direct remove action, and selected widgets can move across lines without requiring drag-and-drop.
 - Clicking the selected Claude widget again or clicking empty layout space clears the selection and restores global properties.

@@ -7,6 +7,7 @@ export interface RenderedMessage {
   actor: "parent" | "child" | "unknown";
   phase?: "final" | "progress";
   timestamp?: string;
+  notice?: "encrypted";
 }
 
 /** Bounded evidence only; never retain a second copy of the transcript. */
@@ -14,6 +15,8 @@ export interface TranscriptParserState {
   child?: boolean;
   createdAt?: string;
   turnId?: string;
+  metaSeen?: boolean;
+  agentPath?: string;
 }
 interface TranscriptLabels { toolCall: string; toolResult: string }
 type RecordValue = Record<string, unknown>;
@@ -98,6 +101,9 @@ function parseClaudeTranscriptItem(obj: RecordValue, labels: TranscriptLabels, s
   if (!message) return [];
   const parts = extractText(message.content, labels);
   const metadata = asRecord(obj.cliManagerSubagent);
+  if (metadata?.version === 1 && metadata.notice === "encrypted" && parts.length === 0) {
+    parts.push({ kind: "text", text: "" });
+  }
   // Optional versioned snapshot metadata; legacy wrappers remain readable.
   if (metadata?.version === 1 && parts.length === 1
     && ["text", "context", "tool_call", "tool_result", "reasoning", "unknown"].includes(string(metadata.kind))
@@ -106,6 +112,7 @@ function parseClaudeTranscriptItem(obj: RecordValue, labels: TranscriptLabels, s
       kind: metadata.kind as TranscriptKind, actor: metadata.actor as RenderedMessage["actor"],
       phase: metadata.phase === "final" || metadata.phase === "progress" ? metadata.phase : undefined,
       timestamp: typeof metadata.timestamp === "string" ? metadata.timestamp : undefined,
+      ...(metadata.notice === "encrypted" ? { notice: "encrypted" as const } : {}),
     } satisfies Omit<RenderedMessage, "id">];
   }
   return messagesFromParts(obj, message, parts, state);
@@ -115,11 +122,53 @@ function parseCodexResponseItem(obj: RecordValue, labels: TranscriptLabels, stat
   if (obj.type !== "response_item") return [];
   const payload = asRecord(obj.payload);
   if (!payload) return [];
+  if (payload.type === "agent_message") return parseAgentMessage(obj, payload, labels, state);
   const message = asRecord(payload.message) ?? (payload.type === "message" ? payload : null);
   if (message) return messagesFromParts(obj, message, extractText(message.content, labels), state);
   const kind = string(payload.type);
   if (!["function_call", "custom_tool_call", "function_call_output", "custom_tool_call_output", "reasoning"].includes(kind)) return [];
   return messagesFromParts(obj, { ...payload, role: "tool" }, extractText([payload], labels), state);
+}
+
+function agentPath(value: unknown): string {
+  const path = string(value);
+  return path.length <= 512 && /^\/root(?:\/[a-zA-Z0-9_-]+)*$/.test(path) ? path : "";
+}
+
+/** v2 communication has explicit endpoints; a role alone never proves its author. */
+function parseAgentMessage(obj: RecordValue, payload: RecordValue, labels: TranscriptLabels, state: TranscriptParserState) {
+  const author = agentPath(payload.author), recipient = agentPath(payload.recipient);
+  const current = state.agentPath;
+  const incoming = !!(current && recipient === current && author && author !== current);
+  const outgoing = !!(current && author === current && recipient && recipient !== current);
+  const parent = current?.slice(0, current.lastIndexOf("/"));
+  const role = outgoing ? "assistant" : "user";
+  const content = Array.isArray(payload.content) ? payload.content : [];
+  const encrypted = content.some(value => asRecord(value)?.type === "encrypted_content");
+  let messageType = "";
+  const parts = extractText(typeof payload.content === "string" ? payload.content
+    : content.filter(value => asRecord(value)?.type !== "encrypted_content"), labels).map(part => {
+    // Remove only the verified transport envelope, not arbitrary task text.
+    const envelope = /^Message Type: ([A-Z_]+)\nTask name: ([^\n]+)\nSender: ([^\n]+)\nPayload:\n/.exec(part.text);
+    if (part.kind !== "text" || !envelope || envelope[3] !== author
+      || (envelope[2] !== author && envelope[2] !== recipient)) return part;
+    messageType = envelope[1];
+    return { ...part, text: part.text.slice(envelope[0].length) };
+  }).filter(part => part.text.trim());
+  if (encrypted && !parts.some(part => part.kind === "text")) parts.unshift({ kind: "text", text: "" });
+  const messages = messagesFromParts(obj, { ...payload, role }, parts, state);
+  let noticeAdded = false;
+  return messages.map(message => {
+    const unrelated = !!(current && author && recipient && !incoming && !outgoing);
+    const context = unrelated || message.kind === "context";
+    const actor = context ? "unknown" : state.child && incoming && author === parent ? "parent"
+      : state.child && outgoing ? "child" : "unknown";
+    const notice = encrypted && message.kind === "text" && !noticeAdded ? "encrypted" : undefined;
+    if (notice) noticeAdded = true;
+    return { ...message, kind: context ? "context" : message.kind, actor,
+      phase: messageType === "FINAL_ANSWER" ? "final" : message.phase, notice,
+    } satisfies Omit<RenderedMessage, "id">;
+  });
 }
 
 /** Complete JSONL lines only. Callers carry state across appends and discard it on reset/head trimming. */
@@ -134,10 +183,12 @@ export function parseTranscriptLines(
     try { obj = asRecord(JSON.parse(line)); } catch { continue; }
     if (!obj) continue;
     const payload = asRecord(obj.payload);
-    if (obj.type === "session_meta") {
+    if (obj.type === "session_meta" && !state.metaSeen) {
       const spawn = asRecord(asRecord(asRecord(payload?.source)?.subagent)?.thread_spawn);
-      state.child = !!string(spawn?.parent_thread_id);
+      state.metaSeen = true;
+      state.child = !!(string(spawn?.parent_thread_id) || string(payload?.parent_thread_id));
       state.createdAt = string(payload?.timestamp) || undefined;
+      state.agentPath = agentPath(payload?.agent_path) || agentPath(spawn?.agent_path) || undefined;
       state.turnId = undefined;
     } else if (obj.type === "event_msg" && payload?.type === "task_started") {
       const attribution = asRecord(payload.turn_attribution);

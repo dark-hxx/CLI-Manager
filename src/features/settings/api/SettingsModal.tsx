@@ -94,6 +94,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "sync",
   "history-sources",
   "hooks",
+  "statusline",
   "sidebar",
   "desktop-pet",
   "developer",
@@ -102,7 +103,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
 ];
 
 const WIDE_SETTINGS_TABS: ReadonlySet<SettingsTab> = new Set([
-  "terminal-theme", "shortcuts", "templates", "native-providers", "extensions", "model-pricing", "ssh-hosts",
+  "terminal-theme", "shortcuts", "templates", "native-providers", "extensions", "model-pricing", "ssh-hosts", "statusline",
 ]);
 
 const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {

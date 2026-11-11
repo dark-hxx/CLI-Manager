@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
 // Render the actual presentation components without starting Vite, Tauri, or any
 // desktop services. These checks cover theme isolation and semantic markup only.
@@ -36,10 +38,10 @@ await build({
         </MantineProvider>);
       }
 
-      export function renderLayout() {
+      export function renderLayout(activeTab = 'tools', activeLabel = 'Tools') {
         return renderToStaticMarkup(<MantineProvider><SettingsThemeProvider>
-          <SettingsLayout tabs={[{ id: 'general', label: 'General', icon: Settings2 }, { id: 'tools', label: 'Tools', icon: Settings2 }]}
-            activeTab="tools" onTabChange={() => {}} title="Tools" description="Configure tools" contentWidth="wide"
+          <SettingsLayout tabs={[{ id: 'general', label: 'General', icon: Settings2 }, { id: activeTab, label: activeLabel, icon: Settings2 }]}
+            activeTab={activeTab} onTabChange={() => {}} title={activeLabel} description="Configure tools" contentWidth="wide"
             searchValue="" onSearchChange={() => {}} onClose={() => {}}>
             <SettingsSection title="Connection"><SettingsRow title="Host" description="Remote host">
               <TextInput aria-label="Host" />
@@ -86,4 +88,28 @@ test('desktop and compact navigation expose the same selected category; sections
   assert.match(html, /aria-expanded="false"/);
   assert.doesNotMatch(html, /Hidden content/);
   assert.match(html, /aria-label="settings.closeLabel"/);
+});
+
+test('restored statusline navigation uses the existing page in both languages and keeps unrelated hidden entries hidden', () => {
+  const source = readFileSync(new URL('../src/features/settings/api/SettingsModal.tsx', import.meta.url), 'utf8');
+  const ast = ts.createSourceFile('SettingsModal.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  const variables = ast.statements.filter(ts.isVariableStatement).flatMap(statement => [...statement.declarationList.declarations]);
+  const order = variables.find(declaration => declaration.name.getText(ast) === 'SETTINGS_TAB_ORDER')?.initializer;
+  assert.ok(order && ts.isArrayLiteralExpression(order));
+  const visible = order.elements.filter(ts.isStringLiteral).map(element => element.text);
+  assert.equal(visible.filter(id => id === 'statusline').length, 1);
+  assert.equal(visible[visible.indexOf('hooks') + 1], 'statusline');
+  assert.equal(visible[visible.indexOf('statusline') + 1], 'sidebar');
+  assert.ok(!visible.includes('command-suggestions'));
+  const wide = variables.find(declaration => declaration.name.getText(ast) === 'WIDE_SETTINGS_TABS')?.initializer;
+  assert.match(wide?.getText(ast) ?? '', /"statusline"/);
+  assert.match(source, /if \(activeTab === "statusline"\) return <StatuslineSettingsPage searchValue=\{searchValue\}/);
+  for (const [language, label] of [['zh-CN', '状态栏'], ['en-US', 'Statusline']]) {
+    const dictionary = readFileSync(new URL(`../src/shared/i18n/messages/settings.${language}.ts`, import.meta.url), 'utf8');
+    assert.ok(dictionary.includes(`"settings.tabs.statusline.label": "${label}"`));
+    const html = renderLayout('statusline', label);
+    assert.match(html, /value="statusline"/);
+    assert.ok(html.includes(label));
+    assert.match(html, /data-selected="true"[^>]*aria-pressed="true"/);
+  }
 });

@@ -4,7 +4,7 @@ import "./subagent-conversation.css";
 
 export type ConversationLabel = "conversation" | "records" | "parent" | "child" | "user" | "assistant"
   | "final" | "progress" | "context" | "tool_call" | "tool_result" | "reasoning" | "unknown"
-  | "details" | "expand" | "collapse" | "empty";
+  | "details" | "expand" | "collapse" | "empty" | "encrypted";
 type Labels = (key: ConversationLabel) => string;
 interface Props {
   messages: RenderedMessage[];
@@ -33,6 +33,7 @@ const ConversationMessage = memo(function ConversationMessage({ message, label, 
     <div className="subagent-chat-bubble">
       {dialogue ? renderMarkdown(long && !expanded ? message.text.slice(0, LONG_TEXT) + "…" : message.text)
         : <pre>{long && !expanded ? message.text.slice(0, LONG_TEXT) + "…" : message.text}</pre>}
+      {message.notice === "encrypted" && <p className="subagent-chat-empty">{label("encrypted")}</p>}
       {long && <button type="button" className="subagent-chat-expand" aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}>{label(expanded ? "collapse" : "expand")}</button>}
     </div>
