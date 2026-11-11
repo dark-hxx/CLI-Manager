@@ -137,6 +137,9 @@
 .ui-terminal-action-sidebar .ui-icon-action svg,
 .ui-terminal-action-drag-overlay .ui-toolbar-button svg,
 .ui-terminal-action-drag-overlay .ui-icon-action svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
   color: var(--terminal-action-color, currentColor);
 }
 

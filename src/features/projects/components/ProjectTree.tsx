@@ -1126,10 +1126,25 @@ function DragGhost({ activeId, tree }: { activeId: string; tree: TNode[] }) {
   const node = findNodeById(tree, activeId);
   if (!node) return null;
   const label = node.type === "group" ? node.group.name : node.type === "worktree" ? node.worktree.name : node.project.name;
-  const icon = node.type === "group" ? <Folder size={16} strokeWidth={1.5} /> : node.type === "worktree" ? <WorktreeIcon className="h-3.5 w-3.5" /> : <Terminal size={16} strokeWidth={1.5} />;
+  const appearance = resolveNodeAppearance(node.type === "group" ? node.group : node.type === "project" ? node.project : {});
+  const icon = node.type === "worktree" ? (
+    <WorktreeIcon className="h-3.5 w-3.5" />
+  ) : (
+    <NodeAppearanceIcon
+      homeStyle
+      mark={appearance.emoji}
+      iconKey={appearance.iconKey}
+      cliTool={node.type === "project" ? node.project.cli_tool : undefined}
+      fallback={node.type === "group" ? "folder" : "terminal"}
+      size={19}
+    />
+  );
   return (
     <div className="ui-tree-drag-ghost flex items-center gap-2 rounded-xl border border-border bg-surface-container-high px-3 py-1.5 text-[12px] font-medium shadow-lg">
-      <span className="text-on-surface-variant">{icon}</span>
+      <span
+        className="ui-tree-leading-icon text-on-surface-variant"
+        style={(appearance.hasColor ? { "--node-accent": appearance.colorVar } : {}) as CSSProperties}
+      >{icon}</span>
       <span className="truncate text-on-surface">{label}</span>
     </div>
   );
