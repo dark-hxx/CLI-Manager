@@ -144,6 +144,12 @@
   background-image: none !important;
 }
 
+/* Settings pages paint a grouped-inset canvas; keep it under the image too. */
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-content,
+.ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-topbar {
+  background: var(--settings-canvas, var(--surface)) !important;
+}
+
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-nav {
   background: var(--surface-container-low) !important;
   background-image: none !important;
