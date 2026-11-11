@@ -1084,16 +1084,26 @@
   scrollbar-gutter: stable;
 }
 
+/* Popovers sit one elevation above dialogs: a solid surface lighter than the
+   sheet in dark themes, plus a visible hairline and shadow, so the list never
+   reads as a see-through hole over the fields beneath it. */
 .ui-select-popover {
-  background-color: var(--surface);
-  border-color: color-mix(in srgb, var(--border) 32%, transparent);
+  background-color: var(--surface-container-high);
+  border-color: color-mix(in srgb, var(--border) 88%, var(--text-primary) 12%);
   box-shadow:
-    0 12px 32px color-mix(in srgb, var(--on-surface) 12%, transparent),
-    0 2px 8px color-mix(in srgb, var(--on-surface) 6%, transparent);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+    inset 0 1px 0 color-mix(in srgb, #fff 5%, transparent),
+    0 18px 44px color-mix(in srgb, #000 48%, transparent),
+    0 2px 10px color-mix(in srgb, #000 24%, transparent);
   color: var(--text-primary);
   animation: slide-down var(--animate-duration-fast) var(--ease-standard);
+}
+
+[data-theme="light"] .ui-select-popover {
+  background-color: var(--surface-container-lowest);
+  border-color: color-mix(in srgb, var(--border) 92%, var(--text-primary) 8%);
+  box-shadow:
+    0 16px 40px color-mix(in srgb, #0f172a 14%, transparent),
+    0 2px 8px color-mix(in srgb, #0f172a 8%, transparent);
 }
 
 .ui-select-popover [role="option"] {
