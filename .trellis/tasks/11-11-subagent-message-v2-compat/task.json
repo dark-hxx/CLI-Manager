@@ -15,12 +15,12 @@
   "branch": "fix/subagent-message-v2-compat",
   "base_branch": "master",
   "worktree_path": null,
-  "commit": null,
+  "commit": "6569145247a857bc23b9910c3e2bd1660045df7c",
   "pr_url": null,
   "subtasks": [],
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "",
+  "notes": "本地代码提交后已构建并核验 1.4.4 NSIS，等待用户安装验收。加密任务正文只能显示不可读取提示。未安装、未合并主干、未同步远程。",
   "meta": {}
 }

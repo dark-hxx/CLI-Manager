@@ -16,4 +16,11 @@
 ## 本地交付约束
 - 分支 `fix/subagent-message-v2-compat`，基线 `73874439`。未 fetch/pull/merge/push，不合并本地主干，不安装；仅沿用 1.4.4 NSIS，提交后构建。
 - 保留 1 MiB 尾读（额外有界首行身份提取）、4 Mi 字符 Store、2 Mi 字符解析、300 展示行与 Web 快照预算。超出尾部窗口的历史、无有效头部/turn 的旧片段依旧可能省略或显示来源未确认，不伪称完整审计转录。
-- 安装包信息待构建核验后补充。
+
+## 安装包核验（2026-11-11）
+- 代码先提交为 `65691452`，再从该提交构建 1.4.4 NSIS。复用已验证的前端产物，主程序及三个 helper 按现有锁文件重新编译；未复用旧后端充当新包。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.4.4_x64-setup.exe`，31,663,461 字节，2026-11-11 14:58:43 +08:00。
+- SHA256：`BDA9B0A853B7790D2B537A3C2E6F24E76EEBC121ABBEFBA224407785202042E6`。
+- 7-Zip 完整性检测和解包通过，19 个 Web 文件（含 15 个 Tap 文件）逐项 SHA256 与本轮构建产物一致；448 个桌面 JS 资源 key 确认嵌入新主程序，新解析/加密提示资源均存在，所有 HTML/CSS/manifest 引用可解析。
+- 三个 helper 与本次编译产物逐字节一致；主程序仅有 Tauri NSIS 的 `NSS/UNK` 三字节标记差异。机器可读记录 `.codex/subagent-v2-package-verification.json`。
+- 旧 NSIS 保存在 `.codex/packages/CLI-Manager_1.4.4_before-subagent-v2-20261111-144641.exe`；无应用安装/启动或用户配置变更。工作分支保留，等待用户安装验收，master 仍为 `73874439`；没有远程同步。
