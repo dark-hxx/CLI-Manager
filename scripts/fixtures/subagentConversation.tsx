@@ -54,6 +54,26 @@ function Harness() {
       <button id="switch" onClick={() => setId(id === "child" ? "other" : "child")}>Switch</button>
       <button id="append" onClick={() => { content += jsonl(message("assistant", "APPENDED_REPLY")); publish(); }}>Append</button>
       <button id="reset" onClick={() => { seq++; content = jsonl(message("user", "RESET_MESSAGE")); publish(); }}>Reset</button>
+      <button id="v2" onClick={() => {
+        seq++;
+        content = jsonl({ ...header, payload: { ...header.payload, agent_path: "/root/reviewer" } },
+          { type: "session_meta", payload: { source: "cli", timestamp: "2026-11-01T00:00:00Z" } }, task,
+          { type: "response_item", timestamp: "2026-11-03T12:05:00Z", payload: {
+            type: "agent_message", author: "/root", recipient: "/root/reviewer", content: [
+              { type: "input_text", text: "Message Type: NEW_TASK\nTask name: /root/reviewer\nSender: /root\nPayload:\n" },
+              { type: "encrypted_content", encrypted_content: "SYNTHETIC_CIPHER" },
+            ], internal_chat_message_metadata_passthrough: { turn_id: "child-turn" },
+          } }, message("assistant", "V2_FINAL_REPLY", { phase: "final_answer" }));
+        publish();
+      }}>V2</button>
+      <button id="v2-follow" onClick={() => {
+        content += jsonl({ type: "response_item", timestamp: "2026-11-03T12:06:00Z", payload: {
+          type: "agent_message", author: "/root", recipient: "/root/reviewer", content: [
+            { type: "input_text", text: "Message Type: MESSAGE\nTask name: /root/reviewer\nSender: /root\nPayload:\nV2_FOLLOW_TASK" },
+          ], internal_chat_message_metadata_passthrough: { turn_id: "child-turn" },
+        } }, message("assistant", "V2_FOLLOW_REPLY"));
+        publish();
+      }}>V2 follow-up</button>
       <button id="many" onClick={() => {
         for (let i = 0; i < 330; i++) content += jsonl(message("assistant", `ROW_${i} ` + "content ".repeat(25)));
         publish();

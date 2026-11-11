@@ -92,6 +92,27 @@ try {
   await desktop.getByText("RESET_MESSAGE", { exact: true }).waitFor();
   assert.equal(await desktop.getByText(/ROW_329/).count(), 0);
   assert.equal(await desktop.locator('[data-actor="parent"]').count(), 0, "reset discards provenance");
+  await page.locator("#v2").click();
+  await web.getByRole("tab", { name: /Reviewer/ }).click();
+  for (const host of [desktop, web]) {
+    await host.getByText("V2_FINAL_REPLY", { exact: true }).waitFor();
+    assert.ok(await host.locator('[data-actor="parent"]').isVisible());
+    assert.ok(await host.getByText("该消息包含加密正文，无法从本地转录读取原文。", { exact: true }).isVisible());
+    assert.equal(await host.getByText(/SYNTHETIC_CIPHER|Payload:|来源未确认/).count(), 0);
+  }
+  await page.locator("#v2-follow").click();
+  for (const host of [desktop, web]) {
+    await host.getByText("V2_FOLLOW_TASK", { exact: true }).waitFor();
+    await host.getByText("V2_FOLLOW_REPLY", { exact: true }).waitFor();
+  }
+  await page.locator("#language").click();
+  for (const host of [desktop, web]) {
+    assert.ok(await host.getByText("This message contains encrypted content that cannot be read from the local transcript.", { exact: true }).isVisible());
+  }
+  await page.screenshot({ path: ".codex/subagent-v2-desktop-web.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await page.screenshot({ path: ".codex/subagent-v2-mobile.png", fullPage: true });
   assert.deepEqual(errors, []);
   console.log("PASS: desktop + Web, classification, lazy details, long text, append/reset, hidden catch-up, child isolation, 300-row cap, scroll, zh/en, dark/light, 390px");
 } finally {

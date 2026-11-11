@@ -1,4 +1,5 @@
 import { parseTranscriptLines, type RenderedMessage, type TranscriptParserState } from "../../../shared/lib/subagentTranscriptMessages";
+import { boundSubagentTranscript } from "../../../shared/lib/subagentTranscriptBuffer";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { SubagentConversation, type ConversationLabel } from "../../../shared/ui/SubagentConversation";
 import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
@@ -49,9 +50,7 @@ interface ScrollbarMetrics {
 
 /** 全量解析累积的 jsonl 文本（超过 2MB 仅解析尾部并记录诊断日志）。 */
 function parseTranscript(content: string): ReturnType<typeof parseTranscriptLines> {
-  const parseContent = content.length > TRANSCRIPT_PARSE_MAX_CHARS
-    ? content.slice(-TRANSCRIPT_PARSE_MAX_CHARS)
-    : content;
+  const parseContent = boundSubagentTranscript("", content, TRANSCRIPT_PARSE_MAX_CHARS).content;
   if (parseContent.length !== content.length) {
     debugConsoleWarn("[oom-diagnostics:webview]", {
       area: "subagentTranscript",

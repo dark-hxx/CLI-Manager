@@ -310,11 +310,50 @@ fn read_new_lines(path: &Path, offset: u64) -> Option<(String, u64, bool)> {
     };
     let complete = &buf[first..=last_nl];
     let consumed = start + last_nl as u64 + 1;
-    Some((
-        String::from_utf8_lossy(complete).to_string(),
-        consumed,
-        shrank,
-    ))
+    let mut content = if tailing_initial {
+        transcript_identity_prefix(path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    content.push_str(&String::from_utf8_lossy(complete));
+    Some((content, consumed, shrank))
+}
+
+// Tail reads must not discard child identity; copy only bounded, non-content fields.
+fn transcript_identity_prefix(path: &Path) -> Option<String> {
+    let mut first_line = String::new();
+    std::io::BufReader::new(File::open(path).ok()?)
+        .take(SESSION_META_LINE_MAX_BYTES + 1)
+        .read_line(&mut first_line)
+        .ok()?;
+    if first_line.len() as u64 > SESSION_META_LINE_MAX_BYTES || !first_line.ends_with('\n') {
+        return None;
+    }
+    let row: Value = serde_json::from_str(&first_line).ok()?;
+    if row.get("type")?.as_str()? != "session_meta" {
+        return None;
+    }
+    let payload = row.get("payload")?;
+    let spawn = payload.pointer("/source/subagent/thread_spawn");
+    fn short(value: Option<&Value>) -> Option<&str> {
+        value
+            .and_then(Value::as_str)
+            .filter(|text| !text.is_empty() && text.len() <= 512)
+    }
+    let parent = short(payload.get("parent_thread_id"))
+        .or_else(|| short(spawn.and_then(|v| v.get("parent_thread_id"))))?;
+    let agent =
+        short(payload.get("agent_path")).or_else(|| short(spawn.and_then(|v| v.get("agent_path"))));
+    let identity = serde_json::json!({
+        "type": "session_meta",
+        "payload": {
+            "id": short(payload.get("id")),
+            "parent_thread_id": parent,
+            "timestamp": short(payload.get("timestamp")),
+            "agent_path": agent
+        }
+    });
+    Some(format!("{identity}\n"))
 }
 
 /// cwd → Claude projects 目录 slug：把 `:`、`\`、`/` 全部替换为 `-`，其余保留。
@@ -1662,5 +1701,51 @@ mod tests {
         fs::write(&path, vec![b'x'; SESSION_META_LINE_MAX_BYTES as usize + 1]).unwrap();
 
         assert_eq!(codex_rollout_parent_thread_id(&path), None);
+    }
+
+    #[test]
+    fn large_transcript_tail_keeps_only_identity_and_exact_offsets() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("rollout.jsonl");
+        let meta = serde_json::json!({ "type": "session_meta", "payload": {
+            "id": "child", "timestamp": "2026-11-11T12:00:00Z",
+            "source": {"subagent": {"thread_spawn": {
+                "parent_thread_id": "parent", "agent_path": "/root/reviewer"
+            }}}, "cwd": "PRIVATE_PATH", "base_instructions": "PRIVATE_INSTRUCTIONS"
+        }});
+        let data = format!(
+            "{meta}\n{}\n{{\"tail\":1}}\n",
+            "x".repeat(TRANSCRIPT_READ_MAX_BYTES as usize)
+        );
+        fs::write(&path, &data).unwrap();
+        let (content, offset, reset) = read_new_lines(&path, 0).unwrap();
+        let (header, tail) = content.split_once('\n').unwrap();
+        let identity: Value = serde_json::from_str(header).unwrap();
+        assert_eq!(identity["payload"]["agent_path"], "/root/reviewer");
+        assert_eq!(identity["payload"]["parent_thread_id"], "parent");
+        assert!(!content.contains("PRIVATE_"));
+        assert_eq!(tail, "{\"tail\":1}\n");
+        assert_eq!(offset, data.len() as u64);
+        assert!(!reset);
+        assert!(read_new_lines(&path, offset).is_none());
+
+        fs::write(&path, format!("{meta}\n{{\"new\":2}}\n")).unwrap();
+        let (reset_content, _, reset) = read_new_lines(&path, offset).unwrap();
+        assert!(reset);
+        assert!(reset_content.ends_with("{\"new\":2}\n"));
+    }
+
+    #[test]
+    fn identity_prefix_rejects_non_child_and_oversized_metadata() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("rollout.jsonl");
+        fs::write(
+            &path,
+            "{\"type\":\"session_meta\",\"payload\":{\"source\":\"cli\"}}\n",
+        )
+        .unwrap();
+        assert_eq!(transcript_identity_prefix(&path), None);
+        fs::write(&path, vec![b'x'; SESSION_META_LINE_MAX_BYTES as usize + 1]).unwrap();
+        assert_eq!(transcript_identity_prefix(&path), None);
     }
 }

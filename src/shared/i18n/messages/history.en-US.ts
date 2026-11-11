@@ -1,6 +1,7 @@
 import type { zh } from "./history.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+  "subagentTranscript.encrypted": "This message contains encrypted content that cannot be read from the local transcript.",
   "history.resumeProject.unsupportedSource": "Resuming conversations is not supported for this source yet",
   "history.resumeProject.environmentUnavailable": "Cannot resume in the original environment. Select a matching WSL project and check its distribution and directory. Error: {code}",
   "subagentTranscript.omittedMessages": "Omitted the first {count} messages",

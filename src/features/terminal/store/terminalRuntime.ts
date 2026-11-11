@@ -1,4 +1,5 @@
 import type { StoreApi } from "zustand";
+import { boundSubagentTranscript } from "../../../shared/lib/subagentTranscriptBuffer";
 import type { TerminalStore } from "../types/terminalStoreTypes";
 import { invoke } from "@tauri-apps/api/core";
 import type { SubagentTranscriptSource, TerminalSession } from "../../../shared/types/index";
@@ -1307,19 +1308,9 @@ export function createTerminalRuntime(
         const prev = state.subagentTranscripts[key];
         // 仅更新已存在的订阅（本窗口 openSubagentTranscript 预置）；未知 key 忽略（多窗口广播）。
         if (!prev) return state;
-        let droppedChars = 0;
-        let nextContent: string;
-        if (content.length >= SUBAGENT_TRANSCRIPT_MAX_CHARS) {
-          nextContent = content.slice(-SUBAGENT_TRANSCRIPT_MAX_CHARS);
-          droppedChars = (reset ? 0 : prev.content.length) + content.length - nextContent.length;
-        } else if (reset) {
-          nextContent = content;
-        } else {
-          const maxPrevChars = SUBAGENT_TRANSCRIPT_MAX_CHARS - content.length;
-          const prevTail = prev.content.length > maxPrevChars ? prev.content.slice(-maxPrevChars) : prev.content;
-          droppedChars = prev.content.length - prevTail.length;
-          nextContent = prevTail + content;
-        }
+        const { content: nextContent, droppedChars } = boundSubagentTranscript(
+          prev.content, content, SUBAGENT_TRANSCRIPT_MAX_CHARS, reset,
+        );
         if (droppedChars > 0) {
           debugConsoleWarn("[oom-diagnostics:webview]", {
             area: "subagentTranscript",
