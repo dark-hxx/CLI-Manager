@@ -73,10 +73,10 @@ const modelPricingStyles = `
   background: var(--surface-container-lowest) !important;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent) !important;
   color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--font-size-meta, 12px);
+  font-weight: 500;
   letter-spacing: 0;
-  text-transform: uppercase;
+  text-transform: none;
   text-align: center !important;
   padding-top: 4px;
   padding-bottom: 10px;
@@ -92,7 +92,7 @@ const modelPricingStyles = `
 .mp-num {
   font-family: var(--font-ui-mono);
   font-variant-numeric: tabular-nums;
-  font-size: 12px;
+  font-size: var(--font-size-ui, 13px);
 }
 .mp-soft-button,
 .mp-soft-button .mantine-Button-label {
@@ -118,24 +118,12 @@ const modelPricingStyles = `
   --button-color: var(--primary) !important;
   --button-bd: 1px solid transparent !important;
 }
-.mp-segmented {
-  --sc-color: var(--primary) !important;
-}
-.mp-segmented .mantine-SegmentedControl-indicator {
-  background: var(--primary) !important;
-}
-.mp-segmented .mantine-SegmentedControl-label {
-  font-weight: 500;
-}
-.mp-segmented .mantine-SegmentedControl-label[data-active="true"] {
-  color: var(--on-primary) !important;
-}
 /* 候选 Select 与「确认应用」同高、底边对齐（Select 有 label，按钮贴输入框底） */
 .mp-candidate-select .mantine-Input-input,
 .mp-candidate-select input,
 .mp-candidate-apply {
-  height: 36px !important;
-  min-height: 36px !important;
+  height: max(36px, calc(var(--font-size-ui, 13px) + 20px)) !important;
+  min-height: max(36px, calc(var(--font-size-ui, 13px) + 20px)) !important;
 }
 .mp-candidate-apply {
   align-self: flex-end;
@@ -224,7 +212,7 @@ function IconTile({
         borderRadius: Math.round(size * 0.3),
         backgroundColor: solid ? color : `color-mix(in srgb, ${color} 14%, transparent)`,
         color: solid ? (tone === "primary" ? "var(--on-primary)" : "#fff") : color,
-        boxShadow: solid ? `0 6px 16px color-mix(in srgb, ${color} 30%, transparent)` : "none",
+        boxShadow: "none",
       }}
     >
       <Icon size={Math.round(size * 0.54)} strokeWidth={2.2} />
@@ -540,8 +528,8 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
       <style>{modelPricingStyles}</style>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
-        <Group justify="space-between" align="flex-start" gap="md" wrap="nowrap">
-          <Stack gap="sm" className="min-w-0">
+        <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
+          <Stack gap="sm" className="min-w-0 flex-1" style={{ flexBasis: 320 }}>
             <Group gap="sm" align="center" wrap="nowrap">
               <IconTile icon={Coins} tone="primary" variant="solid" size={32} />
               <Box>
@@ -571,7 +559,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
             )}
             {error && <Text size="xs" c="var(--danger)">{text("最近错误：", "Last error: ")}{error}</Text>}
           </Stack>
-          <Group gap="xs" className="shrink-0">
+          <Group gap="xs" className="max-w-full">
             <Button className="mp-soft-button" size="compact-sm" variant="light" color="cliPrimary" leftSection={<ScanLine size={15} />} loading={discovering} onClick={() => void handleDiscover()}>
               {text("识别本地模型", "Discover Local Models")}
             </Button>
@@ -619,71 +607,73 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
 
         <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }} className="ui-thin-scroll">
         {showTable && (
-          <Table className="mp-table" verticalSpacing="sm" stickyHeader>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>{text("模型", "Model")}</Table.Th>
-                <Table.Th>{text("来源", "Source")}</Table.Th>
-                <Table.Th ta="right">{text("输入", "Input")}</Table.Th>
-                <Table.Th ta="right">{text("输出", "Output")}</Table.Th>
-                <Table.Th ta="right">{text("缓存命中", "Cache Hit")}</Table.Th>
-                <Table.Th ta="right">{text("缓存写入", "Cache Write")}</Table.Th>
-                <Table.Th ta="right">{text("操作", "Actions")}</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {filteredPrices.map((price) => {
-                const rowSyncKey = `row:${price.model}`;
-                return (
-                <Table.Tr key={price.model}>
-                  <Table.Td>
-                    <Group gap="sm" wrap="nowrap" align="center">
-                      <span
-                        className="inline-flex shrink-0 items-center justify-center"
-                        style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: "var(--surface-container-high)", color: "var(--on-surface)" }}
-                      >
-                        <VendorIcon vendor={inferVendor(price.model)} size={18} fallback={Coins} />
-                      </span>
-                      <Box className="min-w-0">
-                        <Text fw={500} size="sm" c="var(--on-surface)" className="break-all">{price.model}</Text>
-                        {price.sourceModelId && price.sourceModelId !== price.model && (
-                          <Text size="xs" c="var(--text-muted)" className="break-all">{text("源 ID：", "Source ID: ")}{price.sourceModelId}</Text>
-                        )}
-                      </Box>
-                    </Group>
-                  </Table.Td>
-                  <Table.Td><SourceBadge source={price.source} /></Table.Td>
-                  <Table.Td ta="right"><PriceCell value={price.inputPer1m} /></Table.Td>
-                  <Table.Td ta="right"><PriceCell value={price.outputPer1m} /></Table.Td>
-                  <Table.Td ta="right"><PriceCell value={price.cacheReadPer1m} /></Table.Td>
-                  <Table.Td ta="right"><PriceCell value={price.cacheCreationPer1m} /></Table.Td>
-                  <Table.Td>
-                    <Group justify="flex-end" gap={4} wrap="nowrap">
-                      <Tooltip label={text("同步远程价格", "Sync Remote Price")} withArrow>
-                        <ActionIcon variant="subtle" color="cliPrimary" loading={syncingButton === rowSyncKey} disabled={syncing && syncingButton !== rowSyncKey} onClick={() => void handleSync([price.model], rowSyncKey)} aria-label={text("同步远程价格", "Sync Remote Price")}>
-                          <RefreshCw size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={text("编辑", "Edit")} withArrow>
-                        <ActionIcon variant="subtle" color="gray" onClick={() => openEditEditor(price)} aria-label={text("编辑", "Edit")}>
-                          <Pencil size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={text("删除", "Delete")} withArrow>
-                        <ActionIcon variant="subtle" color="red" onClick={() => setDeleteTarget(price.model)} aria-label={text("删除", "Delete")}>
-                          <Trash2 size={15} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </Table.Td>
+          <Table.ScrollContainer minWidth={720} maxHeight="min(480px, 60vh)" type="native">
+            <Table className="mp-table" verticalSpacing="sm" stickyHeader>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>{text("模型", "Model")}</Table.Th>
+                  <Table.Th>{text("来源", "Source")}</Table.Th>
+                  <Table.Th ta="right">{text("输入", "Input")}</Table.Th>
+                  <Table.Th ta="right">{text("输出", "Output")}</Table.Th>
+                  <Table.Th ta="right">{text("缓存命中", "Cache Hit")}</Table.Th>
+                  <Table.Th ta="right">{text("缓存写入", "Cache Write")}</Table.Th>
+                  <Table.Th ta="right">{text("操作", "Actions")}</Table.Th>
                 </Table.Tr>
-                );
-              })}
-              {filteredPrices.length === 0 && (
-                <Table.Tr><Table.Td colSpan={7}><Text ta="center" c="var(--text-muted)" py="md">{text("没有匹配的模型价格。", "No matching model prices.")}</Text></Table.Td></Table.Tr>
-              )}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {filteredPrices.map((price) => {
+                  const rowSyncKey = `row:${price.model}`;
+                  return (
+                  <Table.Tr key={price.model}>
+                    <Table.Td>
+                      <Group gap="sm" wrap="nowrap" align="center">
+                        <span
+                          className="inline-flex shrink-0 items-center justify-center"
+                          style={{ width: 28, height: 28, borderRadius: 8, backgroundColor: "var(--surface-container-high)", color: "var(--on-surface)" }}
+                        >
+                          <VendorIcon vendor={inferVendor(price.model)} size={18} fallback={Coins} />
+                        </span>
+                        <Box className="min-w-0">
+                          <Text fw={500} size="sm" c="var(--on-surface)" className="break-all">{price.model}</Text>
+                          {price.sourceModelId && price.sourceModelId !== price.model && (
+                            <Text size="xs" c="var(--text-muted)" className="break-all">{text("源 ID：", "Source ID: ")}{price.sourceModelId}</Text>
+                          )}
+                        </Box>
+                      </Group>
+                    </Table.Td>
+                    <Table.Td><SourceBadge source={price.source} /></Table.Td>
+                    <Table.Td ta="right"><PriceCell value={price.inputPer1m} /></Table.Td>
+                    <Table.Td ta="right"><PriceCell value={price.outputPer1m} /></Table.Td>
+                    <Table.Td ta="right"><PriceCell value={price.cacheReadPer1m} /></Table.Td>
+                    <Table.Td ta="right"><PriceCell value={price.cacheCreationPer1m} /></Table.Td>
+                    <Table.Td>
+                      <Group justify="flex-end" gap={4} wrap="nowrap">
+                        <Tooltip label={text("同步远程价格", "Sync Remote Price")} withArrow>
+                          <ActionIcon variant="subtle" color="cliPrimary" loading={syncingButton === rowSyncKey} disabled={syncing && syncingButton !== rowSyncKey} onClick={() => void handleSync([price.model], rowSyncKey)} aria-label={text("同步远程价格", "Sync Remote Price")}>
+                            <RefreshCw size={15} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={text("编辑", "Edit")} withArrow>
+                          <ActionIcon variant="subtle" color="gray" onClick={() => openEditEditor(price)} aria-label={text("编辑", "Edit")}>
+                            <Pencil size={15} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={text("删除", "Delete")} withArrow>
+                          <ActionIcon variant="subtle" color="red" onClick={() => setDeleteTarget(price.model)} aria-label={text("删除", "Delete")}>
+                            <Trash2 size={15} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Group>
+                    </Table.Td>
+                  </Table.Tr>
+                  );
+                })}
+                {filteredPrices.length === 0 && (
+                  <Table.Tr><Table.Td colSpan={7}><Text ta="center" c="var(--text-muted)" py="md">{text("没有匹配的模型价格。", "No matching model prices.")}</Text></Table.Td></Table.Tr>
+                )}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         )}
 
         {(filter === "all" || filter === "missing") && visibleMissing.length > 0 && (
@@ -693,7 +683,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
               <Group
                 key={model}
                 justify="space-between"
-                wrap="nowrap"
+                wrap="wrap"
                 className="rounded-2xl px-3 py-2.5"
                 style={{
                   backgroundColor: "var(--surface-container-lowest)",
@@ -750,9 +740,10 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
                         <IconTile icon={Sparkles} tone="primary" size={24} />
                         <Text fw={500} size="sm" c="var(--on-surface)" className="truncate">{targetModel}</Text>
                       </Group>
-                      <Group gap="sm" align="flex-end" wrap="nowrap" className="min-w-0">
+                      <Group gap="sm" align="flex-end" wrap="wrap" className="min-w-0">
                         <Select
                           className="min-w-0 flex-1 mp-candidate-select"
+                          style={{ flexBasis: 240 }}
                           size="sm"
                           label={text("候选远程价格", "Candidate Remote Price")}
                           data={data}
@@ -799,7 +790,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
         title={
           <Group gap="xs" align="center">
             <IconTile icon={editingModel ? Pencil : Plus} tone="primary" size={26} />
-            <Text fw={700}>{editingModel ? text("编辑模型价格", "Edit Model Price") : text("添加模型价格", "Add Model Price")}</Text>
+            <Text fw={600}>{editingModel ? text("编辑模型价格", "Edit Model Price") : text("添加模型价格", "Add Model Price")}</Text>
           </Group>
         }
         centered
@@ -828,7 +819,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
         title={
           <Group gap="xs" align="center">
             <IconTile icon={Trash2} tone="danger" size={26} />
-            <Text fw={700}>{text("删除模型价格", "Delete Model Price")}</Text>
+            <Text fw={600}>{text("删除模型价格", "Delete Model Price")}</Text>
           </Group>
         }
         centered
@@ -836,7 +827,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
       >
         <Stack gap="md">
           <Text size="sm">
-            {text("确认删除 ", "Delete price for ")}<Text span fw={700}>{deleteTarget}</Text>{text(" 的价格？删除后该模型的用量将计入未定价 Token。", "? Usage for this model will be counted as unpriced tokens.")}
+            {text("确认删除 ", "Delete price for ")}<Text span fw={600}>{deleteTarget}</Text>{text(" 的价格？删除后该模型的用量将计入未定价 Token。", "? Usage for this model will be counted as unpriced tokens.")}
           </Text>
           <Group justify="flex-end">
             <Button variant="subtle" onClick={() => setDeleteTarget(null)}>{text("取消", "Cancel")}</Button>

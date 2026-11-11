@@ -17,6 +17,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import type { CreateSshHostInput, SshHost, SshHostGroup } from "../../../../shared/types/index";
 import { buildSshConnectionSpec } from "../../../remote/api/ssh";
@@ -649,7 +650,7 @@ export function SshHostsSettingsPage({ searchValue, onTerminalOpened }: Props) {
           <div className="p-8 text-center text-sm text-text-muted">{t("common.loading")}</div>
         ) : filteredHosts.length === 0 && groups.length === 0 ? (
           <div className="p-10 text-center">
-            <Server className="mx-auto mb-3 h-8 w-8 text-text-muted" />
+            <SettingsGlyph name="server" classic={Server} className="mx-auto mb-3 h-8 w-8 text-text-muted" />
             <div className="font-bold text-text-primary">{t("settings.sshHosts.empty")}</div>
             <div className="mt-1 text-xs text-text-muted">
               {t("settings.sshHosts.emptyDescription")}
@@ -917,7 +918,7 @@ function SshHostRow({
       className="flex items-center gap-3 border-t border-border px-4 py-2.5"
       style={{ paddingLeft: 16 + depth * 18 }}
     >
-      <Server className="h-4 w-4 shrink-0 text-primary" />
+      <SettingsGlyph name="server" classic={Server} className="h-4 w-4 shrink-0 text-primary" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-bold text-text-primary">{host.name}</div>
         <div className="truncate text-xs text-text-muted">

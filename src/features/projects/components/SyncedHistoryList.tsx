@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { ChevronDown, ChevronRight, Folder, Trash2 } from "../../../shared/ui/icons";
+import { ChevronDown, ChevronRight, Folder, Trash2 } from "../../../shared/ui/homeIcons";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
 import { ConfirmDialog } from "../../../shared/ui/ConfirmDialog";
 import { useExternalSessionSyncStore } from "../../history/api/externalSessionSyncStore";

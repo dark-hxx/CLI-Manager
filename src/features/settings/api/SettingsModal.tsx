@@ -19,12 +19,13 @@ import {
   Terminal,
   Webhook,
   PanelsTopLeft,
-  type LucideIcon,
 } from "lucide-react";
 import "@mantine/core/styles.css";
 import { useFocusTrap } from "../../../shared/hooks/useFocusTrap";
 import { AppMantineThemeProvider } from "../../../shared/ui/MantineThemeProvider";
 import { SettingsLayout } from "../components/SettingsLayout";
+import { SettingsThemeProvider } from "../components/SettingsThemeProvider";
+import { SETTINGS_NAV_ICONS, type SettingsIconComponent } from "../components/SettingsIcons";
 import { useWorkspaceBackground } from "../../workspace/api/WorkspaceBackground";
 import { GeneralSettingsPage } from "../components/pages/GeneralSettingsPage";
 import { DeveloperSettingsPage } from "../components/pages/DeveloperSettingsPage";
@@ -41,7 +42,7 @@ import { NativeProviderSettingsPage } from "../components/pages/NativeProviderSe
 import { ModelPricingSettingsPage } from "../components/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "../components/pages/AboutSettingsPage";
 import { SponsorsSettingsPage } from "../components/pages/SponsorsSettingsPage";
-import { SPONSORS_ENABLED } from "../lib/sponsors";
+import { SPONSORS_ENABLED } from "./sponsors";
 import { DesktopPetSettingsPage } from "../components/pages/DesktopPetSettingsPage";
 import { RemoteConnectionsSettingsPage } from "../components/pages/RemoteConnectionsSettingsPage";
 import { SshHostsSettingsPage } from "../components/pages/SshHostsSettingsPage";
@@ -76,7 +77,7 @@ interface SettingsTabConfig {
   label: TranslationKey;
   title: TranslationKey;
   description: TranslationKey;
-  icon: LucideIcon;
+  icon: SettingsIconComponent;
   searchPlaceholder?: TranslationKey;
 }
 
@@ -94,13 +95,16 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "history-sources",
   "hooks",
   "statusline",
-  "command-suggestions",
   "sidebar",
   "desktop-pet",
   "developer",
   ...(SPONSORS_ENABLED ? (["sponsors"] as const) : []),
   "about",
 ];
+
+const WIDE_SETTINGS_TABS: ReadonlySet<SettingsTab> = new Set([
+  "terminal-theme", "shortcuts", "templates", "native-providers", "extensions", "model-pricing", "ssh-hosts", "statusline",
+]);
 
 const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
   general: {
@@ -276,6 +280,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const wasOpenRef = useRef(open);
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
+  const settingsIconStyle = useSettingsStore((s) => s.settingsIconStyle);
   const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
   const { t } = useI18n();
   const { active: workspaceBackgroundActive } = useWorkspaceBackground();
@@ -333,7 +338,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
   const tabs = SETTINGS_TAB_ORDER.map((id) => ({
     id,
     label: t(SETTINGS_TAB_CONFIG[id].label),
-    icon: SETTINGS_TAB_CONFIG[id].icon,
+    icon: settingsIconStyle === "refined" ? SETTINGS_NAV_ICONS[id] : SETTINGS_TAB_CONFIG[id].icon,
   }));
   const activeConfig = SETTINGS_TAB_CONFIG[activeTab];
   const activeContent = (() => {
@@ -363,51 +368,54 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
 
   return (
     <AppMantineThemeProvider>
-      {mcpSave.dialog}
-      <div
-        className={`ui-workspace-settings-overlay fixed inset-x-0 bottom-0 ${isLikelyMacOs() ? "top-0" : "top-[26px]"} z-50 ${
-          closing ? "animate-fade-out" : "animate-fade-in"
-        }`}
-        data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
-        style={{ fontFamily: effectiveUiFontFamily }}
-        onClick={(event) => {
-          // Portal 内的点击仍可能沿 React 树冒泡，只有真实遮罩点击才是离开意图。
-          if (event.target === event.currentTarget) requestClose("backdrop");
-        }}
-      >
+      <SettingsThemeProvider>
+        {mcpSave.dialog}
         <div
-          ref={dialogRef}
-          className={`ui-workspace-settings-dialog ui-surface-base flex h-full w-full overflow-hidden${
-            closing ? "" : " animate-slide-down"
+          className={`settings-scope ui-workspace-settings-overlay fixed inset-x-0 bottom-0 ${isLikelyMacOs() ? "top-0" : "top-[26px]"} z-50 ${
+            closing ? "animate-fade-out" : "animate-fade-in"
           }`}
-          onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("settings.dialogLabel")}
+          data-workspace-background={workspaceBackgroundActive ? "true" : undefined}
+          style={{ fontFamily: effectiveUiFontFamily }}
+          onClick={(event) => {
+            // Portal 内的点击仍可能沿 React 树冒泡，只有真实遮罩点击才是离开意图。
+            if (event.target === event.currentTarget) requestClose("backdrop");
+          }}
         >
-          <SettingsLayout
-            tabs={tabs}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            title={t(activeConfig.title)}
-            description={t(activeConfig.description)}
-            searchValue={searchValue}
-            searchPlaceholder={activeTab !== "extensions" && activeConfig.searchPlaceholder ? t(activeConfig.searchPlaceholder) : undefined}
-            searchReplacement={activeTab === "extensions" ? <SegmentedControl
-              fullWidth value={extensionTab}
-              data={[{ value: "mcp", label: t("extensions.tabs.mcp") }, { value: "skills", label: t("extensions.tabs.skills") }]}
-              onChange={value => {
-                if (value === extensionTab) return;
-                mcpSave.requestLeave(() => setExtensionTab(value as "mcp" | "skills"));
-              }}
-            /> : undefined}
-            onSearchChange={setSearchValue}
-            onClose={() => requestClose("topbar")}
+          <div
+            ref={dialogRef}
+            className={`ui-workspace-settings-dialog ui-surface-base flex h-full w-full overflow-hidden${
+              closing ? "" : " animate-slide-down"
+            }`}
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("settings.dialogLabel")}
           >
-            {activeContent}
-          </SettingsLayout>
+            <SettingsLayout
+              contentWidth={WIDE_SETTINGS_TABS.has(activeTab) ? "wide" : "standard"}
+              tabs={tabs}
+              activeTab={activeTab}
+              onTabChange={handleTabChange}
+              title={t(activeConfig.title)}
+              description={t(activeConfig.description)}
+              searchValue={searchValue}
+              searchPlaceholder={activeTab !== "extensions" && activeConfig.searchPlaceholder ? t(activeConfig.searchPlaceholder) : undefined}
+              searchReplacement={activeTab === "extensions" ? <SegmentedControl
+                fullWidth value={extensionTab}
+                data={[{ value: "mcp", label: t("extensions.tabs.mcp") }, { value: "skills", label: t("extensions.tabs.skills") }]}
+                onChange={value => {
+                  if (value === extensionTab) return;
+                  mcpSave.requestLeave(() => setExtensionTab(value as "mcp" | "skills"));
+                }}
+              /> : undefined}
+              onSearchChange={setSearchValue}
+              onClose={() => requestClose("topbar")}
+            >
+              {activeContent}
+            </SettingsLayout>
+          </div>
         </div>
-      </div>
+      </SettingsThemeProvider>
     </AppMantineThemeProvider>
   );
 }

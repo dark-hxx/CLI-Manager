@@ -11,7 +11,7 @@ import type {
   NativeProviderGlobalPreview,
 } from "../../api/nativeProviderTypes";
 import { NativeProviderCodeEditor } from "./NativeProviderCodeEditor";
-import { FLUXION_REGISTER_URL, SPONSORS_ENABLED } from "../../lib/sponsors";
+import { FLUXION_REGISTER_URL, SPONSORS_ENABLED } from "../../api/sponsors";
 import {
   formatJsonDocument,
   nativeProviderConfigFormat,
@@ -182,7 +182,7 @@ export function NativeProviderEditor({
         <Group justify="space-between" align="flex-start" wrap="wrap">
           <Stack gap={4} miw={0}>
             <Group gap="xs" wrap="wrap">
-              <Text fw={700} size="lg" truncate>{card.name}</Text>
+              <Text fw={600} size="lg" truncate>{card.name}</Text>
               {isFluxionProvider && SPONSORS_ENABLED && (
                 <Badge size="sm" variant="light" color="orange">
                   {t("providerCatalog.fluxion.sponsorBadge")}

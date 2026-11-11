@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Badge, Box, Button, Card, Group, SimpleGrid, Stack, Switch, Text } from "@mantine/core";
 import { HardDrive, Sparkles, Trash2 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useCommandHistoryStore, type CommandHistoryStorageStats } from "../../../terminal/api/commandHistoryStore";
 import { useSettingsStore } from "../../../../shared/preferences/settingsStore";
 import { useI18n } from "../../../../shared/i18n/index";
@@ -73,7 +74,7 @@ export function CommandSuggestionSettingsPage() {
           <Group justify="space-between" align="flex-start" gap="md">
             <Group gap="sm" wrap="nowrap">
               <Box style={{ color: "var(--primary)", marginTop: 2 }}>
-                <Sparkles size={18} />
+                <SettingsGlyph name="sparkles" classic={Sparkles} size={18} />
               </Box>
               <Box>
                 <Text size="sm" fw={600} c="var(--on-surface)">
@@ -138,13 +139,13 @@ export function CommandSuggestionSettingsPage() {
               <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm">
                 <Card className="border border-border bg-surface" p="sm" radius="md">
                   <Text size="xs" c="var(--text-muted)">{t("settings.commandSuggestions.storageCommandCount")}</Text>
-                  <Text size="lg" fw={700} c="var(--on-surface)">
+                  <Text size="lg" fw={600} c="var(--on-surface)">
                     {storageLoading ? "..." : formatMetricNumber(storageStats.commandCount)}
                   </Text>
                 </Card>
                 <Card className="border border-border bg-surface" p="sm" radius="md">
                   <Text size="xs" c="var(--text-muted)">{t("settings.commandSuggestions.storageUsage")}</Text>
-                  <Text size="lg" fw={700} c="var(--on-surface)">
+                  <Text size="lg" fw={600} c="var(--on-surface)">
                     {storageLoading ? "..." : formatStorageSize(storageStats.storageBytes)}
                   </Text>
                 </Card>
@@ -158,6 +159,7 @@ export function CommandSuggestionSettingsPage() {
         </Stack>
       </section>
       <ConfirmDialog
+        contentClassName="settings-scope settings-radix-dialog"
         open={clearConfirmOpen}
         title={t("settings.commandSuggestions.clearStorageTitle")}
         message={t("settings.commandSuggestions.clearStorageConfirm")}

@@ -12,7 +12,9 @@ function getFocusableElements(container: HTMLElement): HTMLElement[] {
 
   return Array.from(container.querySelectorAll<HTMLElement>(selector)).filter((el) => {
     const style = window.getComputedStyle(el);
-    return style.display !== "none" && style.visibility !== "hidden";
+    // 响应式导航的祖先可能 display:none，而按钮自己的 display 仍为 block。
+    // 以实际布局矩形排除整棵隐藏子树，避免初始焦点和 Tab 循环落到不可见控件。
+    return el.getClientRects().length > 0 && style.visibility !== "hidden" && style.visibility !== "collapse";
   });
 }
 

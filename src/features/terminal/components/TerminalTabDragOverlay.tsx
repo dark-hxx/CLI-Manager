@@ -4,7 +4,7 @@ import { DragOverlay, useDndContext } from "@dnd-kit/core";
 import { type TabNotificationState } from "../state";
 import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
 import { type CliToolIconKey } from "../../../shared/lib/cliTools";
-import { X } from "../../../shared/ui/icons";
+import { X } from "../../../shared/ui/homeIcons";
 import { VendorIcon, type VendorKey } from "../../../shared/ui/VendorIcon";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
 import { Portal } from "../../../shared/ui/Portal";

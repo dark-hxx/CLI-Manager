@@ -19,6 +19,7 @@ export const SETTING_BACKUP_POLICY = {
   uiFontFamily: "preferences",
   uiFontSize: "preferences",
   uiTextColor: "preferences",
+  settingsIconStyle: "preferences",
   lastSettingsTab: "excluded",
   statuslineEditorSource: "preferences",
   defaultShell: "excluded",

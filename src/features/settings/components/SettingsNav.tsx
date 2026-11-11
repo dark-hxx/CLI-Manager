@@ -1,10 +1,11 @@
-import type { LucideIcon } from "lucide-react";
 import { useI18n } from "../../../shared/i18n/index";
+import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import type { SettingsIconComponent } from "./SettingsIcons";
 
 export interface SettingsNavTab<T extends string> {
   id: T;
   label: string;
-  icon: LucideIcon;
+  icon: SettingsIconComponent;
 }
 
 interface SettingsNavProps<T extends string> {
@@ -15,35 +16,33 @@ interface SettingsNavProps<T extends string> {
 
 export function SettingsNav<T extends string>({ tabs, activeTab, onChange }: SettingsNavProps<T>) {
   const { t } = useI18n();
+  const iconStyle = useSettingsStore((s) => s.settingsIconStyle);
+  const refined = iconStyle === "refined";
 
   return (
-    <aside className="ui-settings-nav ui-surface-low flex min-h-0 w-[220px] shrink-0 flex-col border-r border-border p-3">
-      <span className="px-2 pb-3 text-[12px] font-semibold tracking-[0.04em] text-on-surface-variant">
+    <aside className="ui-settings-nav settings-nav">
+      <span className="settings-nav-title">
         {t("settings.navTitle")}
       </span>
-      <nav className="ui-no-divider-list min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
+      <nav className="settings-nav-list" aria-label={t("settings.navTitle")}>
         {tabs.map((tab) => {
           const active = tab.id === activeTab;
           const Icon = tab.icon;
-          const iconClass = active ? "text-primary" : "text-text-muted";
           return (
             <button
               key={tab.id}
+              type="button"
               onClick={() => onChange(tab.id)}
-              className={`ui-interactive flex w-full items-center gap-2 whitespace-nowrap rounded-xl px-3 py-2 text-left text-sm ${
-                active ? "font-[800] text-on-surface" : "font-[700] text-on-surface-variant"
-              }`}
-              style={
-                active
-                  ? {
-                      backgroundColor: "var(--interactive-selected-bg)",
-                      boxShadow: "inset 0 0 0 1px var(--interactive-selected-border)",
-                    }
-                  : undefined
-              }
+              className="settings-nav-item"
+              data-selected={active}
+              data-icon-style={iconStyle}
               aria-pressed={active}
             >
-              <Icon className={`h-4 w-4 shrink-0 ${iconClass}`} aria-hidden="true" />
+              {refined ? (
+                <Icon size={18} className="shrink-0" aria-hidden="true" />
+              ) : (
+                <Icon size={17} strokeWidth={1.65} className="shrink-0" aria-hidden="true" />
+              )}
               <span>{tab.label}</span>
             </button>
           );

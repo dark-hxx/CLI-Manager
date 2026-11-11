@@ -26,14 +26,37 @@ for (const name of ["cli-manager-daemon", "cli-manager-web-daemon", "cli-manager
 }
 writeFileSync(helperSpawnHook, `
 import cp from "node:child_process";
+import { EventEmitter } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import { appendFileSync } from "node:fs";
-const original = cp.spawnSync;
-cp.spawnSync = (command, args, options) => {
-  if (command !== "cargo") return original(command, args, options);
+
+function logCargo(args) {
   appendFileSync(process.env.TAURI_CLI_DEV_PROXY_TEST_LOG, "cargo " + args.join(" ") + "\\n");
+}
+
+const originalSpawnSync = cp.spawnSync;
+cp.spawnSync = (command, args, options) => {
+  if (command !== "cargo") return originalSpawnSync(command, args, options);
+  logCargo(args);
   return { status: Number(process.env.TAURI_CLI_DEV_HELPER_EXIT_CODE || 0) };
 };
+
+const originalSpawn = cp.spawn;
+cp.spawn = (command, args = [], options) => {
+  if (command !== "cargo" || options?.shell) return originalSpawn(command, args, options);
+  logCargo(args);
+  const child = new EventEmitter();
+  child.pid = 0;
+  child.stdin = null;
+  child.stdout = null;
+  child.stderr = null;
+  child.kill = () => true;
+  setImmediate(() => {
+    child.emit("exit", Number(process.env.TAURI_CLI_DEV_HELPER_EXIT_CODE || 0), null);
+  });
+  return child;
+};
+
 syncBuiltinESMExports();
 `, "utf8");
 const lockedBinaryPath = path.join(

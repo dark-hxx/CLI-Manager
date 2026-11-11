@@ -86,7 +86,7 @@ test("effective editor and field origin display the projected slash model", () =
     react: { useMemo: (compute) => compute(), useState: (initial) => [initial, () => {}] },
     "@tauri-apps/plugin-opener": {},
     sonner: {},
-    "../../lib/sponsors": {},
+    "../../api/sponsors": {},
     "./nativeProviderConfigView": configView,
   });
   const tree = render({ view: "effective", detail: {

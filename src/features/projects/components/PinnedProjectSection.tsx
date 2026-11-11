@@ -1,7 +1,7 @@
 import type { CSSProperties, KeyboardEvent as ReactKeyboardEvent } from "react";
 import type { Project } from "../../../shared/types/index";
 import { useI18n } from "../../../shared/i18n/index";
-import { AlertTriangle, ChevronRight, Folder, Pin, Play } from "../../../shared/ui/icons";
+import { AlertTriangle, ChevronRight, Folder, Pin, Play } from "../../../shared/ui/homeIcons";
 import { NodeAppearanceIcon } from "../api/NodeAppearanceIcon";
 import { resolveNodeAppearance } from "../api/nodeAppearance";
 import { ProviderBadgeChip, preventSecondaryPointerFocus } from "./TreeNodeItem";
@@ -45,7 +45,7 @@ export function PinnedProjectSection({ projects, density }: PinnedProjectSection
           />
         </span>
         <span className="ui-tree-leading-icon ui-pinned-project-folder" aria-hidden="true">
-          <Folder size={16} strokeWidth={1.6} />
+          <Folder size={19} strokeWidth={1.6} />
           <Pin size={8} strokeWidth={2} fill="currentColor" />
         </span>
         <span className="ui-pinned-project-title flex-1 truncate text-left">{t("sidebar.pinned.title")}</span>
@@ -130,12 +130,12 @@ function PinnedProjectItem({ project, density }: { project: Project; density: "c
         onContextMenu={(event) => actions.onContextMenuProject(event, project, true)}
       >
         <span className="ui-tree-leading-icon">
-          <NodeAppearanceIcon
+          <NodeAppearanceIcon homeStyle
             mark={appearance.emoji}
             iconKey={appearance.iconKey}
             cliTool={project.cli_tool}
             fallback="terminal"
-            size={14}
+            size={19}
           />
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-1.5">

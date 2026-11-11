@@ -150,7 +150,9 @@
   border-radius: 10px;
   background-color: color-mix(in srgb, var(--surface) 96%, var(--on-surface) 4%);
   outline: 1px solid color-mix(in srgb, var(--border) 58%, transparent);
-  box-shadow: 0 14px 34px color-mix(in srgb, var(--on-surface) 18%, transparent);
+  box-shadow:
+    0 6px 16px color-mix(in srgb, var(--on-surface) 7%, transparent),
+    0 1px 3px color-mix(in srgb, var(--on-surface) 5%, transparent);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   animation: slide-down var(--animate-duration-fast) var(--ease-standard);
@@ -1083,7 +1085,7 @@
 }
 
 .ui-select-popover {
-  background-color: color-mix(in srgb, var(--surface) 92%, transparent);
+  background-color: var(--surface);
   border-color: color-mix(in srgb, var(--border) 32%, transparent);
   box-shadow:
     0 12px 32px color-mix(in srgb, var(--on-surface) 12%, transparent),

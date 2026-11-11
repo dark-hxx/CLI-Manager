@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
+import { debugConsoleError, debugConsoleWarn } from "../../../shared/platform/debugConsole";
 import type { GitFileChange, GitTreeNode, GitBranchStatus, GitPullStrategy, GitBranchInfo, GitPendingOperation } from "../../../shared/types/index";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import {
@@ -275,7 +275,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       } catch (err) {
         if (!current()) return;
         const errorMsg = err instanceof Error ? err.message : String(err);
-        console.error(`[GitStore] 获取 Git 变更失败:`, err);
+        debugConsoleError(`[GitStore] 获取 Git 变更失败:`, err);
         if (reportError) set({ error: errorMsg, loading: false, changes: [], tree: [], untrackedTree: [] });
         else set({ loading: false });
       }
@@ -375,7 +375,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 回滚文件失败:`, err);
+      debugConsoleError(`[GitStore] 回滚文件失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -399,7 +399,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 批量回滚失败:`, err);
+      debugConsoleError(`[GitStore] 批量回滚失败:`, err);
       set({ error: errorMsg });
     } finally {
       // 无论成功或部分失败都刷新，反映真实状态。
@@ -425,7 +425,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 删除未跟踪文件失败:`, err);
+      debugConsoleError(`[GitStore] 删除未跟踪文件失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -452,7 +452,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 回滚 hunk 失败:`, err);
+      debugConsoleError(`[GitStore] 回滚 hunk 失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -472,7 +472,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 回滚选中行失败:`, err);
+      debugConsoleError(`[GitStore] 回滚选中行失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -491,7 +491,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 暂存文件失败:`, err);
+      debugConsoleError(`[GitStore] 暂存文件失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -508,7 +508,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 取消暂存文件失败:`, err);
+      debugConsoleError(`[GitStore] 取消暂存文件失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -525,7 +525,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 全部暂存失败:`, err);
+      debugConsoleError(`[GitStore] 全部暂存失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -542,7 +542,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 批量暂存失败:`, err);
+      debugConsoleError(`[GitStore] 批量暂存失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -559,7 +559,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 批量取消暂存失败:`, err);
+      debugConsoleError(`[GitStore] 批量取消暂存失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -576,7 +576,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchChanges(currentProjectPath, true);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 全部取消暂存失败:`, err);
+      debugConsoleError(`[GitStore] 全部取消暂存失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -661,7 +661,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return shortId;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 提交失败:`, err);
+      debugConsoleError(`[GitStore] 提交失败:`, err);
       set({ error: errorMsg });
       // 失败后刷新一次：若已 add 部分未跟踪，让 UI 反映真实索引状态。
       await get().fetchChanges(currentProjectPath, true);
@@ -687,7 +687,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 推送失败:`, err);
+      debugConsoleError(`[GitStore] 推送失败:`, err);
       set({ error: errorMsg });
       // 推送被拒可能因落后远端，刷新状态以便展示 behind / 拉取入口。
       void get().fetchBranchStatus(currentProjectPath);
@@ -712,7 +712,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 获取远端更新失败:`, err);
+      debugConsoleError(`[GitStore] 获取远端更新失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -736,7 +736,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 切换分支失败:`, err);
+      debugConsoleError(`[GitStore] 切换分支失败:`, err);
       set({ error: errorMsg });
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
@@ -762,7 +762,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] Smart Checkout 失败:`, err);
+      debugConsoleError(`[GitStore] Smart Checkout 失败:`, err);
       set({ error: errorMsg });
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);
@@ -788,7 +788,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 新建分支失败:`, err);
+      debugConsoleError(`[GitStore] 新建分支失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -811,7 +811,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 拉取失败:`, err);
+      debugConsoleError(`[GitStore] 拉取失败:`, err);
       set({ error: errorMsg });
       // 冲突等失败也刷新：让冲突文件(C)与 pendingOp 在 UI 呈现，驱动横幅与中止/继续。
       await get().fetchChanges(currentProjectPath, true);
@@ -834,7 +834,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await get().fetchBranchStatus(currentProjectPath);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 中止拉取失败:`, err);
+      debugConsoleError(`[GitStore] 中止拉取失败:`, err);
       set({ error: errorMsg });
       await refreshIfResultUnknown(currentProjectPath, err);
       throw err;
@@ -856,7 +856,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
       return out;
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
-      console.error(`[GitStore] 继续变基失败:`, err);
+      debugConsoleError(`[GitStore] 继续变基失败:`, err);
       set({ error: errorMsg });
       await get().fetchChanges(currentProjectPath, true);
       await get().fetchBranchStatus(currentProjectPath);

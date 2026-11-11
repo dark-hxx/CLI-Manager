@@ -27,6 +27,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import { CliCat } from "../../../desktop-pet/api/CliCat";
 import { PetArtwork } from "../../../desktop-pet/api/PetArtwork";
@@ -722,7 +723,7 @@ export function DesktopPetSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="md">
           <SectionHeader
-            icon={<Cat size={18} />}
+            icon={<SettingsGlyph name="cat" classic={Cat} size={18} />}
             title={t("desktopPet.settings.behaviorTitle")}
             description={t("desktopPet.settings.behaviorDescription")}
           />
@@ -836,7 +837,7 @@ export function DesktopPetSettingsPage() {
       <section className="ui-surface-card rounded-2xl border border-border p-4">
         <Stack gap="md">
           <SectionHeader
-            icon={<HardDrive size={18} />}
+            icon={<SettingsGlyph name="hardDrive" classic={HardDrive} size={18} />}
             title={t("desktopPet.settings.installedTitle")}
             description={t("desktopPet.settings.installedDescription")}
             action={

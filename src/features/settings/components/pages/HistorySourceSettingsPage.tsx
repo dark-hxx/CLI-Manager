@@ -15,8 +15,9 @@ import {
 } from "@mantine/core";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Database, FolderOpen, RefreshCw } from "lucide-react";
+import { RefreshCw } from "lucide-react";
 import { toast } from "sonner";
+import { debugConsoleWarn } from "../../../../shared/platform/debugConsole";
 import {
   HISTORY_SOURCE_DESCRIPTORS,
   createHistorySourceInstanceId,
@@ -34,8 +35,26 @@ import {
   HISTORY_SMART_TITLE_CUSTOM_PROMPT_MAX_BYTES,
   useSettingsStore,
 } from "../../../../shared/preferences/settingsStore";
-import { VendorIcon, inferVendor } from "../../../../shared/ui/VendorIcon";
+import { CliToolIcon } from "../../../../shared/ui/CliToolIcon";
+import type { CliToolIconKey } from "../../../../shared/lib/cliTools";
+import KimiMono from "@lobehub/icons/es/Kimi/components/Mono";
 import { useAppConfirm } from "../../../../shared/ui/useAppConfirm";
+
+// 按历史来源显式映射工具品牌，新增来源时由类型检查要求补齐图标。
+const HISTORY_SOURCE_ICONS = {
+  claude: "claude-code",
+  codex: "codex",
+  gemini: "gemini-cli",
+  copilot: "copilot",
+  antigravity: "antigravity",
+  grok: "grok",
+  kimi: "kimi",
+  pi: "pi",
+  opencode: "opencode",
+  kiro: "kiro",
+  cursor: "cursor",
+  cline: "cline",
+} satisfies Record<HistorySourceId, CliToolIconKey>;
 
 // 标题供应选项的分组顺序，与 Native Provider 设置页的 Tab 顺序一致。
 const TITLE_PROVIDER_APP_TYPES = ["claude", "codex", "grokbuild"] as const;
@@ -201,7 +220,7 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
 
   useEffect(() => {
     void Promise.all([loadBackupStatus(), loadRestoreCandidates()]).catch((error) => {
-      console.warn("Failed to load history backup state", error);
+      debugConsoleWarn("Failed to load history backup state", error);
     });
   }, []);
 
@@ -828,14 +847,17 @@ export function HistorySourceSettingsPage({ onOpenNativeProviderSettings }: Hist
           const current = settings[descriptor.id];
           const slot = descriptor.locations[0];
           const draft = drafts[descriptor.id] ?? "";
-          const vendor = inferVendor(descriptor.id);
           return (
             <Card key={descriptor.id} className="border border-border bg-surface-container-low" p="md" radius="lg">
               <Stack gap="sm">
                 <Group justify="space-between" align="flex-start" gap="sm">
                   <Group gap="sm" wrap="nowrap">
                     <ThemeIcon variant="light" color="gray" size="lg">
-                      <VendorIcon vendor={vendor} fallback={slot?.kind === "database" ? Database : FolderOpen} />
+                      {descriptor.id === "kimi" ? (
+                        <KimiMono size={20} className="text-text-primary" />
+                      ) : (
+                        <CliToolIcon icon={HISTORY_SOURCE_ICONS[descriptor.id]} size={20} />
+                      )}
                     </ThemeIcon>
                     <Stack gap={2}>
                       <Text fw={600} c="var(--on-surface)">

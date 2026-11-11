@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check, type DownloadEvent, type Update } from "@tauri-apps/plugin-updater";
 import { create } from "zustand";
+import { debugConsoleError } from "../../../shared/platform/debugConsole";
 
 const RELEASES_URL = "https://github.com/dark-hxx/CLI-Manager/releases";
 const AUR_PACKAGE_URL = "https://aur.archlinux.org/packages/cli-manager-bin";
@@ -128,7 +129,7 @@ export const useUpdateStore = create<UpdateState>((set, get) => ({
         releaseFallbackUrl: distribution === "aur" ? AUR_PACKAGE_URL : `${RELEASES_URL}/latest`,
       });
     } catch (e) {
-      console.error("Failed to fetch version:", e);
+      debugConsoleError("Failed to fetch version:", e);
     }
   },
 

@@ -31,6 +31,7 @@ import {
   Webhook,
   type LucideIcon,
 } from "lucide-react";
+import { SettingsGlyph } from "./SettingsIcons";
 import { pickByLanguage, useI18n, type AppLanguage } from "../../../shared/i18n/index";
 import {
   createThirdPartyHookTarget,
@@ -372,7 +373,7 @@ export function ThirdPartyNotificationSection({ embedded = false }: { embedded?:
         <Group justify="space-between" align="flex-start" gap="md">
           <Group gap="sm" wrap="nowrap" className="min-w-0">
             <Box style={{ color: "var(--primary)", marginTop: 2 }}>
-              <BellRing size={18} />
+              <SettingsGlyph name="bell" classic={BellRing} size={18} />
             </Box>
             <Box className="min-w-0">
               <Text size="sm" fw={600} c="var(--on-surface)">

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Accordion, Alert, Group, NumberInput, Stack, Switch, Text } from "@mantine/core";
 import { RefreshCw, Route, Server } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { useI18n, type TranslationKey } from "../../../../shared/i18n/index";
 import { NativeProviderButton as Button } from "./NativeProviderButton";
 import type { NativeProviderAppType, NativeProviderHomeIdentity } from "../../api/nativeProviderTypes";
@@ -91,7 +92,7 @@ export function NativeProviderRoutingSection({
 
       <Accordion multiple variant="separated" defaultValue={["service"]}>
         <Accordion.Item value="service">
-          <Accordion.Control icon={<Server size={16} />}>{t("providerCatalog.routing.service.title")}</Accordion.Control>
+          <Accordion.Control icon={<SettingsGlyph name="server" classic={Server} size={16} />}>{t("providerCatalog.routing.service.title")}</Accordion.Control>
           <Accordion.Panel>
             <Stack gap="sm">
               <Switch
@@ -136,7 +137,7 @@ export function NativeProviderRoutingSection({
         </Accordion.Item>
 
         <Accordion.Item value="listener">
-          <Accordion.Control icon={<Route size={16} />}>{t("providerCatalog.routing.listener.title")}</Accordion.Control>
+          <Accordion.Control icon={<SettingsGlyph name="route" classic={Route} size={16} />}>{t("providerCatalog.routing.listener.title")}</Accordion.Control>
           <Accordion.Panel>
             <Stack gap="sm">
               <NumberInput
@@ -166,7 +167,7 @@ export function NativeProviderRoutingSection({
         </Accordion.Item>
 
         <Accordion.Item value="runtime">
-          <Accordion.Control icon={<Server size={16} />}>{t("providerCatalog.routing.runtime.title")}</Accordion.Control>
+          <Accordion.Control icon={<SettingsGlyph name="server" classic={Server} size={16} />}>{t("providerCatalog.routing.runtime.title")}</Accordion.Control>
           <Accordion.Panel>
             <Stack gap={4}>
               <Text size="sm">{t("providerCatalog.routing.runtime.status", { status: daemon?.status ?? t("providerCatalog.routing.unknownValue") })}</Text>

@@ -112,7 +112,10 @@ jobs:
           - platform: windows-latest
             args: ""
             rust-target: ""
-          - platform: macos-14
+          # macOS 14 runner 已于 2026-11-02 从 GitHub Actions 退役（label 解析失败：
+          # The configuration 'macos-14-arm64-us-default' is not supported）。
+          # macos-15 为 arm64 runner，与 aarch64-apple-darwin 构建目标一致。
+          - platform: macos-15
             args: "--target aarch64-apple-darwin"
             rust-target: aarch64-apple-darwin
           # Linux 只产出 deb（x86_64 / arm64）：updater 先查 `linux-<arch>-deb`，deb 安装用户自动更新不受影响；

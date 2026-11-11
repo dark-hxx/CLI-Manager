@@ -1,8 +1,11 @@
 import {
+  createContext,
   forwardRef,
+  useContext,
   type ComponentPropsWithoutRef,
   type ElementRef,
   type HTMLAttributes,
+  type ReactNode,
 } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
@@ -12,6 +15,18 @@ const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
 const DialogPortal = DialogPrimitive.Portal;
 const DialogClose = DialogPrimitive.Close;
+
+interface DialogPresentation {
+  contentClassName?: string;
+  closeLabel?: string;
+}
+
+const DialogPresentationContext = createContext<DialogPresentation>({});
+
+// Portal 不继承宿主 DOM 的样式作用域；通过 React 上下文传递可选外观，默认调用方保持原样。
+function DialogPresentationProvider({ children, ...presentation }: DialogPresentation & { children: ReactNode }) {
+  return <DialogPresentationContext.Provider value={presentation}>{children}</DialogPresentationContext.Provider>;
+}
 
 const DialogOverlay = forwardRef<
   ElementRef<typeof DialogPrimitive.Overlay>,
@@ -39,36 +54,40 @@ interface DialogContentProps
 const DialogContent = forwardRef<
   ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, showCloseButton = true, overlayClassName, overlayStyle, ...props }, ref) => (
-  <DialogPortal>
-    <DialogOverlay className={overlayClassName} style={overlayStyle} />
-    <DialogPrimitive.Content
-      ref={ref}
-      className={cn(
-        "ui-surface-card fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
-        "w-full max-w-lg p-5 outline-none",
-        "data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
-        className
-      )}
-      {...props}
-    >
-      {children}
-      {showCloseButton && (
-        <DialogPrimitive.Close
-          aria-label="关闭"
-          className={cn(
-            "absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center",
-            "rounded-md text-on-surface-variant opacity-70 transition",
-            "hover:bg-[var(--interactive-hover-bg)] hover:opacity-100",
-            "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
-          )}
-        >
-          <X size={14} />
-        </DialogPrimitive.Close>
-      )}
-    </DialogPrimitive.Content>
-  </DialogPortal>
-));
+>(({ className, children, showCloseButton = true, overlayClassName, overlayStyle, ...props }, ref) => {
+  const presentation = useContext(DialogPresentationContext);
+  return (
+    <DialogPortal>
+      <DialogOverlay className={overlayClassName} style={overlayStyle} />
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(
+          "ui-surface-card fixed left-1/2 top-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
+          "w-full max-w-lg p-5 outline-none",
+          "data-[state=open]:animate-scale-in data-[state=closed]:animate-scale-out",
+          presentation.contentClassName,
+          className
+        )}
+        {...props}
+      >
+        {children}
+        {showCloseButton && (
+          <DialogPrimitive.Close
+            aria-label={presentation.closeLabel ?? "关闭"}
+            className={cn(
+              "absolute right-3 top-3 inline-flex h-6 w-6 items-center justify-center",
+              "rounded-md text-on-surface-variant opacity-70 transition",
+              "hover:bg-[var(--interactive-hover-bg)] hover:opacity-100",
+              "focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]"
+            )}
+          >
+            <X size={14} />
+          </DialogPrimitive.Close>
+        )}
+      </DialogPrimitive.Content>
+    </DialogPortal>
+  );
+});
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 
 const DialogHeader = ({ className, ...props }: HTMLAttributes<HTMLDivElement>) => (
@@ -107,6 +126,7 @@ DialogDescription.displayName = DialogPrimitive.Description.displayName;
 
 export {
   Dialog,
+  DialogPresentationProvider,
   DialogPortal,
   DialogOverlay,
   DialogTrigger,

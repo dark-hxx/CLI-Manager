@@ -1,11 +1,12 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Button, Card, Group, Image, Stack, Text, ThemeIcon } from "@mantine/core";
 import { ExternalLink, Gift, Sparkles } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import fluxionBanner from "../../../../../docs/img/sponsor/fluxion-ai-banner.png";
 import fluxionLogo from "../../../../../docs/img/sponsor/fluxion-ai-logo.jpg";
 import { useI18n } from "../../../../shared/i18n/index";
-import { FLUXION_REGISTER_URL } from "../../lib/sponsors";
+import { FLUXION_REGISTER_URL } from "../../api/sponsors";
 
 export function SponsorsSettingsPage() {
   const { t } = useI18n();
@@ -38,10 +39,10 @@ export function SponsorsSettingsPage() {
               <Image src={fluxionLogo} alt={t("sponsors.fluxion.logoAlt")} fit="contain" className="sponsor-card__logo" />
             </div>
             <Stack gap={4}>
-              <Text size="xs" fw={700} c="indigo" className="sponsor-card__category">
+              <Text size="xs" fw={600} c="indigo" className="sponsor-card__category">
                 {t("sponsors.fluxion.category")}
               </Text>
-              <Text component="h2" m={0} size="xl" fw={800} lh={1.25} className="sponsor-card__title">
+              <Text component="h2" m={0} size="xl" fw={600} lh={1.25} className="sponsor-card__title">
                 {t("sponsors.fluxion.title")}
               </Text>
               <Text size="sm" c="dimmed" lh={1.7} className="sponsor-card__brand-name">
@@ -58,13 +59,13 @@ export function SponsorsSettingsPage() {
             <Card withBorder radius="md" p="md" className="sponsor-card__benefit bg-surface-container-low">
               <Group gap="sm" align="flex-start" wrap="nowrap">
                 <ThemeIcon size={32} radius="md" variant="light" color="orange">
-                  <Gift size={16} aria-hidden="true" />
+                  <SettingsGlyph name="gift" classic={Gift} size={16} aria-hidden="true" />
                 </ThemeIcon>
                 <Stack gap={2}>
-                  <Text size="xs" fw={700} c="dimmed">
+                  <Text size="xs" fw={600} c="dimmed">
                     {t("sponsors.fluxion.benefitLabel")}
                   </Text>
-                  <Text size="sm" fw={700} className="sponsor-card__benefit-copy">
+                  <Text size="sm" fw={600} className="sponsor-card__benefit-copy">
                     {t("sponsors.fluxion.benefitPrefix")}
                     <code className="sponsor-card__coupon">CLIMANAGER</code>
                     {t("sponsors.fluxion.benefitSuffix")}

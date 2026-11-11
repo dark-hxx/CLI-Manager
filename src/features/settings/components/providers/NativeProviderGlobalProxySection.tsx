@@ -11,6 +11,7 @@ import {
   TextInput,
 } from "@mantine/core";
 import { Check, Globe2, Radar, Save, Trash2 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { toast } from "sonner";
 import { useI18n } from "../../../../shared/i18n/index";
 import { NativeProviderButton as Button } from "./NativeProviderButton";
@@ -132,7 +133,7 @@ export function NativeProviderGlobalProxySection() {
 
   return (
     <Accordion.Item value="global-proxy">
-      <Accordion.Control icon={<Globe2 size={16} />}>
+      <Accordion.Control icon={<SettingsGlyph name="globe2" classic={Globe2} size={16} />}>
         {t("providerCatalog.routing.proxy.title")}
       </Accordion.Control>
       <Accordion.Panel>

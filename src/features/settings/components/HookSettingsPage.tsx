@@ -13,6 +13,7 @@ import {
   Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Check, X, Activity,
   Bell, ShieldAlert, ToggleRight, AlertTriangle, XCircle, Layers, Volume2, Trash2,
 } from "lucide-react";
+import { SettingsGlyph } from "./SettingsIcons";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "../../../shared/preferences/settingsStore";
 import { getErrorMessage, getKimiHookErrorMessage, getPiHookErrorMessage } from "../api/hookErrors";
 import { useI18n } from "../../../shared/i18n/index";
@@ -913,7 +914,7 @@ export function HookSettingsPage() {
                   <Group justify="space-between" align="flex-start" gap="md" wrap="wrap">
                     <Box className="min-w-0 flex-1">
                       <Group gap="xs" wrap="nowrap">
-                        <Volume2 size={16} style={{ color: "var(--primary)" }} />
+                        <SettingsGlyph name="volume" classic={Volume2} size={16} style={{ color: "var(--primary)" }} />
                         <Text size="sm" fw={500} c="var(--on-surface)">
                           {t("settings.hooks.systemNotifications.sound.title")}
                         </Text>

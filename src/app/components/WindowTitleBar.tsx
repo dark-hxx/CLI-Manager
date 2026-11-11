@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { Copy, Minus, Square, X } from "lucide-react";
+import { Copy, Minus, Square, X } from "../../shared/ui/homeIcons";
 import { logWarn } from "../../shared/platform/logger";
 import { getOsPlatform } from "../../shared/platform/shell";
 import appIcon32 from "../../assets/app-icon-32.png";

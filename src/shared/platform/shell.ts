@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { debugConsoleError } from "./debugConsole";
 
 export type ShellKey =
   // Windows
@@ -74,7 +75,7 @@ export async function getOsPlatform(): Promise<OsPlatform> {
     const platform = await invoke<string>("get_os_platform");
     return platform as OsPlatform;
   } catch (err) {
-    console.error("Failed to get OS platform:", err);
+    debugConsoleError("Failed to get OS platform:", err);
     return "unknown";
   }
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Badge, Button, Card, Collapse, Divider, Group, NumberInput, PasswordInput, Select, SimpleGrid, Stack, Switch, Text, TextInput, UnstyledButton } from "@mantine/core";
 import { ChevronDown, ChevronUp, Globe, Play, RefreshCw, Save, ShieldAlert, Square } from "lucide-react";
+import { SettingsGlyph } from "./SettingsIcons";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
 import { webServerApi, type WebServerStatus } from "../../../shared/lib/webServer";
@@ -103,7 +104,7 @@ export function WebServerSettingsSection() {
     <Card className="border border-primary/25 bg-primary/5" p="md" radius="lg">
       <Group justify="space-between" align="flex-start" wrap="wrap">
         <div>
-          <Group gap="xs"><Globe size={18} /><Text fw={700}>{t("settings.webServer.title")}</Text></Group>
+          <Group gap="xs"><SettingsGlyph name="globe" classic={Globe} size={18} /><Text fw={600}>{t("settings.webServer.title")}</Text></Group>
           <Text mt={4} size="xs" c="var(--text-muted)">{t("settings.webServer.description")}</Text>
         </div>
         <Badge color={status?.running ? "green" : status?.configured ? "gray" : "yellow"} variant="light">{t(stateKey)}</Badge>
@@ -125,7 +126,7 @@ export function WebServerSettingsSection() {
 
       <Divider my="md" />
       <Stack gap="xs">
-        <Text fw={700} size="sm">{t("settings.webServer.basicTitle")}</Text>
+        <Text fw={600} size="sm">{t("settings.webServer.basicTitle")}</Text>
         <Text size="xs" c="var(--text-muted)">{t("settings.webServer.basicDescription")}</Text>
       </Stack>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="sm">
@@ -140,7 +141,7 @@ export function WebServerSettingsSection() {
       <UnstyledButton className="w-full rounded-md text-left" onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen}>
         <Group justify="space-between" wrap="nowrap">
           <div>
-            <Text fw={700} size="sm">{t("settings.webServer.advancedTitle")}</Text>
+            <Text fw={600} size="sm">{t("settings.webServer.advancedTitle")}</Text>
             <Text size="xs" c="var(--text-muted)">{t("settings.webServer.advancedDescription")}</Text>
           </div>
           {advancedOpen ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
@@ -156,7 +157,7 @@ export function WebServerSettingsSection() {
 
       <Divider my="md" />
       <Stack gap="xs">
-        <Text fw={700} size="sm">{t("settings.webServer.securityTitle")}</Text>
+        <Text fw={600} size="sm">{t("settings.webServer.securityTitle")}</Text>
         <Text size="xs" c="var(--text-muted)">{t("settings.webServer.securityDescription")}</Text>
       </Stack>
       <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="sm" mt="sm">

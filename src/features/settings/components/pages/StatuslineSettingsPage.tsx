@@ -46,6 +46,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import { SettingsGlyph } from "../SettingsIcons";
 import { pickByLanguage, useI18n } from "../../../../shared/i18n/index";
 import { normalizeTerminalFontFamily } from "../../../terminal/api/terminalFontFamily";
 import {
@@ -1279,7 +1280,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
               value: "claude",
               label: (
                 <Group gap="xs" justify="center">
-                  <Bot size={16} />
+                  <SettingsGlyph name="bot" classic={Bot} size={16} />
                   <Text size="sm" fw={600}>
                     Claude Code
                   </Text>
@@ -1293,7 +1294,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
               value: "codex",
               label: (
                 <Group gap="xs" justify="center">
-                  <Braces size={16} />
+                  <SettingsGlyph name="braces" classic={Braces} size={16} />
                   <Text size="sm" fw={600}>
                     Codex
                   </Text>

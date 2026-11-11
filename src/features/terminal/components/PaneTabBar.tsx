@@ -7,7 +7,7 @@ import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useI18n } from "../../../shared/i18n/index";
 import type { TerminalPaneLeaf, TerminalPaneSplitDirection } from "../api/terminalPaneTree";
 import { PULSING_TAB_STATES, TAB_NOTIFICATION_COLORS } from "../api/terminalTabVisuals";
-import { X, Maximize2, Minimize2, ChevronDown, ChevronRight, Undo2 } from "../../../shared/ui/icons";
+import { X, Maximize2, Minimize2, ChevronDown, ChevronRight, Undo2 } from "../../../shared/ui/homeIcons";
 import { inferVendor } from "../../../shared/ui/VendorIcon";
 import { canSaveSessionToSidebar } from "../../projects/api/saveSessionToSidebar";
 import type { Project, TerminalSession, WorktreeRecord } from "../../../shared/types/index";

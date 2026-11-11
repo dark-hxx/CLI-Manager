@@ -1,4 +1,5 @@
-import { Card, Group, Stack, Switch, Text } from "@mantine/core";
+import { Switch } from "@mantine/core";
+import { SettingsRow, SettingsSection } from "../SettingsPrimitives";
 import { toast } from "sonner";
 import { useI18n } from "../../../../shared/i18n/index";
 import { useSettingsStore } from "../../../../shared/preferences/settingsStore";
@@ -8,20 +9,15 @@ export function PerformanceSettingsSection() {
   const lowMemoryMode = useSettingsStore(state => state.lowMemoryMode);
   const update = useSettingsStore(state => state.update);
   return (
-    <Stack gap="sm">
-      <Text fw={600}>{t("settings.general.performance")}</Text>
-      <Card className="border border-border bg-surface-container-lowest" p="sm" radius="lg">
-        <Group justify="space-between" wrap="nowrap">
-          <div>
-            <Text size="sm" fw={500}>{t("settings.general.lowMemoryMode")}</Text>
-            <Text size="xs" c="var(--text-muted)">{t("settings.general.lowMemoryModeDescription")}</Text>
-            <Text size="xs" mt="xs" c="var(--text-muted)">{t("settings.general.performanceHint")}</Text>
-          </div>
+    <SettingsSection title={t("settings.general.performance")}>
+      <SettingsRow
+        title={t("settings.general.lowMemoryMode")}
+        description={<>{t("settings.general.lowMemoryModeDescription")}<p className="mt-2">{t("settings.general.performanceHint")}</p></>}
+      >
           <Switch checked={lowMemoryMode} aria-label={t("settings.general.lowMemoryMode")} onChange={event => {
             void update("lowMemoryMode", event.currentTarget.checked).catch(err => toast.error(t("settings.general.performanceSaveFailed"), { description: String(err) }));
           }} />
-        </Group>
-      </Card>
-    </Stack>
+      </SettingsRow>
+    </SettingsSection>
   );
 }

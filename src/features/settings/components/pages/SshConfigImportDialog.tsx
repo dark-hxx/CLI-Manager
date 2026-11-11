@@ -205,7 +205,7 @@ export function SshConfigImportDialog({ open: dialogOpen, hosts, groups, onOpenC
 
   return (
     <Dialog open={dialogOpen} onOpenChange={(next) => !importing && onOpenChange(next)}>
-      <DialogContent className="flex max-h-[min(760px,90vh)] max-w-[760px] flex-col p-0" showCloseButton={!importing}>
+      <DialogContent className="settings-scope settings-radix-dialog flex max-h-[min(760px,90vh)] max-w-[760px] flex-col p-0" showCloseButton={!importing}>
         <div className="shrink-0 border-b border-border px-5 py-4">
           <DialogTitle>{t("settings.sshHosts.import.title")}</DialogTitle>
           <DialogDescription className="mt-1">{t("settings.sshHosts.import.description")}</DialogDescription>

@@ -1,3 +1,4 @@
+import { Folder as HomeFolder, Terminal as HomeTerminal } from "../../../shared/ui/homeIcons";
 import { Folder, Terminal } from "../../../shared/ui/icons";
 import { CliToolIcon, isCliToolIconKey } from "../../../shared/ui/CliToolIcon";
 import { resolveCliToolIconKey } from "../../../shared/lib/cliTools";
@@ -13,6 +14,8 @@ interface NodeAppearanceIconProps {
   /** 都没有时的兜底图标。 */
   fallback: "folder" | "terminal";
   size?: number;
+  /** 仅首页默认图形跟随精致图标偏好，自定义和品牌图标优先。 */
+  homeStyle?: boolean;
 }
 
 /**
@@ -27,6 +30,7 @@ export function NodeAppearanceIcon({
   cliTool,
   fallback,
   size = 16,
+  homeStyle = false,
 }: NodeAppearanceIconProps) {
   if (mark) {
     return (
@@ -52,9 +56,11 @@ export function NodeAppearanceIcon({
   const resolvedKey = isCliToolIconKey(iconKey) ? iconKey : resolveCliToolIconKey(cliTool);
   if (resolvedKey) return <CliToolIcon icon={resolvedKey} size={size} />;
 
+  const FolderIcon = homeStyle ? HomeFolder : Folder;
+  const TerminalIcon = homeStyle ? HomeTerminal : Terminal;
   return fallback === "folder" ? (
-    <Folder size={size} strokeWidth={1.5} />
+    <FolderIcon size={size} strokeWidth={1.5} />
   ) : (
-    <Terminal size={size} strokeWidth={1.5} />
+    <TerminalIcon size={size} strokeWidth={1.5} />
   );
 }

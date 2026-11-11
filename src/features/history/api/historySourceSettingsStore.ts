@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Store } from "@tauri-apps/plugin-store";
 import { getCliManagerDataPaths } from "../../../shared/platform/appPaths";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
+import { debugConsoleWarn } from "../../../shared/platform/debugConsole";
 import {
   HISTORY_SOURCE_DESCRIPTOR_BY_ID,
   createHistorySourceInstanceId,
@@ -185,7 +186,7 @@ async function syncIndexSourceInstanceBestEffort(sourceId: HistorySourceId, sour
   try {
     await syncIndexSourceInstance(sourceId, sourceSettings);
   } catch (error) {
-    console.warn("history source index snapshot sync failed", sourceId, error);
+    debugConsoleWarn("history source index snapshot sync failed", sourceId, error);
   }
 }
 
