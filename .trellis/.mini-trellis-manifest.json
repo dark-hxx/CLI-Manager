@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "files": {
+    ".trellis/scripts/add_session.py": "33be5c8782e2a2470e74488d6cd8d07c169b20c0e55d2770aa27178e5d6f76a6",
+    ".trellis/scripts/common/active_task.py": "2728909f388035bd8077772cbd9122f0f7e1b5c23801b9f7916e58c32eb864e3",
+    ".trellis/scripts/common/config.py": "e6100ee12925748c521e1bb9dcfbdc7984b43cffbf54bebede4a02d130fb5330",
+    ".trellis/scripts/common/developer.py": "be6c0a37e80684441607f39bab0e8acbbd1e18da5f0849cf7e49beca309adc57",
+    ".trellis/scripts/common/git.py": "5605b71662e524b47632030d9db9245121a5cba85b5521eeb524ed464d840ff5",
+    ".trellis/scripts/common/git_context.py": "fa30ced454f1a91ffc9f8b2abeb32225e3447cbdc90bad783797374eba07265d",
+    ".trellis/scripts/common/io.py": "041f5f05d6af020a910995d027bcaa14cded1e465957e29aed0e457ca19da837",
+    ".trellis/scripts/common/log.py": "471df6895cfac80f995edebbf9974f6b7440634b7a688f28b8331c868bc0f3cf",
+    ".trellis/scripts/common/packages_context.py": "efe158d7c99c2268851d0216fbb08de22836e418a8dbeb73575b8cc249eed7b7",
+    ".trellis/scripts/common/paths.py": "d8586d4d3f9bb2dd46b7f11b0f038b5340d283f41b6fa2c76bb8235c13bbb0b7",
+    ".trellis/scripts/common/safe_commit.py": "262ad740552279fe6ec6a2a9865b2965ce2448577cf973a4d702dfe2f5f91f04",
+    ".trellis/scripts/common/session_context.py": "20da801d2b1f0fcca6c6debd9d7d8b2cc54157ad49bd37c0548c334e8fbf7e7f",
+    ".trellis/scripts/common/tasks.py": "87aca6b73ec4524450cfff8e2ae561b1f2e53bd62a185f036a7a2d484d90c8a2",
+    ".trellis/scripts/common/trellis_config.py": "f1fc705ec463b0b9c163672dc9e50f10d29da967775a1900429205f7c4fcb51c",
+    ".trellis/scripts/common/types.py": "9962081cc2608fb9d1deb32c6880e336f62cdca6b338e7ae813304701e155ee9",
+    ".trellis/scripts/common/workflow_phase.py": "146b69c1ec0e628aeb720d3e34d8333f16050225037fe4233da9bbc4d4ac99c1",
+    ".trellis/scripts/common/__init__.py": "f258cd873681dc5a4d71db0dd71d10fd78656de55bec96418d6702503c16e87d",
+    ".trellis/scripts/get_context.py": "af3ea7cd563a453227cf2cb4ab04d667390046b7febfac2217348d0892781f4b",
+    ".trellis/scripts/init_developer.py": "0943f1c240993649ab89b91a2c5b379e84daa8c53b35f0490774bff05a552873",
+    ".trellis/scripts/__init__.py": "1242be5b972094c2e141aecbe81a4efd478f6534e3d5e28306374e6a18fcf46c",
+    ".claude/settings.json": "bb37af49dc733f09079d6fe50a2f0638a5e9282a489ec73c296f8bfeb27b6639",
+    ".claude/commands/mini-trellis/remember.md": "4f2de956568011b35ea92bc914744001d211544b50cecb1208621fce64cd9610",
+    ".claude/skills/mini-trellis-update-spec/SKILL.md": "0aad061e617b5876def511dcb656464d1b5eb99dfbc0e483914543d6f1435acc",
+    ".claude/skills/mini-trellis-session-insight/references/cli-quick-reference.md": "e4b3de19c99ca75847593befd59b49c4689fc0c302f9c47a4f08058303984061",
+    ".claude/skills/mini-trellis-session-insight/references/organize-history.md": "0683b7eba8ba6e0e192f2f8f8bce7bf9ee469201c5926586f7215562648268fe",
+    ".claude/skills/mini-trellis-session-insight/references/triggering-patterns.md": "b9a01ec8cd7414516e9b15fe7bca392738e595dcaaf36a6347f495721a91e55f",
+    ".claude/skills/mini-trellis-session-insight/SKILL.md": "bcf4b863cb3b0b30ee63957b6549ebe229e064e1f76f03fd4575cbedab673343"
+  }
+}
