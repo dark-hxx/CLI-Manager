@@ -28,3 +28,4 @@ Per quality-guidelines.md, agents do not start application services or the deskt
 - `NodeAppearanceIcon.homeStyle` only opts homepage fallback folder/terminal shapes in; history and stats defaults remain unchanged.
 - Preserve classic SVG props unchanged. Refined glyphs retain size, transforms, aria overrides and refs.
 - Toolbar triggers and drag overlays share the same icon components. Nested panel contents retain their existing icons.
+- The terminal action rail (incl. template and background-task triggers) uses `shared/ui/terminalActionIcons.tsx`, not homeIcons: one hierarchical construction (1.7 stroke outline + 18% `currentColor` wash), no fixed colors, solid blobs, sheens or knockouts, so `--terminal-action-color` tones and disabled opacity apply uniformly.

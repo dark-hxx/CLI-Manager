@@ -8,9 +8,9 @@ import { useI18n } from "../../../shared/i18n/index";
 import { CommandTemplatePanel } from "../../prompts/api/CommandTemplatePanel";
 import { BackgroundTasksPanel, type BackgroundTaskMeta } from "../components/BackgroundTasksPanel";
 import {
-  Activity, ArrowLeftRight, Plus, ListClockIcon, Maximize2, Minimize2, BarChart3, GitBranch, Folder,
-  Cpu,
-} from "../../../shared/ui/homeIcons";
+  NewTerminalIcon, EnterFullscreenIcon, ExitFullscreenIcon, SessionHistoryIcon, ReplayIcon, GitIcon,
+  FilesIcon, StatsIcon, ProvidersIcon, SystemResourcesIcon,
+} from "../../../shared/ui/terminalActionIcons";
 import type { Project } from "../../../shared/types/index";
 import { SortableToolbarButton, CpuCatIndicator } from "../components/TerminalToolbarControls";
 
@@ -120,7 +120,7 @@ export function useTerminalToolbarRenderer({
           className="ui-focus-ring ui-icon-action ui-primary-action ui-action-new"
           aria-label={t("terminal.toolbar.newTerminal")}
         >
-          <Plus size={15} strokeWidth={2} />
+          <NewTerminalIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       templates: (
@@ -138,7 +138,7 @@ export function useTerminalToolbarRenderer({
           aria-label={fullscreen ? t("terminal.toolbar.exitImmersiveFullscreen") : t("terminal.toolbar.enterImmersiveFullscreen")}
           aria-pressed={fullscreen}
         >
-          {fullscreen ? <Minimize2 size={14} strokeWidth={1.8} /> : <Maximize2 size={14} strokeWidth={1.8} />}
+          {fullscreen ? <ExitFullscreenIcon size={18} strokeWidth={1.8} /> : <EnterFullscreenIcon size={18} strokeWidth={1.8} />}
         </button>
       ) : null,
       sessionHistory: (
@@ -150,7 +150,7 @@ export function useTerminalToolbarRenderer({
           aria-controls="history-workspace"
           aria-expanded={historyOpen}
         >
-          <ListClockIcon size={16} />
+          <SessionHistoryIcon size={18} strokeWidth={1.8} />
           {terminalToolbarVisibility.showText && <span>{t("terminal.toolbar.sessionHistory")}</span>}
         </button>
       ),
@@ -162,7 +162,7 @@ export function useTerminalToolbarRenderer({
           aria-label={replayPanelActive ? t("terminal.toolbar.closeReplayPanel") : t("terminal.toolbar.openReplayPanel")}
           aria-pressed={replayPanelActive}
         >
-          <Activity size={13} strokeWidth={1.8} />
+          <ReplayIcon size={18} strokeWidth={1.8} />
           {terminalToolbarVisibility.showText && <span>{t("terminal.toolbar.replay")}</span>}
         </button>
       ),
@@ -174,7 +174,7 @@ export function useTerminalToolbarRenderer({
           aria-label={gitPanelActive ? t("terminal.toolbar.closeGitPanel") : t("terminal.toolbar.openGitPanel")}
           aria-pressed={gitPanelActive}
         >
-          <GitBranch size={13} strokeWidth={1.8} />
+          <GitIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       files: (
@@ -192,7 +192,7 @@ export function useTerminalToolbarRenderer({
           }
           aria-pressed={filesPanelActive}
         >
-          <Folder size={13} strokeWidth={1.8} />
+          <FilesIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       stats: (
@@ -203,7 +203,7 @@ export function useTerminalToolbarRenderer({
           aria-label={statsPanelActive ? t("terminal.toolbar.closeStatsPanel") : t("terminal.toolbar.openStatsPanel")}
           aria-pressed={statsPanelActive}
         >
-          <BarChart3 size={13} strokeWidth={1.8} />
+          <StatsIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       providers: (
@@ -214,7 +214,7 @@ export function useTerminalToolbarRenderer({
           aria-label={providersPanelActive ? t("terminal.toolbar.closeProvidersPanel") : t("terminal.toolbar.openProvidersPanel")}
           aria-pressed={providersPanelActive}
         >
-          <ArrowLeftRight size={13} strokeWidth={1.8} />
+          <ProvidersIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       systemResources: (
@@ -225,7 +225,7 @@ export function useTerminalToolbarRenderer({
           aria-label={systemResourcesPanelActive ? t("terminal.toolbar.closeSystemResourcesPanel") : t("terminal.toolbar.openSystemResourcesPanel")}
           aria-pressed={systemResourcesPanelActive}
         >
-          <Cpu size={13} strokeWidth={1.8} />
+          <SystemResourcesIcon size={18} strokeWidth={1.8} />
         </button>
       ),
       backgroundTasks: (

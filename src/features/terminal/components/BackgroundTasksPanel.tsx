@@ -1,4 +1,4 @@
-import { Layers as HomeLayers } from "../../../shared/ui/homeIcons";
+import { BackgroundTasksIcon } from "../../../shared/ui/terminalActionIcons";
 import { useMemo, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
@@ -189,7 +189,7 @@ export function BackgroundTasksPanel({ tasks, onRefresh, showText, popoverSide =
           disabled={!hasAnyTask}
           aria-label={t("terminal.backgroundTasks.title")}
         >
-          <HomeLayers size={14} strokeWidth={1.8} />
+          <BackgroundTasksIcon size={18} strokeWidth={1.8} />
           {showText && <span>{t("terminal.backgroundTasks.shortTitle")}</span>}
         </button>
       </PopoverTrigger>
