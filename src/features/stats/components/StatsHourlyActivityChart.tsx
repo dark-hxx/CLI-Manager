@@ -1,32 +1,18 @@
 import { memo, useMemo } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { HistoryStatsHourlyActivityItem } from "../../../shared/types/index";
 import { useI18n, type AppLanguage } from "../../../shared/i18n/index";
 import {
-  HISTORY_SERIES_COLORS,
-  RECHARTS_BAR_CURSOR,
-  RECHARTS_TOOLTIP_ITEM_STYLE,
-  RECHARTS_TOOLTIP_LABEL_STYLE,
   RECHARTS_TOOLTIP_WRAPPER_STYLE,
+  STATS_AXIS_TICK,
+  STATS_BAR_CURSOR,
+  STATS_COLORS,
+  STATS_GRID_STROKE,
 } from "../api/statsPalette";
 
 interface StatsHourlyActivityChartProps {
   items: HistoryStatsHourlyActivityItem[];
 }
-
-const RECHARTS_TOOLTIP_STYLE = {
-  backgroundColor: "var(--bg-secondary)",
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
-  color: "var(--text-primary)",
-  fontSize: 12,
-} as const;
-
-const RECHARTS_AXIS_STYLE = {
-  fill: "var(--text-muted)",
-  fontSize: 11,
-} as const;
 
 function formatCount(value: number, language: AppLanguage): string {
   if (!Number.isFinite(value)) return "0";
@@ -76,61 +62,67 @@ function StatsHourlyActivityChartImpl({ items }: StatsHourlyActivityChartProps) 
   const hasData = normalized.some((item) => item.messages > 0 || item.sessions > 0);
 
   return (
-    <div className="flex h-[320px] flex-col rounded-2xl border border-border/60 bg-bg-secondary p-4">
-      <div className="mb-2 flex items-center gap-2">
-        <div className="text-xs font-semibold text-text-primary">{t("stats.hourly.title")}</div>
-        <div className="ml-auto text-[11px] text-text-secondary">
-          {active
+    <section className="ui-stats-card flex h-full min-h-[340px] flex-col p-5">
+      <header className="mb-4 flex items-start gap-3">
+        <h3 className="text-[15px] font-semibold tracking-tight text-text-primary">{t("stats.hourly.title")}</h3>
+        <span className="ui-stats-inset ml-auto truncate px-2.5 py-1 text-[11px] font-medium text-text-secondary">
+          {active && active.messages > 0
             ? t("stats.summary.sessionsMessages", {
                 bucket: formatHour(active.hour),
                 sessions: formatCount(active.sessions, language),
                 messages: formatCount(active.messages, language),
               })
             : t("stats.hourly.empty")}
-        </div>
-      </div>
+        </span>
+      </header>
 
-      <div className="min-h-0 flex-1">
+      <div className="min-h-0 flex-1" aria-label={t("stats.hourly.chartAria")}>
         {!hasData ? (
-          <div className="py-8 text-center text-[11px] text-text-muted">
+          <div className="flex h-full items-center justify-center text-[12px] text-text-muted">
             {t("stats.hourly.noData")}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={normalized} margin={{ top: 8, right: 8, bottom: 8, left: 0 }}>
-              <CartesianGrid stroke="var(--border)" strokeOpacity={0.42} vertical={false} />
-              <XAxis dataKey="label" tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={{ stroke: "var(--border)" }} interval={2} />
-              <YAxis tick={RECHARTS_AXIS_STYLE} tickLine={false} axisLine={false} tickFormatter={(value) => formatCompactAxis(Number(value), language)} allowDecimals={false} />
+            <BarChart data={normalized} margin={{ top: 4, right: 0, bottom: 0, left: -12 }}>
+              <CartesianGrid stroke={STATS_GRID_STROKE} strokeDasharray="3 4" vertical={false} />
+              <XAxis dataKey="label" tick={STATS_AXIS_TICK} tickLine={false} axisLine={false} interval={2} dy={6} />
+              <YAxis tick={STATS_AXIS_TICK} tickLine={false} axisLine={false} tickFormatter={(value) => formatCompactAxis(Number(value), language)} allowDecimals={false} width={44} />
               <Tooltip
-                cursor={RECHARTS_BAR_CURSOR}
-                contentStyle={RECHARTS_TOOLTIP_STYLE}
-                itemStyle={RECHARTS_TOOLTIP_ITEM_STYLE}
-                labelStyle={RECHARTS_TOOLTIP_LABEL_STYLE}
+                cursor={STATS_BAR_CURSOR}
                 wrapperStyle={RECHARTS_TOOLTIP_WRAPPER_STYLE}
-                labelFormatter={(label) => `${label}:00`}
-                formatter={(value, name, payload) => {
-                  const item = payload?.payload as HistoryStatsHourlyActivityItem | undefined;
-                  if (String(name) === t("stats.hourly.legendMessages")) {
-                    return [t("stats.unit.messages", { count: formatCount(Number(value), language) }), String(name)];
-                  }
-                  return [
-                    item
-                      ? t("stats.summary.sessionsMessages", {
-                          bucket: formatHour(item.hour),
-                          sessions: formatCount(item.sessions, language),
-                          messages: formatCount(item.messages, language),
-                        })
-                      : String(value),
-                    String(name),
-                  ];
+                content={({ active: tooltipActive, payload }) => {
+                  const item = payload?.[0]?.payload as HistoryStatsHourlyActivityItem | undefined;
+                  if (!tooltipActive || !item) return null;
+                  return (
+                    <div className="ui-stats-tooltip">
+                      <div className="mb-1.5 text-[12px] font-semibold text-text-primary">{formatHour(item.hour)}</div>
+                      <div className="flex items-center justify-between gap-5 text-text-secondary">
+                        <span className="inline-flex items-center gap-2">
+                          <span className="ui-stats-legend-dot" style={{ backgroundColor: STATS_COLORS.accent }} />
+                          {t("stats.hourly.legendMessages")}
+                        </span>
+                        <span className="font-semibold tabular-nums text-text-primary">{formatCount(item.messages, language)}</span>
+                      </div>
+                      <div className="mt-1 text-[11px] text-text-muted">{t("stats.unit.sessions", { count: formatCount(item.sessions, language) })}</div>
+                    </div>
+                  );
                 }}
               />
-              <Bar dataKey="messages" name={t("stats.hourly.legendMessages")} fill={HISTORY_SERIES_COLORS.input} radius={[5, 5, 0, 0]} maxBarSize={16} />
+              <Bar dataKey="messages" name={t("stats.hourly.legendMessages")} radius={[4, 4, 4, 4]} maxBarSize={18}>
+                {normalized.map((item) => (
+                  <Cell
+                    key={item.hour}
+                    fill={active && item.hour === active.hour && item.messages > 0
+                      ? STATS_COLORS.accent
+                      : "color-mix(in srgb, var(--stats-blue) 42%, transparent)"}
+                  />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         )}
       </div>
-    </div>
+    </section>
   );
 }
 

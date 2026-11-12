@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
 import {
-  CalendarDays,
   CircleAlert,
   ChevronDown,
   ChevronLeft,
@@ -20,7 +19,6 @@ import {
   SlidersHorizontal,
 } from "lucide-react";
 import { Button } from "../../../shared/ui/button";
-import { Card } from "../../../shared/ui/card";
 import { Select } from "../../../shared/ui/select";
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../../../shared/ui/dialog";
 import type { RequestLogFilters, RequestLogItem, RequestLogPage, RequestLogSource } from "../../../shared/types/index";
@@ -325,17 +323,25 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
     }
   };
 
-  const controlClass = "h-8 rounded-md border border-border bg-bg-secondary px-2 text-xs text-text-primary";
+  const controlClass = "ui-stats-control ui-focus-ring outline-none";
+  const unpricedTokens = result?.summary.unpriced_tokens ?? 0;
+  const summaryItems = [
+    { icon: FileText, label: t("requestLogs.summary.records"), value: formatCount(result?.summary.total ?? 0, language), tint: "var(--stats-blue)" },
+    { icon: Layers3, label: t("requestLogs.summary.tokens"), value: formatCompact(result?.summary.total_tokens ?? 0, language), tint: "var(--stats-teal)" },
+    { icon: Database, label: t("requestLogs.summary.cacheHitRate"), value: formatRate(result?.summary.cache_hit_rate ?? 0), tint: "var(--stats-green)" },
+    { icon: Coins, label: t("requestLogs.summary.cost"), value: formatCost(result?.summary.total_cost_usd ?? 0), tint: "var(--stats-pink)" },
+    { icon: CircleAlert, label: t("requestLogs.summary.unpriced"), value: formatCompact(unpricedTokens, language), tint: unpricedTokens > 0 ? "var(--stats-orange)" : "var(--stats-muted)" },
+  ];
 
   return (
-    <div className="space-y-3">
-      <Card className="border-border/70 bg-bg-secondary p-3">
+    <div className="space-y-4">
+      <section className="ui-stats-card p-4">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="w-full shrink-0 sm:w-[120px]">
+          <div className="w-full shrink-0 sm:w-[128px]">
             <Select
               value={draft.source}
               onChange={(event) => setDraft((current) => ({ ...current, source: event.target.value as RequestLogSourceFilter }))}
-              className={controlClass}
+              className={`${controlClass} w-full`}
               aria-label={t("requestLogs.filter.source")}
             >
               <option value="all">{t("common.allSources")}</option>
@@ -346,14 +352,20 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
               <option value="grok">{t("requestLogs.source.grok")}</option>
             </Select>
           </div>
-          <input
-            value={draft.project}
-            onChange={(event) => setDraft((current) => ({ ...current, project: event.target.value, projectPath: "" }))}
-            className={`${controlClass} min-w-[220px] flex-[1_1_300px] xl:max-w-[520px]`}
-            placeholder={t("requestLogs.filter.project")}
-            aria-label={t("requestLogs.filter.project")}
-          />
-          <div className="flex w-full min-w-[280px] items-center gap-1.5 sm:w-auto sm:flex-[0_0_310px]">
+          <label className="ui-stats-control min-w-[220px] flex-[1_1_300px] text-text-secondary xl:max-w-[480px]">
+            <Search size={13} className="shrink-0" />
+            <input
+              value={draft.project}
+              onChange={(event) => setDraft((current) => ({ ...current, project: event.target.value, projectPath: "" }))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") applyFilters();
+              }}
+              className="min-w-0 flex-1 bg-transparent text-text-primary outline-none placeholder:text-text-muted"
+              placeholder={t("requestLogs.filter.project")}
+              aria-label={t("requestLogs.filter.project")}
+            />
+          </label>
+          <div className="flex w-full min-w-[280px] items-center gap-1.5 sm:w-auto sm:flex-[0_0_300px]">
             <StatsDatePicker
               mode="date"
               value={draft.startDate}
@@ -361,7 +373,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
               className={`${controlClass} min-w-0 flex-1`}
               ariaLabel={t("requestLogs.filter.startDate")}
             />
-            <span className="shrink-0 text-[11px] text-text-muted">{t("common.to")}</span>
+            <span className="shrink-0 text-[12px] text-text-muted">{t("common.to")}</span>
             <StatsDatePicker
               mode="date"
               value={draft.endDate}
@@ -370,57 +382,65 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
               ariaLabel={t("requestLogs.filter.endDate")}
             />
           </div>
-          <div className="flex shrink-0 items-center gap-0.5 rounded-lg border border-border/60 bg-bg-tertiary/45 p-0.5" role="group" aria-label={t("requestLogs.datePreset.label")}>
-            <CalendarDays size={13} className="mx-1 text-text-muted" aria-hidden="true" />
+          <div className="ui-stats-segmented shrink-0" role="group" aria-label={t("requestLogs.datePreset.label")}>
             {(["today", "last7Days", "last30Days"] as RequestLogDatePreset[]).map((preset) => {
               const selected = matchesDatePreset(draft, preset);
               return (
-                <Button
+                <button
                   key={preset}
+                  type="button"
                   onClick={() => selectDatePreset(preset)}
-                  variant="ghost"
-                  size="sm"
-                  className={selected ? "h-7 bg-primary/10 px-2 text-primary" : "h-7 px-2 text-text-muted"}
+                  className="ui-stats-segment ui-focus-ring"
+                  data-selected={selected ? "true" : "false"}
                   aria-pressed={selected}
                 >
                   {t(`requestLogs.datePreset.${preset}`)}
-                </Button>
+                </button>
               );
             })}
           </div>
-          <Button
+          <button
+            type="button"
             onClick={() => setAdvancedOpen((current) => !current)}
-            variant="outline"
-            size="sm"
-            className="h-8 shrink-0 text-text-secondary"
+            className={`${controlClass} shrink-0 text-text-secondary`}
             aria-expanded={advancedOpen}
           >
             <SlidersHorizontal size={13} />
             {advancedOpen ? t("requestLogs.filter.hideAdvanced") : t("requestLogs.filter.showAdvanced")}
             {advancedFilterCount > 0 && (
-              <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary/10 px-1 text-[10px] text-primary">
+              <span className="inline-flex min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-on-primary">
                 {advancedFilterCount}
               </span>
             )}
             <ChevronDown size={12} className={`transition-transform ${advancedOpen ? "rotate-180" : ""}`} />
-          </Button>
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-1.5">
-            <Button onClick={applyFilters} disabled={invalidRange} variant="default" size="sm">
-              <Search size={13} />
-              {t("requestLogs.query")}
-            </Button>
-            <Button onClick={resetFilters} variant="ghost" size="sm">
+          </button>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={resetFilters}
+              className={`${controlClass} text-text-secondary`}
+              title={t("requestLogs.reset")}
+            >
               <RotateCcw size={13} />
               {t("requestLogs.reset")}
-            </Button>
-            <Button onClick={() => void syncAndRefresh()} disabled={syncing} variant="outline" size="sm">
+            </button>
+            <button
+              type="button"
+              onClick={() => void syncAndRefresh()}
+              disabled={syncing}
+              className={`${controlClass} text-text-secondary disabled:cursor-not-allowed disabled:opacity-45`}
+            >
               <RefreshCw size={13} className={syncing ? "animate-spin" : ""} />
               {syncing ? t("requestLogs.syncing") : t("requestLogs.refresh")}
+            </button>
+            <Button onClick={applyFilters} disabled={invalidRange} variant="default" size="sm" className="h-[30px] rounded-lg px-4">
+              <Search size={13} />
+              {t("requestLogs.query")}
             </Button>
           </div>
         </div>
         {advancedOpen && (
-          <div className="mt-2 grid grid-cols-1 gap-2 border-t border-border/60 pt-2 md:grid-cols-2">
+          <div className="mt-3 grid grid-cols-1 gap-2 border-t border-[color:var(--stats-divider)] pt-3 md:grid-cols-2">
             <input
               value={draft.model}
               onChange={(event) => setDraft((current) => ({ ...current, model: event.target.value }))}
@@ -439,58 +459,50 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
         )}
         {invalidRange && <div className="mt-2 text-[12px] text-danger" role="alert">{t("requestLogs.invalidRange")}</div>}
         {syncError && <div className="mt-2 text-[12px] text-danger" role="alert">{t("requestLogs.syncFailed", { error: syncError })}</div>}
-      </Card>
+      </section>
 
-      <div className="grid grid-cols-5 gap-2">
-        {[
-          { icon: FileText, label: t("requestLogs.summary.records"), value: formatCount(result?.summary.total ?? 0, language) },
-          { icon: Layers3, label: t("requestLogs.summary.tokens"), value: formatCompact(result?.summary.total_tokens ?? 0, language) },
-          { icon: Database, label: t("requestLogs.summary.cacheHitRate"), value: formatRate(result?.summary.cache_hit_rate ?? 0) },
-          { icon: Coins, label: t("requestLogs.summary.cost"), value: formatCost(result?.summary.total_cost_usd ?? 0) },
-          { icon: Database, label: t("requestLogs.summary.unpriced"), value: formatCompact(result?.summary.unpriced_tokens ?? 0, language) },
-        ].map((item) => {
+      <section className="ui-stats-card grid grid-cols-2 gap-y-4 px-5 py-4 sm:grid-cols-3 xl:grid-cols-5">
+        {summaryItems.map((item, index) => {
           const Icon = item.icon;
           return (
-            <Card
+            <div
               key={item.label}
-              className="flex min-w-0 items-center gap-2.5 border-border/70 bg-bg-secondary px-3 py-2.5 shadow-sm"
+              className={`min-w-0 px-4 ${index === 0 ? "pl-0" : ""} xl:border-l xl:border-[color:var(--stats-divider)] xl:first:border-l-0`}
             >
-              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                <Icon size={14} />
-              </span>
-              <div className="min-w-0">
-                <div className="truncate text-[10px] font-medium text-text-muted">{item.label}</div>
-                <div className="mt-0.5 truncate text-[17px] font-semibold tabular-nums tracking-tight text-text-primary">{item.value}</div>
+              <div className="inline-flex max-w-full items-center gap-1.5 text-[12px] font-semibold" style={{ color: item.tint }}>
+                <Icon size={13} strokeWidth={2.2} />
+                <span className="truncate">{item.label}</span>
               </div>
-            </Card>
+              <div className="ui-stats-value mt-1.5 truncate text-[22px] leading-tight">{item.value}</div>
+            </div>
           );
         })}
-      </div>
+      </section>
 
-      <Card className="overflow-hidden border-border/70 bg-bg-secondary">
-        {query.isPending && <div className="p-6 text-center text-[12px] text-text-muted" role="status">{t("requestLogs.loading")}</div>}
-        {query.error && <div className="p-4 text-[12px] text-danger" role="alert">{t("requestLogs.loadFailed", { error: String(query.error) })}</div>}
+      <section className="ui-stats-card overflow-hidden">
+        {query.isPending && <div className="p-8 text-center text-[12px] text-text-muted" role="status">{t("requestLogs.loading")}</div>}
+        {query.error && <div className="p-5 text-[12px] text-danger" role="alert">{t("requestLogs.loadFailed", { error: String(query.error) })}</div>}
         {!query.isPending && !query.error && result?.data.length === 0 && (
-          <div className="p-8 text-center text-[12px] text-text-muted">{t("requestLogs.empty")}</div>
+          <div className="p-10 text-center text-[12px] text-text-muted">{t("requestLogs.empty")}</div>
         )}
         {result && result.data.length > 0 && (
-          <div className="max-h-[calc(100vh-280px)] overflow-auto">
-            <table className="w-full min-w-[1120px] border-collapse text-center text-[12px]">
-              <thead className="sticky top-0 z-10 border-b border-border bg-bg-tertiary text-[11px] font-semibold text-text-muted">
+          <div className="ui-thin-scroll max-h-[calc(100vh-300px)] overflow-auto">
+            <table className="ui-stats-table min-w-[1120px]">
+              <thead>
                 <tr>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.time")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.source")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.model")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.projectSession")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.input")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.output")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.cost")}</th>
-                  <th className="px-3 py-2.5">{t("requestLogs.column.status")}</th>
-                  <th className="sticky right-0 z-20 bg-bg-tertiary px-3 py-2.5 text-center">{t("requestLogs.column.action")}</th>
+                  <th>{t("requestLogs.column.time")}</th>
+                  <th>{t("requestLogs.column.source")}</th>
+                  <th>{t("requestLogs.column.model")}</th>
+                  <th>{t("requestLogs.column.projectSession")}</th>
+                  <th className="is-num">{t("requestLogs.column.input")}</th>
+                  <th className="is-num">{t("requestLogs.column.output")}</th>
+                  <th className="is-num">{t("requestLogs.column.cost")}</th>
+                  <th>{t("requestLogs.column.status")}</th>
+                  <th className="is-sticky-end text-center">{t("requestLogs.column.action")}</th>
                 </tr>
               </thead>
               <tbody>
-                {result.data.map((item, rowIndex) => {
+                {result.data.map((item) => {
                   const tokenOutlier = item.total_tokens > tokenOutlierThreshold;
                   const costOutlier = item.total_cost_usd > costOutlierThreshold;
                   const sourceLabel = t(REQUEST_LOG_SOURCE_LABEL_KEYS[item.source]);
@@ -508,16 +520,15 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                   return (
                     <tr
                       key={item.request_id}
-                      className={`group border-t border-border/70 odd:bg-bg-tertiary/20 transition-colors hover:bg-bg-tertiary/60 ${item.session_available ? "cursor-default" : ""}`}
                       onDoubleClick={() => {
                         if (item.session_available) openSession(item.source, item.session_id, item.file_path);
                       }}
                       title={item.session_available ? t("requestLogs.rowOpenHint") : undefined}
                     >
-                      <td className="whitespace-nowrap px-3 py-2.5 font-mono text-[11px] tabular-nums text-text-secondary">
+                      <td className="whitespace-nowrap text-[11px] tabular-nums text-text-secondary">
                         {formatDateTime(item.timestamp_ms, language)}
                       </td>
-                      <td className="px-3 py-2.5">
+                      <td>
                         <button
                           type="button"
                           onClick={(event) => {
@@ -525,7 +536,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                             applyQuickFilter({ source: item.source });
                           }}
                           onDoubleClick={(event) => event.stopPropagation()}
-                          className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-border bg-bg-primary px-2 py-0.5 font-medium text-text-secondary transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                          className="ui-stats-chip ui-focus-ring cursor-pointer"
                           title={t("requestLogs.applyQuickFilter", { value: sourceLabel })}
                         >
                           <VendorIcon vendor={sourceVendor} fallback={Database} size={13} />
@@ -536,7 +547,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                           {item.provider_name ? ` · ${item.provider_name}` : ""}
                         </div>
                       </td>
-                      <td className="max-w-[180px] px-3 py-2.5">
+                      <td className="max-w-[200px]">
                         {item.model ? (
                           <button
                             type="button"
@@ -545,16 +556,16 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                               applyQuickFilter({ model: item.model ?? "" });
                             }}
                             onDoubleClick={(event) => event.stopPropagation()}
-                            className="mx-auto block max-w-full cursor-pointer truncate font-medium text-text-primary transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                            className="ui-stats-link ui-focus-ring block max-w-full cursor-pointer truncate text-left font-medium text-text-primary"
                             title={t("requestLogs.applyQuickFilter", { value: item.model })}
                           >
                             {item.outbound_model && item.requested_model && item.outbound_model !== item.requested_model
                               ? `${item.requested_model} → ${item.outbound_model}`
                               : item.model}
                           </button>
-                        ) : "—"}
+                        ) : <span className="text-text-muted">—</span>}
                       </td>
-                      <td className="max-w-[280px] px-3 py-2.5">
+                      <td className="max-w-[280px]">
                         {item.project_key ? (
                           <button
                             type="button"
@@ -563,7 +574,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                               applyQuickFilter({ project: item.project_key });
                             }}
                             onDoubleClick={(event) => event.stopPropagation()}
-                            className="mx-auto block max-w-full cursor-pointer truncate font-medium text-text-primary transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                            className="ui-stats-link ui-focus-ring block max-w-full cursor-pointer truncate text-left font-medium text-text-primary"
                             title={t("requestLogs.applyQuickFilter", { value: item.project_key })}
                           >
                             {item.project_key}
@@ -574,7 +585,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                         <div className="mt-0.5 truncate font-mono text-[10px] text-text-muted" title={item.session_id}>{item.session_id}</div>
                       </td>
                       <td
-                        className={`px-3 py-2.5 font-medium tabular-nums ${tokenOutlier ? "bg-warning/5 text-warning" : "text-text-primary"}`}
+                        className={`is-num font-medium ${tokenOutlier ? "is-outlier" : "text-text-primary"}`}
                         title={tokenOutlier ? t("requestLogs.tokenOutlier") : undefined}
                       >
                         <div>{formatCompact(item.input_tokens, language)}</div>
@@ -586,13 +597,13 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                         </div>
                       </td>
                       <td
-                        className={`px-3 py-2.5 font-medium tabular-nums ${tokenOutlier ? "text-warning" : "text-text-primary"}`}
+                        className={`is-num font-medium ${tokenOutlier ? "is-outlier" : "text-text-primary"}`}
                         title={tokenOutlier ? t("requestLogs.tokenOutlier") : undefined}
                       >
                         {formatCompact(item.output_tokens, language)}
                       </td>
                       <td
-                        className={`px-3 py-2.5 font-medium tabular-nums ${costOutlier || item.unpriced_tokens > 0 ? "bg-warning/5 text-warning" : "text-text-primary"}`}
+                        className={`is-num font-medium ${costOutlier || item.unpriced_tokens > 0 ? "is-outlier" : "text-text-primary"}`}
                         title={costOutlier ? t("requestLogs.costOutlier") : undefined}
                       >
                         <div>{formatCost(item.total_cost_usd)}</div>
@@ -602,11 +613,11 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                           </div>
                         )}
                       </td>
-                      <td className="px-3 py-2.5 text-text-muted">
+                      <td className="text-text-secondary">
                         {hasRouteError && errorSummary ? (
-                          <div className="flex min-w-[180px] flex-col items-center gap-1">
-                            <span className="inline-flex max-w-full items-center gap-1.5 text-danger" title={errorSummary}>
-                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-danger" aria-hidden="true" />
+                          <div className="flex min-w-[180px] flex-col items-start gap-1">
+                            <span className="inline-flex max-w-full items-center gap-1.5" style={{ color: "var(--stats-red)" }} title={errorSummary}>
+                              <span className="ui-stats-legend-dot" style={{ backgroundColor: "var(--stats-red)" }} aria-hidden="true" />
                               <span className="truncate">{errorSummary}</span>
                             </span>
                             <button
@@ -616,7 +627,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                                 setSelectedError(item);
                               }}
                               onDoubleClick={(event) => event.stopPropagation()}
-                              className="inline-flex cursor-pointer items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                              className="ui-focus-ring -ml-1 inline-flex cursor-pointer items-center gap-1 rounded-md px-1 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/10"
                               title={t("requestLogs.error.viewDetails")}
                               aria-label={t("requestLogs.error.viewDetails")}
                             >
@@ -626,16 +637,20 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                           </div>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                            <span className={`h-1.5 w-1.5 rounded-full ${item.usage_status === "complete" ? "bg-primary/55" : "bg-warning"}`} aria-hidden="true" />
+                            <span
+                              className="ui-stats-legend-dot"
+                              style={{ backgroundColor: item.usage_status === "complete" ? "var(--stats-green)" : "var(--stats-orange)" }}
+                              aria-hidden="true"
+                            />
                             {item.usage_status === "complete"
                               ? t(item.data_source === "route" ? "requestLogs.dataSource.route" : "requestLogs.status.recorded")
                               : t(`requestLogs.usageStatus.${item.usage_status ?? "missing"}`)}
                           </span>
                         )}
-                        {item.degraded && <div className="mt-1 text-[10px] text-warning">{t("requestLogs.status.degraded", { count: item.attempt_count ?? 1 })}</div>}
+                        {item.degraded && <div className="mt-1 text-[10px]" style={{ color: "var(--stats-orange)" }}>{t("requestLogs.status.degraded", { count: item.attempt_count ?? 1 })}</div>}
                       </td>
-                      <td className={`sticky right-0 px-3 py-2.5 text-center transition-colors group-hover:bg-bg-tertiary ${rowIndex % 2 === 0 ? "bg-bg-tertiary/20" : "bg-bg-secondary"}`}>
-                        <div className="flex items-center justify-center gap-1">
+                      <td className="is-sticky-end text-center">
+                        <div className="flex items-center justify-center gap-0.5">
                           <Button
                             onClick={(event) => {
                               event.stopPropagation();
@@ -644,6 +659,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                             onDoubleClick={(event) => event.stopPropagation()}
                             variant="ghost"
                             size="icon"
+                            className="rounded-lg text-text-muted hover:text-text-primary"
                             title={t("requestLogs.copySessionId")}
                             aria-label={t("requestLogs.copySessionId")}
                           >
@@ -658,6 +674,7 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
                               onDoubleClick={(event) => event.stopPropagation()}
                               variant="ghost"
                               size="icon"
+                              className="rounded-lg text-text-muted hover:text-primary"
                               title={t("requestLogs.openSession")}
                               aria-label={t("requestLogs.openSession")}
                             >
@@ -673,19 +690,19 @@ export function RequestLogsView({ onOpenSession, globalFilters }: RequestLogsVie
             </table>
           </div>
         )}
-        <div className="flex items-center justify-between border-t border-border px-3 py-2 text-[11px] text-text-muted">
+        <div className="flex items-center justify-between border-t border-[color:var(--stats-divider)] px-4 py-2.5 text-[12px] text-text-muted">
           <span>{t("requestLogs.pagination.total", { count: result?.total ?? 0 })}</span>
-          <div className="flex items-center gap-2">
-            <Button onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page <= 0} variant="ghost" size="icon" aria-label={t("requestLogs.pagination.previous")}>
+          <div className="flex items-center gap-1">
+            <Button onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page <= 0} variant="ghost" size="icon" className="rounded-lg" aria-label={t("requestLogs.pagination.previous")}>
               <ChevronLeft size={14} />
             </Button>
-            <span>{t("requestLogs.pagination.page", { current: page + 1, total: pageCount })}</span>
-            <Button onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={page + 1 >= pageCount} variant="ghost" size="icon" aria-label={t("requestLogs.pagination.next")}>
+            <span className="min-w-[88px] text-center tabular-nums">{t("requestLogs.pagination.page", { current: page + 1, total: pageCount })}</span>
+            <Button onClick={() => setPage((current) => Math.min(pageCount - 1, current + 1))} disabled={page + 1 >= pageCount} variant="ghost" size="icon" className="rounded-lg" aria-label={t("requestLogs.pagination.next")}>
               <ChevronRight size={14} />
             </Button>
           </div>
         </div>
-      </Card>
+      </section>
 
       <Dialog
         open={selectedError !== null}

@@ -3,12 +3,11 @@ import { Bar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Scatter, Scatt
 import type { HistoryStatsHeatmapDay } from "../../../shared/types/index";
 import { useI18n, type AppLanguage } from "../../../shared/i18n/index";
 import {
-  ACCENT,
-  HISTORY_HEATMAP_COLORS,
-  RECHARTS_BAR_CURSOR,
-  RECHARTS_TOOLTIP_ITEM_STYLE,
-  RECHARTS_TOOLTIP_LABEL_STYLE,
   RECHARTS_TOOLTIP_WRAPPER_STYLE,
+  STATS_AXIS_TICK,
+  STATS_BAR_CURSOR,
+  STATS_GRID_STROKE,
+  statsHeatColor,
 } from "../api/statsPalette";
 
 interface TimelineHeatmapProps {
@@ -27,19 +26,7 @@ interface HeatmapPoint {
 
 const BAR_MODE_MAX_DAYS = 14;
 
-const RECHARTS_TOOLTIP_STYLE = {
-  backgroundColor: "var(--bg-secondary)",
-  border: "1px solid var(--border)",
-  borderRadius: 12,
-  boxShadow: "0 8px 28px rgba(0,0,0,0.18)",
-  color: "var(--text-primary)",
-  fontSize: 12,
-} as const;
-
-const RECHARTS_AXIS_STYLE = {
-  fill: "var(--text-muted)",
-  fontSize: 11,
-} as const;
+const SELECTED_STROKE = "var(--primary)";
 
 function formatDay(dayStartUtc: number, language: AppLanguage): string {
   if (!Number.isFinite(dayStartUtc) || dayStartUtc <= 0) return "-";
@@ -66,11 +53,16 @@ function formatCount(value: number, language: AppLanguage): string {
 }
 
 function cellColor(level: number): string {
-  if (level <= 0) return HISTORY_HEATMAP_COLORS.empty;
-  if (level === 1) return HISTORY_HEATMAP_COLORS.level1;
-  if (level === 2) return HISTORY_HEATMAP_COLORS.level2;
-  if (level === 3) return HISTORY_HEATMAP_COLORS.level3;
-  return HISTORY_HEATMAP_COLORS.level4;
+  return statsHeatColor(level);
+}
+
+function HeatmapTooltip({ title, sessions, messages }: { title: string; sessions: string; messages: string }) {
+  return (
+    <div className="ui-stats-tooltip">
+      <div className="mb-1 text-[12px] font-semibold text-text-primary">{title}</div>
+      <div className="text-text-secondary">{sessions} · {messages}</div>
+    </div>
+  );
 }
 
 export const TimelineHeatmap = memo(TimelineHeatmapImpl);
@@ -129,9 +121,9 @@ function TimelineHeatmapImpl({
   }
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-center justify-end gap-2">
-        <div className="text-[11px] text-text-secondary">
+    <div className="flex h-full flex-col">
+      <div className="mb-3 flex items-center">
+        <span className="ui-stats-inset truncate px-2.5 py-1 text-[11px] font-medium text-text-secondary">
           {activeDay
             ? t("stats.summary.sessionsMessages", {
                 bucket: formatBucket(activeDay.day_start_utc, granularity, language),
@@ -139,26 +131,32 @@ function TimelineHeatmapImpl({
                 messages: formatCount(activeDay.messages, language),
               })
             : "-"}
-        </div>
+        </span>
       </div>
 
-      <div className="h-[240px] rounded border border-border bg-bg-primary p-2">
+      <div className="h-[230px]">
         {barMode ? (
           <ResponsiveContainer width="100%" height="100%">
-            <BarChart data={chartData} layout="vertical" margin={{ top: 6, right: 20, bottom: 6, left: 0 }}>
-              <CartesianGrid stroke="var(--border)" strokeOpacity={0.42} horizontal={false} />
-              <XAxis type="number" tick={RECHARTS_AXIS_STYLE} tickFormatter={(value) => formatCount(Number(value), language)} axisLine={false} tickLine={false} />
-              <YAxis type="category" dataKey="label" width={72} tick={RECHARTS_AXIS_STYLE} axisLine={false} tickLine={false} />
+            <BarChart data={chartData} layout="vertical" margin={{ top: 0, right: 8, bottom: 0, left: 0 }}>
+              <CartesianGrid stroke={STATS_GRID_STROKE} strokeDasharray="3 4" horizontal={false} />
+              <XAxis type="number" tick={STATS_AXIS_TICK} tickFormatter={(value) => formatCount(Number(value), language)} axisLine={false} tickLine={false} />
+              <YAxis type="category" dataKey="label" width={76} tick={STATS_AXIS_TICK} axisLine={false} tickLine={false} />
               <Tooltip
-                cursor={RECHARTS_BAR_CURSOR}
-                contentStyle={RECHARTS_TOOLTIP_STYLE}
-                itemStyle={RECHARTS_TOOLTIP_ITEM_STYLE}
-                labelStyle={RECHARTS_TOOLTIP_LABEL_STYLE}
+                cursor={STATS_BAR_CURSOR}
                 wrapperStyle={RECHARTS_TOOLTIP_WRAPPER_STYLE}
-                formatter={(value) => [t("stats.unit.messages", { count: formatCount(Number(value), language) }), t("stats.hourly.legendMessages")]}
-                labelFormatter={(label) => String(label)}
+                content={({ active, payload }) => {
+                  const day = payload?.[0]?.payload as (HistoryStatsHeatmapDay & { label: string }) | undefined;
+                  if (!active || !day) return null;
+                  return (
+                    <HeatmapTooltip
+                      title={day.label}
+                      sessions={t("stats.unit.sessions", { count: formatCount(day.sessions, language) })}
+                      messages={t("stats.unit.messages", { count: formatCount(day.messages, language) })}
+                    />
+                  );
+                }}
               />
-              <Bar dataKey="messages" radius={[0, 6, 6, 0]} cursor="pointer" onClick={(entry) => {
+              <Bar dataKey="messages" radius={[0, 5, 5, 0]} maxBarSize={14} cursor="pointer" onClick={(entry) => {
                 const payload = (entry as { payload?: HistoryStatsHeatmapDay }).payload;
                 if (payload) onSelectDay(payload);
               }}>
@@ -166,7 +164,8 @@ function TimelineHeatmapImpl({
                   <Cell
                     key={day.day_start_utc}
                     fill={cellColor(Math.max(day.level, day.messages > 0 ? 1 : 0))}
-                    stroke={day.day_start_utc === selectedDayStart ? ACCENT : "transparent"}
+                    stroke={day.day_start_utc === selectedDayStart ? SELECTED_STROKE : "transparent"}
+                    strokeWidth={1.5}
                   />
                 ))}
               </Bar>
@@ -174,7 +173,7 @@ function TimelineHeatmapImpl({
           </ResponsiveContainer>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 18, right: 18, bottom: 18, left: 18 }}>
+            <ScatterChart margin={{ top: 12, right: 12, bottom: 12, left: 12 }}>
               <XAxis type="number" dataKey="x" domain={[-0.5, xDomainMax + 0.5]} hide />
               <YAxis type="number" dataKey="y" domain={[-0.5, yDomainMax + 0.5]} reversed hide />
               <ZAxis range={[140, 140]} />
@@ -185,15 +184,11 @@ function TimelineHeatmapImpl({
                   const point = payload?.[0]?.payload as HeatmapPoint | undefined;
                   if (!active || !point) return null;
                   return (
-                    <div style={{ ...RECHARTS_TOOLTIP_STYLE, padding: "8px 10px" }}>
-                      <div style={RECHARTS_TOOLTIP_ITEM_STYLE}>
-                        {t("stats.summary.sessionsMessages", {
-                          bucket: point.label,
-                          sessions: formatCount(point.day.sessions, language),
-                          messages: formatCount(point.day.messages, language),
-                        })}
-                      </div>
-                    </div>
+                    <HeatmapTooltip
+                      title={point.label}
+                      sessions={t("stats.unit.sessions", { count: formatCount(point.day.sessions, language) })}
+                      messages={t("stats.unit.messages", { count: formatCount(point.day.messages, language) })}
+                    />
                   );
                 }}
               />
@@ -211,10 +206,10 @@ function TimelineHeatmapImpl({
                       y={cy - 8}
                       width={16}
                       height={16}
-                      rx={4}
+                      rx={4.5}
                       fill={cellColor(point.day.level)}
-                      stroke={selected ? ACCENT : "var(--border)"}
-                      strokeOpacity={selected ? 1 : 0.28}
+                      stroke={selected ? SELECTED_STROKE : "none"}
+                      strokeWidth={selected ? 2 : 0}
                       style={{ cursor: "pointer" }}
                       onClick={() => onSelectDay(point.day)}
                     />
@@ -226,25 +221,21 @@ function TimelineHeatmapImpl({
         )}
       </div>
 
-      <div className="mt-2 flex items-center justify-between">
-        <div className="text-[10px] text-text-muted">
-          {t("stats.heatmap.hint")}
-        </div>
+      <div className="mt-auto flex items-center justify-between gap-3 pt-3 text-[11px] text-text-muted">
+        <span className="tabular-nums">{formatBucket(days[0]?.day_start_utc ?? 0, granularity, language)}</span>
         <div className="flex items-center gap-1">
           {[0, 1, 2, 3, 4].map((level) => (
             <span
               key={level}
-              className="inline-block h-[10px] w-[10px] rounded-[2px]"
+              className="inline-block h-[10px] w-[10px] rounded-[3px]"
               style={{ backgroundColor: cellColor(level) }}
               title={level === 0 ? t("stats.heatmap.noActivity") : t("stats.heatmap.level", { level })}
             />
           ))}
         </div>
+        <span className="tabular-nums">{formatBucket(days[days.length - 1]?.day_start_utc ?? 0, granularity, language)}</span>
       </div>
-      <div className="mt-1 flex items-center justify-between text-[10px] text-text-muted">
-        <span>{formatBucket(days[0]?.day_start_utc ?? 0, granularity, language)}</span>
-        <span>{formatBucket(days[days.length - 1]?.day_start_utc ?? 0, granularity, language)}</span>
-      </div>
+      <div className="mt-1.5 text-[10px] text-text-muted">{t("stats.heatmap.hint")}</div>
     </div>
   );
 }

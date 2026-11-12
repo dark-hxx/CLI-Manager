@@ -1,0 +1,347 @@
+/* 历史用量分析（StatsPanel）视觉 token。
+   Apple 分组式：安静画布 + 抬升卡片 + 发丝边框；图表色取 Apple 系统色，亮/暗主题各用对应变体，
+   不随用户调色板漂移，保证多系列在所有主题下都可区分。UI 选中态仍跟随 --primary。 */
+.ui-stats-panel {
+  --stats-canvas: var(--surface-container-low);
+  --stats-card: var(--surface-container-lowest);
+  --stats-card-line: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  --stats-divider: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  --stats-fill: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  --stats-fill-strong: color-mix(in srgb, var(--on-surface) 9%, transparent);
+  --stats-grid: color-mix(in srgb, var(--on-surface) 9%, transparent);
+  --stats-axis: var(--on-surface-variant);
+  --stats-muted: var(--on-surface-variant);
+  --stats-card-shadow: 0 1px 2px color-mix(in srgb, black 4%, transparent);
+  --stats-float-bg: color-mix(in srgb, var(--surface-container-lowest) 84%, transparent);
+  --stats-float-shadow: 0 10px 30px color-mix(in srgb, black 14%, transparent), 0 1px 3px color-mix(in srgb, black 8%, transparent);
+
+  --stats-blue: #007aff;
+  --stats-indigo: #5856d6;
+  --stats-purple: #af52de;
+  --stats-pink: #ff2d55;
+  --stats-orange: #ff9500;
+  --stats-yellow: #ffcc00;
+  --stats-green: #34c759;
+  --stats-teal: #30b0c7;
+  --stats-red: #ff3b30;
+
+  background: var(--stats-canvas);
+}
+
+[data-theme="dark"] .ui-stats-panel {
+  --stats-canvas: var(--surface);
+  --stats-card: color-mix(in srgb, var(--on-surface) 5%, var(--surface));
+  --stats-card-line: color-mix(in srgb, var(--on-surface) 9%, transparent);
+  --stats-fill: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  --stats-fill-strong: color-mix(in srgb, var(--on-surface) 11%, transparent);
+  --stats-grid: color-mix(in srgb, var(--on-surface) 10%, transparent);
+  --stats-card-shadow: none;
+  --stats-float-bg: color-mix(in srgb, var(--on-surface) 9%, var(--surface) 88%);
+  --stats-float-shadow: 0 12px 32px color-mix(in srgb, black 40%, transparent), 0 0 0 1px color-mix(in srgb, var(--on-surface) 6%, transparent);
+
+  --stats-blue: #0a84ff;
+  --stats-indigo: #5e5ce6;
+  --stats-purple: #bf5af2;
+  --stats-pink: #ff375f;
+  --stats-orange: #ff9f0a;
+  --stats-yellow: #ffd60a;
+  --stats-green: #30d158;
+  --stats-teal: #40c8e0;
+  --stats-red: #ff453a;
+}
+
+/* 顶部 chrome：与画布同色，滚动内容在其下时靠发丝线分层。 */
+.ui-stats-chrome {
+  background: var(--stats-canvas);
+  border-bottom: 1px solid var(--stats-divider);
+}
+
+.ui-stats-title {
+  font-size: calc(var(--font-size-ui, 13px) + 9px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--on-surface);
+}
+
+.ui-stats-card {
+  background: var(--stats-card);
+  border: 1px solid var(--stats-card-line);
+  border-radius: 16px;
+  box-shadow: var(--stats-card-shadow);
+}
+
+.ui-stats-inset {
+  background: var(--stats-fill);
+  border-radius: 10px;
+}
+
+.ui-stats-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--stats-muted);
+}
+
+.ui-stats-value {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  color: var(--on-surface);
+}
+
+/* 分段控件（Segmented Control）：浅槽 + 抬升滑块。 */
+.ui-stats-segmented {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--stats-fill-strong);
+}
+
+.ui-stats-segment {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--on-surface);
+  white-space: nowrap;
+  transition: background-color 160ms ease, box-shadow 160ms ease, color 160ms ease;
+}
+
+.ui-stats-segment:hover:not([data-selected="true"]) {
+  background: var(--stats-fill);
+}
+
+.ui-stats-segment[data-selected="true"] {
+  background: var(--stats-card);
+  font-weight: 600;
+  box-shadow: 0 1px 3px color-mix(in srgb, black 12%, transparent), 0 0 0 0.5px color-mix(in srgb, black 6%, transparent);
+}
+
+[data-theme="dark"] .ui-stats-segment[data-selected="true"] {
+  background: color-mix(in srgb, var(--on-surface) 20%, var(--surface));
+  box-shadow: 0 1px 3px color-mix(in srgb, black 30%, transparent);
+}
+
+/* 过滤控件：胶囊形、无重边框。 */
+.ui-stats-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: var(--stats-fill-strong);
+  color: var(--on-surface);
+  font-size: 12px;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+
+.ui-stats-control:hover {
+  background: color-mix(in srgb, var(--on-surface) 13%, transparent);
+}
+
+.ui-stats-control:focus-within,
+.ui-stats-control:focus-visible {
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent);
+  outline: none;
+}
+
+.ui-stats-control::placeholder {
+  color: var(--stats-muted);
+}
+
+.ui-stats-popover {
+  background: var(--stats-float-bg);
+  border: 1px solid var(--stats-card-line);
+  border-radius: 12px;
+  box-shadow: var(--stats-float-shadow);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+
+.ui-stats-tooltip {
+  min-width: 180px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--stats-card-line);
+  background: var(--stats-float-bg);
+  box-shadow: var(--stats-float-shadow);
+  backdrop-filter: blur(24px) saturate(160%);
+  color: var(--on-surface);
+  font-size: 12px;
+}
+
+.ui-stats-legend-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 999px;
+}
+
+/* 排行条：细胶囊进度。 */
+.ui-stats-meter {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--stats-fill-strong);
+}
+
+.ui-stats-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  transition: width 320ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ui-stats-row {
+  border-radius: 10px;
+  transition: background-color 140ms ease;
+}
+
+.ui-stats-row:hover {
+  background: var(--stats-fill);
+}
+
+.ui-stats-row[data-selected="true"] {
+  background: color-mix(in srgb, var(--primary) 10%, transparent);
+}
+
+.ui-stats-scroll {
+  scrollbar-width: none;
+}
+
+.ui-stats-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+@supports not (backdrop-filter: blur(1px)) {
+  .ui-stats-popover,
+  .ui-stats-tooltip {
+    background: var(--stats-card);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .ui-stats-popover,
+  .ui-stats-tooltip {
+    background: var(--stats-card);
+    backdrop-filter: none;
+  }
+}
+
+/* 工作区背景图开启时画布透明，卡片与 chrome 保持近不透明以保证图表可读。 */
+.ui-stats-panel[data-workspace-background="true"] .ui-stats-chrome {
+  background: color-mix(in srgb, var(--stats-canvas) 72%, transparent);
+  backdrop-filter: blur(24px) saturate(150%);
+}
+
+.ui-stats-panel[data-workspace-background="true"] .ui-stats-card {
+  background: color-mix(in srgb, var(--stats-card) 92%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+}
+
+/* 请求日志表格：无斑马纹，发丝分隔线；数值列右对齐、等宽数字。 */
+.ui-stats-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.ui-stats-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 10px 14px;
+  background: var(--stats-card);
+  border-bottom: 1px solid var(--stats-divider);
+  color: var(--stats-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ui-stats-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--stats-divider);
+  vertical-align: middle;
+}
+
+.ui-stats-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ui-stats-table .is-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-stats-table tbody tr {
+  transition: background-color 120ms ease;
+}
+
+.ui-stats-table tbody tr:hover {
+  background: var(--stats-fill);
+}
+
+/* 固定操作列需要不透明底色，悬停时与行同步加深。 */
+.ui-stats-table .is-sticky-end {
+  position: sticky;
+  right: 0;
+  background: var(--stats-card);
+  box-shadow: -1px 0 0 var(--stats-divider);
+}
+
+.ui-stats-table thead .is-sticky-end {
+  z-index: 20;
+}
+
+.ui-stats-table tbody tr:hover .is-sticky-end {
+  background: color-mix(in srgb, var(--on-surface) 5%, var(--stats-card));
+}
+
+.ui-stats-table .is-outlier {
+  color: var(--stats-orange);
+}
+
+.ui-stats-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--stats-fill-strong);
+  color: var(--on-surface);
+  font-size: 11px;
+  font-weight: 500;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.ui-stats-chip:hover {
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+}
+
+.ui-stats-link {
+  transition: color 140ms ease;
+}
+
+.ui-stats-link:hover {
+  color: var(--primary);
+}
+
+.ui-stats-control.is-icon {
+  width: 30px;
+  padding: 0;
+  justify-content: center;
+}

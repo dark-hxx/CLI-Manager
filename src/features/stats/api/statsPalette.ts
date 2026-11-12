@@ -77,3 +77,52 @@ export const CHART_TOOLTIP = {
   textStyle: { color: "var(--text-primary)", fontSize: 12 },
   extraCssText: "border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.18);color:var(--text-primary);",
 };
+
+// 历史用量分析（StatsPanel）专用：引用 stats-panel.css 中按亮/暗主题切换的 Apple 系统色，
+// 只在 .ui-stats-panel 作用域内有效；实时统计等其它面板继续使用上面的固定色板。
+export const STATS_COLORS = {
+  total: "var(--stats-blue)",
+  input: "var(--stats-teal)",
+  output: "var(--stats-indigo)",
+  cacheCreation: "var(--stats-orange)",
+  cacheRead: "var(--stats-green)",
+  cost: "var(--stats-pink)",
+  peak: "var(--stats-orange)",
+  accent: "var(--stats-blue)",
+} as const;
+
+// 排行/来源等分类序列：色相间隔拉开，前几项即可互相区分。
+export const STATS_CATEGORICAL = [
+  "var(--stats-blue)",
+  "var(--stats-purple)",
+  "var(--stats-teal)",
+  "var(--stats-orange)",
+  "var(--stats-green)",
+  "var(--stats-pink)",
+  "var(--stats-indigo)",
+  "var(--stats-yellow)",
+] as const;
+
+export const STATS_AXIS_TICK = {
+  fill: "var(--stats-axis)",
+  fontSize: 11,
+} as const;
+
+export const STATS_GRID_STROKE = "var(--stats-grid)";
+
+export const STATS_AXIS_CURSOR = {
+  stroke: "var(--stats-grid)",
+  strokeWidth: 1,
+} as const;
+
+export const STATS_BAR_CURSOR = {
+  fill: "var(--stats-fill)",
+  radius: 6,
+} as const;
+
+// 热力等级：同一色相按透明度递进，自动适配卡片底色。
+export function statsHeatColor(level: number): string {
+  if (level <= 0) return "var(--stats-fill-strong)";
+  const alpha = [0, 28, 50, 74, 100][Math.min(4, level)];
+  return `color-mix(in srgb, var(--stats-blue) ${alpha}%, transparent)`;
+}
