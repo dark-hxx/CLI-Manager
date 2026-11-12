@@ -122,6 +122,7 @@ type LastSettingsTab =
   | "history-sources"
   | "hooks"
   | "statusline"
+  | "terminal-status-bar"
   | "command-suggestions"
   | "about";
 export type StatuslineEditorSource = "claude" | "codex";
@@ -303,6 +304,45 @@ export type TerminalStatsCardOrderSettings = TerminalStatsCardKey[];
 export type SystemResourceCardVisibilitySettings = Record<SystemResourceCardKey, boolean>;
 export type SystemResourceCardOrderSettings = SystemResourceCardKey[];
 
+export type TerminalStatusBarItemKey =
+  | "todayTokens"
+  | "todayCost"
+  | "claudeTokens"
+  | "codexTokens"
+  | "aiRunning"
+  | "aiAttention"
+  | "activeTabAi"
+  | "cpu"
+  | "memory"
+  | "appMemory"
+  | "gpu"
+  | "vram"
+  | "netUp"
+  | "netDown"
+  | "diskRead"
+  | "diskWrite";
+export type TerminalStatusBarVisibilitySettings = Record<TerminalStatusBarItemKey, boolean>;
+export type TerminalStatusBarOrderSettings = TerminalStatusBarItemKey[];
+
+export const TERMINAL_STATUS_BAR_ITEM_KEYS: readonly TerminalStatusBarItemKey[] = [
+  "todayTokens",
+  "todayCost",
+  "claudeTokens",
+  "codexTokens",
+  "aiRunning",
+  "aiAttention",
+  "activeTabAi",
+  "cpu",
+  "memory",
+  "appMemory",
+  "gpu",
+  "vram",
+  "netUp",
+  "netDown",
+  "diskRead",
+  "diskWrite",
+];
+
 export const TERMINAL_STATS_CARD_KEYS: readonly TerminalStatsCardKey[] = [
   "session",
   "tokenUsage",
@@ -447,6 +487,10 @@ export interface Settings {
   systemResourceCardVisibility: SystemResourceCardVisibilitySettings;
   systemResourceCardOrder: SystemResourceCardOrderSettings;
   systemResourceMonitoringEnabled: boolean;
+  /** 终端底部信息栏总开关，默认关闭；关闭时不挂载也不轮询任何数据。 */
+  terminalStatusBarEnabled: boolean;
+  terminalStatusBarVisibility: TerminalStatusBarVisibilitySettings;
+  terminalStatusBarOrder: TerminalStatusBarOrderSettings;
   shellRuntimeMonitoringEnabled: boolean;
   ccusageAnalyticsEnabled: boolean;
   ccusageUseWsl: boolean;
@@ -644,6 +688,26 @@ const DEFAULTS: Settings = {
   },
   systemResourceCardOrder: [...SYSTEM_RESOURCE_CARD_KEYS],
   systemResourceMonitoringEnabled: false,
+  terminalStatusBarEnabled: true,
+  terminalStatusBarVisibility: {
+    todayTokens: true,
+    todayCost: false,
+    claudeTokens: false,
+    codexTokens: false,
+    aiRunning: false,
+    aiAttention: false,
+    activeTabAi: false,
+    cpu: true,
+    memory: true,
+    appMemory: true,
+    gpu: false,
+    vram: false,
+    netUp: true,
+    netDown: true,
+    diskRead: true,
+    diskWrite: true,
+  },
+  terminalStatusBarOrder: [...TERMINAL_STATUS_BAR_ITEM_KEYS],
   shellRuntimeMonitoringEnabled: false,
   ccusageAnalyticsEnabled: false,
   ccusageUseWsl: false,
@@ -779,6 +843,7 @@ const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "history-sources",
   "hooks",
   "statusline",
+  "terminal-status-bar",
   "command-suggestions",
   "about",
 ];
@@ -1063,6 +1128,41 @@ export function migrateTerminalStatsCardOrder(value: unknown): TerminalStatsCard
   for (const item of value) {
     if (typeof item !== "string") continue;
     const key = item as TerminalStatsCardKey;
+    if (!validKeys.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(key);
+  }
+
+  for (const key of defaults) {
+    if (!seen.has(key)) ordered.push(key);
+  }
+
+  return ordered;
+}
+
+export function migrateTerminalStatusBarVisibility(value: unknown): TerminalStatusBarVisibilitySettings {
+  const defaults = DEFAULTS.terminalStatusBarVisibility;
+  if (typeof value !== "object" || value === null) {
+    return { ...defaults };
+  }
+  const raw = value as Partial<Record<TerminalStatusBarItemKey, unknown>>;
+  return TERMINAL_STATUS_BAR_ITEM_KEYS.reduce<TerminalStatusBarVisibilitySettings>((next, key) => {
+    next[key] = typeof raw[key] === "boolean" ? raw[key] : defaults[key];
+    return next;
+  }, { ...defaults });
+}
+
+export function migrateTerminalStatusBarOrder(value: unknown): TerminalStatusBarOrderSettings {
+  const defaults = DEFAULTS.terminalStatusBarOrder;
+  if (!Array.isArray(value)) return [...defaults];
+
+  const validKeys = new Set<TerminalStatusBarItemKey>(TERMINAL_STATUS_BAR_ITEM_KEYS);
+  const seen = new Set<TerminalStatusBarItemKey>();
+  const ordered: TerminalStatusBarItemKey[] = [];
+
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const key = item as TerminalStatusBarItemKey;
     if (!validKeys.has(key) || seen.has(key)) continue;
     seen.add(key);
     ordered.push(key);
@@ -1530,6 +1630,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.terminalStatsCardOrder = migrateTerminalStatsCardOrder(entries.terminalStatsCardOrder);
     entries.systemResourceCardVisibility = migrateSystemResourceCardVisibility(entries.systemResourceCardVisibility);
     entries.systemResourceCardOrder = migrateSystemResourceCardOrder(entries.systemResourceCardOrder);
+    entries.terminalStatusBarVisibility = migrateTerminalStatusBarVisibility(entries.terminalStatusBarVisibility);
+    entries.terminalStatusBarOrder = migrateTerminalStatusBarOrder(entries.terminalStatusBarOrder);
     entries.terminalBackground = migrateTerminalBackground(entries.terminalBackground);
     entries.desktopPet = migrateDesktopPetSettings(entries.desktopPet);
     entries.terminalShellProfiles = migrateTerminalShellProfiles(entries.terminalShellProfiles);
@@ -1545,6 +1647,10 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.shellRuntimeMonitoringEnabled === "boolean"
         ? entries.shellRuntimeMonitoringEnabled
         : DEFAULTS.shellRuntimeMonitoringEnabled;
+    entries.terminalStatusBarEnabled =
+      typeof entries.terminalStatusBarEnabled === "boolean"
+        ? entries.terminalStatusBarEnabled
+        : DEFAULTS.terminalStatusBarEnabled;
     entries.systemResourceMonitoringEnabled =
       typeof entries.systemResourceMonitoringEnabled === "boolean"
         ? entries.systemResourceMonitoringEnabled

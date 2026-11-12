@@ -83,6 +83,7 @@ export function useTerminalTabsController({
   terminalScope = ALL_TERMINALS_SCOPE,
   onOpenProviderSettings,
   onOpenHistorySettings,
+  onActivateSession,
 }: TerminalTabsProps = {}) {
   const { t } = useI18n();
   const { prompt, promptDialog } = useAppPrompt();
@@ -1917,6 +1918,7 @@ export function useTerminalTabsController({
     setDiscardTarget,
     historyOpen,
     onOpenHistorySettings,
+    onActivateSession,
     gitWorkspaceOpen,
     gitWorkspaceHeight,
     beginGitWorkspaceResize,

@@ -18,6 +18,8 @@ export interface SystemResourceSnapshot {
   }>;
   gpu: {
     usagePercent: number;
+    /** 各适配器专用显存已用量合计；PDH 计数器不可用时为 null。 */
+    dedicatedUsedBytes: number | null;
   } | null;
   memory: {
     totalBytes: number;

@@ -8,6 +8,7 @@ import { SystemResourcesPanel } from "./SystemResourcesPanel";
 import { TerminalSidePanel } from "./TerminalSidePanel";
 import { ResizableTerminalPanelFrame } from "./ResizableTerminalPanelFrame";
 import { TerminalWorkspaceFrame } from "./TerminalWorkspaceFrame";
+import { TerminalStatusBar } from "./TerminalStatusBar";
 import { ProviderQuickSwitchPanel } from "./ProviderQuickSwitchPanel";
 import { WorktreeFinishDialog } from "../../projects/api/WorktreeFinishDialog";
 import { FileExplorerSidebar } from "../../files/api/FileExplorerSidebar";
@@ -28,6 +29,7 @@ import { SplitProjectPicker, TerminalCloseConfirmBubble } from "./TerminalTabDia
 
 export function TerminalTabsView({
   fullscreen,
+  onActivateSession,
   historyActive,
   terminalWellStyle,
   promptDialog,
@@ -516,6 +518,7 @@ export function TerminalTabsView({
           </TerminalWorkspaceFrame>
         </div>
       </div>
+      {!fullscreen && <TerminalStatusBar onActivateSession={onActivateSession} menuStyle={splitPickerMenuStyle} />}
     </div>
   );
 }

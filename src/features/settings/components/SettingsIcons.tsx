@@ -27,6 +27,7 @@ export type SettingsNavIconKey =
   | "history-sources"
   | "hooks"
   | "statusline"
+  | "terminal-status-bar"
   | "command-suggestions"
   | "about";
 
@@ -246,6 +247,17 @@ function StatuslineIcon(props: SettingsGlyphProps) {
   );
 }
 
+function TerminalStatusBarIcon(props: SettingsGlyphProps) {
+  return (
+    <NavTile color="#3F9C8A" {...props}>
+      <rect x="5" y="5.5" width="14" height="13" rx="2" />
+      <path d="m8 9 2 1.5L8 12" strokeOpacity=".6" />
+      <path d="M5 15h14" />
+      <path d="M8 16.8h2M12 16.8h1.5M15.5 16.8h.5" />
+    </NavTile>
+  );
+}
+
 function CommandSuggestionsIcon(props: SettingsGlyphProps) {
   return (
     <NavTile color="#BB8939" {...props}>
@@ -274,6 +286,7 @@ export const SETTINGS_NAV_ICONS: Record<SettingsNavIconKey, SettingsIconComponen
   sponsors: SponsorsIcon,
   about: AboutIcon,
   statusline: StatuslineIcon,
+  "terminal-status-bar": TerminalStatusBarIcon,
   "command-suggestions": CommandSuggestionsIcon,
 };
 

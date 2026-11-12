@@ -29,6 +29,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, DrawIconEx, DI_NO
 
 const TOP_PROCESS_LIMIT: usize = 5;
 const EXPENSIVE_REFRESH_INTERVAL: Duration = Duration::from_secs(8);
+// CPU 占用率是两次刷新之间的差值；多个前端轮询共享采集器，过短的间隔会让结果在 0/100% 间跳变。
+const CPU_MIN_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 const PROCESS_PRESENTATION_CACHE_LIMIT: usize = 96;
 #[cfg(target_os = "windows")]
 const PROCESS_ICON_SIZE: i32 = 16;
@@ -130,6 +132,7 @@ pub struct CpuCoreSnapshot {
 #[serde(rename_all = "camelCase")]
 pub struct GpuSnapshot {
     usage_percent: f32,
+    dedicated_used_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -199,6 +202,7 @@ struct ResourceCollector {
     cached_top_processes: Vec<ProcessSnapshot>,
     process_presentation_cache: HashMap<String, ProcessPresentation>,
     last_system_refresh: Option<Instant>,
+    last_cpu_refresh: Option<Instant>,
     last_network_refresh: Option<Instant>,
     last_disk_refresh: Option<Instant>,
     last_gpu_refresh: Option<Instant>,
@@ -224,6 +228,7 @@ impl ResourceCollector {
             cached_top_processes: Vec::new(),
             process_presentation_cache: HashMap::new(),
             last_system_refresh: None,
+            last_cpu_refresh: None,
             last_network_refresh: None,
             last_disk_refresh: None,
             last_gpu_refresh: None,
@@ -234,14 +239,15 @@ impl ResourceCollector {
     // 按选项刷新 CPU/内存，其余昂贵项按独立时钟复用缓存；关闭项返回空值但不清除旧缓存。
     // 保留物理核与逻辑线程区分；进程排行会额外读取前五项命令行/程序路径，不能用作脱敏日志。
     fn snapshot(&mut self, options: SamplingOptions) -> SystemResourceSnapshot {
-        if options.cpu {
+        let now = Instant::now();
+        if options.cpu && self.should_refresh_cpu(now) {
             self.system.refresh_cpu_usage();
+            self.last_cpu_refresh = Some(now);
         }
         if options.memory {
             self.system.refresh_memory();
         }
 
-        let now = Instant::now();
         if options.system && self.should_refresh_system(now) {
             self.cached_ip_address = local_ip().ok().map(|ip| ip.to_string());
             self.last_system_refresh = Some(now);
@@ -362,6 +368,13 @@ impl ResourceCollector {
     // 以八秒公共间隔限制本机 IP 的再次探测，首次允许刷新。
     fn should_refresh_system(&self, now: Instant) -> bool {
         should_refresh(self.last_system_refresh, now)
+    }
+
+    // CPU 至少间隔一秒才重新计算占用率，间隔内的并发请求复用上次结果。
+    fn should_refresh_cpu(&self, now: Instant) -> bool {
+        self.last_cpu_refresh
+            .map(|last| now.duration_since(last) >= CPU_MIN_REFRESH_INTERVAL)
+            .unwrap_or(true)
     }
 
     // 网络使用独立的一秒刷新间隔，未采样过时立即刷新。
@@ -1105,9 +1118,12 @@ impl GpuCollector {
     // 对成功取得的引擎利用率合计做 0~100 限制；查询不存在或读取失败则不返回 GPU 数值。
     fn sample(&mut self) -> Option<GpuSnapshot> {
         let query = self.inner.as_mut()?;
-        query.sample().map(|usage_percent| GpuSnapshot {
-            usage_percent: clamp_percent(usage_percent),
-        })
+        query
+            .sample()
+            .map(|(usage_percent, dedicated_used_bytes)| GpuSnapshot {
+                usage_percent: clamp_percent(usage_percent),
+                dedicated_used_bytes,
+            })
     }
 }
 
@@ -1115,6 +1131,7 @@ impl GpuCollector {
 struct GpuPdhQuery {
     query: windows_sys::Win32::System::Performance::PDH_HQUERY,
     counter: windows_sys::Win32::System::Performance::PDH_HCOUNTER,
+    memory_counter: Option<windows_sys::Win32::System::Performance::PDH_HCOUNTER>,
 }
 
 // PDH handles are only accessed through ResourceCollector's global Mutex.
@@ -1123,7 +1140,7 @@ unsafe impl Send for GpuPdhQuery {}
 
 #[cfg(target_os = "windows")]
 impl GpuPdhQuery {
-    // 打开所有 GPU Engine 利用率通配计数器并预采样，添加失败释放查询；预采样错误暂不传播。
+    // 打开 GPU Engine 利用率通配计数器并预采样，添加失败释放查询；显存计数器可选，添加失败不影响利用率。
     fn new() -> Result<Self, ()> {
         use windows_sys::Win32::System::Performance::{
             PdhAddEnglishCounterW, PdhCollectQueryData, PdhOpenQueryW, PDH_HCOUNTER, PDH_HQUERY,
@@ -1131,7 +1148,9 @@ impl GpuPdhQuery {
 
         let mut query: PDH_HQUERY = std::ptr::null_mut();
         let mut counter: PDH_HCOUNTER = std::ptr::null_mut();
+        let mut memory_counter: PDH_HCOUNTER = std::ptr::null_mut();
         let counter_path = wide_null(r"\GPU Engine(*)\Utilization Percentage");
+        let memory_counter_path = wide_null(r"\GPU Adapter Memory(*)\Dedicated Usage");
 
         unsafe {
             if PdhOpenQueryW(std::ptr::null(), 0, &mut query) != 0 {
@@ -1141,58 +1160,84 @@ impl GpuPdhQuery {
                 let _ = windows_sys::Win32::System::Performance::PdhCloseQuery(query);
                 return Err(());
             }
+            let memory_counter = (PdhAddEnglishCounterW(
+                query,
+                memory_counter_path.as_ptr(),
+                0,
+                &mut memory_counter,
+            ) == 0)
+                .then_some(memory_counter);
             let _ = PdhCollectQueryData(query);
-        }
 
-        Ok(Self { query, counter })
+            Ok(Self {
+                query,
+                counter,
+                memory_counter,
+            })
+        }
     }
 
-    // 刷新 GPU 查询，两阶段获取计数数组并累加有效项的非负利用率，不在此层限制总和为 100。
-    fn sample(&mut self) -> Option<f32> {
-        use windows_sys::Win32::System::Performance::{
-            PdhCollectQueryData, PdhGetFormattedCounterArrayW, PDH_FMT_COUNTERVALUE_ITEM_W,
-            PDH_FMT_DOUBLE, PDH_MORE_DATA,
-        };
+    // 刷新 GPU 查询，返回引擎利用率合计与各适配器专用显存占用合计（字节）。
+    fn sample(&mut self) -> Option<(f32, Option<u64>)> {
+        use windows_sys::Win32::System::Performance::PdhCollectQueryData;
 
         unsafe {
             if PdhCollectQueryData(self.query) != 0 {
                 return None;
             }
-
-            let mut buffer_size = 0_u32;
-            let mut item_count = 0_u32;
-            let status = PdhGetFormattedCounterArrayW(
-                self.counter,
-                PDH_FMT_DOUBLE,
-                &mut buffer_size,
-                &mut item_count,
-                std::ptr::null_mut(),
-            );
-            if status != PDH_MORE_DATA || buffer_size == 0 || item_count == 0 {
-                return None;
-            }
-
-            let mut buffer = vec![0_u8; buffer_size as usize];
-            let items = buffer.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
-            if PdhGetFormattedCounterArrayW(
-                self.counter,
-                PDH_FMT_DOUBLE,
-                &mut buffer_size,
-                &mut item_count,
-                items,
-            ) != 0
-            {
-                return None;
-            }
-
-            let values = std::slice::from_raw_parts(items, item_count as usize);
-            let usage = values
-                .iter()
-                .filter(|item| item.FmtValue.CStatus == 0)
-                .map(|item| item.FmtValue.Anonymous.doubleValue.max(0.0))
-                .sum::<f64>();
-            Some(usage as f32)
         }
+        let usage = sum_counter_array(self.counter)?;
+        let dedicated_used_bytes = self
+            .memory_counter
+            .and_then(sum_counter_array)
+            .map(|bytes| bytes as u64);
+        Some((usage as f32, dedicated_used_bytes))
+    }
+}
+
+#[cfg(target_os = "windows")]
+// 两阶段获取通配计数器数组并累加有效项的非负值，不在此层限制总和（利用率合计可能超过 100）。
+fn sum_counter_array(
+    counter: windows_sys::Win32::System::Performance::PDH_HCOUNTER,
+) -> Option<f64> {
+    use windows_sys::Win32::System::Performance::{
+        PdhGetFormattedCounterArrayW, PDH_FMT_COUNTERVALUE_ITEM_W, PDH_FMT_DOUBLE, PDH_MORE_DATA,
+    };
+
+    unsafe {
+        let mut buffer_size = 0_u32;
+        let mut item_count = 0_u32;
+        let status = PdhGetFormattedCounterArrayW(
+            counter,
+            PDH_FMT_DOUBLE,
+            &mut buffer_size,
+            &mut item_count,
+            std::ptr::null_mut(),
+        );
+        if status != PDH_MORE_DATA || buffer_size == 0 || item_count == 0 {
+            return None;
+        }
+
+        let mut buffer = vec![0_u8; buffer_size as usize];
+        let items = buffer.as_mut_ptr() as *mut PDH_FMT_COUNTERVALUE_ITEM_W;
+        if PdhGetFormattedCounterArrayW(
+            counter,
+            PDH_FMT_DOUBLE,
+            &mut buffer_size,
+            &mut item_count,
+            items,
+        ) != 0
+        {
+            return None;
+        }
+
+        let values = std::slice::from_raw_parts(items, item_count as usize);
+        let usage = values
+            .iter()
+            .filter(|item| item.FmtValue.CStatus == 0)
+            .map(|item| item.FmtValue.Anonymous.doubleValue.max(0.0))
+            .sum::<f64>();
+        Some(usage)
     }
 }
 

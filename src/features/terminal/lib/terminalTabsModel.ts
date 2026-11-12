@@ -347,4 +347,6 @@ export interface TerminalTabsProps {
   terminalScope?: TerminalScope;
   onOpenProviderSettings?: () => void;
   onOpenHistorySettings?: () => void;
+  /** 底部信息栏点击“等待确认”时定位到目标终端（含项目作用域切换与窗口聚焦）。 */
+  onActivateSession?: (sessionId: string) => void | Promise<void>;
 }

@@ -19,6 +19,7 @@ import {
   Terminal,
   Webhook,
   PanelsTopLeft,
+  PanelBottom,
 } from "lucide-react";
 import "@mantine/core/styles.css";
 import { useFocusTrap } from "../../../shared/hooks/useFocusTrap";
@@ -38,6 +39,7 @@ import { HistorySourceSettingsPage } from "../components/pages/HistorySourceSett
 import { HookSettingsPage } from "../index";
 import { StatuslineSettingsPage } from "../components/pages/StatuslineSettingsPage";
 import { CommandSuggestionSettingsPage } from "../components/pages/CommandSuggestionSettingsPage";
+import { TerminalStatusBarSettingsPage } from "../components/pages/TerminalStatusBarSettingsPage";
 import { NativeProviderSettingsPage } from "../components/pages/NativeProviderSettingsPage";
 import { ModelPricingSettingsPage } from "../components/pages/ModelPricingSettingsPage";
 import { AboutSettingsPage } from "../components/pages/AboutSettingsPage";
@@ -70,6 +72,7 @@ export type SettingsTab =
   | "history-sources"
   | "hooks"
   | "statusline"
+  | "terminal-status-bar"
   | "command-suggestions"
   | "about";
 
@@ -96,6 +99,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "hooks",
   "statusline",
   "sidebar",
+  "terminal-status-bar",
   "desktop-pet",
   "developer",
   ...(SPONSORS_ENABLED ? (["sponsors"] as const) : []),
@@ -216,6 +220,12 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     description: "settings.tabs.statusline.description",
     icon: PanelsTopLeft,
     searchPlaceholder: "settings.tabs.statusline.search",
+  },
+  "terminal-status-bar": {
+    label: "settings.tabs.terminalStatusBar.label",
+    title: "settings.tabs.terminalStatusBar.title",
+    description: "settings.tabs.terminalStatusBar.description",
+    icon: PanelBottom,
   },
   "command-suggestions": {
     label: "settings.tabs.commandSuggestions.label",
@@ -362,6 +372,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "hooks") return <HookSettingsPage />;
     if (activeTab === "statusline") return <StatuslineSettingsPage searchValue={searchValue} />;
     if (activeTab === "command-suggestions") return <CommandSuggestionSettingsPage />;
+    if (activeTab === "terminal-status-bar") return <TerminalStatusBarSettingsPage />;
     if (activeTab === "about") return <AboutSettingsPage />;
     return null;
   })();

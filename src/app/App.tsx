@@ -1907,6 +1907,7 @@ function App() {
                 terminalScope={terminalScope}
                 onOpenProviderSettings={() => handleOpenSettings("native-providers")}
                 onOpenHistorySettings={() => handleOpenSettings("history-sources")}
+                onActivateSession={handleActivateHookNotificationTarget}
               />
             </main>
           </div>

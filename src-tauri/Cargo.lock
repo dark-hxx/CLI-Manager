@@ -918,6 +918,8 @@ dependencies = [
  "url",
  "uuid",
  "wallpaper",
+ "webview2-com",
+ "windows-core 0.61.2",
  "windows-native-keyring-store",
  "windows-sys 0.61.2",
  "winreg 0.55.0",

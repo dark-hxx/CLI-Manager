@@ -804,3 +804,327 @@
 .ui-terminal-tabs-shell[data-fullscreen="true"] .ui-history-shell {
   border-radius: 0;
 }
+
+/* 终端底部信息栏：作为终端井的页脚无缝衔接在其下方（参考 Orca），同底色、无分隔线，配色随终端主题。 */
+.ui-terminal-tabs-shell:has(> .ui-terminal-status-bar) .ui-terminal-well {
+  margin-bottom: 0;
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  /* 去掉内描边的底边，避免在与信息栏的接缝处出现一条亮线。 */
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset -1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.ui-terminal-tabs-shell:has(> .ui-terminal-status-bar) .ui-terminal-well[data-terminal-mode="independent"] {
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.04),
+    inset -1px 0 0 rgba(255, 255, 255, 0.04),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 -16px 28px color-mix(in srgb, var(--terminal-bridge-color, #0c0e10) 18%, transparent);
+}
+
+[data-theme="light"] .ui-terminal-tabs-shell:has(> .ui-terminal-status-bar) .ui-terminal-well {
+  box-shadow:
+    inset 1px 0 0 color-mix(in srgb, var(--border) 16%, transparent),
+    inset -1px 0 0 color-mix(in srgb, var(--border) 16%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--border) 16%, transparent);
+}
+
+.ui-terminal-status-bar {
+  --status-bar-fg: var(--terminal-theme-foreground, #f8fafc);
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 28px;
+  margin: 0 6px 6px;
+  padding: 0 14px;
+  overflow: hidden;
+  white-space: nowrap;
+  border-radius: 0 0 8px 8px;
+  background-color: var(--terminal-theme-background, #0c0e10);
+  /* 与终端井共用左右与底部外描边；裁掉顶边，使两者在视觉上是同一块面板。 */
+  outline: 1px solid color-mix(in srgb, var(--terminal-bridge-color, #0c0e10) 42%, var(--border) 58%);
+  clip-path: inset(0 -2px -2px -2px round 0 0 9px 9px);
+  color: color-mix(in srgb, var(--status-bar-fg) 52%, transparent);
+  font-size: 11.5px;
+  line-height: 1;
+  user-select: none;
+}
+
+[data-theme="light"] .ui-terminal-status-bar {
+  outline-color: color-mix(in srgb, var(--border) 24%, transparent);
+}
+
+.ui-terminal-status-bar__group {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 18px;
+  overflow: hidden;
+}
+
+.ui-terminal-status-bar__group:empty {
+  display: none;
+}
+
+.ui-terminal-status-bar__group--end {
+  margin-left: auto;
+}
+
+.ui-terminal-status-bar__item {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+.ui-terminal-status-bar__item--button {
+  margin: 0 -4px;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.ui-terminal-status-bar__item--button:hover {
+  background-color: color-mix(in srgb, var(--status-bar-fg) 8%, transparent);
+}
+
+.ui-terminal-status-bar__icon {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--status-bar-fg) 46%, transparent);
+}
+
+.ui-terminal-status-bar__brand {
+  flex-shrink: 0;
+  color: color-mix(in srgb, var(--status-bar-fg) 80%, transparent);
+}
+
+.ui-terminal-status-bar__meter {
+  position: relative;
+  width: 36px;
+  height: 4px;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--status-bar-fg) 14%, transparent);
+}
+
+.ui-terminal-status-bar__meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background-color: color-mix(in srgb, var(--status-bar-fg) 62%, transparent);
+  transition: width 400ms ease;
+}
+
+.ui-terminal-status-bar__value {
+  color: color-mix(in srgb, var(--status-bar-fg) 80%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-terminal-status-bar__item[data-tone="accent"] .ui-terminal-status-bar__icon,
+.ui-terminal-status-bar__item[data-tone="accent"] .ui-terminal-status-bar__value {
+  color: var(--term-panel-cyan, var(--terminal-theme-accent, #60a5fa));
+}
+
+.ui-terminal-status-bar__item[data-tone="warn"] .ui-terminal-status-bar__icon,
+.ui-terminal-status-bar__item[data-tone="warn"] .ui-terminal-status-bar__value {
+  color: var(--term-panel-yellow, #facc15);
+}
+
+.ui-terminal-status-bar__item[data-tone="warn"] .ui-terminal-status-bar__meter > span {
+  background-color: var(--term-panel-yellow, #facc15);
+}
+
+.ui-terminal-status-bar__item[data-tone="danger"] .ui-terminal-status-bar__icon,
+.ui-terminal-status-bar__item[data-tone="danger"] .ui-terminal-status-bar__value {
+  color: var(--term-panel-red, #f87171);
+}
+
+.ui-terminal-status-bar__item[data-tone="danger"] .ui-terminal-status-bar__meter > span {
+  background-color: var(--term-panel-red, #f87171);
+}
+
+/* 信息栏悬浮卡：替代原生 title，配色取终端主题推导的 --menu-*。 */
+.ui-terminal-status-bar-card {
+  --card-fg: var(--menu-fg, var(--on-surface));
+  position: fixed;
+  z-index: 90;
+  box-sizing: border-box;
+  max-width: calc(100vw - 16px);
+  padding: 10px 12px;
+  border: 1px solid var(--menu-border, color-mix(in srgb, var(--border) 40%, transparent));
+  border-radius: 10px;
+  color: var(--card-fg);
+  background-color: color-mix(in srgb, var(--menu-bg, var(--surface-container-lowest)) 96%, var(--card-fg) 4%);
+  box-shadow: 0 12px 30px color-mix(in srgb, var(--menu-bg, var(--surface-container-lowest)) 58%, transparent);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: auto;
+  animation: ui-terminal-status-bar-card-in 120ms var(--ease-standard, ease-out);
+}
+
+@keyframes ui-terminal-status-bar-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ui-terminal-status-bar-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ui-terminal-status-bar-card__title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.ui-terminal-status-bar-card__title > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ui-terminal-status-bar-card .ui-terminal-status-bar__icon {
+  color: color-mix(in srgb, var(--card-fg) 62%, transparent);
+}
+
+.ui-terminal-status-bar-card .ui-terminal-status-bar__brand {
+  color: var(--card-fg);
+}
+
+.ui-terminal-status-bar-card__value {
+  flex-shrink: 0;
+  font-size: 13px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-terminal-status-bar-card__meter {
+  position: relative;
+  height: 4px;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--card-fg) 14%, transparent);
+}
+
+.ui-terminal-status-bar-card__meter > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background-color: color-mix(in srgb, var(--card-fg) 62%, transparent);
+  transition: width 400ms ease;
+}
+
+.ui-terminal-status-bar-card__rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 8px;
+}
+
+.ui-terminal-status-bar-card__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ui-terminal-status-bar-card__label {
+  min-width: 0;
+  overflow: hidden;
+  color: color-mix(in srgb, var(--card-fg) 62%, transparent);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ui-terminal-status-bar-card__row-value {
+  flex-shrink: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.ui-terminal-status-bar-card__hint {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--card-fg) 10%, transparent);
+  color: color-mix(in srgb, var(--card-fg) 55%, transparent);
+}
+
+.ui-terminal-status-bar-card[data-tone="accent"] .ui-terminal-status-bar-card__value {
+  color: var(--term-panel-cyan, var(--terminal-theme-accent, #60a5fa));
+}
+
+.ui-terminal-status-bar-card[data-tone="warn"] .ui-terminal-status-bar-card__value,
+.ui-terminal-status-bar-card__row[data-tone="warn"] .ui-terminal-status-bar-card__row-value {
+  color: var(--term-panel-yellow, #facc15);
+}
+
+.ui-terminal-status-bar-card[data-tone="warn"] .ui-terminal-status-bar-card__meter > span {
+  background-color: var(--term-panel-yellow, #facc15);
+}
+
+.ui-terminal-status-bar-card[data-tone="danger"] .ui-terminal-status-bar-card__value,
+.ui-terminal-status-bar-card__row[data-tone="danger"] .ui-terminal-status-bar-card__row-value {
+  color: var(--term-panel-red, #f87171);
+}
+
+.ui-terminal-status-bar-card[data-tone="danger"] .ui-terminal-status-bar-card__meter > span {
+  background-color: var(--term-panel-red, #f87171);
+}
+
+.ui-terminal-status-bar__icon--spin {
+  animation: ui-terminal-status-bar-spin 900ms linear infinite;
+}
+
+@keyframes ui-terminal-status-bar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.ui-terminal-status-bar__item[data-tone="success"] .ui-terminal-status-bar__icon,
+.ui-terminal-status-bar__item[data-tone="success"] .ui-terminal-status-bar__value {
+  color: var(--term-panel-green, #4ade80);
+  transition: color 300ms ease;
+}
+
+.ui-terminal-status-bar-card[data-tone="success"] .ui-terminal-status-bar-card__value,
+.ui-terminal-status-bar-card__row[data-tone="success"] .ui-terminal-status-bar-card__label {
+  color: var(--term-panel-green, #4ade80);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-terminal-status-bar__icon--spin,
+  .ui-terminal-status-bar-card {
+    animation: none;
+  }
+}

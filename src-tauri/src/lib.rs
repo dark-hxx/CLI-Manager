@@ -841,6 +841,8 @@ pub fn run() {
             commands::web_server::web_server_stop,
             commands::web_server::web_server_restart,
             commands::system_resources::system_resources_get_snapshot,
+            commands::app_memory::app_memory_get_usage,
+            commands::app_memory::app_memory_optimize,
             commands::version::get_app_version,
             commands::version::get_os_platform,
             linux_graphics::app_get_graphics_diagnostics,

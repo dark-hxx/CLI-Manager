@@ -21,7 +21,7 @@ static RESOURCE_LOG_WRITER: OnceLock<
 > = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ManagedProcessRole {
+pub(crate) enum ManagedProcessRole {
     AppMain,
     WebviewChild,
     AppChild,
@@ -337,7 +337,7 @@ fn log_snapshot(system: &System, cpu_sample_ready: bool) {
 
 // 从当前构建的发现文件取 PID，并要求快照中进程名包含 daemon 标识；缺失/读取失败时省略。
 // 不连接 daemon，也不按启动时间或可执行文件签名校验身份。
-fn current_daemon_pid(system: &System) -> Option<u32> {
+pub(crate) fn current_daemon_pid(system: &System) -> Option<u32> {
     let data_dir = crate::app_paths::cli_manager_data_dir().ok()?;
     let path = crate::daemon::discovery::daemon_info_path(&data_dir, cfg!(debug_assertions));
     let pid = crate::daemon::discovery::read_daemon_info(&path)
@@ -354,7 +354,7 @@ fn current_daemon_pid(system: &System) -> Option<u32> {
 }
 
 // 优先归类 daemon 及其后代，再判断主应用和其 WebView/普通后代；其他进程不纳入统计。
-fn classify_process(
+pub(crate) fn classify_process(
     pid: u32,
     name: &str,
     app_pid: u32,
