@@ -68,6 +68,18 @@ const EMPTY_DRAFT: PriceDraft = {
 
 // 模型价格页样式：表格走苹果风「无斑马纹 + hairline 分隔 + 柔和悬浮」，全部映射主题 token。
 const modelPricingStyles = `
+.settings-scope .mp-segmented {
+  flex-shrink: 0;
+  max-width: 100%;
+  overflow-x: auto;
+}
+.settings-scope .mp-segmented .mantine-SegmentedControl-control {
+  flex: 0 0 auto;
+}
+.settings-scope .mp-segmented .mantine-SegmentedControl-label {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
 .mp-table { border-collapse: separate; border-spacing: 0; }
 .mp-table thead th {
   background: var(--surface-container-lowest) !important;
