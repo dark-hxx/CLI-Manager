@@ -62,3 +62,24 @@ Topics: [.trellis/research/windows-helper-webview2-build-compat.md](../../resear
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: 修复文件树首屏被 Git 查询阻塞
+<!-- trellis-session: v=2 fp=8a9968a63c34604e -->
+
+**Date**: 2026-11-13
+**Task**: 修复文件树首屏被 Git 查询阻塞
+**Branch**: `fix/file-tree-first-paint`
+
+### Summary
+
+根目录优先显示，Git 后台补齐并按代际隔离；保留构建兼容，沿用1.5.0安装包，TEMP变更记录，不推送不安装。14项新增与21项既有定向回归已通过。
+Topics: [.trellis/research/file-tree-first-paint.md](../../research/file-tree-first-paint.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
