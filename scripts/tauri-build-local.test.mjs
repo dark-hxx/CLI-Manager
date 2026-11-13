@@ -69,3 +69,17 @@ test("Tap resources use a directory mapping that preserves nested assets and fon
   // Tauri flattens glob matches to file names; mapping the directory preserves its subtree.
   assert.deepEqual(tapResources, [["../apps/web/dist/tap", "apps/web/dist/tap"]]);
 });
+
+test("Windows helpers and desktop lock the same Tauri/WebView2 host versions", () => {
+  const hostPackages = ["tauri", "tauri-runtime", "tauri-runtime-wry", "wry", "webview2-com", "webview2-com-sys"];
+  const versions = (file) => {
+    const blocks = readFileSync(new URL(file, import.meta.url), "utf8").split(/^\[\[package\]\]\r?$/m);
+    return Object.fromEntries(hostPackages.map((name) => {
+      const locked = blocks.filter((block) => /^name = "([^"]+)"/m.exec(block)?.[1] === name)
+        .map((block) => /^version = "([^"]+)"/m.exec(block)?.[1]).sort();
+      assert.ok(locked.length > 0 && locked.every(Boolean), `${file}: missing ${name}`);
+      return [name, locked];
+    }));
+  };
+  assert.deepEqual(versions("../src-tauri/helpers/Cargo.lock"), versions("../src-tauri/Cargo.lock"));
+});
