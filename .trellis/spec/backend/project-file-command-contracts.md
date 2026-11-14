@@ -1,5 +1,20 @@
 # Project File Command Contracts
 
+## File tree first paint (TEMP, 2026-11-13)
+
+- `fileExplorerStore.openProject` completes after the root directory is published,
+  not after Git decorations. Start optional local/WSL Git collection only after
+  successful listing; its completion or failure must not own the directory's
+  loading flag, clear the tree, or delay clean restored-file hydration.
+- Late initial Git results must match the open generation, project file context
+  and remote context. Switching away/back, Worktrees, case-distinct WSL paths and
+  closing the panel invalidate the previous publication even for a shared pending
+  Git request. Existing Git single-flight and non-repository caching remain intact.
+- SSH listing retains its remote context/release boundary and must not issue local
+  directory or Git calls. IPC signatures, filesystem guards and Git scan behavior
+  are unchanged. `scripts/fileExplorerInitialLoad.test.mjs` exercises the real store
+  against deferred IPC promises for these boundaries.
+
 ## Reloadable frontend file residency (TEMP, 2026-11-01)
 
 - File tabs can carry `dehydrated: true`: metadata/tab identity remain, but reloadable clean text/base64 payload is absent. The cache budget is 32 MiB/64 nonempty files across retained workspaces, excluding active, dirty, undo/redo-model and in-flight-save contents.

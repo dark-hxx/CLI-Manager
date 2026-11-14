@@ -931,10 +931,7 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       if (remoteContext) await waitForRemoteFileContextRelease(remoteContext);
       if (requestSeq !== openProjectRequestSeq || !isSameProjectFileContext(get().project, project)) return;
       set({ remoteFileContext: remoteContext });
-      const [tree, gitChanges] = await Promise.all([
-        remoteContext ? sshRemoteListDir(remoteContext) : listDir(project.path, ""),
-        remoteContext ? Promise.resolve([]) : fetchGitChanges(project.path),
-      ]);
+      const tree = await (remoteContext ? sshRemoteListDir(remoteContext) : listDir(project.path, ""));
       if (
         requestSeq !== openProjectRequestSeq
         || !isSameProjectFileContext(get().project, project)
@@ -942,7 +939,16 @@ export const useFileExplorerStore = create<FileExplorerStore>((set, get) => ({
       ) {
         return;
       }
-      set({ tree, gitChanges, loading: false });
+      set({ tree, loading: false });
+      // Git diff/line statistics are decorations, never a prerequisite for browsing.
+      if (!remoteContext) void fetchGitChanges(project.path).then((gitChanges) => {
+        if (
+          requestSeq !== openProjectRequestSeq
+          || !isSameProjectFileContext(get().project, project)
+          || get().remoteFileContext !== remoteContext
+        ) return;
+        set({ gitChanges });
+      });
       const active = get().activeFile;
       if (active?.dehydrated) void get().openFile({ ...active, kind: "file" }).catch(err => {
         toast.error(translateCurrent("files.toast.previewFailed"), { description: fileReadErrorMessage(err) });
