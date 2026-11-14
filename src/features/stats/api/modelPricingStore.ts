@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { create } from "zustand";
-import { getDb } from "../../../shared/platform/db";
+import { buildBatchInsertStatements, getDb } from "../../../shared/platform/db";
 import {
   DEFAULT_MODEL_PRICES,
   extractModelContextWindow,
@@ -41,6 +41,8 @@ export interface ModelPriceSyncResult {
   candidates: ModelPriceSyncCandidate[];
   unmatched: string[];
   fetchedCount: number;
+  /** 本次拉取失败、改用本地旧快照的价格源。 */
+  staleSources: string[];
 }
 
 interface ModelPriceRow {
@@ -258,7 +260,8 @@ function toBackendEntry(price: ModelPrice): BackendModelPriceEntry {
     cacheCreationPer1m: price.cacheCreationPer1m,
     source: price.source,
     sourceModelId: price.sourceModelId,
-    rawJson: price.rawJson,
+    // 后端缓存只用于按模型查单价，不读原始 JSON；省略可显著缩小每次推送的 IPC 负载。
+    rawJson: null,
     updatedAtMs: price.updatedAtMs,
     syncedAtMs: price.syncedAtMs,
   };
@@ -302,22 +305,31 @@ function makePriceMap(prices: ModelPrice[]): Record<string, ModelPrice> {
   return map;
 }
 
+let modelPricesTableReady: Promise<void> | null = null;
+
+// 每个进程只建表一次；失败时清空记忆以便下次重试。
 async function ensureModelPricesTable(): Promise<void> {
-  const db = await getDb();
-  await db.execute(`
-    CREATE TABLE IF NOT EXISTS model_prices (
-      model TEXT PRIMARY KEY,
-      input_per_1m REAL NOT NULL DEFAULT 0,
-      output_per_1m REAL NOT NULL DEFAULT 0,
-      cache_read_per_1m REAL NOT NULL DEFAULT 0,
-      cache_creation_per_1m REAL NOT NULL DEFAULT 0,
-      source TEXT NOT NULL DEFAULT 'manual',
-      source_model_id TEXT,
-      raw_json TEXT,
-      updated_at_ms INTEGER NOT NULL DEFAULT 0,
-      synced_at_ms INTEGER
-    )
-  `);
+  modelPricesTableReady ??= (async () => {
+    const db = await getDb();
+    await db.execute(`
+      CREATE TABLE IF NOT EXISTS model_prices (
+        model TEXT PRIMARY KEY,
+        input_per_1m REAL NOT NULL DEFAULT 0,
+        output_per_1m REAL NOT NULL DEFAULT 0,
+        cache_read_per_1m REAL NOT NULL DEFAULT 0,
+        cache_creation_per_1m REAL NOT NULL DEFAULT 0,
+        source TEXT NOT NULL DEFAULT 'manual',
+        source_model_id TEXT,
+        raw_json TEXT,
+        updated_at_ms INTEGER NOT NULL DEFAULT 0,
+        synced_at_ms INTEGER
+      )
+    `);
+  })().catch((err) => {
+    modelPricesTableReady = null;
+    throw err;
+  });
+  return modelPricesTableReady;
 }
 
 async function readAllPrices(): Promise<ModelPrice[]> {
@@ -329,15 +341,20 @@ async function readAllPrices(): Promise<ModelPrice[]> {
   return rows.map(rowToPrice);
 }
 
+// 批量写入复用多值 INSERT 分批（每批一次 IPC、一次隐式事务），替代逐行往返。
+// tauri-plugin-sql 底层是连接池，跨 execute 的 BEGIN/COMMIT 不保证同一连接，故不用显式事务。
 async function writePrices(prices: ModelPrice[]): Promise<ModelPrice[]> {
   if (prices.length === 0) return [];
   await ensureModelPricesTable();
   const db = await getDb();
-  const normalized = prices.map(normalizePrice);
-  for (const price of normalized) {
+  // 同一模型只保留最后一条，避免同一语句内出现重复冲突键。
+  const normalized = Array.from(new Map(prices.map((price) => {
+    const next = normalizePrice(price);
+    return [next.model, next] as const;
+  })).values());
+  for (const statement of buildBatchInsertStatements("model_prices", MODEL_PRICE_COLUMNS, normalized, priceToDbValues)) {
     await db.execute(
-      `INSERT INTO model_prices (${MODEL_PRICE_COLUMNS.join(", ")})
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `${statement.sql}
        ON CONFLICT(model) DO UPDATE SET
          input_per_1m = excluded.input_per_1m,
          output_per_1m = excluded.output_per_1m,
@@ -348,10 +365,23 @@ async function writePrices(prices: ModelPrice[]): Promise<ModelPrice[]> {
          raw_json = excluded.raw_json,
          updated_at_ms = excluded.updated_at_ms,
          synced_at_ms = excluded.synced_at_ms`,
-      priceToDbValues(price)
+      statement.values
     );
   }
   return normalized;
+}
+
+const DELETE_BATCH_SIZE = 500;
+
+// 按批 DELETE ... IN (...) 删除，每批一次 IPC。
+async function deletePrices(models: string[]): Promise<void> {
+  await ensureModelPricesTable();
+  const db = await getDb();
+  for (let i = 0; i < models.length; i += DELETE_BATCH_SIZE) {
+    const batch = models.slice(i, i + DELETE_BATCH_SIZE);
+    const placeholders = batch.map((_, idx) => `$${idx + 1}`).join(", ");
+    await db.execute(`DELETE FROM model_prices WHERE model IN (${placeholders})`, batch);
+  }
 }
 
 export const useModelPricingStore = create<ModelPricingStore>((set, get) => ({
@@ -397,11 +427,7 @@ export const useModelPricingStore = create<ModelPricingStore>((set, get) => ({
 
   delete: async (models) => {
     if (models.length === 0) return;
-    await ensureModelPricesTable();
-    const db = await getDb();
-    for (const model of models) {
-      await db.execute("DELETE FROM model_prices WHERE model = $1", [model]);
-    }
+    await deletePrices(models);
     set((state) => {
       const next = { ...state.modelPrices };
       for (const model of models) delete next[model];

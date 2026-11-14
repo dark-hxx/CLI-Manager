@@ -493,6 +493,15 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
         ),
       });
       if (result.candidates.length > 0) setFilter("candidates");
+      if (result.staleSources.length > 0) {
+        const sources = result.staleSources.join(", ");
+        toast.warning(text("部分价格源拉取失败", "Some price sources failed to refresh"), {
+          description: text(
+            `${sources} 暂时无法访问，已使用本地缓存的价格数据，可能不是最新。`,
+            `${sources} is unreachable; used locally cached prices, which may be outdated.`
+          ),
+        });
+      }
     } catch (err) {
       toast.error(text("远程价格同步失败", "Remote price sync failed"), { description: String(err) });
     } finally {
