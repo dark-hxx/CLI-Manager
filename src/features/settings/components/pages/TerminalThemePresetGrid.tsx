@@ -67,7 +67,7 @@ export function TerminalThemePresetGrid({ groups, isSelected, onSelect }: Termin
               {t(TERMINAL_THEME_GROUP_LABEL_KEYS[group.id].description)}
             </Text>
           </Group>
-          <div className="settings-palette-grid">
+          <div className="settings-palette-grid settings-terminal-palette-grid">
             {group.presets.map((preset) => {
               const active = isSelected(preset);
               return (
@@ -88,7 +88,7 @@ export function TerminalThemePresetGrid({ groups, isSelected, onSelect }: Termin
                         c={active ? "var(--on-surface)" : "var(--on-surface-variant)"}
                         style={{ whiteSpace: "normal", overflowWrap: "anywhere", lineHeight: 1.25 }}
                       >
-                        {preset.name}
+                        {preset.nameKey ? t(preset.nameKey) : preset.name}
                       </Text>
                       <Text
                         size="xs"

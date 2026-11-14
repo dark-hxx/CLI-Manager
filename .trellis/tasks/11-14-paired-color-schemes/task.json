@@ -1,0 +1,28 @@
+{
+  "id": "paired-color-schemes",
+  "name": "paired-color-schemes",
+  "title": "通用界面与终端成套配色",
+  "description": "参考 VS Code、Nord 与 Rosé Pine，设计三组明暗配色并接入通用设置、终端独立选择和自动跟随。",
+  "status": "review",
+  "dev_type": "frontend",
+  "scope": "settings",
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-14",
+  "completedAt": null,
+  "branch": "master",
+  "base_branch": "master",
+  "relatedFiles": [
+    "src/styles/themes.css",
+    "src/shared/lib/terminalThemes.ts",
+    "src/shared/preferences/appearanceSettings.ts",
+    "src/features/settings/components/pages/GeneralSettingsPage.tsx",
+    "src/features/settings/components/pages/ThemeSettingsPage.tsx",
+    "src/features/settings/components/pages/TerminalAppearancePreview.tsx",
+    "src/styles/components/terminal-appearance-preview.css",
+    "docs/design/paired-color-schemes.html",
+    "scripts/colorSchemes.test.mjs"
+  ],
+  "notes": "六套配色、固定宽度主题卡片和扩大外观预览均已实现；续作 15 项定向测试、类型检查与生产构建通过，实际组件静态宽窄布局已检查。待人工桌面验收；严格架构检查仍有两处未改动文件中的既有问题，详见 validation.md。用户指定 TEMP，不执行 Git 同步或提交。"
+}

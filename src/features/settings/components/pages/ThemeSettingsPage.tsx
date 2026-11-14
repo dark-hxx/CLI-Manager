@@ -56,7 +56,8 @@ import {
 } from "../../../../shared/preferences/settingsStore";
 import { useTerminalStore } from "../../../terminal/state";
 import { TerminalBackgroundSection } from "./TerminalBackgroundSection";
-import { SWATCH_KEYS, TerminalThemePresetGrid } from "./TerminalThemePresetGrid";
+import { TerminalThemePresetGrid } from "./TerminalThemePresetGrid";
+import { TerminalAppearancePreview } from "./TerminalAppearancePreview";
 import {
   listSystemFonts,
   mergeFontFamilyOptions,
@@ -513,8 +514,10 @@ export function ThemeSettingsPage() {
         ? TERMINAL_THEME_PRESETS.filter((preset) => preset.id === autoThemeId)
         : TERMINAL_THEME_PRESETS.filter((preset) => preset.tone === themeLibraryMode);
     if (!keyword) return scoped;
-    return scoped.filter((preset) => preset.name.toLowerCase().includes(keyword));
-  }, [autoThemeId, query, themeLibraryMode]);
+    return scoped.filter((preset) =>
+      [preset.name, preset.nameKey ? t(preset.nameKey) : ""].some((name) => name.toLowerCase().includes(keyword))
+    );
+  }, [autoThemeId, query, t, themeLibraryMode]);
 
   const groupedThemes = useMemo(
     () =>
@@ -529,13 +532,12 @@ export function ThemeSettingsPage() {
     const effective = getTerminalTheme(effectiveThemeName, resolvedTheme, lightThemePalette, darkThemePalette);
     return {
       label:
-        selectedPreset?.name ?? text("独立终端主题", "Independent terminal theme"),
+        (selectedPreset?.nameKey ? t(selectedPreset.nameKey) : selectedPreset?.name) ?? text("独立终端主题", "Independent terminal theme"),
       theme: effective,
     };
-  }, [darkThemePalette, effectiveThemeName, language, lightThemePalette, resolvedTheme, selectedPreset]);
+  }, [darkThemePalette, effectiveThemeName, language, lightThemePalette, resolvedTheme, selectedPreset, t]);
 
   const defaultTerminalTextColor = selectedTheme.theme.foreground ?? "#d8dee9";
-  const previewTerminalTextColor = terminalTextColor || defaultTerminalTextColor;
 
   const themeLibraryOptions = useMemo(
     () => [
@@ -577,13 +579,15 @@ export function ThemeSettingsPage() {
   const previewThemeGroups = useMemo(() => {
     const keyword = previewThemeQuery.trim().toLowerCase();
     const scoped = keyword
-      ? TERMINAL_THEME_PRESETS.filter((preset) => preset.name.toLowerCase().includes(keyword))
+      ? TERMINAL_THEME_PRESETS.filter((preset) =>
+        [preset.name, preset.nameKey ? t(preset.nameKey) : ""].some((name) => name.toLowerCase().includes(keyword))
+      )
       : TERMINAL_THEME_PRESETS;
     return TERMINAL_THEME_GROUPS.map((group) => ({
       ...group,
       presets: scoped.filter((preset) => preset.group === group.id),
     })).filter((group) => group.presets.length > 0);
-  }, [previewThemeQuery]);
+  }, [previewThemeQuery, t]);
 
   const handlePreviewThemeModeChange = (value: TerminalPreviewThemeMode) => {
     if (value === "follow") {
@@ -834,59 +838,19 @@ export function ThemeSettingsPage() {
   );
 
   const terminalPreview = (
-    <Stack gap="sm">
-      <Text size="xs" c="var(--on-surface-variant)">
-        {selectedTheme.label}
-      </Text>
-      <Box
-        className="rounded-xl border p-3 font-mono text-xs"
-        style={{
-          borderColor: "var(--border)",
-          backgroundColor: selectedTheme.theme.background ?? "var(--surface-container-lowest)",
-          color: selectedTheme.theme.foreground ?? "var(--on-surface)",
-        }}
-      >
-        <div>$ echo "hello cli-manager"</div>
-        <div className="mt-1 opacity-80">hello cli-manager</div>
-        <Group mt="md" gap={6}>
-          {SWATCH_KEYS.map((key) => (
-            <Box
-              key={key}
-              component="span"
-              w={16}
-              h={16}
-              style={{
-                backgroundColor:
-                  (selectedTheme.theme as Record<string, string | undefined>)[key] ?? "var(--surface-container-lowest)",
-                border: "1px solid rgba(255,255,255,0.15)",
-                borderRadius: 4,
-              }}
-              title={key}
-            />
-          ))}
-        </Group>
-      </Box>
-
-      <Text size="xs" fw={600} c="var(--on-surface-variant)">
-        {text("实时字体预览", "Live Font Preview")}
-      </Text>
-      <Box
-        className="rounded-xl border border-border p-4 font-mono"
-        style={{ backgroundColor: "var(--surface-container-lowest)", color: previewTerminalTextColor }}
-      >
-        <Box style={{ fontFamily: normalizedFontFamily, fontSize: `${fontSize}px` }}>
-          <div>$ cli-manager --doctor</div>
-          <div className="opacity-80">Environment ready. Launching workspace...</div>
-          <div className="mt-1 text-success">Terminal initialized</div>
-        </Box>
-      </Box>
-    </Stack>
+    <TerminalAppearancePreview
+      theme={selectedTheme.theme}
+      themeName={selectedTheme.label}
+      fontFamily={normalizedFontFamily}
+      fontSize={fontSize}
+      textColor={terminalTextColor}
+    />
   );
 
   return (
     <Stack gap="md">
-      <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_320px] xl:items-start">
-        <Stack gap="md" className="min-w-0 xl:col-start-1 xl:row-start-1">
+      <section className="terminal-settings-layout">
+        <Stack gap="md" className="terminal-settings-controls">
         <CollapsibleSettingsSection
           title={text("终端行为", "Terminal Behavior")}
           open={terminalSettingsSectionsExpanded.behavior}
@@ -1413,7 +1377,7 @@ export function ThemeSettingsPage() {
               />
             </Group>
 
-            <Box className="xl:hidden">
+            <Box className="terminal-settings-preview-inline">
               {terminalPreview}
             </Box>
 
@@ -1494,7 +1458,7 @@ export function ThemeSettingsPage() {
         <CollapsibleSettingsSection
           title={text("终端预览", "Terminal Preview")}
           collapsible={false}
-          className="hidden self-start xl:sticky xl:top-5 xl:z-10 xl:col-start-2 xl:row-start-1 xl:block"
+          className="terminal-settings-preview-sidebar"
         >
           {terminalPreview}
         </CollapsibleSettingsSection>

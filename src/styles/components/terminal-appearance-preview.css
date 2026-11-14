@@ -1,0 +1,58 @@
+.terminal-settings-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+.terminal-settings-controls { min-width: 0; }
+.terminal-settings-preview-sidebar { display: none; }
+.terminal-settings-preview-inline { min-width: 0; }
+
+/* Use the settings content width, so a wide window with a sidebar still has room for both columns. */
+@container settings-page (min-width: 1160px) {
+  .terminal-settings-layout { grid-template-columns: minmax(0, 1fr) 480px; }
+  .terminal-settings-controls { grid-column: 1; grid-row: 1; }
+  .terminal-settings-preview-inline { display: none; }
+  .terminal-settings-preview-sidebar { display: block; position: sticky; top: 20px; grid-column: 2; grid-row: 1; }
+}
+
+.terminal-appearance-preview { min-width: 0; padding-block: 12px; }
+.terminal-appearance-caption { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; font-size: var(--settings-meta, 12px); }
+.terminal-appearance-caption strong { font-weight: 600; color: var(--on-surface); overflow-wrap: anywhere; }
+.terminal-appearance-caption > span { color: var(--on-surface-variant); }
+.terminal-appearance-window {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--settings-line);
+  border-radius: 10px;
+  background: var(--appearance-background);
+  color: var(--appearance-foreground);
+}
+.terminal-appearance-titlebar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--appearance-foreground) 15%, transparent);
+  background: color-mix(in srgb, var(--appearance-foreground) 5%, var(--appearance-background));
+  font-size: 12px;
+}
+.terminal-appearance-session { margin-left: auto; }
+.terminal-appearance-screen {
+  min-width: 0;
+  height: clamp(420px, 54vh, 620px);
+  padding: 16px;
+  overflow: auto;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--appearance-foreground) 30%, transparent) transparent;
+}
+.terminal-appearance-transcript { width: max-content; min-width: 100%; white-space: pre; }
+.terminal-appearance-transcript strong { font-weight: 700; }
+.terminal-appearance-gap { height: 1.35em; }
+.terminal-appearance-selection, .terminal-appearance-screen ::selection {
+  background: var(--appearance-selection);
+  color: var(--appearance-selection-text);
+}
+.terminal-appearance-cursor { display: inline-block; height: 1em; border-left: 1px solid var(--appearance-cursor); vertical-align: -0.12em; }
+.terminal-appearance-palette { padding: 10px 14px 14px; border-top: 1px solid color-mix(in srgb, var(--appearance-foreground) 15%, transparent); }
+.terminal-appearance-palette-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; font-size: 11px; }
+.terminal-appearance-swatches { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
+.terminal-appearance-swatch { height: 16px; border: 1px solid color-mix(in srgb, var(--appearance-foreground) 18%, transparent); border-radius: 2px; }

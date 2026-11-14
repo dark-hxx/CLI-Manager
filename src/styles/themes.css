@@ -482,3 +482,183 @@
   --interactive-selected-border: color-mix(in srgb, var(--primary) 64%, var(--border) 36%);
   --interactive-shadow: 0 8px 20px color-mix(in srgb, var(--on-surface) 8%, transparent);
 }
+
+/* Code Midnight: paired application / terminal palette. */
+[data-theme="dark"][data-dark-palette="code-midnight"] {
+  --bg-primary: #1f1f1f;
+  --bg-secondary: #252526;
+  --bg-tertiary: #303033;
+  --text-primary: #e3e3e3;
+  --text-secondary: #c5c5c5;
+  --text-muted: #a3a3a3;
+  --accent: #75bfff;
+  --accent-hover: #a3d5ff;
+  --border: #424247;
+  --danger: #f48771;
+  --success: #89d185;
+  --warning: #e5c07b;
+  --on-primary: #142438;
+  --surface-container-lowest: #252526;
+  --surface-container-low: #252526;
+  --surface-container-high: #303033;
+  --surface-container-highest: #303033;
+  --on-surface-variant: #c5c5c5;
+  --primary-gradient-start: #75bfff;
+  --primary-gradient-end: #75bfff;
+  --interactive-focus-ring: #75bfff;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}
+
+/* Code Daylight: paired application / terminal palette. */
+[data-theme="light"][data-light-palette="code-daylight"] {
+  --bg-primary: #f5f7fa;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #e9edf2;
+  --text-primary: #24292f;
+  --text-secondary: #414c59;
+  --text-muted: #535e6b;
+  --accent: #0969da;
+  --accent-hover: #0755b1;
+  --border: #ccd3dc;
+  --danger: #b42332;
+  --success: #246b36;
+  --warning: #7b5400;
+  --on-primary: #ffffff;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #ffffff;
+  --surface-container-high: #e9edf2;
+  --surface-container-highest: #e9edf2;
+  --on-surface-variant: #414c59;
+  --primary-gradient-start: #0969da;
+  --primary-gradient-end: #0969da;
+  --interactive-focus-ring: #0969da;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}
+
+/* Nord Frost: paired application / terminal palette. */
+[data-theme="dark"][data-dark-palette="nord-frost"] {
+  --bg-primary: #2e3440;
+  --bg-secondary: #353d4b;
+  --bg-tertiary: #3b4352;
+  --text-primary: #eceff4;
+  --text-secondary: #d8dee9;
+  --text-muted: #acb6c6;
+  --accent: #88c0d0;
+  --accent-hover: #a8d6e2;
+  --border: #515d70;
+  --danger: #e58c94;
+  --success: #a3be8c;
+  --warning: #ebcb8b;
+  --on-primary: #253141;
+  --surface-container-lowest: #353d4b;
+  --surface-container-low: #353d4b;
+  --surface-container-high: #3b4352;
+  --surface-container-highest: #3b4352;
+  --on-surface-variant: #d8dee9;
+  --primary-gradient-start: #88c0d0;
+  --primary-gradient-end: #88c0d0;
+  --interactive-focus-ring: #88c0d0;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}
+
+/* Nord Snow: paired application / terminal palette. */
+[data-theme="light"][data-light-palette="nord-snow"] {
+  --bg-primary: #eceff4;
+  --bg-secondary: #f8fafc;
+  --bg-tertiary: #e2e7ee;
+  --text-primary: #2e3440;
+  --text-secondary: #434c5e;
+  --text-muted: #536176;
+  --accent: #356779;
+  --accent-hover: #285363;
+  --border: #c6ceda;
+  --danger: #a13948;
+  --success: #3b6539;
+  --warning: #795b17;
+  --on-primary: #ffffff;
+  --surface-container-lowest: #f8fafc;
+  --surface-container-low: #f8fafc;
+  --surface-container-high: #e2e7ee;
+  --surface-container-highest: #e2e7ee;
+  --on-surface-variant: #434c5e;
+  --primary-gradient-start: #356779;
+  --primary-gradient-end: #356779;
+  --interactive-focus-ring: #356779;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}
+
+/* Rosé Moon: paired application / terminal palette. */
+[data-theme="dark"][data-dark-palette="rose-moon"] {
+  --bg-primary: #232136;
+  --bg-secondary: #2a273f;
+  --bg-tertiary: #343049;
+  --text-primary: #e0def4;
+  --text-secondary: #c9c4df;
+  --text-muted: #aaa3bf;
+  --accent: #ebbcba;
+  --accent-hover: #f4d2ce;
+  --border: #504a66;
+  --danger: #eb8fa7;
+  --success: #add1b0;
+  --warning: #f6c177;
+  --on-primary: #302537;
+  --surface-container-lowest: #2a273f;
+  --surface-container-low: #2a273f;
+  --surface-container-high: #343049;
+  --surface-container-highest: #343049;
+  --on-surface-variant: #c9c4df;
+  --primary-gradient-start: #ebbcba;
+  --primary-gradient-end: #ebbcba;
+  --interactive-focus-ring: #ebbcba;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}
+
+/* Rosé Dawn: paired application / terminal palette. */
+[data-theme="light"][data-light-palette="rose-dawn"] {
+  --bg-primary: #faf4ed;
+  --bg-secondary: #fffaf3;
+  --bg-tertiary: #f0e7df;
+  --text-primary: #464261;
+  --text-secondary: #605b76;
+  --text-muted: #6b627d;
+  --accent: #96506b;
+  --accent-hover: #7e4058;
+  --border: #d9cbc7;
+  --danger: #a33c58;
+  --success: #466b50;
+  --warning: #805c20;
+  --on-primary: #ffffff;
+  --surface-container-lowest: #fffaf3;
+  --surface-container-low: #fffaf3;
+  --surface-container-high: #f0e7df;
+  --surface-container-highest: #f0e7df;
+  --on-surface-variant: #605b76;
+  --primary-gradient-start: #96506b;
+  --primary-gradient-end: #96506b;
+  --interactive-focus-ring: #96506b;
+  --interactive-hover-bg: color-mix(in srgb, var(--accent) 8%, var(--bg-secondary));
+  --interactive-active-bg: color-mix(in srgb, var(--accent) 14%, var(--bg-secondary));
+  --interactive-selected-bg: color-mix(in srgb, var(--accent) 16%, var(--bg-secondary));
+  --interactive-selected-border: var(--accent);
+  --interactive-shadow: none;
+}

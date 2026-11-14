@@ -1,4 +1,5 @@
 import type { ITheme } from "@xterm/xterm";
+import type { TranslationKey } from "../i18n/index";
 import { getRelativeLuminance, hexToRgb } from "./terminalColor";
 
 export type TerminalThemeGroupId = "cool" | "warm" | "nature" | "pink-purple" | "high-contrast" | "light-office";
@@ -12,6 +13,7 @@ export interface TerminalThemeGroup {
 export interface TerminalThemePreset {
   id: string;
   name: string;
+  nameKey?: TranslationKey;
   theme: ITheme;
   group: TerminalThemeGroupId;
   family?: string;
@@ -87,7 +89,10 @@ export type LightTerminalPalette =
   | "apple-pure"
   | "apple-mist"
   | "apple-warm"
-  | "apple-mono";
+  | "apple-mono"
+  | "code-daylight"
+  | "nord-snow"
+  | "rose-dawn";
 export type DarkTerminalPalette =
   | "night-indigo"
   | "forest-night"
@@ -97,7 +102,10 @@ export type DarkTerminalPalette =
   | "catppuccin-mocha"
   | "terminal-green"
   | "dracula-purple"
-  | "carbon-black";
+  | "carbon-black"
+  | "code-midnight"
+  | "nord-frost"
+  | "rose-moon";
 
 const tokyoNightDark: ITheme = {
   background: "#1a1b26",
@@ -1384,6 +1392,157 @@ const windowsTerminalVintage: ITheme = {
   brightWhite: "#FFFFFF",
 };
 
+// Paired with the application palettes in styles/themes.css; adapted for readable ANSI output.
+const codeMidnight: ITheme = {
+  background: "#1f1f1f",
+  foreground: "#e3e3e3",
+  cursor: "#75bfff",
+  cursorAccent: "#1f1f1f",
+  selectionBackground: "#334d68",
+  selectionForeground: "#e3e3e3",
+  black: "#16161e",
+  red: "#f48771",
+  green: "#89d185",
+  yellow: "#e5c07b",
+  blue: "#75bfff",
+  magenta: "#c586c0",
+  cyan: "#73c9d2",
+  white: "#c5c5c5",
+  brightBlack: "#a3a3a3",
+  brightRed: "#f48771",
+  brightGreen: "#89d185",
+  brightYellow: "#e5c07b",
+  brightBlue: "#75bfff",
+  brightMagenta: "#c586c0",
+  brightCyan: "#73c9d2",
+  brightWhite: "#e3e3e3",
+};
+
+const codeDaylight: ITheme = {
+  background: "#f5f7fa",
+  foreground: "#24292f",
+  cursor: "#0969da",
+  cursorAccent: "#f5f7fa",
+  selectionBackground: "#c6def8",
+  selectionForeground: "#24292f",
+  black: "#24292f",
+  red: "#b42332",
+  green: "#246b36",
+  yellow: "#7b5400",
+  blue: "#0969da",
+  magenta: "#8250a4",
+  cyan: "#176978",
+  white: "#535e6b",
+  brightBlack: "#535e6b",
+  brightRed: "#b42332",
+  brightGreen: "#246b36",
+  brightYellow: "#7b5400",
+  brightBlue: "#0969da",
+  brightMagenta: "#8250a4",
+  brightCyan: "#176978",
+  brightWhite: "#24292f",
+};
+
+const nordFrost: ITheme = {
+  background: "#2e3440",
+  foreground: "#eceff4",
+  cursor: "#88c0d0",
+  cursorAccent: "#2e3440",
+  selectionBackground: "#48586f",
+  selectionForeground: "#eceff4",
+  black: "#16161e",
+  red: "#e58c94",
+  green: "#a3be8c",
+  yellow: "#ebcb8b",
+  blue: "#91b4d8",
+  magenta: "#c5a0be",
+  cyan: "#88c0d0",
+  white: "#d8dee9",
+  brightBlack: "#acb6c6",
+  brightRed: "#e58c94",
+  brightGreen: "#a3be8c",
+  brightYellow: "#ebcb8b",
+  brightBlue: "#91b4d8",
+  brightMagenta: "#c5a0be",
+  brightCyan: "#88c0d0",
+  brightWhite: "#eceff4",
+};
+
+const nordSnow: ITheme = {
+  background: "#eceff4",
+  foreground: "#2e3440",
+  cursor: "#356779",
+  cursorAccent: "#eceff4",
+  selectionBackground: "#c4d8e5",
+  selectionForeground: "#2e3440",
+  black: "#2e3440",
+  red: "#a13948",
+  green: "#3b6539",
+  yellow: "#795b17",
+  blue: "#3d6090",
+  magenta: "#7c4d79",
+  cyan: "#356779",
+  white: "#536176",
+  brightBlack: "#536176",
+  brightRed: "#a13948",
+  brightGreen: "#3b6539",
+  brightYellow: "#795b17",
+  brightBlue: "#3d6090",
+  brightMagenta: "#7c4d79",
+  brightCyan: "#356779",
+  brightWhite: "#2e3440",
+};
+
+const roseMoon: ITheme = {
+  background: "#232136",
+  foreground: "#e0def4",
+  cursor: "#ebbcba",
+  cursorAccent: "#232136",
+  selectionBackground: "#4c425e",
+  selectionForeground: "#e0def4",
+  black: "#16161e",
+  red: "#eb8fa7",
+  green: "#add1b0",
+  yellow: "#f6c177",
+  blue: "#91b8d0",
+  magenta: "#c4a7e7",
+  cyan: "#9ccfd8",
+  white: "#c9c4df",
+  brightBlack: "#aaa3bf",
+  brightRed: "#eb8fa7",
+  brightGreen: "#add1b0",
+  brightYellow: "#f6c177",
+  brightBlue: "#91b8d0",
+  brightMagenta: "#c4a7e7",
+  brightCyan: "#9ccfd8",
+  brightWhite: "#e0def4",
+};
+
+const roseDawn: ITheme = {
+  background: "#faf4ed",
+  foreground: "#464261",
+  cursor: "#96506b",
+  cursorAccent: "#faf4ed",
+  selectionBackground: "#e4d2dc",
+  selectionForeground: "#464261",
+  black: "#464261",
+  red: "#a33c58",
+  green: "#466b50",
+  yellow: "#805c20",
+  blue: "#386782",
+  magenta: "#76558f",
+  cyan: "#286978",
+  white: "#6b627d",
+  brightBlack: "#6b627d",
+  brightRed: "#a33c58",
+  brightGreen: "#466b50",
+  brightYellow: "#805c20",
+  brightBlue: "#386782",
+  brightMagenta: "#76558f",
+  brightCyan: "#286978",
+  brightWhite: "#464261",
+};
+
 export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   { id: "windowsTerminalCampbell", name: "Windows Terminal Campbell", theme: windowsTerminalCampbell, group: "high-contrast", family: "windows-terminal", tone: "dark" },
   { id: "windowsTerminalCampbellPowershell", name: "Windows Terminal Campbell PowerShell", theme: windowsTerminalCampbellPowershell, group: "cool", family: "windows-terminal", tone: "dark" },
@@ -1442,12 +1601,39 @@ export const TERMINAL_THEME_PRESETS: TerminalThemePreset[] = [
   { id: "carbonfox", name: "Carbonfox", theme: carbonfox, group: "high-contrast", family: "nightfox", tone: "dark" },
   { id: "cobalt2", name: "Cobalt2", theme: cobalt2, group: "high-contrast", family: "cobalt", tone: "dark" },
   { id: "wombat", name: "Wombat", theme: wombat, group: "high-contrast", family: "classic", tone: "dark" },
+  {
+    id: "codeMidnight", name: "Code Midnight", nameKey: "settings.palette.dark.codeMidnight.label",
+    theme: codeMidnight, group: "cool", family: "code", tone: "dark",
+  },
+  {
+    id: "codeDaylight", name: "Code Daylight", nameKey: "settings.palette.light.codeDaylight.label",
+    theme: codeDaylight, group: "light-office", family: "code", tone: "light",
+  },
+  {
+    id: "nordFrost", name: "Nord Frost", nameKey: "settings.palette.dark.nordFrost.label",
+    theme: nordFrost, group: "cool", family: "nord", tone: "dark",
+  },
+  {
+    id: "nordSnow", name: "Nord Snow", nameKey: "settings.palette.light.nordSnow.label",
+    theme: nordSnow, group: "light-office", family: "nord", tone: "light",
+  },
+  {
+    id: "roseMoon", name: "Rosé Moon", nameKey: "settings.palette.dark.roseMoon.label",
+    theme: roseMoon, group: "pink-purple", family: "rose-pine", tone: "dark",
+  },
+  {
+    id: "roseDawn", name: "Rosé Dawn", nameKey: "settings.palette.light.roseDawn.label",
+    theme: roseDawn, group: "warm", family: "rose-pine", tone: "light",
+  },
 ];
 
 const themeMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p.theme]));
 const themePresetMap = new Map(TERMINAL_THEME_PRESETS.map((p) => [p.id, p]));
 
 function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-paper"): string {
+  if (lightPalette === "code-daylight") return "codeDaylight";
+  if (lightPalette === "nord-snow") return "nordSnow";
+  if (lightPalette === "rose-dawn") return "roseDawn";
   if (lightPalette === "cream-green") return "creamGreenLight";
   if (lightPalette === "emerald-mist") return "creamGreenLight";
   if (lightPalette === "ink-red") return "inkRedLight";
@@ -1460,6 +1646,9 @@ function resolveAutoLightThemeId(lightPalette: LightTerminalPalette = "warm-pape
 }
 
 function resolveAutoDarkThemeId(darkPalette: DarkTerminalPalette = "night-indigo"): string {
+  if (darkPalette === "code-midnight") return "codeMidnight";
+  if (darkPalette === "nord-frost") return "nordFrost";
+  if (darkPalette === "rose-moon") return "roseMoon";
   if (darkPalette === "night-indigo") return "codexDark";
   if (darkPalette === "forest-night") return "forestNightDark";
   if (darkPalette === "graphite-red") return "graphiteRedDark";

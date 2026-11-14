@@ -298,6 +298,11 @@
 .settings-scope .settings-choice[data-selected="true"] { background: var(--settings-selected); border-color: var(--settings-selected-line); }
 .settings-choice-mark { position: absolute; top: 12px; right: 12px; color: var(--primary); }
 .settings-palette-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: 10px; }
+/* Terminal cards keep the same width across groups; only sub-card-width containers shrink them. */
+.settings-terminal-palette-grid {
+  grid-template-columns: repeat(auto-fill, min(100%, 240px));
+  justify-content: start;
+}
 .settings-scope .settings-list-item { display: flex; align-items: center; gap: 12px; padding: 10px 12px; }
 .settings-scope .settings-list-item .settings-text { font-size: var(--settings-font); }
 .settings-scope .settings-list-item .settings-list-subtitle { font-size: var(--settings-meta); }

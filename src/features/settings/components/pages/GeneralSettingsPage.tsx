@@ -59,6 +59,24 @@ const LIGHT_PALETTE_OPTIONS: {
   swatches: [string, string, string];
 }[] = [
   {
+    value: "code-daylight",
+    labelKey: "settings.palette.light.codeDaylight.label",
+    descriptionKey: "settings.palette.light.codeDaylight.description",
+    swatches: ["#f5f7fa", "#24292f", "#0969da"],
+  },
+  {
+    value: "nord-snow",
+    labelKey: "settings.palette.light.nordSnow.label",
+    descriptionKey: "settings.palette.light.nordSnow.description",
+    swatches: ["#eceff4", "#2e3440", "#356779"],
+  },
+  {
+    value: "rose-dawn",
+    labelKey: "settings.palette.light.roseDawn.label",
+    descriptionKey: "settings.palette.light.roseDawn.description",
+    swatches: ["#faf4ed", "#464261", "#96506b"],
+  },
+  {
     value: "warm-paper",
     labelKey: "settings.palette.light.warmPaper.label",
     descriptionKey: "settings.palette.light.warmPaper.description",
@@ -120,6 +138,24 @@ const DARK_PALETTE_OPTIONS: {
   descriptionKey: TranslationKey;
   swatches: [string, string, string];
 }[] = [
+  {
+    value: "code-midnight",
+    labelKey: "settings.palette.dark.codeMidnight.label",
+    descriptionKey: "settings.palette.dark.codeMidnight.description",
+    swatches: ["#1f1f1f", "#e3e3e3", "#75bfff"],
+  },
+  {
+    value: "nord-frost",
+    labelKey: "settings.palette.dark.nordFrost.label",
+    descriptionKey: "settings.palette.dark.nordFrost.description",
+    swatches: ["#2e3440", "#eceff4", "#88c0d0"],
+  },
+  {
+    value: "rose-moon",
+    labelKey: "settings.palette.dark.roseMoon.label",
+    descriptionKey: "settings.palette.dark.roseMoon.description",
+    swatches: ["#232136", "#e0def4", "#ebbcba"],
+  },
   {
     value: "night-indigo",
     labelKey: "settings.palette.dark.nightIndigo.label",
@@ -184,6 +220,9 @@ function clampUiFontSize(value: number) {
 }
 
 const LIGHT_TEXT_COLORS: Record<LightThemePalette, string> = {
+  "code-daylight": "#24292f",
+  "nord-snow": "#2e3440",
+  "rose-dawn": "#464261",
   "warm-paper": "#2e3336",
   "cream-green": "#25302a",
   "ink-red": "#1f1f1c",
@@ -196,6 +235,9 @@ const LIGHT_TEXT_COLORS: Record<LightThemePalette, string> = {
 };
 
 const DARK_TEXT_COLORS: Record<DarkThemePalette, string> = {
+  "code-midnight": "#e3e3e3",
+  "nord-frost": "#eceff4",
+  "rose-moon": "#e0def4",
   "night-indigo": "#c0caf5",
   "forest-night": "#d8e5dc",
   "graphite-red": "#e6dfdb",
@@ -219,6 +261,9 @@ function getDefaultUiTextColor(
 // 用纯映射而非 getComputedStyle：data-theme/data-*-palette 由 App.tsx 的 effect 在
 // render 之后才更新，render 期间读 computed style 会在切换主题/配色时拿到旧背景色。
 const LIGHT_BG_COLORS: Record<LightThemePalette, string> = {
+  "code-daylight": "#f5f7fa",
+  "nord-snow": "#eceff4",
+  "rose-dawn": "#faf4ed",
   "warm-paper": "#f9f9fb",
   "cream-green": "#f7faf7",
   "ink-red": "#f7f6f4",
@@ -231,6 +276,9 @@ const LIGHT_BG_COLORS: Record<LightThemePalette, string> = {
 };
 
 const DARK_BG_COLORS: Record<DarkThemePalette, string> = {
+  "code-midnight": "#1f1f1f",
+  "nord-frost": "#2e3440",
+  "rose-moon": "#232136",
   "night-indigo": "#1a1b26",
   "forest-night": "#111714",
   "graphite-red": "#171616",

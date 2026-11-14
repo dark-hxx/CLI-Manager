@@ -1,4 +1,13 @@
 import { create } from "zustand";
+import {
+  LAST_SETTINGS_TABS, type ThemeMode, type LightThemePalette, type DarkThemePalette,
+  type TerminalThemeMode, type SidebarDensity, type ViewMode, type SettingsIconStyle,
+  type LastSettingsTab, type TerminalSidePanelSkin, type TerminalStatsCardKey,
+} from "./appearanceSettings";
+export type {
+  ThemeMode, LightThemePalette, DarkThemePalette, TerminalThemeMode, SidebarDensity,
+  ViewMode, SettingsIconStyle, TerminalSidePanelSkin, TerminalStatsCardKey,
+} from "./appearanceSettings";
 import { normalizeExternalTerminalProgram, type ExternalTerminalProgram } from "../lib/externalTerminalProgram";
 import { normalizeWebTerminalBatchKiB, type WebTerminalBatchKiB } from "../lib/webTerminalFrames";
 import { Store } from "@tauri-apps/plugin-store";
@@ -68,74 +77,17 @@ export {
   DESKTOP_PET_SIZE_STEP_PERCENT,
 } from "../lib/desktopPetSize";
 
-export type ThemeMode = "dark" | "light" | "system";
-export type LightThemePalette =
-  | "warm-paper"
-  | "cream-green"
-  | "ink-red"
-  | "emerald-mist"
-  | "saas-analytics-dashboard"
-  | "apple-pure"
-  | "apple-mist"
-  | "apple-warm"
-  | "apple-mono";
-export type DarkThemePalette =
-  | "night-indigo"
-  | "forest-night"
-  | "graphite-red"
-  | "investment-platform"
-  | "github-dark"
-  | "catppuccin-mocha"
-  | "terminal-green"
-  | "dracula-purple"
-  | "carbon-black";
-export type TerminalThemeMode = "system" | "independent";
-export type SidebarDensity = "compact" | "comfortable";
-export type ViewMode = "standard" | "compact";
 export type GitDiffViewMode = "split" | "unified";
 export type GitDiffOpenMode = "dialog" | "editor";
 export type CloseBehavior = "ask" | "minimize" | "exit";
 
-/** 设置页图标风格：refined 为自绘彩色圆角砖，classic 恢复 lucide 线性图标。 */
-export type SettingsIconStyle = "classic" | "refined";
 /** 退出时存在运行中任务的处理方式：询问 / 后台继续 / 最小化到托盘 / 丢弃任务并退出。 */
 export type ExitWithRunningTasksBehavior = "ask" | "background" | "minimize" | "discard";
 /** 启动检测到可恢复终端标签时的恢复方式：启动时弹窗询问 / 静默自动恢复。 */
 export type TerminalSessionRestoreMode = "ask" | "auto";
 export const LINUX_GRAPHICS_MODES = ["auto", "system", "disable-dmabuf", "disable-compositing"] as const;
 export type LinuxGraphicsMode = (typeof LINUX_GRAPHICS_MODES)[number];
-type LastSettingsTab =
-  | "general"
-  | "extensions"
-  | "desktop-pet"
-  | "developer"
-  | "sidebar"
-  | "terminal-theme"
-  | "shortcuts"
-  | "templates"
-  | "native-providers"
-  | "sponsors"
-  | "model-pricing"
-  | "cc-connect" // Legacy persisted ID for the Web remote-connections page.
-  | "ssh-hosts"
-  | "sync"
-  | "history-sources"
-  | "hooks"
-  | "statusline"
-  | "terminal-status-bar"
-  | "command-suggestions"
-  | "about";
 export type StatuslineEditorSource = "claude" | "codex";
-export type TerminalSidePanelSkin = "terminal" | "classic-terminal" | "warm-paper" | "sunrise" | "linen" | "latte";
-export type TerminalStatsCardKey =
-  | "session"
-  | "tokenUsage"
-  | "tokenTrend"
-  | "modelContext"
-  | "tools"
-  | "agentCapabilities"
-  | "latestChanges"
-  | "todayUsage";
 export type SystemResourceCardKey =
   | "system"
   | "cpu"
@@ -825,28 +777,6 @@ const LEGACY_TERMINAL_THEME_MAP: Partial<Record<string, string>> = {
   cryptoWalletDark: "investmentPlatformDark",
 };
 
-const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
-  "general",
-  "extensions",
-  "desktop-pet",
-  "developer",
-  "sidebar",
-  "terminal-theme",
-  "shortcuts",
-  "templates",
-  "native-providers",
-  "sponsors",
-  "model-pricing",
-  "cc-connect",
-  "ssh-hosts",
-  "sync",
-  "history-sources",
-  "hooks",
-  "statusline",
-  "terminal-status-bar",
-  "command-suggestions",
-  "about",
-];
 
 const HEX_COLOR_PATTERN = /^#[0-9a-fA-F]{6}$/;
 

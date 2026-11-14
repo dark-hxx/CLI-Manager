@@ -8,6 +8,9 @@ import {
 import { normalizeFontFamilyStack } from "../platform/systemFonts";
 
 const LIGHT_PRIMARY_COLORS: Record<LightThemePalette, string> = {
+  "code-daylight": "#0969da",
+  "nord-snow": "#356779",
+  "rose-dawn": "#96506b",
   "warm-paper": "#c46a2d",
   "cream-green": "#3f7a4f",
   "ink-red": "#c43d2f",
@@ -20,6 +23,9 @@ const LIGHT_PRIMARY_COLORS: Record<LightThemePalette, string> = {
 };
 
 const DARK_PRIMARY_COLORS: Record<DarkThemePalette, string> = {
+  "code-midnight": "#75bfff",
+  "nord-frost": "#88c0d0",
+  "rose-moon": "#ebbcba",
   "night-indigo": "#7aa2f7",
   "forest-night": "#52a36e",
   "graphite-red": "#c95b4a",
@@ -34,6 +40,16 @@ const DARK_PRIMARY_COLORS: Record<DarkThemePalette, string> = {
 interface AppMantineThemeProviderProps {
   children: ReactNode;
 }
+
+// These palettes pair pale accents with dark labels; older palettes retain their existing rendering.
+const AUTO_CONTRAST_PALETTES = new Set<string>([
+  "code-midnight",
+  "code-daylight",
+  "nord-frost",
+  "nord-snow",
+  "rose-moon",
+  "rose-dawn",
+]);
 
 function mixHex(hex: string, target: string, ratio: number): string {
   const parse = (value: string) => {
@@ -67,6 +83,7 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
   const uiFontFamily = useSettingsStore((s) => s.uiFontFamily);
   const uiFontSize = useSettingsStore((s) => s.uiFontSize);
   const effectiveUiFontFamily = normalizeFontFamilyStack(uiFontFamily);
+  const autoContrast = AUTO_CONTRAST_PALETTES.has(resolvedTheme === "dark" ? darkThemePalette : lightThemePalette);
   const primaryColor =
     resolvedTheme === "dark" ? DARK_PRIMARY_COLORS[darkThemePalette] : LIGHT_PRIMARY_COLORS[lightThemePalette];
 
@@ -78,6 +95,7 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
       },
       primaryColor: "cliPrimary",
       primaryShade: 6,
+      autoContrast,
       fontFamily: effectiveUiFontFamily,
       fontFamilyMonospace: effectiveUiFontFamily,
       fontSizes: {
@@ -92,7 +110,7 @@ export function AppMantineThemeProvider({ children }: AppMantineThemeProviderPro
       },
       defaultRadius: "md",
     });
-  }, [effectiveUiFontFamily, primaryColor, uiFontSize]);
+  }, [autoContrast, effectiveUiFontFamily, primaryColor, uiFontSize]);
 
   return (
     <MantineProvider theme={mantineTheme} defaultColorScheme={resolvedTheme} forceColorScheme={resolvedTheme}>
