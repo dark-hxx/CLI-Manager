@@ -213,3 +213,24 @@ Implemented configured newline mapping under Kitty, keyboard/mouse checkpoint pr
 ### Next Steps
 
 - Manually validate all three configured newline chords, Enter once, IME, OMP version/keybindings, WSL/SSH and bilingual UI before closing #293.
+
+
+## Session 141: 修复Windowshelper运行库链接并验证本地打包
+<!-- trellis-session: v=2 fp=85fcea9c8d5f46e2 -->
+
+**Date**: 2026-11-15
+**Task**: 修复Windowshelper运行库链接并验证本地打包
+**Branch**: `master`
+
+### Summary
+
+本记录为构建验收阶段：V1.5.1记录helper的MSVC运行库选择修复；原生回归及本地构建共8项测试通过，三个helper的debug和release通过，完整MSI/NSIS打包及解包哈希通过。架构检查仍有两项既有违规；全工作区graph含其他任务报告critical，当时未安装、提交或发布。
+Topics: [.trellis/research/windows-helper-runtime-linking.md](../../research/windows-helper-runtime-linking.md)
+
+### Git Commits
+
+构建验收阶段未提交；用户随后授权仅提交本次修复，提交前检查见该 topic 的 validation 记录。
+
+### Status
+
+[OK] **Completed**

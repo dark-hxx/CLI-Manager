@@ -1,0 +1,25 @@
+{
+  "id": "fix-windows-helper-runtime-linking",
+  "name": "fix-windows-helper-runtime-linking",
+  "title": "修复 Windows helper 的 MSVC 运行库链接失败",
+  "description": "在独立 helper 构建入口补齐 Tauri 的运行库选择，避免占位 msvcrt.lib 导致 LNK4003/LNK2001，并验证真实本地打包。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "windows-helper-build",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-15",
+  "completedAt": "2026-11-15",
+  "branch": "master",
+  "base_branch": "master",
+  "version": "V1.5.1",
+  "relatedFiles": [
+    "src-tauri/helpers/build.rs",
+    "scripts/helper-windows-runtime.test.mjs",
+    "CHANGELOG.md",
+    "docs/功能清单.md",
+    ".trellis/research/windows-helper-runtime-linking.md"
+  ],
+  "notes": "修复完成。8 项定向测试、三个 helper 的 debug/local release、完整 MSI/NSIS 本地打包和解包哈希均通过；产物沿用当前 1.5.0 元数据，变更记录为授权 V1.5.1。严格架构检查仍有两项既有失败，全工作区 graph 分析含其他任务并报告 critical，不声称清洁提交准入。构建验收后用户另行授权仅提交本次修复；未安装或发布，详见 validation.md。"
+}
