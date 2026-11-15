@@ -133,6 +133,11 @@ pub(super) async fn replace_v2_session(
     let stats = &parts.computed.stats;
     let raw_pointers_json =
         serde_json::to_string(&session_ref.raw_pointers).map_err(|err| err.to_string())?;
+    // 斜杠命令与 Codex 读取 SKILL.md 没有对应的 Skill 工具行，会话级计数随会话行保存供详情读回。
+    let source_extension_json = (!stats.skill_calls.is_empty())
+        .then(|| serde_json::to_string(&serde_json::json!({ "skillCalls": stats.skill_calls })))
+        .transpose()
+        .map_err(|err| err.to_string())?;
     let cwd_normalized = session_ref.cwd.as_deref().map(normalize_history_path);
     let now = now_millis();
     let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
@@ -154,14 +159,14 @@ pub(super) async fn replace_v2_session(
             total_cost_usd, usage_quality, cost_kind, fingerprint_kind, fingerprint_value,
             dominant_model, current_model, context_window, last_context_tokens, reasoning_effort,
             tool_call_count, parser_version, model_version, parse_status, raw_pointers_json,
-            parent_session_id, last_seen_generation, indexed_at
+            parent_session_id, last_seen_generation, indexed_at, source_extension_json
          ) VALUES (
             ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11,
             'active', ?12, ?13, 'reported', ?14,
             ?15, ?16, ?17, ?18,
             ?19, ?20, ?21, 'file-stat', ?22,
             ?23, ?24, ?25, ?26, ?27,
-            ?28, ?29, ?30, 'ok', ?31, ?32, ?33, ?34
+            ?28, ?29, ?30, 'ok', ?31, ?32, ?33, ?34, ?35
          )",
     )
     .bind(source_instance_id)
@@ -212,6 +217,7 @@ pub(super) async fn replace_v2_session(
     .bind(&parts.computed.parent_session_id)
     .bind(generation as i64)
     .bind(now)
+    .bind(source_extension_json)
     .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;

@@ -58,6 +58,7 @@ fn scan_native_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
     let mut message_index = 0usize;
     let mut seen_call_ids: HashSet<String> = HashSet::new();
     let copilot_events = looks_like_copilot_events_file(path);
+    let mut has_completed_tool_items = false;
 
     for line in BufReader::with_capacity(READ_BUF_CAPACITY, file)
         .lines()
@@ -70,6 +71,8 @@ fn scan_native_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
         let Ok(value) = serde_json::from_str::<Value>(trimmed) else {
             continue;
         };
+        has_completed_tool_items |=
+            super::native_tool_records::codex_tool_item(&value).is_some_and(|tool| tool.completed);
 
         let current_message_index = if (copilot_events
             && copilot_message_from_event(&value, message_index).is_some())
@@ -89,7 +92,25 @@ fn scan_native_tool_events(path: &Path) -> Vec<HistoryToolEvent> {
             &mut events,
         );
     }
+    if has_completed_tool_items {
+        drop_covered_inferred_events(&mut events);
+    }
     events
+}
+
+// Codex 有 item_completed 真实执行记录时，编排脚本里同名工具与 MCP 的静态推断调用点只是重复；
+// 仅保留没有原生执行记录的推断项（如 write_stdin）。
+fn drop_covered_inferred_events(events: &mut Vec<HistoryToolEvent>) {
+    use super::tool_observations::is_inferred;
+    let observed: HashSet<String> = events
+        .iter()
+        .filter(|event| !is_inferred(event))
+        .map(|event| event.name.clone())
+        .collect();
+    events.retain(|event| {
+        !is_inferred(event)
+            || !(event.category.starts_with("mcp") || observed.contains(&event.name))
+    });
 }
 
 // 扫描 Grok 工具生命周期记录，按调用 ID 去重并回填结果状态。

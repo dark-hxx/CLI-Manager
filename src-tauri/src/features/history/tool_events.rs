@@ -6,9 +6,11 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 /// 统计工具调用：Claude content 块的 tool_use（按块 id 去重，流式重复行只计一次）、
-/// Codex 的 function_call / custom_tool_call / mcp_tool_call 事件（按 call_id 去重）。
+/// Codex 的 function_call / custom_tool_call / mcp_tool_call 事件（按 call_id 去重），
+/// 以及 Codex 编排（exec）嵌套工具的 item_completed 真实执行记录与 web_search_call（按 item id 去重）。
 /// MCP 按 server 聚合：Claude 工具名形如 mcp__<server>__<tool>，Codex 可在 namespace
-/// 或 invocation.server 里携带 server；Skill 工具取 input.skill。
+/// 或 invocation.server / item.server 里携带 server；Skill 工具取 input.skill，
+/// Codex 读取 `skills/<名称>/SKILL.md` 的命令额外记为该 Skill。
 // 提取 Claude 和 Codex 工具调用，按可用 ID 去重并分类累计 MCP、Skill 与内置工具。
 pub(super) fn collect_tool_calls(
     value: &Value,
@@ -22,7 +24,7 @@ pub(super) fn collect_tool_calls(
         |name: &str, call_id: Option<&str>, input: Option<&Value>, mcp_server: Option<&str>| {
             if let Some(id) = call_id.map(str::trim).filter(|id| !id.is_empty()) {
                 if !seen_call_ids.insert(id.to_string()) {
-                    return;
+                    return false;
                 }
             }
             *tool_call_count += 1;
@@ -45,7 +47,9 @@ pub(super) fn collect_tool_calls(
                 // 既非 MCP 也非 Skill 的内置工具（如 Read / Edit / Bash / shell）
                 *builtin_calls.entry(name.to_string()).or_insert(0) += 1;
             }
+            true
         };
+    let mut payload_recorded = false;
 
     if let Some(blocks) = value
         .get("message")
@@ -74,7 +78,7 @@ pub(super) fn collect_tool_calls(
             Some("function_call") | Some("custom_tool_call")
         ) {
             if let Some(name) = payload.get("name").and_then(Value::as_str) {
-                record(
+                payload_recorded = record(
                     name,
                     payload.get("call_id").and_then(Value::as_str),
                     None,
@@ -102,6 +106,14 @@ pub(super) fn collect_tool_calls(
                     );
                 }
             }
+        } else if let Some(tool) = super::native_tool_records::codex_tool_item(value) {
+            payload_recorded = record(tool.name, tool.call_id, None, tool.mcp_server);
+        }
+    }
+    // Codex 读取 SKILL.md 加载技能，随该命令记录去重；只计 Skill，不重复计工具调用数。
+    if payload_recorded {
+        for skill in super::native_tool_records::codex_command_skills(value) {
+            *skill_calls.entry(skill).or_insert(0) += 1;
         }
     }
 }

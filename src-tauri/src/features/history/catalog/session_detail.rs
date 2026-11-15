@@ -125,7 +125,8 @@ async fn read_session_detail_window(
                 hs.input_tokens, hs.output_tokens, hs.cache_read_tokens,
                 hs.cache_creation_tokens, hs.total_cost_usd, hs.dominant_model,
                 hs.current_model, hs.context_window, hs.last_context_tokens,
-                hs.reasoning_effort, hs.tool_call_count, hs.fingerprint_value
+                hs.reasoning_effort, hs.tool_call_count, hs.fingerprint_value,
+                hs.source_extension_json
          FROM history_sessions hs
          JOIN history_source_instances i ON i.id = hs.source_instance_id
          WHERE i.activation_state = 'active'
@@ -450,6 +451,19 @@ async fn read_session_detail_window(
                 .try_get("output_summary")
                 .map_err(|err| err.to_string())?,
         });
+    }
+    // 斜杠命令与 Codex 读取 SKILL.md 只存在会话级计数里，按名称取较大值与工具行合并。
+    let stored_skill_calls = row
+        .try_get::<Option<String>, _>("source_extension_json")
+        .map_err(|err| err.to_string())?
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+        .and_then(|value| {
+            serde_json::from_value::<HashMap<String, u64>>(value.get("skillCalls")?.clone()).ok()
+        })
+        .unwrap_or_default();
+    for (skill, count) in stored_skill_calls {
+        let current = skill_calls.entry(skill).or_insert(0);
+        *current = (*current).max(count);
     }
 
     let change_rows = sqlx::query(

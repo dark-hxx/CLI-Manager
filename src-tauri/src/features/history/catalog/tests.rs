@@ -1738,6 +1738,86 @@ async fn shadow_build_v2_uses_codex_adapter_stats_and_raw_pointers() {
 }
 
 #[tokio::test]
+// 验证 Codex 读取 SKILL.md 的会话级 Skill 计数经物化后能从第二代详情读回。
+async fn shadow_build_v2_round_trips_codex_skill_loads_into_detail() {
+    let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    ensure_schema(&mut conn).await.unwrap();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let roots = HistoryRoots {
+        claude_config_dir: Some(temp_dir.path().join(".claude")),
+        codex_config_dir: Some(temp_dir.path().join(".codex")),
+        grok_session_root: None,
+        kimi_config_dir: None,
+    };
+    let roots_key = roots.cache_key();
+    let file = resolve_codex_history_root(&roots)
+        .join("2026")
+        .join("01")
+        .join("rollout-2026-01-01T00-00-00-codex-skill.jsonl");
+    let file_path = file.to_string_lossy().to_string();
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(
+        &file,
+        concat!(
+            r#"{"type":"session_meta","payload":{"id":"codex-skill","cwd":"F:\\work\\proj"}}"#,
+            "\n",
+            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:00Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"use docs"}]}}"#,
+            "\n",
+            r#"{"type":"event_msg","timestamp":"2026-01-01T00:00:01Z","payload":{"type":"item_completed","item":{"type":"CommandExecution","id":"exec-1","status":"completed","command":["pwsh.exe","-Command","Get-Content -LiteralPath 'C:/Users/yz/.codex/skills/find-docs/SKILL.md'"]}}}"#,
+            "\n",
+            r#"{"type":"response_item","timestamp":"2026-01-01T00:00:02Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let fingerprint = session_file_fingerprint(&file);
+    sqlx::query(
+        "INSERT INTO history_source_instances(
+            id, source_id, environment_kind, environment_key, storage_kind,
+            locations_json, settings_hash, activation_state, created_at, updated_at
+         ) VALUES (
+            'codex-default', 'codex', 'windows', 'windows', 'mixed',
+            '{}', 'settings', 'active', 1, 1
+         )",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO history_catalog_sessions(
+            roots_key, file_path, source, project_key, cwd, cwd_normalized,
+            session_id, title, branch, created_at, updated_at, message_count,
+            file_created_at, file_updated_at, file_size, parser_version, indexed_at
+         ) VALUES (?1, ?2, 'codex', 'proj', 'F:\\work\\proj', 'f:/work/proj',
+            'codex-skill', 'use docs', NULL, 10, 20, 2, ?3, ?4, ?5, ?6, 30)",
+    )
+    .bind(&roots_key)
+    .bind(&file_path)
+    .bind(fingerprint.created_at)
+    .bind(fingerprint.updated_at)
+    .bind(fingerprint.size as i64)
+    .bind(CATALOG_PARSER_VERSION)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+
+    shadow_build_v2(&mut conn, &roots, &roots_key, 7, false)
+        .await
+        .unwrap();
+    let detail =
+        get_session_detail_from_v2_with_conn(&mut conn, &roots, &file_path, "codex", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+
+    assert_eq!(detail.usage.tool_call_count, 1);
+    assert_eq!(detail.usage.builtin_calls[0].name, "exec_command");
+    assert_eq!(detail.usage.skill_calls.len(), 1);
+    assert_eq!(detail.usage.skill_calls[0].name, "find-docs");
+    assert_eq!(detail.usage.skill_calls[0].count, 1);
+}
+
+#[tokio::test]
 // 验证影子构建纳入活动的 Gemini 等非核心来源。
 async fn shadow_build_v2_includes_active_non_core_sources() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();

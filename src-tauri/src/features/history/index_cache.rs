@@ -86,7 +86,8 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 14：Codex rollout 逐响应 token_usage_record 去重（用量改为只认累计 token_count 差分）。
 // 旧快照里同一个文件的 input/output 被记两次且 cached_input_tokens 未归一化，
 // 而快照复用只比对文件指纹——不改这个版本号，未再写入的旧会话会永远留着翻倍的用量。
-pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 15;
+// 16：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计、读取 SKILL.md 计入 Skill，旧快照计数缺失。
+pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 16;
 pub(super) const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 pub(super) static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();

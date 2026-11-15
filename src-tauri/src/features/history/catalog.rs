@@ -38,7 +38,8 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
-const CATALOG_PARSER_VERSION: i64 = 4;
+// 5：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计，读取 SKILL.md 计入 Skill。
+const CATALOG_PARSER_VERSION: i64 = 5;
 const HISTORY_INDEX_SCHEMA_VERSION: i64 = 6;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;

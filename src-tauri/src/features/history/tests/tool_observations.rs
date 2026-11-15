@@ -66,6 +66,110 @@ fn protocol_errors_and_tool_results_are_not_guessed_from_text() {
 }
 
 #[test]
+fn codex_completed_items_count_nested_executions_and_supersede_covered_inference() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("rollout-2026-11-15T00-00-00-session.jsonl");
+    let completed = |item: Value| json!({"type":"event_msg","payload":{"type":"item_completed",
+        "item":item,"started_at_ms":1000,"completed_at_ms":1600}});
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"session","cwd":"D:\\repo"}}),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call","call_id":"outer","name":"exec",
+            "input":"await tools.exec_command({cmd:\"git status\"}); await tools.mcp__gitnexus__query({}); await tools.write_stdin({});"}}),
+        completed(json!({"type":"CommandExecution","id":"exec-1","command":["pwsh.exe","-Command","git status"],
+            "status":"failed","exit_code":1,"aggregated_output":"boom"})),
+        completed(json!({"type":"McpToolCall","id":"exec-2","server":"gitnexus","tool":"query",
+            "arguments":{"search_query":"x"},"status":"completed","result":{"content":[]}})),
+        completed(json!({"type":"FileChange","id":"exec-3","changes":{"a.rs":{"type":"add","content":"fn main() {}"}},"status":"completed"})),
+        completed(json!({"type":"WebSearch","id":"ws_1","query":"rust"})),
+        json!({"type":"response_item","payload":{"type":"web_search_call","id":"ws_1","status":"completed","action":{"type":"search","query":"rust"}}}),
+        json!({"type":"response_item","payload":{"type":"function_call","name":"sleep","namespace":"clock","call_id":"call_s","arguments":"{}"}}),
+        completed(json!({"type":"Extension","kind":"clock.sleep","id":"call_s","durationMs":45000})),
+        completed(json!({"type":"AgentMessage","id":"msg_1","content":[{"type":"Text","text":"done"}]})),
+        completed(json!({"type":"Reasoning","id":"rs_1","summary_text":[]})),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"outer","output":"ok"}}),
+    ];
+    write_text(&path, &rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"));
+
+    let (_, stats) = scan_session_combined(&path);
+    assert_eq!(stats.tool_call_count, 6);
+    assert_eq!(stats.mcp_calls.get("gitnexus"), Some(&1));
+    for name in ["exec", "exec_command", "apply_patch", "web_search", "sleep"] {
+        assert_eq!(stats.builtin_calls.get(name), Some(&1), "{name}");
+    }
+
+    let events = scan_tool_events(&path);
+    let inferred: Vec<_> = events.iter().filter(|event| is_inferred(event)).map(|event| event.name.as_str()).collect();
+    assert_eq!(inferred, ["write_stdin"]);
+    let command = events.iter().find(|event| event.call_id.as_deref() == Some("exec-1")).unwrap();
+    assert_eq!(command.name, "exec_command");
+    assert_eq!(command.status.as_deref(), Some("failed"));
+    assert_eq!(command.duration_ms, Some(600));
+    assert_eq!(command.input_summary.as_deref(), Some("git status"));
+    assert_eq!(command.output_summary.as_deref(), Some("boom"));
+    let mcp = events.iter().find(|event| event.call_id.as_deref() == Some("exec-2")).unwrap();
+    assert_eq!((mcp.name.as_str(), mcp.category.as_str()), ("query", "mcp:gitnexus"));
+    let patch = events.iter().find(|event| event.name == "apply_patch").unwrap();
+    assert_eq!(patch.input_summary.as_deref(), Some(r#"["a.rs"]"#));
+    let sleep = events.iter().find(|event| event.call_id.as_deref() == Some("call_s")).unwrap();
+    assert_eq!((sleep.name.as_str(), sleep.status.as_deref()), ("sleep", Some("completed")));
+}
+
+#[test]
+fn codex_skill_loads_require_a_concrete_file_under_a_skills_root() {
+    let command = |text: &str| json!({"payload":{"type":"item_completed","item":{
+        "type":"CommandExecution","id":"exec-1","command":["pwsh.exe","-Command",text]}}});
+    let cases: [(&str, &[&str]); 9] = [
+        ("Get-Content -LiteralPath 'C:/Users/yz/.codex/skills/find-docs/SKILL.md' -TotalCount 100; \
+          Get-Content 'C:/Users/yz/.codex/skills/ac-execute/SKILL.md'; cat C:/Users/yz/.codex/skills/find-docs/SKILL.md",
+            &["find-docs", "ac-execute"]),
+        (r"type C:\Users\yz\.codex\skills\.system\imagegen\SKILL.md", &["imagegen"]),
+        ("Get-Content .agents/skills/trellis-start/SKILL.md; Get-Content 'skills/local/SKILL.md'", &["trellis-start", "local"]),
+        // Editing a skill source repo, listings, globs and look-alike files are not skill loads.
+        ("sed -n 1,200p ac-execute/SKILL.md", &[]),
+        ("rg --files -g SKILL.md .codex/skills", &[]),
+        ("Get-ChildItem C:/Users/yz/.codex/skills/*/SKILL.md", &[]),
+        ("cat ~/.codex/skills/$name/SKILL.md", &[]),
+        ("cat ~/.codex/skills/pdf/SKILL.md.bak", &[]),
+        ("cat ~/.codex/skills/SKILL.md", &[]),
+    ];
+    for (text, expected) in cases {
+        assert_eq!(super::super::native_tool_records::codex_command_skills(&command(text)), expected, "{text}");
+    }
+    let direct = json!({"payload":{"type":"function_call","name":"shell","call_id":"c1",
+        "arguments":"{\"command\":[\"bash\",\"-lc\",\"cat ~/.codex/skills/pdf/SKILL.md\"]}"}});
+    assert_eq!(super::super::native_tool_records::codex_command_skills(&direct), ["pdf"]);
+    // Claude has a Skill tool; its shell reads of SKILL.md are skill development, not loads.
+    let claude = json!({"message":{"content":[{"type":"tool_use","id":"t1","name":"Bash",
+        "input":{"command":"cat ~/.claude/skills/pdf/SKILL.md"}}]}});
+    assert!(super::super::native_tool_records::codex_command_skills(&claude).is_empty());
+}
+
+#[test]
+fn codex_skill_loads_count_as_skills_without_extra_tool_calls() {
+    let temp = TempDir::new().unwrap();
+    let path = temp.path().join("rollout-2026-11-15T00-00-00-session.jsonl");
+    let read = |id: &str, file: &str| json!({"type":"event_msg","payload":{"type":"item_completed","item":{
+        "type":"CommandExecution","id":id,"status":"completed","aggregated_output":"# Skill",
+        "command":["pwsh.exe","-Command",format!("Get-Content -LiteralPath '{file}'")]}}});
+    let rows = [
+        json!({"type":"session_meta","payload":{"id":"session","cwd":"D:\\repo"}}),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call","call_id":"outer","name":"exec",
+            "input":"await tools.exec_command({cmd:\"Get-Content C:/Users/yz/.codex/skills/find-docs/SKILL.md\"});"}}),
+        read("exec-1", "C:/Users/yz/.codex/skills/find-docs/SKILL.md"),
+        read("exec-1", "C:/Users/yz/.codex/skills/find-docs/SKILL.md"),
+        read("exec-2", "F:/work/myskill/ac-execute/SKILL.md"),
+        read("exec-3", "C:/Users/yz/.codex/skills/find-docs/SKILL.md"),
+        json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"outer","output":"ok"}}),
+    ];
+    write_text(&path, &rows.iter().map(Value::to_string).collect::<Vec<_>>().join("\n"));
+
+    let (_, stats) = scan_session_combined(&path);
+    assert_eq!(stats.skill_calls, HashMap::from([("find-docs".to_string(), 2)]));
+    assert_eq!(stats.tool_call_count, 4);
+    assert_eq!(stats.builtin_calls.get("exec_command"), Some(&3));
+}
+
+#[test]
 fn inference_ignores_comments_strings_dynamic_access_and_duplicate_parent_records() {
     assert!(literal_tool_calls(r"const regex = /tools.fake()/; tools.real();").is_empty());
     let calls = literal_tool_calls(r#"// tools.fake()

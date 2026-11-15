@@ -144,12 +144,18 @@ export async function fetchLatestProjectSessionDetail(
   prev?: { filePath: string; updatedAt: number },
   source?: HistorySource | null,
   cliSessionId?: string | null,
-  options?: { forceCatalogRefresh?: boolean; freshDetail?: boolean; waitForCatalogRefresh?: boolean }
+  options?: {
+    forceCatalogRefresh?: boolean;
+    freshDetail?: boolean;
+    waitForCatalogRefresh?: boolean;
+    aggregateSubtasks?: boolean;
+  }
 ): Promise<HistorySessionDetail | "unchanged" | null> {
   try {
     const forceCatalogRefresh = Boolean(options?.forceCatalogRefresh);
     const freshDetail = Boolean(options?.freshDetail);
     const waitForCatalogRefresh = Boolean(options?.waitForCatalogRefresh);
+    const aggregateSubtasks = Boolean(options?.aggregateSubtasks);
     logInfo("history.realtime.lookup.start", {
       source: source ?? null,
       projectPath,
@@ -244,16 +250,20 @@ export async function fetchLatestProjectSessionDetail(
       });
       return "unchanged";
     }
-    // aggregateSubtasks=false：实时侧栏优先走可快速返回的路径，避免大会话聚合拖慢首屏。
+    // 默认不聚合子代理，回放/预览等只需父会话的调用方走快速路径；实时统计侧栏显式开启，
+    // 让子代理里的 token、工具与扩展调用计入当前会话。
     const detailRaw = await invoke<unknown>("history_get_session", {
       filePath: summary.file_path,
       ...pathArgs,
       source: summary.source,
       projectKey: summary.project_key,
-      aggregateSubtasks: false,
+      aggregateSubtasks,
       fresh: freshDetail || summaryChanged,
     });
     const detail = normalizeDetail(detailRaw);
+    // 聚合详情的 updated_at 取父子转录最大值，而新鲜度键比较的是父会话 summary；
+    // 子代理更新时会令两者永远不等、每轮轮询都整树重扫，故回填父会话时间作为比较基准。
+    if (aggregateSubtasks) detail.updated_at = summary.updated_at;
     logInfo("history.realtime.lookup.detail", {
       source: detail.source,
       projectPath,

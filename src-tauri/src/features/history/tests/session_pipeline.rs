@@ -237,7 +237,20 @@ fn build_session_detail_exposes_cwd() {
 fn build_session_detail_aggregates_subtasks_for_realtime_stats() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
-    let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
+    let child_file = temp_dir
+        .path()
+        .join("rollout-session")
+        .join("subagents")
+        .join("agent-child.jsonl");
+    // 兄弟 subagents 目录不属于该父会话，不得被聚合。
+    let unrelated_file = temp_dir.path().join("subagents").join("agent-other.jsonl");
+    write_text(
+        &unrelated_file,
+        concat!(
+            r#"{"type":"assistant","timestamp":"2026-06-26T10:02:00Z","message":{"id":"tools-other","content":[{"type":"tool_use","id":"t9","name":"Bash","input":{}}]}}"#,
+            "\n",
+        ),
+    );
     write_text(
         &parent_file,
         concat!(
@@ -294,9 +307,15 @@ fn build_session_detail_aggregates_subtasks_for_realtime_stats() {
 fn delete_session_tree_rejects_subagent_and_cascades_from_parent() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
-    let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
+    let child_file = temp_dir
+        .path()
+        .join("rollout-session")
+        .join("subagents")
+        .join("agent-child.jsonl");
     write_text(&parent_file, "{}\n");
     write_text(&child_file, "{}\n");
+    let sibling_file = temp_dir.path().join("subagents").join("agent-other.jsonl");
+    write_text(&sibling_file, "{}\n");
     let child_ref = SessionFileRef {
         source: "test".to_string(),
         project_key: "CLI-Manager".to_string(),
@@ -320,6 +339,7 @@ fn delete_session_tree_rejects_subagent_and_cascades_from_parent() {
     );
     assert!(!parent_file.exists());
     assert!(!child_file.exists());
+    assert!(sibling_file.exists());
 }
 
 #[test]
@@ -844,7 +864,11 @@ fn scan_session_detail_maps_codex_messages_to_physical_lines() {
 fn build_session_detail_blanks_line_mapping_for_aggregated_subtask_messages() {
     let temp_dir = TempDir::new().unwrap();
     let parent_file = temp_dir.path().join("rollout-session.jsonl");
-    let child_file = temp_dir.path().join("subagents").join("agent-child.jsonl");
+    let child_file = temp_dir
+        .path()
+        .join("rollout-session")
+        .join("subagents")
+        .join("agent-child.jsonl");
     write_text(
         &parent_file,
         concat!(

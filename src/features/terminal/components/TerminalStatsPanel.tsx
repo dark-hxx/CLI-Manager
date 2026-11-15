@@ -621,6 +621,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             {
               forceCatalogRefresh: waitingForUsage || freshDetail,
               freshDetail,
+              aggregateSubtasks: true,
             }
           );
         }

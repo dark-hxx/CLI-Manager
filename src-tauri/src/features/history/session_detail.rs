@@ -575,10 +575,9 @@ pub(super) fn collect_subtask_session_file_refs(
     if is_subagent_transcript_path(&parent_file_ref.path) {
         return Vec::new();
     }
-    let Some(parent_dir) = parent_file_ref.path.parent() else {
-        return Vec::new();
-    };
-    let subagents_dir = parent_dir.join("subagents");
+    // Claude Code 把子代理写在与父 transcript 同名的目录下（`<stem>/subagents/agent-*.jsonl`），
+    // 与 terminal 子代理转录推导一致；父文件的兄弟目录会混入同项目其他会话的子代理。
+    let subagents_dir = parent_file_ref.path.with_extension("").join("subagents");
     let mut paths = list_subagent_transcript_files(&subagents_dir);
     paths.sort();
     paths
