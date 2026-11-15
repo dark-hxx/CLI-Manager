@@ -26,8 +26,6 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
   const terminal = useRef<TerminalHandle>(null);
   const defaults = resolved(prefs);
   const [chosen, setChosen] = useState<ViewMode>();
-  const [nativeScope, setNativeScope] = useState("");
-  const composer = useRef<HTMLDivElement>(null);
   const [chatOpened, setChatOpened] = useState(false);
   const [modifiers, setModifiers] = useState<Modifiers>({ ctrl: false, alt: false });
   const [info, setInfo] = useState<TerminalInfo>({ size: "", direct: false });
@@ -45,19 +43,17 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
   const supported = Boolean(model.device?.capabilities.includes("terminal.transcript"));
   const view: ViewMode = chosen ?? defaults.view;
   const inputScope = JSON.stringify([model.user?.id, model.deviceId, id, session?.projectId, session?.worktreeId]);
-  const nativeOpen = view === "chat" && nativeScope === inputScope;
-  const terminalVisible = view === "terminal" || nativeOpen;
-  const currentView = useRef({ active, view, scope: inputScope, disabled, nativeOpen });
-  currentView.current = { active, view, scope: inputScope, disabled, nativeOpen };
+  const terminalVisible = view === "terminal";
+  const currentView = useRef({ active, view, scope: inputScope, disabled });
+  currentView.current = { active, view, scope: inputScope, disabled };
   const viewMounted = useRef(true);
   const context = { projectId: session?.projectId ?? "", ...(session?.worktreeId ? { worktreeId: session.worktreeId } : {}) };
   const git = useGit(session ? gitKey(model.user?.id, model.deviceId, session.projectId, session.worktreeId) : undefined, context, model.run, active);
   const clearModifiers = () => setModifiers({ ctrl: false, alt: false });
   const latched = modifiers.ctrl || modifiers.alt;
-  const showKeys = nativeOpen || (defaults.keys && !disabled && view === "terminal" && (info.direct || latched || !writing));
+  const showKeys = defaults.keys && !disabled && view === "terminal" && (info.direct || latched || !writing);
   if (view === "chat" && !chatOpened) setChatOpened(true);
   const choose = (next: ViewMode) => {
-    setNativeScope("");
     setChosen(next);
     if (next !== defaults.view || prefs.view) setPrefs({ ...prefs, view: next });
   };
@@ -70,24 +66,6 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
     viewMounted.current = true;
     return () => { clearTimeout(later.current); viewMounted.current = false; };
   }, []);
-  useEffect(() => { setNativeScope(""); }, [inputScope]);
-  const currentChat = () => viewMounted.current && currentView.current.scope === inputScope
-    && !currentView.current.disabled && currentView.current.active && currentView.current.view === "chat";
-  const openCommand = (prefix: string) => {
-    if (!currentChat() || currentView.current.nativeOpen || !["claude", "codex"].includes(project?.source ?? "")) return false;
-    // Use the actual CLI's menu and installed skills; never submit a guessed command or replay failed input.
-    if (!terminal.current?.command(prefix)) return false;
-    flushSync(() => setNativeScope(inputScope));
-    terminal.current.focus();
-    return true;
-  };
-  const returnToChat = () => {
-    // The user finishes/cancels inside the CLI. Hiding its view must not inject control bytes.
-    terminal.current?.leaveDirect(); clearModifiers();
-    flushSync(() => setNativeScope(""));
-    composer.current?.querySelector("textarea")?.focus();
-    git.refresh();
-  };
   const agent = agentName(project?.source);
   const title = session?.title || project?.name || t("app");
   const blocked = ended ? t("blockedEnded") : !online ? t("blockedOffline") : !linkOk || !running ? t("blockedConnecting") : undefined;
@@ -98,15 +76,10 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
       onFontSize={(size) => setPrefs({ ...prefs, fontSize: Math.min(TERMINAL_SIZES.max, Math.max(TERMINAL_SIZES.min, size)) })}
       onView={choose} onDrawer={onDrawer} onPanel={() => onPanel(phone ? undefined : "changes")} onNewSession={onNewSession}
       onSettings={onSettings} onEnd={() => model.end(id)} t={t} />
-    <div className={`tap-session-content${nativeOpen ? " has-native-command" : ""}`}>
-      <div id={`terminal-${id}`} className="tap-terminal-panel" role={nativeOpen ? "region" : "tabpanel"}
-        aria-labelledby={nativeOpen ? `native-command-${id}` : `terminal-tab-${id}`} hidden={!terminalVisible}>
-        {nativeOpen && <div className="tap-native-command-heading">
-          <div><b id={`native-command-${id}`}>{t("nativeCommandTitle")}</b><p>{blocked ?? t("nativeCommandHint")}</p></div>
-          <button type="button" disabled={disabled} onClick={() => terminal.current?.focus()}>{t("nativeCommandKeyboard")}</button>
-          <button type="button" onClick={returnToChat}>{t("nativeCommandReturn")}</button>
-        </div>}
-        <Terminal key={id} ref={terminal} sessionId={id} stream={model.stream} active={active} visible={terminalVisible} nativeMenu={nativeOpen}
+    <div className="tap-session-content">
+      <div id={`terminal-${id}`} className="tap-terminal-panel" role="tabpanel"
+        aria-labelledby={`terminal-tab-${id}`} hidden={!terminalVisible}>
+        <Terminal key={id} ref={terminal} sessionId={id} stream={model.stream} active={active} visible={terminalVisible}
           connected={!disabled} state={state} fontSize={defaults.fontSize} t={t} onInfo={receive}
           onInput={(text) => model.input(id, text)} onResize={(cols, rows) => model.resize(id, cols, rows)}
           onError={(code) => { if (!code.startsWith("terminal_")) model.setError(code); }} onRetry={() => model.reopen(id)} />
@@ -124,24 +97,18 @@ export function SessionView({ id, active, model, prefs, setPrefs, phone, panelOp
       {showKeys && <KeyBar key={id} disabled={disabled} modifiers={modifiers} onModifiers={setModifiers} t={t} onKey={(key) => {
         if (terminal.current?.key(key, modifiers)) clearModifiers();
       }} />}
-      <div ref={composer} hidden={nativeOpen}>
+      <div>
       <Composer key={`${model.user?.id}:${model.deviceId}:${id}`} storageKey={JSON.stringify(["cli-manager.tap.draft", model.user?.id, model.deviceId, id])}
-        disabled={disabled || nativeOpen} blocked={blocked} phone={phone} cli={agent} modifiers={modifiers} clearModifiers={clearModifiers}
-        completion={{ enabled: view === "chat" && !nativeOpen && (project?.source === "claude" || project?.source === "codex"),
-          source: project?.source ?? "", ...context, capabilities: model.device?.capabilities ?? [], run: model.run }}
+        disabled={disabled} blocked={blocked} phone={phone} cli={agent} modifiers={modifiers} clearModifiers={clearModifiers}
+        completion={{ enabled: view === "chat" && (project?.source === "claude" || project?.source === "codex"),
+          source: project?.source ?? "", sessionId: id, ...context, capabilities: model.device?.capabilities ?? [], run: model.run }}
         onPresence={(focused, drafting) => setWriting(focused && drafting)}
         onCharacter={(text) => model.input(id, text)}
-        onCommand={openCommand}
         onSend={async (text) => {
-          if (!viewMounted.current || currentView.current.scope !== inputScope || currentView.current.disabled || currentView.current.nativeOpen) return false;
+          if (!viewMounted.current || currentView.current.scope !== inputScope || currentView.current.disabled) return false;
           // The terminal stays mounted in chat mode, so paste still reads the real CLI modes.
           const accepted = await (terminal.current?.message(text) ?? Promise.resolve(false));
           if (accepted) { clearTimeout(later.current); later.current = setTimeout(git.refresh, 8000); }
-          if (accepted && currentChat() && /^\s*\/(?:[a-z][\w:-]*)?(?:\s|$)/i.test(text)) {
-            // Keep native interactive results in the conversation page and preserve the saved view.
-            flushSync(() => setNativeScope(inputScope));
-            terminal.current?.focus();
-          }
           return accepted;
         }}
         onInterrupt={() => model.input(id, project?.source === "claude" || project?.source === "codex" ? "\x1b" : "\x03")}

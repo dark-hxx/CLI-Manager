@@ -58,42 +58,42 @@ fn checked_path(path: &Path, base: &Path) -> Result<PathBuf, String> {
     Ok(canonical)
 }
 
+// Codex 精确文件名查找绕过目录缓存及其他日志正文，缺失或歧义仍返回不可读。
 fn locate(roots: &HistoryRoots, request: &TranscriptRequest) -> Result<(PathBuf, PathBuf), String> {
-    let base = history_source_base(&request.source, roots)?
+    let root = history_source_base(&request.source, roots)?;
+    let base = root
         .canonicalize()
         .map_err(|_| "history_source_not_found")?;
-    // Enumerate using the existing native / WSL guest boundary; parse only the exact filename.
-    let suffix = format!("-{}.jsonl", request.cli_session_id);
-    let claude_name = format!("{}.jsonl", request.cli_session_id);
-    let matches = |file: &super::SessionFileRef| {
-        let name = file
-            .path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default();
-        file.source == request.source
-            && if request.source == "codex" {
-                name.starts_with("rollout-") && name.ends_with(&suffix)
-            } else {
-                name == claude_name
-            }
+    let candidates: Vec<PathBuf> = if request.source == "codex" {
+        // Keep the original UNC root so WSL still resolves through guest find.
+        super::codex_lookup::rollout_candidates(&root, &request.cli_session_id)
+    } else {
+        let filename = format!("{}.jsonl", request.cli_session_id);
+        let matches = |file: &super::SessionFileRef| {
+            file.source == request.source
+                && file.path.file_name().and_then(|s| s.to_str()) == Some(filename.as_str())
+        };
+        let mut files: Vec<_> = collect_session_files(Some(&request.source), roots)
+            .into_iter()
+            .filter(matches)
+            .collect();
+        if files.is_empty() {
+            files = super::discovery::collect_session_files_with_force(
+                Some(&request.source),
+                roots,
+                true,
+            )
+            .into_iter()
+            .filter(matches)
+            .collect();
+        }
+        files.into_iter().map(|file| file.path).collect()
     };
-    let mut candidates: Vec<_> = collect_session_files(Some(&request.source), roots)
-        .into_iter()
-        .filter(matches)
-        .collect();
-    if candidates.is_empty() {
-        candidates =
-            super::discovery::collect_session_files_with_force(Some(&request.source), roots, true)
-                .into_iter()
-                .filter(matches)
-                .collect();
-    }
     // Ambiguous IDs must not silently choose a different transcript.
     if candidates.len() != 1 {
         return Err("session_file_not_found".into());
     }
-    let path = checked_path(&candidates[0].path, &base)?;
+    let path = checked_path(&candidates[0], &base)?;
     Ok((path, base))
 }
 
@@ -144,6 +144,40 @@ fn watch(key: String, entry: &Arc<Entry>, changed: impl Fn() + Send + 'static) {
     });
 }
 
+// 旧读取失败或文件消失时，仅移除同一个条目，保留并发请求刚建立的替代定位器。
+fn evict_entry(key: &str, entry: &Arc<Entry>) -> Result<(), String> {
+    let mut entries = ENTRIES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| "transcript_cache_poisoned")?;
+    if entries
+        .get(key)
+        .is_some_and(|current| Arc::ptr_eq(current, entry))
+    {
+        entries.remove(key);
+    }
+    Ok(())
+}
+
+// 文件已消失的定位器不能持续续租；条件删除避免清掉另一读请求刚建立的新条目。
+fn cached_entry(key: &str) -> Result<Option<Arc<Entry>>, String> {
+    let entries = ENTRIES.get_or_init(Default::default);
+    let cached = entries
+        .lock()
+        .map_err(|_| "transcript_cache_poisoned")?
+        .get(key)
+        .cloned();
+    if let Some(entry) = &cached {
+        // Metadata I/O stays outside the cache lock, including WSL paths.
+        if !entry.path.is_file() {
+            evict_entry(key, entry)?;
+            return Ok(None);
+        }
+    }
+    Ok(cached)
+}
+
+// 按精确身份及来源根隔离缓存，读取后保留 cwd 校验及既有分页预算。
 fn read(app: AppHandle, request: TranscriptRequest) -> Result<TranscriptPage, String> {
     if !matches!(request.source.as_str(), "claude" | "codex")
         || request.session_id.is_empty()
@@ -169,12 +203,7 @@ fn read(app: AppHandle, request: TranscriptRequest) -> Result<TranscriptPage, St
         roots.cache_key(),
     ))
     .unwrap();
-    let cached = ENTRIES
-        .get_or_init(Default::default)
-        .lock()
-        .map_err(|_| "transcript_cache_poisoned")?
-        .get(&key)
-        .cloned();
+    let cached = cached_entry(&key)?;
     let entry = if let Some(entry) = cached {
         entry
     } else {
@@ -226,12 +255,7 @@ fn read(app: AppHandle, request: TranscriptRequest) -> Result<TranscriptPage, St
         .lock()
         .map_err(|_| "transcript_reader_poisoned")?;
     if let Err(error) = reader.update(&path, None) {
-        ENTRIES
-            .get()
-            .unwrap()
-            .lock()
-            .map_err(|_| "transcript_cache_poisoned")?
-            .remove(&key);
+        evict_entry(&key, &entry)?;
         return Err(error);
     }
     let page = if let Some(before) = request.before {
@@ -264,6 +288,167 @@ pub async fn history_read_live_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 精确 Codex 日志使用独立临时来源，避免测试污染真实目录及其他缓存键。
+    fn codex_fixture() -> (tempfile::TempDir, HistoryRoots, TranscriptRequest, PathBuf) {
+        let temp = tempfile::TempDir::new().unwrap();
+        let config = temp.path().join("codex");
+        let directory = config.join("sessions/2026/11/15");
+        std::fs::create_dir_all(&directory).unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        let path = directory.join(format!("rollout-original-{id}.jsonl"));
+        let request = TranscriptRequest {
+            session_id: "pty-fixture".into(),
+            cli_session_id: id.clone(),
+            source: "codex".into(),
+            cwd: "C:/fixture".into(),
+            claude_config_dir: None,
+            codex_config_dir: Some(config.to_string_lossy().into()),
+            before: None,
+            include_details: Some(true),
+            revision: None,
+        };
+        let rows = [
+            serde_json::json!({"type":"session_meta","payload":{"id":id,"cwd":request.cwd}}),
+            serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+                "content":[{"type":"output_text","text":"Exact reply"}]}}),
+        ];
+        std::fs::write(&path, rows.map(|row| format!("{row}\n")).concat()).unwrap();
+        let roots = history_roots(None, request.codex_config_dir.clone(), None);
+        (temp, roots, request, path)
+    }
+
+    // 目录缓存还指向旧文件时，同 UUID 的当前日志仍必须可读。
+    #[test]
+    fn live_transcript_codex_locator_ignores_stale_catalog_after_rollout_moves() {
+        let (_temp, roots, request, path) = codex_fixture();
+        let cached = collect_session_files(Some("codex"), &roots);
+        assert_eq!(cached.len(), 1);
+        let moved = path.with_file_name(format!("rollout-moved-{}.jsonl", request.cli_session_id));
+        std::fs::rename(&path, &moved).unwrap();
+        assert_eq!(collect_session_files(Some("codex"), &roots)[0].path, path);
+        let (located, _) = locate(&roots, &request)
+            .expect("stale inventory must not block the current exact rollout");
+        assert_eq!(located, moved.canonicalize().unwrap());
+        let mut reader = Reader::new(&request.cli_session_id, &request.cwd);
+        reader.update(&located, None).unwrap();
+        assert_eq!(
+            reader.page(None, true, None).messages[0].text,
+            "Exact reply"
+        );
+    }
+
+    // 有可见页面持续续租时，消失的缓存路径也应被移除并重新定位。
+    #[test]
+    fn live_transcript_missing_cached_locator_is_evicted_before_relocation() {
+        let (_temp, roots, request, path) = codex_fixture();
+        let key = format!("test-codex-{}", request.cli_session_id);
+        let entry = Arc::new(Entry {
+            path: path.canonicalize().unwrap(),
+            base: path.parent().unwrap().canonicalize().unwrap(),
+            reader: Mutex::new(Reader::new(&request.cli_session_id, &request.cwd)),
+            touched: AtomicU64::new(now()),
+        });
+        ENTRIES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(key.clone(), entry.clone());
+        assert!(Arc::ptr_eq(&cached_entry(&key).unwrap().unwrap(), &entry));
+        let moved = path.with_file_name(format!("rollout-moved-{}.jsonl", request.cli_session_id));
+        std::fs::rename(&path, &moved).unwrap();
+        assert!(cached_entry(&key).unwrap().is_none());
+        assert!(!ENTRIES.get().unwrap().lock().unwrap().contains_key(&key));
+        assert_eq!(
+            locate(&roots, &request).unwrap().0,
+            moved.canonicalize().unwrap()
+        );
+    }
+
+    // 在途旧请求失败时，不应移除另一个请求已经替换的缓存。
+    #[test]
+    fn live_transcript_stale_locator_does_not_evict_concurrent_replacement() {
+        let (_temp, _roots, request, path) = codex_fixture();
+        let key = format!("test-replacement-{}", request.cli_session_id);
+        let entry = || {
+            Arc::new(Entry {
+                path: path.clone(),
+                base: path.parent().unwrap().to_path_buf(),
+                reader: Mutex::new(Reader::new(&request.cli_session_id, &request.cwd)),
+                touched: AtomicU64::new(now()),
+            })
+        };
+        let old = entry();
+        let replacement = entry();
+        ENTRIES
+            .get_or_init(Default::default)
+            .lock()
+            .unwrap()
+            .insert(key.clone(), replacement.clone());
+        evict_entry(&key, &old).unwrap();
+        assert!(Arc::ptr_eq(
+            &cached_entry(&key).unwrap().unwrap(),
+            &replacement
+        ));
+        evict_entry(&key, &replacement).unwrap();
+        assert!(cached_entry(&key).unwrap().is_none());
+    }
+
+    // 文件名只缩小定位范围，Reader 仍验证日志正文中的 UUID 和 cwd。
+    #[test]
+    fn live_transcript_codex_exact_filename_does_not_bypass_identity_or_project() {
+        for wrong_identity in [true, false] {
+            let (_temp, roots, request, path) = codex_fixture();
+            let rows = [
+                serde_json::json!({"type":"session_meta","payload":{
+                    "id": if wrong_identity { "12345678-1234-4234-8234-123456789012" } else { &request.cli_session_id },
+                    "cwd": if wrong_identity { &request.cwd } else { "C:/another-project" }}}),
+                serde_json::json!({"type":"response_item","payload":{"type":"message","role":"assistant",
+                    "content":[{"type":"output_text","text":"Must not leak"}]}}),
+            ];
+            std::fs::write(&path, rows.map(|row| format!("{row}\n")).concat()).unwrap();
+            let located = locate(&roots, &request).unwrap().0;
+            let mut reader = Reader::new(&request.cli_session_id, &request.cwd);
+            reader.update(&located, None).unwrap();
+            let page = reader.page(None, true, None);
+            assert!(!page.available);
+            assert!(page.messages.is_empty());
+        }
+    }
+
+    // 冷读取不建立全局目录缓存；后续出现的歧义也不能被旧快照掩盖。
+    #[test]
+    fn live_transcript_codex_locator_is_independent_of_catalog_and_rejects_new_duplicates() {
+        let (_temp, roots, request, path) = codex_fixture();
+        let cache_key = format!("codex|{}", roots.cache_key());
+        assert!(!super::super::get_files_cache()
+            .lock()
+            .unwrap()
+            .by_source
+            .contains_key(&cache_key));
+        assert_eq!(
+            locate(&roots, &request).unwrap().0,
+            path.canonicalize().unwrap()
+        );
+        assert!(!super::super::get_files_cache()
+            .lock()
+            .unwrap()
+            .by_source
+            .contains_key(&cache_key));
+        let copy = path.with_file_name(format!("rollout-copy-{}.jsonl", request.cli_session_id));
+        std::fs::copy(&path, &copy).unwrap();
+        assert!(
+            locate(&roots, &request).is_err(),
+            "duplicate exact IDs must not choose one file"
+        );
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&copy).unwrap();
+        std::fs::write(path.with_file_name("rollout-neighbor.jsonl"), "neighbor").unwrap();
+        assert!(
+            locate(&roots, &request).is_err(),
+            "missing IDs must not borrow a neighbor"
+        );
+    }
 
     #[test]
     fn live_transcript_final_disk_write_notifies_without_pty_and_lease_expires() {

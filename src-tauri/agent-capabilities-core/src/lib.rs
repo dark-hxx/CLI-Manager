@@ -13,6 +13,10 @@ const MAX_SKILL_BYTES: u64 = 256 * 1024;
 const MAX_CONFIG_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_SKILL_FILES: usize = 500;
 const MAX_SKILL_SCAN_DEPTH: usize = 8;
+const MAX_SKILL_SCAN_PATHS: usize = 10_000;
+
+#[cfg(test)]
+mod skill_discovery_tests;
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -118,6 +122,7 @@ pub struct SkillRootSpec {
     pub label: String,
     pub scope: &'static str,
     pub source_kind: &'static str,
+    pub follow_directory_links: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -298,6 +303,7 @@ fn push_skill_root(
             label,
             scope,
             source_kind,
+            follow_directory_links: false,
         });
     }
 }
@@ -567,6 +573,11 @@ pub fn discovery_layout(
             push_skill_root(&mut layout, path, label, "project", kind);
         }
     }
+    if agent == AgentKind::Codex {
+        for root in &mut layout.skill_roots {
+            root.follow_directory_links = true;
+        }
+    }
     layout
 }
 
@@ -614,7 +625,17 @@ pub fn collect_local_bundle(layout: &DiscoveryLayout) -> DiscoveryBundle {
         }
         let mut pending = vec![(root.path.clone(), 0usize)];
         let mut skill_paths = Vec::new();
+        let mut visited = HashSet::new();
+        let mut examined = 0;
         while let Some((directory, depth)) = pending.pop() {
+            // Follow Codex Skill links by canonical directory identity; cycles and aliases cannot fan out.
+            let canonical = match directory.canonicalize() {
+                Ok(path) => path,
+                Err(_) => continue,
+            };
+            if !visited.insert(canonical) {
+                continue;
+            }
             let entries = match fs::read_dir(&directory) {
                 Ok(value) => value,
                 Err(_) => {
@@ -626,23 +647,35 @@ pub fn collect_local_bundle(layout: &DiscoveryLayout) -> DiscoveryBundle {
                 }
             };
             for entry in entries.flatten() {
+                if examined >= MAX_SKILL_SCAN_PATHS {
+                    break;
+                }
+                examined += 1;
                 let path = entry.path();
                 let file_type = match entry.file_type() {
                     Ok(value) => value,
                     Err(_) => continue,
                 };
-                if file_type.is_file()
+                let (is_file, is_dir) = if file_type.is_symlink() && root.follow_directory_links {
+                    match fs::metadata(&path) {
+                        Ok(metadata) => (metadata.is_file(), metadata.is_dir()),
+                        Err(_) => continue,
+                    }
+                } else {
+                    (file_type.is_file(), file_type.is_dir())
+                };
+                if is_file
                     && path.file_name().and_then(|value| value.to_str()) == Some("SKILL.md")
                 {
                     skill_paths.push(path);
                     if skill_paths.len() >= MAX_SKILL_FILES {
                         break;
                     }
-                } else if file_type.is_dir() && depth < MAX_SKILL_SCAN_DEPTH {
+                } else if is_dir && depth < MAX_SKILL_SCAN_DEPTH {
                     pending.push((path, depth + 1));
                 }
             }
-            if skill_paths.len() >= MAX_SKILL_FILES {
+            if skill_paths.len() >= MAX_SKILL_FILES || examined >= MAX_SKILL_SCAN_PATHS {
                 break;
             }
         }
@@ -1591,6 +1624,7 @@ command = "local"
                 label: "home/plugins/cache".into(),
                 scope: "user",
                 source_kind: "plugin",
+                follow_directory_links: false,
             }],
         };
         let bundle = collect_local_bundle(&layout);

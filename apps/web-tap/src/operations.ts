@@ -4,10 +4,11 @@ export type OperationTransport = {
   createOperation: (device: string, kind: string, payload: JsonObject, key: string, signal?: AbortSignal) => Promise<{ operation: Operation }>;
   operation: (id: string, signal?: AbortSignal) => Promise<{ operation: Operation }>;
 };
-/** Register before POST; local hosts may finish before its response is delivered. */
+/** Register before POST; the deadline also covers stalled HTTP and ignores late completion. */
 export function createOperationRunner(transport: OperationTransport) {
   type Pending = {
     device: string; kind: string; controller: AbortController; timer?: ReturnType<typeof setTimeout>;
+    deadlineTimer?: ReturnType<typeof setTimeout>;
     resolve: (value: JsonValue) => void; reject: (error: Error) => void;
   };
   const pending = new Map<string, Pending>();
@@ -16,6 +17,7 @@ export function createOperationRunner(transport: OperationTransport) {
     if (!entry) return;
     pending.delete(key);
     clearTimeout(entry.timer);
+    clearTimeout(entry.deadlineTimer);
     entry.controller.abort();
     if (error) entry.reject(error); else entry.resolve(result);
   };
@@ -32,6 +34,8 @@ export function createOperationRunner(transport: OperationTransport) {
       const entry: Pending = { device, kind, controller: new AbortController(), resolve, reject };
       pending.set(key, entry);
       const deadline = Date.now() + 60_000;
+      // HTTP may never return to poll(); expiry must release the caller independently.
+      entry.deadlineTimer = setTimeout(() => settle(key, new Error("operation_timed_out")), 60_000);
       const poll = async (id: string) => {
         if (!pending.has(key)) return;
         if (Date.now() > deadline) { settle(key, new Error("operation_timed_out")); return; }

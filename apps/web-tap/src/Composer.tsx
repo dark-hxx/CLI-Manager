@@ -3,13 +3,13 @@ import { ArrowUp, ImagePlus, Keyboard, LoaderCircle, Plus, Square } from "lucide
 import { composerAction, modifyCharacter, type Modifiers } from "./input";
 import { Menu } from "./Menu";
 import { fill, type Translate } from "./i18n";
-import { DRAFT_LIMIT, nativeCommandPrefix } from "./completion";
+import { DRAFT_LIMIT } from "./completion";
 import { useComposerCompletion, type CompletionContext } from "./useComposerCompletion";
 import { ComposerCompletion } from "./ComposerCompletion";
 
 /** Draft ownership is per account/device/session, independent of selected display mode. */
 export function Composer({ storageKey, disabled, blocked, phone, cli, modifiers, clearModifiers, onPresence,
-  onCharacter, onSend, onInterrupt, onDirect, onImage, onCommand, completion, t }: {
+  onCharacter, onSend, onInterrupt, onDirect, onImage, completion, t }: {
   storageKey: string; disabled: boolean; blocked?: string; phone: boolean; cli: string;
   modifiers: Modifiers; clearModifiers: () => void;
   /** Focus and draft presence; the key strip steps aside while a message is being written. */
@@ -17,8 +17,6 @@ export function Composer({ storageKey, disabled, blocked, phone, cli, modifiers,
   onCharacter: (bytes: string) => boolean; onSend: (text: string) => Promise<boolean>;
   onInterrupt: () => void; onDirect: () => void; onImage: (file: File) => Promise<string>; t: Translate;
   completion?: CompletionContext;
-  /** Hand a command prefix to the live CLI without submitting it. */
-  onCommand?: (text: string) => boolean;
 }) {
   const [draft, setDraft] = useState(() => { try { return localStorage.getItem(storageKey) ?? ""; } catch { return ""; } });
   const [sending, setSending] = useState(false);
@@ -87,12 +85,6 @@ export function Composer({ storageKey, disabled, blocked, phone, cli, modifiers,
         placeholder={placeholder} enterKeyHint={phone ? "enter" : "send"}
         onChange={(event) => {
           const { value, selectionStart, selectionEnd } = event.target;
-          if (completion?.enabled && ["claude", "codex"].includes(completion.source) && onCommand
-            && !disabled && !busy.current && !composing.current && !modifiers.ctrl && !modifiers.alt
-            && selectionStart === value.length && selectionEnd === value.length && nativeCommandPrefix(value)) {
-            if (onCommand(value)) { setDraft(""); setCaret([0, 0]); setError(""); return; }
-            setError(t("sendFailed"));
-          }
           setDraft(value); setCaret([selectionStart, selectionEnd]);
         }}
         onSelect={(event) => setCaret([event.currentTarget.selectionStart, event.currentTarget.selectionEnd])}

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { performance } from "node:perf_hooks";
 import { stableTurns, mergeTranscript, groupTurns } from "./turns.ts";
 import { createTranscriptSignals } from "./transcriptSignals.ts";
+import { createOperationRunner } from "./operations.ts";
 import { hookHarness, loadModule, nodes, deferred } from "../tests/reactHarness.mjs";
 
 function fixture(respond, incremental = true) {
@@ -83,6 +84,31 @@ test("account/device generation isolates old in-flight responses even when PTY I
   first.resolve(page("Old private response")); await f.h.settle();
   assert.equal(f.turn().answer.text, "New device");
   f.h.dispose();
+});
+
+// 最初的读请求卡住时，超时释放单请求状态，现有尾随刷新读取已结束回合的日志。
+test("chat recovers a final reply after its first transcript HTTP request stalls", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  let posts = 0, firstSignal;
+  const runner = createOperationRunner({
+    createOperation: async (deviceId, kind, payload, idempotencyKey, signal) => {
+      if (++posts === 1) { firstSignal = signal; return new Promise(() => {}); }
+      return { operation: { id: "recovered", deviceId, kind, payload, idempotencyKey,
+        status: "succeeded", result: page("Completed Codex reply") } };
+    },
+    operation: async () => { throw Error("completed reads must not poll"); },
+  });
+  const f = fixture((payload) => runner.run("device-a", "terminal.transcript", payload));
+  t.after(() => { f.h.dispose(); runner.cancel(); });
+  await f.h.settle();
+  await f.advance(5000);
+  assert.equal(posts, 1, "refresh hints keep one pending read");
+  t.mock.timers.tick(60_000);
+  await f.h.settle();
+  await f.advance(0);
+  assert.equal(firstSignal.aborted, true);
+  assert.equal(posts, 2);
+  assert.equal(f.turn().answer.text, "Completed Codex reply");
 });
 
 test("reconciliation preserves old pages, and stable grouping skips all unchanged tool derivation", () => {

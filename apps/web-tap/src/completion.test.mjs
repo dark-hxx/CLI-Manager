@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nativeCommandPrefix, completionToken, fileRequest, fileItems, fileReference, replaceCompletion, DRAFT_LIMIT } from "./completion.ts";
+import { nativeCommandPrefix, completionToken, fileRequest, fileItems, skillItems, fileReference, replaceCompletion, DRAFT_LIMIT } from "./completion.ts";
 
 test("native command prefixes allow actual skill namespaces but never controls or arguments", () => {
   for (const prefix of ["/", "/mcp", "/my-skill", "/plugin:skill", "/future_command"]) assert.equal(nativeCommandPrefix(prefix), true);
@@ -77,4 +77,25 @@ test("candidate replacement preserves surrounding draft and enforces its existin
   assert.equal(replaceCompletion("/mo", completionToken("/mo", 3), "/model").text, "/model ");
   const long = "a".repeat(DRAFT_LIMIT - 2) + " @";
   assert.equal(replaceCompletion(long, completionToken(long, long.length), "@hello"), null);
+});
+
+test("Skill candidates filter host policy, preserve namespaces and insert native invocation syntax", () => {
+  const skills = [
+    { name: "my-skill", state: "available", description: "说明" },
+    { name: "plugin:review", state: "available" },
+    ...["disabled", "denied", "shadowed", "invalid"].map((state) => ({ name: state, state })),
+    ...["../escape", "bad\rname", "$injection", "/model", "x".repeat(129)].map((name) => ({ name, state: "available" })),
+  ];
+  for (const source of ["claude", "codex"]) {
+    const result = skillItems({ available: true, source, skills }, source, "/");
+    assert.deepEqual(result.items.map((item) => item.label), ["/my-skill", "/plugin:review"]);
+    assert.equal(result.items[0].value, source === "codex" ? "$my-skill" : "/my-skill");
+    assert.equal(skillItems({ available: true, source, skills }, source, "/REVIEW").items[0].id, "plugin:review");
+    assert.equal(skillItems({ available: true, source, skills }, source, "/model").items.length, 0);
+  }
+  assert.throws(() => skillItems({ available: true, source: "claude", skills }, "codex", "/"));
+  assert.throws(() => skillItems([], "codex", "/"));
+  const many = Array.from({ length: 100 }, (_, index) => ({ name: `skill-${index}`, state: "available" }));
+  assert.equal(skillItems({ available: true, source: "codex", skills: many }, "codex", "/").items.length, 80);
+  assert.equal(skillItems({ available: true, source: "codex", skills: many }, "codex", "/").limited, true);
 });

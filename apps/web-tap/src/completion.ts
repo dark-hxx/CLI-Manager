@@ -1,5 +1,5 @@
 export type CompletionToken = { kind: "command" | "file"; start: number; end: number; query: string };
-export type CompletionItem = { id: string; label: string; value: string; kind: "file" | "directory" };
+export type CompletionItem = { id: string; label: string; value: string; kind: "file" | "directory" | "skill"; description?: string };
 export const COMPLETION_LIMIT = 80;
 export const DRAFT_LIMIT = 16_000;
 
@@ -63,6 +63,24 @@ export function fileReference(path: string, directory = false): string {
   const quoted = /[\s"'`]/.test(value) ? JSON.stringify(value) : value;
   // Keep the quote open while descending through a folder with spaces.
   return `@${directory && quoted.startsWith('"') ? quoted.slice(0, -1) : quoted}`;
+}
+
+/** The host owns discovery/policy. Only available Skills become invocations, never CLI built-ins. */
+export function skillItems(result: unknown, source: string, query: string): { items: CompletionItem[]; limited: boolean } {
+  if (!result || typeof result !== "object" || !("available" in result) || result.available !== true
+    || !("source" in result) || result.source !== source || !("skills" in result) || !Array.isArray(result.skills))
+    throw new Error("invalid_skill_result");
+  const unique = new Map<string, CompletionItem>();
+  for (const entry of result.skills) {
+    if (!entry || typeof entry !== "object" || entry.state !== "available" || typeof entry.name !== "string"
+      || entry.name.length > 128 || !/^[a-z\d][a-z\d:_-]*$/i.test(entry.name)) continue;
+    if (!entry.name.toLowerCase().includes(query.replace(/^\//, "").toLowerCase())) continue;
+    unique.set(entry.name, { id: entry.name, label: `/${entry.name}`, kind: "skill",
+      value: `${source === "codex" ? "$" : "/"}${entry.name}`,
+      ...(typeof entry.description === "string" ? { description: entry.description.slice(0, 512) } : {}) });
+  }
+  const items = [...unique.values()].sort((a, b) => a.label.localeCompare(b.label));
+  return { items: items.slice(0, COMPLETION_LIMIT), limited: items.length > COMPLETION_LIMIT };
 }
 
 export function replaceCompletion(text: string, token: CompletionToken, value: string, directory = false) {

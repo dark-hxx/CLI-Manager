@@ -13,7 +13,7 @@ function timers() {
     async tick() { const jobs = [...pending.values()]; pending.clear(); for (const fn of jobs) void fn(); await Promise.resolve(); },
   };
 }
-function setup({ source = "codex", run = async () => [], phone = false, commandAccepted = true } = {}) {
+function setup({ source = "codex", run = async () => [], phone = false } = {}) {
   const h = hookHarness(), time = timers(), sent = [], commands = [], storage = new Map(), replacements = [];
   const { useComposerCompletion } = loadModule("useComposerCompletion.ts", { react: h.react, "./completion.ts": completion }, time);
   const { Composer } = loadModule("Composer.tsx", {
@@ -22,9 +22,10 @@ function setup({ source = "codex", run = async () => [], phone = false, commandA
   }, { localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) } });
   const props = { storageKey: "account:device:session", disabled: false, phone, cli: source, modifiers: { ctrl: false, alt: false },
     clearModifiers() {}, onCharacter() {}, onSend: async (text) => { sent.push(text); return true; }, onInterrupt() {}, onDirect() {},
-    onCommand: (prefix) => { commands.push(prefix); return commandAccepted; },
+    onCommand: (prefix) => { commands.push(prefix); return true; }, // Regression trap: Composer must never hand off typing.
     onImage() {}, t: i18n.translator("zh-CN"),
-    completion: { enabled: true, source, projectId: "project-a", worktreeId: "wt", capabilities: ["file.management"], run },
+    completion: { enabled: true, source, projectId: "project-a", worktreeId: "wt", sessionId: "pty-a",
+      capabilities: ["file.management", "terminal.skills"], run },
   };
   const field = () => nodes(h.value).find((node) => node.type === "textarea");
   const menu = () => nodes(h.value).find((node) => node.type === "Completion").props.menu;
@@ -44,27 +45,28 @@ function setup({ source = "codex", run = async () => [], phone = false, commandA
   };
 }
 
-test("slash repeatedly hands the real CLI a prefix without submission on desktop and mobile", () => {
+test("slash opens local Skill completion and preserves the draft without PTY input on desktop and mobile", () => {
   for (const phone of [false, true]) {
     const f = setup({ phone });
     for (const prefix of ["/", "/", "/mcp", "/plugin:skill", "/"]) {
       f.type(prefix);
-      assert.equal(f.field().props.value, "");
-      assert.equal(f.menu().open, false);
-      assert.equal(f.storage.has(f.props.storageKey), false);
+      assert.equal(f.field().props.value, prefix);
+      assert.equal(f.menu().open, true);
+      assert.equal(f.storage.get(f.props.storageKey), prefix);
     }
-    assert.deepEqual(f.commands, ["/", "/", "/mcp", "/plugin:skill", "/"]);
+    assert.deepEqual(f.commands, []);
     assert.deepEqual(f.sent, []);
     f.h.dispose();
   }
 });
 
-test("failed native input preserves the exact draft and does not retry on render", () => {
-  const f = setup({ commandAccepted: false }); f.type("/mcp"); f.h.render();
+test("missing Skill capability preserves the exact draft and makes no request", async () => {
+  const calls = [], f = setup({ run: async (kind) => { calls.push(kind); return []; } });
+  f.props.completion.capabilities = ["file.management"]; f.h.render(); f.type("/mcp"); await f.tick();
   assert.equal(f.field().props.value, "/mcp");
   assert.equal(f.storage.get(f.props.storageKey), "/mcp");
-  assert.deepEqual(f.commands, ["/mcp"]); assert.deepEqual(f.sent, []);
-  assert.ok(nodes(f.h.value).some((node) => node.props?.role === "alert"));
+  assert.deepEqual(f.commands, []); assert.deepEqual(f.sent, []); assert.deepEqual(calls, []);
+  assert.equal(f.menu().error, "completionSkillsUnavailable");
   f.h.dispose();
 });
 
@@ -200,6 +202,59 @@ test("a stale file click cannot replace a changed draft or worktree", async () =
   f.h.dispose();
 });
 
+test("Skill selection stays local, filters cached names, preserves arguments and sends only explicitly", async () => {
+  for (const source of ["claude", "codex"]) for (const phone of [false, true]) {
+    const calls = [], f = setup({ source, phone, run: async (kind, payload) => {
+      calls.push({ kind, payload });
+      return { available: true, source, skills: [{ name: "review", state: "available" }, { name: "test", state: "available" }] };
+    } });
+    f.type("/"); await f.tick();
+    assert.equal(calls[0].kind, "terminal.skills");
+    assert.deepEqual(JSON.parse(JSON.stringify(calls[0].payload)), { projectId: "project-a", worktreeId: "wt", sessionId: "pty-a" });
+    f.type("/re explain @src/app.ts", 3); await f.tick();
+    assert.equal(calls.length, 1, "typing filters the memory-only Skill catalog");
+    assert.equal(f.menu().items.length, 1);
+    f.key("Enter");
+    assert.equal(f.field().props.value, `${source === "codex" ? "$" : "/"}review explain @src/app.ts`);
+    assert.deepEqual(f.commands, []); assert.deepEqual(f.sent, []); assert.equal(f.menu().open, false);
+    f.key("Enter", { repeat: true }); assert.deepEqual(f.sent, []);
+    f.key("Enter", { ctrlKey: true }); await f.h.settle();
+    assert.deepEqual(f.sent, [`${source === "codex" ? "$" : "/"}review explain @src/app.ts`]);
+    f.h.dispose();
+  }
+});
+
+test("Skill loading, errors, empty and unbound results consume confirmation without submission", async () => {
+  let count = 0;
+  const f = setup({ run: async () => {
+    if (++count === 1) throw new Error("offline");
+    if (count === 2) return { available: false, reason: "unbound", skills: [] };
+    return { available: true, source: "codex", skills: [] };
+  } });
+  f.type("/"); f.key("Enter"); assert.deepEqual(f.sent, []);
+  await f.tick(); assert.equal(f.menu().error, "completionSkillsReadFailed");
+  f.key("Enter"); f.menu().retry(); f.h.render(); await f.tick();
+  assert.equal(f.menu().error, "completionSkillsUnbound");
+  f.menu().retry(); f.h.render(); await f.tick();
+  assert.equal(f.menu().error, undefined); f.key("Enter"); assert.deepEqual(f.sent, []);
+  f.key("Escape"); assert.equal(f.menu().open, false); assert.equal(f.field().props.value, "/");
+  f.h.dispose();
+});
+
+test("late Skill results and stale clicks cannot cross account/device/session/worktree context", async () => {
+  const late = deferred(), calls = [];
+  const f = setup({ run: (kind, payload) => { calls.push(payload); return late.promise; } });
+  f.type("/"); await f.tick();
+  f.props.storageKey = "new-account:new-device:new-session"; f.props.completion.sessionId = "pty-b"; f.h.render();
+  late.resolve({ available: true, source: "codex", skills: [{ name: "private", state: "available" }] }); await f.h.settle();
+  assert.equal(f.menu().items.length, 0); assert.deepEqual(f.sent, []);
+  await f.tick(); const old = f.menu();
+  f.props.completion.worktreeId = "different-worktree"; f.h.render(); old.select(old.items[0]); f.h.render();
+  assert.equal(f.field().props.value, "/"); assert.equal(f.menu().items.length, 0);
+  f.props.disabled = true; f.h.render(); await f.tick(); assert.equal(f.menu().open, false);
+  f.h.dispose();
+});
+
 test("menu renders localized accessible options and escaped filenames without desktop services", () => {
   const { ComposerCompletion } = loadModule("ComposerCompletion.tsx");
   for (const language of ["zh-CN", "en-US"]) {
@@ -209,5 +264,18 @@ test("menu renders localized accessible options and escaped filenames without de
     } }));
     assert.match(html, /role="listbox"/); assert.match(html, /aria-selected="true"/);
     assert.match(html, /&lt;script&gt;\.md/); assert.ok(html.includes(i18n.translator(language)("completionFiles")));
+  }
+});
+
+test("Skill menu and hints render in both languages with escaped descriptions", () => {
+  const { ComposerCompletion } = loadModule("ComposerCompletion.tsx");
+  for (const language of ["zh-CN", "en-US"]) {
+    const t = i18n.translator(language);
+    const html = renderToStaticMarkup(React.createElement(ComposerCompletion, { t, menu: {
+      id: "skills", open: true, token: { kind: "command" }, items: [{ id: "review", value: "$review", label: "/review",
+        description: "<script>alert(1)</script>", kind: "skill" }], index: 0, loading: false, select() {}, dismiss() {},
+    } }));
+    assert.ok(html.includes(t("completionSkills"))); assert.ok(html.includes(t("completionSkillNote")));
+    assert.match(html, /&lt;script&gt;/); assert.ok(t("completionHint").includes("Skill"));
   }
 });

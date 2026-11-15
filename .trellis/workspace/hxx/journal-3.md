@@ -215,6 +215,48 @@ Implemented configured newline mapping under Kitty, keyboard/mouse checkpoint pr
 - Manually validate all three configured newline chords, Enter once, IME, OMP version/keybindings, WSL/SSH and bilingual UI before closing #293.
 
 
+## Session 138: V1.5.1 Tap Codex 对话读取可靠性
+<!-- trellis-session: v=2 fp=7089b6bc18ee6462 -->
+
+**Date**: 2026-11-15
+**Task**: V1.5.1 Tap Codex 对话读取可靠性
+**Branch**: `master`
+
+### Summary
+
+已复现并修复精确 Codex 日志定位受旧目录缓存影响、消失的定位缓存持续续租以及 HTTP 挂起不触发请求期限的问题。更新 Web 契约中的精确定位、条件淘汰和独立期限边界；保留身份与项目校验。实机偶发触发条件仍待验收，不进行提交或发布。
+Topics: [.trellis/spec/backend/web-service-contracts.md](../../spec/backend/web-service-contracts.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 139: Tap 对话斜杠改为 Skill 补全
+<!-- trellis-session: v=2 fp=4163836b91152057 -->
+
+**Date**: 2026-11-15
+**Task**: Tap 对话斜杠改为 Skill 补全
+**Branch**: `master`
+
+### Summary
+
+V1.5.1：移除 Composer 输入前缀及 SessionView 发送斜杠后的原生菜单自动切换；terminal.skills 复用当前精确绑定的 Agent 只读诊断，候选只填本地草稿，Claude /name、Codex $name，手动发送沿用 PTY。保留 @、IME、手机及异步隔离，更新中英文、变更记录和 Web 契约。Tap 128 项及补全 31 项、主机 Skill/服务器定向验证通过；共享 helper 能力入口 CRITICAL 已告知。严格架构检查仍有两处既有问题；实机 UI 与语言切换待人工验收，不提交或发布。
+Topics: [.trellis/spec/backend/web-service-contracts.md](../../spec/backend/web-service-contracts.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+
 ## Session 140: V1.5.1 修复 Web 设备连接状态同步
 <!-- trellis-session: v=2 fp=a24102335035b503 -->
 
@@ -251,6 +293,27 @@ Topics: [.trellis/research/windows-helper-runtime-linking.md](../../research/win
 ### Git Commits
 
 构建验收阶段未提交；用户随后授权仅提交本次修复，提交前检查见该 topic 的 validation 记录。
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 142: V1.5.1 补修 Codex Skill 配置根与链接发现
+<!-- trellis-session: v=2 fp=63455921f28470a1 -->
+
+**Date**: 2026-11-15
+**Task**: V1.5.1 补修 Codex Skill 配置根与链接发现
+**Branch**: `master`
+
+### Summary
+
+确认自定义 CODEX_HOME 未沿用及符号链接被跳过两处漏读。Tap 优先会话启动环境配置根；本机/WSL 缺省分别用自身环境。仅 Codex 开启 Skill 链接发现，规范目录去重，保留深度/清单大小并增加路径预算；WSL 固定 find -L。修复前回归复现 0 项，修复后共享核心 19 项、桌面诊断 4 项、主机 7 项与 SSH 编译通过；本机真实共享库只读探针识别全部 6 个链接清单，共 27 项可用元数据。共享 HIGH 已告知，严格架构两处既有问题不变；无实际桌面/WSL/UI 启动，不同步、提交或发布。
+Topics: [.trellis/spec/backend/agent-capability-diagnostics-contracts.md](../../spec/backend/agent-capability-diagnostics-contracts.md)
+
+### Git Commits
+
+(No commits - planning session)
 
 ### Status
 

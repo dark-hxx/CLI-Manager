@@ -1415,6 +1415,7 @@ fn default_capabilities() -> Vec<String> {
         "conversation",
         "terminal.transcript",
         "terminal.transcript.incremental",
+        "terminal.skills",
         "conversation.start",
         "conversation.prompt",
         "terminal.stream",

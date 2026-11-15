@@ -25,8 +25,8 @@ pub(super) fn bound_codex_query(
     Some(session_id.to_string())
 }
 
-// 不读取其他 transcript 的内容，也不等待 catalog 锁；WSL 使用既有 guest find 边界。
-fn rollout_candidates(root: &Path, session_id: &str) -> Vec<PathBuf> {
+// 供精确 UUID 查询及实时读取共用：不读其他 transcript、不等 catalog；WSL 保留 guest find 边界。
+pub(super) fn rollout_candidates(root: &Path, session_id: &str) -> Vec<PathBuf> {
     let suffix = format!("-{session_id}.jsonl");
     let root_text = root.to_string_lossy();
     if crate::wsl::is_wsl_config_dir(&root_text) {

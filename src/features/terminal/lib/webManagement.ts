@@ -14,6 +14,7 @@ import { getHistoryPathArgs } from "../../history/api/historyPathArgs";
 import type { TerminalTranscript } from "../../../shared/types/webBrowser";
 import { normalizeProjectPath } from "../api/terminalProject";
 import { terminalTranscriptPage } from "./webTerminalTranscript";
+import { executeTerminalSkills } from "./webTerminalSkills";
 import { openWindowsTerminal } from "../api/externalTerminal";
 import { requestWebDeviceAction, type WebDeviceActionTarget } from "../../../shared/lib/webDeviceActionBus";
 import { webDeviceApi, type WebDeviceOperation } from "../../../shared/lib/webDevice";
@@ -23,6 +24,7 @@ const MANAGEMENT_KINDS = new Set([
   "project.tree.reorder",
   "terminal.attach_image",
   "terminal.transcript",
+  "terminal.skills",
   "project.start",
   "project.action",
   "ssh.hosts.list", "ssh.client_status", "ssh.test_connection", "ssh.check_path", "ssh.list_directories",
@@ -777,7 +779,7 @@ export async function validateWebManagementOperation(operation: WebDeviceOperati
   const payload = payloadObject(operation);
   requireConfirmation(operation, payload);
 
-  if (operation.kind === "terminal.transcript") {
+  if (operation.kind === "terminal.transcript" || operation.kind === "terminal.skills") {
     await transcriptContext(payload);
     return;
   }
@@ -910,6 +912,8 @@ export async function executeWebManagementOperation(operation: WebDeviceOperatio
   if (!validated) await validateWebManagementOperation(operation);
   const payload = payloadObject(operation);
   if (operation.kind === "terminal.transcript") return executeTerminalTranscript(payload);
+  if (operation.kind === "terminal.skills") return boundedResult(await executeTerminalSkills(() => transcriptContext(payload)),
+    "skills_too_large", "skills_too_large");
   if (operation.kind === "project.tree.reorder") return executeProjectTree(payload);
   if (operation.kind === "project.start") return executeProjectStart(payload);
   if (operation.kind === "project.action") return executeProjectAction(payload);

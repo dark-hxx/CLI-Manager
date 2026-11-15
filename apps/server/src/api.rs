@@ -23,6 +23,7 @@ const ENABLED_OPERATION_KINDS: &[&str] = &[
     "conversation.history",
     "terminal.attach_image",
     "terminal.transcript",
+    "terminal.skills",
     "project.tree.reorder",
     "project.start",
     "project.action",
@@ -595,7 +596,7 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             "operation payload is too large",
         ));
     }
-    if request.kind == "terminal.transcript" {
+    if matches!(request.kind.as_str(), "terminal.transcript" | "terminal.skills") {
         for key in ["projectId", "sessionId"] {
             if payload
                 .get(key)
@@ -608,11 +609,11 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
             {
                 return Err(AppError::bad_request(
                     "invalid_operation_payload",
-                    "transcript requires registered context IDs",
+                    "terminal reads require registered context IDs",
                 ));
             }
         }
-        if payload
+        if request.kind == "terminal.transcript" && payload
             .get("before")
             .is_some_and(|value| value.as_u64().is_none_or(|cursor| cursor > 10_000_000))
         {
@@ -721,6 +722,9 @@ fn validate_operation_request(request: &CreateOperationRequest) -> Result<(), Ap
 }
 
 fn operation_capability(kind: &str) -> &'static str {
+    if kind == "terminal.skills" {
+        return "terminal.skills";
+    }
     if kind == "terminal.transcript" {
         return "terminal.transcript";
     }
@@ -807,6 +811,23 @@ mod tests {
             serde_json::json!({"projectId":"p1","sessionId":"pty-a","cwd":"/private"}),
         ] {
             assert!(validate_operation_request(&request("terminal.transcript", payload)).is_err());
+        }
+    }
+
+    #[test]
+    fn terminal_skills_requires_its_capability_and_registered_context() {
+        assert_eq!(operation_capability("terminal.skills"), "terminal.skills");
+        assert!(!operation_requires_confirmation("terminal.skills"));
+        assert!(validate_operation_request(&request("terminal.skills", serde_json::json!({
+            "projectId": "p1", "worktreeId": "wt", "sessionId": "pty-a"
+        }))).is_ok());
+        for payload in [
+            serde_json::json!({"sessionId":"pty-a"}),
+            serde_json::json!({"projectId":"p1","sessionId":""}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty\na"}),
+            serde_json::json!({"projectId":"p1","sessionId":"pty-a","cwd":"/private"}),
+        ] {
+            assert!(validate_operation_request(&request("terminal.skills", payload)).is_err());
         }
     }
 

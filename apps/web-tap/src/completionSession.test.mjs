@@ -35,7 +35,7 @@ function setup(strictEffects = false) {
   };
 }
 
-test("slash delivery opens the same terminal inside conversation without saving a view preference", async () => {
+test("slash and Skill delivery keep the conversation visible without focusing the native terminal", async () => {
   const f = setup(), context = f.composer().completion;
   assert.equal(context.source, "codex"); assert.equal(context.projectId, "p"); assert.equal(context.worktreeId, "wt");
   assert.equal(context.run, f.model.run); assert.equal(context.enabled, true);
@@ -43,14 +43,15 @@ test("slash delivery opens the same terminal inside conversation without saving 
   assert.match(f.h.value.props.className, /is-chat/);
   f.pending.resolve(true); await send; f.h.render();
   assert.match(f.h.value.props.className, /is-chat/);
-  assert.equal(f.terminal().props.visible, true);
-  assert.ok(f.back());
-  assert.equal(f.focused, 1); assert.deepEqual(f.sent, ["/model "]); assert.deepEqual(f.preferences, []);
+  assert.equal(context.sessionId, "pty-a"); assert.equal(f.composer().onCommand, undefined);
+  assert.equal(f.terminal().props.visible, false);
+  assert.equal(f.back(), undefined);
+  assert.equal(f.focused, 0); assert.deepEqual(f.sent, ["/model "]); assert.deepEqual(f.preferences, []);
   f.h.dispose();
 });
 
 test("ordinary messages and failed command delivery stay in conversation", async () => {
-  for (const [text, accepted] of [["please explain @src/app.ts", true], ["/model", false]]) {
+  for (const [text, accepted] of [["please explain @src/app.ts", true], ["/review", true], ["$review", true], ["/model", false]]) {
     const f = setup(); const send = f.composer().onSend(text); f.pending.resolve(accepted); await send; f.h.render();
     assert.match(f.h.value.props.className, /is-chat/); assert.equal(f.focused, 0);
     f.h.dispose();
@@ -60,45 +61,31 @@ test("ordinary messages and failed command delivery stay in conversation", async
 test("StrictMode effect cleanup and setup do not leave a live session marked unmounted", async () => {
   const f = setup(true), send = f.composer().onSend("/model");
   f.pending.resolve(true); await send; f.h.render();
-  assert.equal(f.focused, 1); assert.match(f.h.value.props.className, /is-chat/); assert.ok(f.back());
+  assert.deepEqual(f.sent, ["/model"]); assert.equal(f.focused, 0);
+  assert.match(f.h.value.props.className, /is-chat/); assert.equal(f.back(), undefined);
   f.h.dispose();
 });
 
-test("native menu uses one renderer, keeps chat mounted, exposes keys and reopens repeatedly", () => {
+test("native terminal remains available through explicit view selection and direct input", () => {
   const f = setup();
-  f.props.prefs.keys = false; f.h.render();
-  for (const prefix of ["/", "/", "/plugin:skill"]) {
-    assert.equal(f.composer().onCommand(prefix), true); f.h.render();
-    assert.equal(f.terminal().props.visible, true);
-    assert.equal(nodes(f.h.value).filter((node) => node.type === "Terminal").length, 1);
-    assert.equal(nodes(f.h.value).find((node) => node.type === "Conversation").props.active, true);
-    assert.equal(f.composer().disabled, true);
-    assert.equal(f.composer().completion.enabled, false);
-    const bar = nodes(f.h.value).find((node) => node.type === "KeyBar");
-    assert.ok(bar, "native interaction needs keys even if ordinary key strip is disabled");
-    bar.props.onKey("down");
-    assert.equal(f.composer().onCommand("/"), false, "do not write a second prefix while the native menu is open");
-    f.back().props.onClick(); f.h.render();
-    assert.equal(f.terminal().props.visible, false); assert.equal(f.composer().disabled, false);
-  }
-  assert.deepEqual(f.prefixes, ["/", "/", "/plugin:skill"]);
-  assert.deepEqual(f.keys, ["down", "down", "down"], "returning must not inject cancellation or submit bytes");
-  assert.deepEqual(f.sent, []); assert.deepEqual(f.preferences, []); assert.equal(f.blurred, 3);
+  f.composer().onDirect(); f.h.render();
+  assert.equal(f.terminal().props.visible, true); assert.equal(f.focused, 1);
+  assert.equal(nodes(f.h.value).filter((node) => node.type === "Terminal").length, 1);
+  assert.equal(f.composer().completion.enabled, false);
+  nodes(f.h.value).find((node) => node.type === "Header").props.onView("chat"); f.h.render();
+  assert.equal(f.terminal().props.visible, false); assert.equal(f.composer().completion.enabled, true);
+  assert.deepEqual(f.prefixes, []); assert.deepEqual(f.sent, []);
   f.h.dispose();
 });
 
-test("native handoff does not open on input failure, disabled state or a stale scope", () => {
+test("disabled and stale session callbacks cannot send Skill input", async () => {
   const f = setup();
-  f.handle.command = () => false;
-  assert.equal(f.composer().onCommand("/"), false); f.h.render();
-  assert.equal(f.terminal().props.visible, false); assert.equal(f.focused, 0);
-  f.handle.command = (text) => { f.prefixes.push(text); return true; };
   for (const change of [() => { f.model.link = "closed"; }, () => { f.model.link = "open"; f.props.active = false; },
     () => { f.props.active = true; f.model.deviceId = "new-device"; }]) {
-    const oldCommand = f.composer().onCommand;
-    change(); f.h.render(); assert.equal(oldCommand("/"), false);
+    const oldSend = f.composer().onSend;
+    change(); f.h.render(); assert.equal(await oldSend("$review"), false);
   }
-  assert.deepEqual(f.prefixes, []);
+  assert.deepEqual(f.sent, []); assert.equal(f.terminal().props.visible, false);
   f.h.dispose();
 });
 

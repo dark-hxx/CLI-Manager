@@ -111,15 +111,26 @@ fn canonical_existing_dir(path: &Path, code: &'static str) -> Result<PathBuf, St
         .ok_or_else(|| code.to_string())
 }
 
+fn agent_config_env(agent: AgentKind) -> Option<&'static str> {
+    match agent {
+        AgentKind::Codex => Some("CODEX_HOME"),
+        AgentKind::Claude => Some("CLAUDE_CONFIG_DIR"),
+        _ => None,
+    }
+}
+
+fn local_config_root(configured: Option<&str>, inherited: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    configured.map(str::trim).filter(|value| !value.is_empty()).map(PathBuf::from)
+        .or_else(|| inherited.filter(|value| !value.is_empty()).map(PathBuf::from))
+}
+
 // 规范化本地用户、项目及配置目录，按发现布局收集并组装能力快照。
 fn inspect_local(core: InspectRequest) -> Result<AgentCapabilitySnapshot, String> {
     let home = canonical_existing_dir(&local_home()?, "agent_capability_home_unavailable")?;
     let cwd = canonical_existing_dir(Path::new(&core.cwd), "agent_capability_cwd_unavailable")?;
-    let config_root = core
-        .config_root
+    let inherited = agent_config_env(core.agent).and_then(env::var_os);
+    let config_root = local_config_root(core.config_root.as_deref(), inherited.as_deref())
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .map(Path::new)
         .map(|path| canonical_existing_dir(path, "agent_capability_config_root_unavailable"))
         .transpose()?;
     let layout = discovery_layout(core.agent, &home, &cwd, config_root.as_deref());
@@ -328,23 +339,11 @@ fn push_wsl_skills(
     label: String,
     scope: &str,
     source_kind: &str,
+    follow_links: bool,
 ) {
     let output = match wsl_output(
         distro,
-        &[
-            "--exec",
-            "find",
-            &root,
-            "-mindepth",
-            "2",
-            "-maxdepth",
-            "8",
-            "-type",
-            "f",
-            "-name",
-            "SKILL.md",
-            "-print",
-        ],
+        &wsl_skill_find_args(&root, follow_links),
         INSPECT_TIMEOUT,
     ) {
         Ok(value) if value.status.success() || !value.stdout.is_empty() => value,
@@ -378,6 +377,16 @@ fn push_wsl_skills(
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
+fn wsl_skill_find_args(root: &str, follow_links: bool) -> Vec<&str> {
+    let mut args = vec!["--exec", "find"];
+    if follow_links {
+        args.push("-L");
+    }
+    args.extend([root, "-mindepth", "2", "-maxdepth", "8", "-type", "f", "-name", "SKILL.md", "-print"]);
+    args
+}
+
 #[cfg(target_os = "windows")]
 // 校验 WSL 工作目录环境，按 Agent 优先级收集用户与项目配置和技能并组装快照。
 fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnapshot, String> {
@@ -405,7 +414,17 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
             .map(|(_, path)| path)
             .or_else(|| value.starts_with('/').then(|| value.to_string()))
     });
-    let agent_root = config_root.unwrap_or_else(|| match core.agent {
+    // Read guest environment only; a host CODEX_HOME must never redirect a WSL session to Windows files.
+    let inherited_root = if config_root.is_none() {
+        agent_config_env(core.agent).and_then(|name| {
+            wsl_output(distro, &["--exec", "printenv", name], INSPECT_TIMEOUT).ok()
+                .filter(|output| output.status.success())
+                .and_then(|output| String::from_utf8(output.stdout).ok())
+                .map(|value| value.trim().to_string())
+                .filter(|value| value.starts_with('/') && !value.contains(['\0', '\r', '\n']))
+        })
+    } else { None };
+    let agent_root = config_root.or(inherited_root).unwrap_or_else(|| match core.agent {
         AgentKind::Claude => posix_join(&home, ".claude"),
         AgentKind::Codex => posix_join(&home, ".codex"),
         AgentKind::Pi => posix_join(&home, ".pi/agent"),
@@ -526,6 +545,7 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
             format!("home/skills-{index}"),
             "user",
             kind,
+            core.agent == AgentKind::Codex,
         );
     }
     let git_root = wsl_git_root(distro, &cwd);
@@ -640,6 +660,7 @@ fn inspect_wsl(core: InspectRequest, distro: &str) -> Result<AgentCapabilitySnap
                 format!("project/skills-{index}"),
                 "project",
                 kind,
+                core.agent == AgentKind::Codex,
             );
         }
     }
@@ -860,5 +881,23 @@ mod tests {
             validate_request(&request).unwrap_err(),
             "agent_capability_ssh_context_required"
         );
+    }
+
+    #[test]
+    fn config_home_follows_explicit_session_then_inherited_environment() {
+        let inherited = std::ffi::OsStr::new("custom-home");
+        assert_eq!(agent_config_env(AgentKind::Codex), Some("CODEX_HOME"));
+        assert_eq!(local_config_root(None, Some(inherited)), Some(PathBuf::from("custom-home")));
+        assert_eq!(local_config_root(Some("  session-home  "), Some(inherited)), Some(PathBuf::from("session-home")));
+        assert_eq!(local_config_root(Some(""), Some(inherited)), Some(PathBuf::from("custom-home")));
+        assert_eq!(local_config_root(None, None), None);
+    }
+
+    #[test]
+    fn wsl_skill_links_use_bounded_native_find_arguments() {
+        let args = wsl_skill_find_args("/home/test/.codex/skills", true);
+        assert_eq!(&args[..4], &["--exec", "find", "-L", "/home/test/.codex/skills"]);
+        assert!(args.windows(2).any(|pair| pair == ["-maxdepth", "8"]));
+        assert!(!wsl_skill_find_args("/home/test/.claude/skills", false).contains(&"-L"));
     }
 }
