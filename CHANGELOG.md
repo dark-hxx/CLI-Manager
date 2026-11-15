@@ -29,6 +29,11 @@
 
 ## [TEMP] - 2026-11-15
 
+### 辅助程序构建
+
+- 更新 Rust helpers 锁文件，补齐 HTTP 压缩所需的 async-compression、compression-codecs/core 及 Brotli 依赖。
+- 忽略 Cargo 在 `src-tauri/helpers/target/` 生成的编译产物，避免将依赖生成代码纳入版本控制和手写代码架构检查。
+
 ### 设置分组折叠与架构整理
 
 - 侧边栏设置的行为、面板皮肤、统计卡片、资源卡片和工具栏分组支持独立折叠，记忆展开状态并纳入偏好备份；默认仅展开行为分组。
