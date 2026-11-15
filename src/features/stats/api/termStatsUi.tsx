@@ -558,11 +558,12 @@ export function Sparkline({
   });
   const [lastX, lastY] = coords[coords.length - 1];
   const pointColors = points.map((_, index) => details?.[index]?.color ?? color);
-  const areaFadeId = `${gradientId}-area-fade`;
-  const areaMaskId = `${gradientId}-area-mask`;
+  // 面积填充用“每段一个竖向渐变”代替 <mask>：统计长图经 html-to-image 序列化时，
+  // mask 的 url(#id) 会被当成外部资源去 fetch 并改写，光栅化后变成实心/条纹色块。
   const areaSegments = coords.slice(1).map(([x, y], index) => {
     const [prevX, prevY] = coords[index];
     return {
+      id: `${gradientId}-area-${index}`,
       color: pointColors[index + 1] ?? color,
       d: `M${prevX},${prevY} L${x},${y} L${x},100 L${prevX},100 Z`,
     };
@@ -596,16 +597,15 @@ export function Sparkline({
     >
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="w-full" style={{ height }}>
         <defs>
-          <linearGradient id={areaFadeId} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="white" stopOpacity={0.35} />
-            <stop offset="100%" stopColor="white" stopOpacity={0} />
-          </linearGradient>
-          <mask id={areaMaskId} maskUnits="userSpaceOnUse">
-            <rect x="0" y="0" width="100" height="100" fill={`url(#${areaFadeId})`} />
-          </mask>
+          {areaSegments.map((segment) => (
+            <linearGradient key={segment.id} id={segment.id} gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="100">
+              <stop offset="0%" stopColor={segment.color} stopOpacity={0.35} />
+              <stop offset="100%" stopColor={segment.color} stopOpacity={0} />
+            </linearGradient>
+          ))}
         </defs>
-        {areaSegments.map((segment, index) => (
-          <path key={index} d={segment.d} fill={segment.color} mask={`url(#${areaMaskId})`} />
+        {areaSegments.map((segment) => (
+          <path key={segment.id} d={segment.d} fill={`url(#${segment.id})`} />
         ))}
         {coords.slice(1).map(([x, y], index) => {
           const [prevX, prevY] = coords[index];

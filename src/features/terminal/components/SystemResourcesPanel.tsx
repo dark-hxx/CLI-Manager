@@ -336,14 +336,21 @@ function TrendChart({
     <div className="relative overflow-hidden rounded-lg border" style={{ height, borderColor: TERM_PANEL.border, backgroundColor: TERM_PANEL.cardInner }}>
       <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-full w-full">
         <defs>
-          <linearGradient id={`${gradientId}-fade`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="white" stopOpacity={fadeStartOpacity} />
-            <stop offset="52%" stopColor="white" stopOpacity={Math.max(fadeEndOpacity, fadeStartOpacity * 0.42)} />
-            <stop offset="100%" stopColor="white" stopOpacity={fadeEndOpacity} />
-          </linearGradient>
-          <mask id={`${gradientId}-mask`}>
-            <rect width="100" height="100" fill={`url(#${gradientId}-fade)`} />
-          </mask>
+          {safeSeries.map((line, index) => (
+            <linearGradient
+              key={`${line.color}-${index}`}
+              id={`${gradientId}-area-${index}`}
+              gradientUnits="userSpaceOnUse"
+              x1="0"
+              y1="0"
+              x2="0"
+              y2="100"
+            >
+              <stop offset="0%" stopColor={line.color} stopOpacity={fadeStartOpacity} />
+              <stop offset="52%" stopColor={line.color} stopOpacity={Math.max(fadeEndOpacity, fadeStartOpacity * 0.42)} />
+              <stop offset="100%" stopColor={line.color} stopOpacity={fadeEndOpacity} />
+            </linearGradient>
+          ))}
         </defs>
         {guideLines.map((guide) => (
           <line
@@ -363,7 +370,7 @@ function TrendChart({
           const coords = toCoords(line.points, line.mode, line.max);
           return (
             <g key={`${line.color}-${index}`}>
-              <path d={areaPath(coords, line.mode)} fill={line.color} mask={`url(#${gradientId}-mask)`} opacity={areaOpacity} />
+              <path d={areaPath(coords, line.mode)} fill={`url(#${gradientId}-area-${index})`} opacity={areaOpacity} />
               <path d={linePath(coords)} fill="none" stroke={line.color} strokeWidth="1.8" vectorEffect="non-scaling-stroke" strokeLinecap="round" strokeLinejoin="round" />
             </g>
           );
