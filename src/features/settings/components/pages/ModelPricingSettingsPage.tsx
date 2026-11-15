@@ -568,7 +568,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
               <StatChip icon={Sparkles} tone="primary" value={candidateTargetCount} label={text("候选", "Candidates")} />
             </Group>
             <Text size="sm" c="var(--text-muted)" style={{ maxWidth: 560 }}>
-              {text("历史统计和内置终端实时估算会优先使用这里的价格；ccusage 面板仍使用外部工具自身定价。", "History stats and built-in terminal estimates use these prices first; the ccusage panel still uses its own external pricing.")}
+              {text("历史统计和内置终端实时估算会优先使用这里的价格。", "History stats and built-in terminal estimates use these prices first.")}
             </Text>
             {lastSyncResult && (
               <Text size="xs" c="var(--text-muted)">

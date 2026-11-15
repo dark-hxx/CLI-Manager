@@ -19,9 +19,6 @@ const SettingsModal = lazy(loadSettingsModal);
 const StatsPanel = lazy(() =>
   import("../features/stats/api/StatsPanel").then((module) => ({ default: module.StatsPanel }))
 );
-const CcusageStatsPanel = lazy(() =>
-  import("../features/stats/api/CcusageStatsPanel").then((module) => ({ default: module.CcusageStatsPanel }))
-);
 import { WindowTitleBar } from "./components/WindowTitleBar";
 import { CloseConfirmDialog } from "../features/terminal/api/CloseConfirmDialog";
 import { RunningTasksExitDialog } from "../features/terminal/api/RunningTasksExitDialog";
@@ -134,7 +131,6 @@ let claudeHookToastSequence = 0;
 const CODEX_GOAL_NOTIFICATION_TTL_MS = 30 * 60 * 1000;
 const CODEX_GOAL_NOTIFICATION_CACHE_LIMIT = 256;
 const codexGoalNotificationSeen = new Map<string, number>();
-type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 type StartupStage = "settings" | "sessions" | "database" | "projects";
 
 function isLikelyMacOs() {
@@ -150,15 +146,6 @@ function preloadSettingsModal(): void {
   });
 }
 
-interface HookSettingsStatusPayload {
-  claude: { status: HookInstallStatus };
-  codex: { status: HookInstallStatus };
-  kimi: { status: HookInstallStatus };
-  pi: { status: HookInstallStatus };
-  grok: { status: HookInstallStatus };
-  claudeAutoRepaired?: boolean;
-}
-
 interface SubagentTranscriptAppendPayload {
   key: string;
   content: string;
@@ -167,40 +154,6 @@ interface SubagentTranscriptAppendPayload {
 
 interface SystemNotificationActionPayload {
   tabId: string;
-}
-
-async function hasInstalledCliHook(): Promise<boolean> {
-  const settings = useSettingsStore.getState();
-  const [hookResult, openCodeResult] = await Promise.allSettled([
-    invoke<HookSettingsStatusPayload>("hook_settings_get_status", {
-      selectedDir: settings.claudeHookConfigDir?.trim() || null,
-      codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
-      kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
-      piSelectedDir: settings.piHookConfigDir?.trim() || null,
-      grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
-      ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
-      autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
-    }),
-    invoke<{ status: string }>("opencode_hook_status"),
-  ]);
-  const status = hookResult.status === "fulfilled" ? hookResult.value : null;
-  if (status?.claudeAutoRepaired && !settings.claudeHookAutoRepairNoticeShown) {
-    toast.info(translateCurrent("notifications.hook.autoRepaired.title"), {
-      description: translateCurrent("notifications.hook.autoRepaired.description"),
-    });
-    void settings.update("claudeHookAutoRepairNoticeShown", true);
-  }
-  const installed =
-    openCodeResult.status === "fulfilled" && openCodeResult.value.status === "installed" ||
-    Boolean(status && (
-      (settings.claudeHookBridgeEnabled && status.claude.status === "installed") ||
-      (settings.codexHookBridgeEnabled && status.codex.status === "installed") ||
-      (settings.kimiHookBridgeEnabled && status.kimi.status === "installed") ||
-      (settings.piHookBridgeEnabled && status.pi.status === "installed") ||
-      (settings.grokHookBridgeEnabled && status.grok.status === "installed")
-    ));
-  if (!installed && hookResult.status === "rejected") throw hookResult.reason;
-  return installed;
 }
 
 type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
@@ -663,7 +616,6 @@ function App() {
   const projectSidebarSide = useSettingsStore((s) => s.workspaceLayout.projectSidebarSide);
   const closeBehavior = useSettingsStore((s) => s.closeBehavior);
   const exitWithRunningTasksBehavior = useSettingsStore((s) => s.exitWithRunningTasksBehavior);
-  const ccusageAnalyticsEnabled = useSettingsStore((s) => s.ccusageAnalyticsEnabled);
   const claudeHookConfigDir = useSettingsStore((s) => s.claudeHookConfigDir);
   const codexHookConfigDir = useSettingsStore((s) => s.codexHookConfigDir);
   const debugMode = useSettingsStore((s) => s.debugMode);
@@ -829,32 +781,8 @@ function App() {
   }, [t]);
 
   const handleOpenStats = useCallback(() => {
-    // 历史用量分析（StatsPanel）不需要 hook，直接打开
-    if (!ccusageAnalyticsEnabled) {
-      setStatsOpen(true);
-      return;
-    }
-
-    // 实时统计（CcusageStatsPanel）需要检查 hook 是否安装
-    void (async () => {
-      try {
-        if (await hasInstalledCliHook()) {
-          setStatsOpen(true);
-          return;
-        }
-      } catch (err) {
-        logWarn("Failed to check hook status before opening realtime stats", err);
-      }
-
-      toast.warning(t("notifications.stats.needHook"), {
-        description: t("notifications.stats.needHookDescription"),
-        action: {
-          label: t("notifications.goSettings"),
-          onClick: () => handleOpenSettings("hooks"),
-        },
-      });
-    })();
-  }, [ccusageAnalyticsEnabled, handleOpenSettings, t]);
+    setStatsOpen(true);
+  }, []);
 
   const handleOpenStatsSession = useCallback(
     async (sessionKey: string) => {
@@ -1924,16 +1852,13 @@ function App() {
             onActiveTabChange={handleSettingsTabChange}
           />
         )}
-        {statsOpen &&
-          (ccusageAnalyticsEnabled ? (
-            <CcusageStatsPanel open={statsOpen} onClose={() => setStatsOpen(false)} />
-          ) : (
-            <StatsPanel
-              open={statsOpen}
-              onClose={() => setStatsOpen(false)}
-              onOpenSession={handleOpenStatsSession}
-            />
-          ))}
+        {statsOpen && (
+          <StatsPanel
+            open={statsOpen}
+            onClose={() => setStatsOpen(false)}
+            onOpenSession={handleOpenStatsSession}
+          />
+        )}
       </Suspense>
       </WorkspaceLayoutShell>
       <CommandPalette />

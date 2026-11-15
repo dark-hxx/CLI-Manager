@@ -1229,7 +1229,7 @@ const { suffixParts, leaf: displayNode } = collectCompactDirectoryChain(node);
 
 **What**: Stats and usage-analysis chart components should import semantic colors from `src/features/stats/api/statsPalette.ts` instead of hard-coding one-off hex/RGBA colors for token series, peak markers, cost fills, or chart tooltips.
 
-**Why**: The app supports multiple light/dark themes. Hard-coded high-saturation chart colors can clash with theme surfaces and make related charts disagree visually. A shared palette keeps History Stats and ccusage charts consistent while still deriving colors from theme tokens.
+**Why**: The app supports multiple light/dark themes. Hard-coded high-saturation chart colors can clash with theme surfaces and make related charts disagree visually. A shared palette keeps History Stats charts consistent while still deriving colors from theme tokens.
 
 **Example**:
 

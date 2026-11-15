@@ -1,5 +1,5 @@
 // 用量分析图表共享色板。
-// 实时小图继续使用主题语义色；历史/ccusage 分析图使用固定可区分图表色，
+// 实时小图继续使用主题语义色；历史分析图使用固定可区分图表色，
 // 避免某些主题下 --accent / --success 过近导致多条线和扇区看起来同色。
 
 const mix = (token: string, percent: number, base = "var(--bg-tertiary)") =>
@@ -36,12 +36,8 @@ export const HISTORY_HEATMAP_COLORS = {
   level4: "#78A9FF",
 } as const;
 
-// 主趋势线、排行主条等使用冷蓝；峰值/选中用少量暖色点缀。
-export const ACCENT = "#33B1FF";
+// 峰值/选中用少量暖色点缀。
 export const PEAK = "#F1C21B";
-
-// 费用等辅助量：保留暖色识别度，避免浅色主题下透明混色看成灰色。
-export const COST_COLOR = "#FF832B";
 
 export const RECHARTS_AXIS_CURSOR = {
   stroke: "color-mix(in srgb, #33B1FF 36%, transparent)",
@@ -51,9 +47,6 @@ export const RECHARTS_AXIS_CURSOR = {
 export const RECHARTS_BAR_CURSOR = {
   fill: "color-mix(in srgb, #33B1FF 10%, transparent)",
 } as const;
-
-export const ECHARTS_AXIS_SHADOW = "color-mix(in srgb, #33B1FF 10%, transparent)";
-export const ECHARTS_AXIS_LINE = "color-mix(in srgb, #33B1FF 36%, transparent)";
 
 export const RECHARTS_TOOLTIP_WRAPPER_STYLE = {
   outline: "none",
@@ -67,16 +60,6 @@ export const RECHARTS_TOOLTIP_LABEL_STYLE = {
 export const RECHARTS_TOOLTIP_ITEM_STYLE = {
   color: "var(--text-secondary)",
 } as const;
-
-// 轻量 tooltip：贴合当前主题表面色，替代原先硬编码的深色玻璃。
-export const CHART_TOOLTIP = {
-  backgroundColor: "var(--bg-secondary)",
-  borderColor: "var(--border)",
-  borderWidth: 1,
-  padding: [8, 12] as [number, number],
-  textStyle: { color: "var(--text-primary)", fontSize: 12 },
-  extraCssText: "border-radius:12px;box-shadow:0 8px 28px rgba(0,0,0,0.18);color:var(--text-primary);",
-};
 
 // 历史用量分析（StatsPanel）专用：引用 stats-panel.css 中按亮/暗主题切换的 Apple 系统色，
 // 只在 .ui-stats-panel 作用域内有效；实时统计等其它面板继续使用上面的固定色板。

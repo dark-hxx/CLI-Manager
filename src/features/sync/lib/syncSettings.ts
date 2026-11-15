@@ -65,8 +65,6 @@ export const SETTING_BACKUP_POLICY = {
   terminalStatusBarVisibility: "preferences",
   terminalStatusBarOrder: "preferences",
   shellRuntimeMonitoringEnabled: "preferences",
-  ccusageAnalyticsEnabled: "preferences",
-  ccusageUseWsl: "excluded",
   windowsConptyCompatibilityFixEnabled: "excluded",
   hideCodexRuntimeCursor: "excluded",
   terminalSessionRestoreEnabled: "excluded",

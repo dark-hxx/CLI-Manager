@@ -26,7 +26,6 @@
 | [CLI Hook Contracts](./cli-hook-contracts.md) | 本地及 SSH Claude/Codex Hook 安装、事件、bridge payload、通知与子 Agent transcript 路由 | Active |
 | [Codex Goal Hook Contracts](./codex-goal-hook-contracts.md) | Goal 状态映射、旧 Hook 载荷接纳及新旧运行进程兼容验证 | Active |
 | [WSL Path Contracts](./wsl-path-contracts.md) | WSL UNC 路径的 Plan 9 限制、wsl.exe 规避方案、路径转换工具签名和安全性 | Active |
-| [ccusage Contracts](./ccusage-contracts.md) | ccusage 运行环境显式开关、缓存 scope 与前后端 WSL 判定合约 | Active |
 | [Project File Command Contracts](./project-file-command-contracts.md) | 项目根目录内文件浏览、读写、复制移动和路径边界校验命令合约 | Active |
 | [Terminal Clipboard Image Contracts](./terminal-clipboard-image-contracts.md) | 跨平台图片格式回退、20 MiB/40M 附件预算与终端/SSH 路由 | Active |
 | [App Startup Contracts](./app-startup-contracts.md) | 应用启动链路、单实例约束与主窗口唤醒行为 | Active |

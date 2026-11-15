@@ -6,8 +6,6 @@ pub mod extensions;
 pub mod app_data;
 #[path = "../features/terminal/background.rs"]
 pub mod background;
-#[path = "../features/stats/ccusage.rs"]
-pub mod ccusage;
 #[path = "../features/terminal/suggestions.rs"]
 pub mod command_suggestion;
 #[path = "../features/app-data/repair/mod.rs"]

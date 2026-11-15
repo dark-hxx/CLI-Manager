@@ -429,8 +429,6 @@ export interface Settings {
   terminalStatusBarVisibility: TerminalStatusBarVisibilitySettings;
   terminalStatusBarOrder: TerminalStatusBarOrderSettings;
   shellRuntimeMonitoringEnabled: boolean;
-  ccusageAnalyticsEnabled: boolean;
-  ccusageUseWsl: boolean;
   windowsConptyCompatibilityFixEnabled: boolean;
   hideCodexRuntimeCursor: boolean;
   terminalSessionRestoreEnabled: boolean;
@@ -648,8 +646,6 @@ const DEFAULTS: Settings = {
   },
   terminalStatusBarOrder: [...TERMINAL_STATUS_BAR_ITEM_KEYS],
   shellRuntimeMonitoringEnabled: false,
-  ccusageAnalyticsEnabled: false,
-  ccusageUseWsl: false,
   windowsConptyCompatibilityFixEnabled: true,
   hideCodexRuntimeCursor: false,
   terminalSessionRestoreEnabled: true,
@@ -1588,14 +1584,6 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.backgroundIncludeFinishedTasks === "boolean"
         ? entries.backgroundIncludeFinishedTasks
         : DEFAULTS.backgroundIncludeFinishedTasks;
-    entries.ccusageAnalyticsEnabled =
-      typeof entries.ccusageAnalyticsEnabled === "boolean"
-        ? entries.ccusageAnalyticsEnabled
-        : DEFAULTS.ccusageAnalyticsEnabled;
-    entries.ccusageUseWsl =
-      typeof entries.ccusageUseWsl === "boolean"
-        ? entries.ccusageUseWsl
-        : DEFAULTS.ccusageUseWsl;
     entries.windowsConptyCompatibilityFixEnabled =
       typeof entries.windowsConptyCompatibilityFixEnabled === "boolean"
         ? entries.windowsConptyCompatibilityFixEnabled

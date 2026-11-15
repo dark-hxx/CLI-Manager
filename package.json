@@ -69,7 +69,6 @@
     "@xterm/xterm": "6.1.0-beta.288",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "echarts": "^6.1.0",
     "emoji-mart": "^5.6.0",
     "html-to-image": "^1.11.13",
     "ignore": "^7.0.6",

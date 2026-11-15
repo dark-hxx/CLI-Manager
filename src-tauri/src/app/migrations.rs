@@ -1195,5 +1195,99 @@ pub(crate) fn migrations() -> Vec<Migration> {
             sql: MIGRATION_CREATE_MESSAGE_STARS_SQL,
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: 42,
+            description: "drop_ccusage_cache_table",
+            sql: "DROP TABLE IF EXISTS ccusage_cache;",
+            kind: MigrationKind::Up,
+        },
     ]
+}
+
+#[cfg(test)]
+mod retired_analytics_migration_tests {
+    use super::{migrations, MIGRATION_CREATE_MESSAGE_STARS_VERSION};
+    use sqlx::{Connection, SqliteConnection};
+    use tauri_plugin_sql::MigrationKind;
+
+    #[test]
+    // 验证废弃缓存清理迁移唯一登记在已发布的回答星标迁移之后。
+    fn cleanup_is_registered_after_message_stars() {
+        let registry = migrations();
+        let cleanup: Vec<_> = registry
+            .iter()
+            .filter(|entry| entry.version == 42)
+            .collect();
+        assert_eq!(cleanup.len(), 1);
+        assert_eq!(cleanup[0].description, "drop_ccusage_cache_table");
+        assert!(matches!(&cleanup[0].kind, MigrationKind::Up));
+        let star_position = registry
+            .iter()
+            .position(|entry| entry.version == MIGRATION_CREATE_MESSAGE_STARS_VERSION)
+            .unwrap();
+        let cleanup_position = registry
+            .iter()
+            .position(|entry| entry.version == 42)
+            .unwrap();
+        assert!(star_position < cleanup_position);
+    }
+
+    #[tokio::test]
+    // 在真实 SQLite 事务中验证缺表、空表和旧缓存清理，以及其他业务数据保留。
+    async fn cleanup_handles_legacy_cache_states_without_touching_business_data() {
+        let registry = migrations();
+        let legacy = registry.iter().find(|entry| entry.version == 10).unwrap();
+        let cleanup = registry.iter().find(|entry| entry.version == 42).unwrap();
+
+        for state in ["missing", "empty", "populated"] {
+            let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+            sqlx::raw_sql(
+                "CREATE TABLE projects (id TEXT PRIMARY KEY);
+                 INSERT INTO projects VALUES ('keep-project');
+                 CREATE TABLE model_prices (model TEXT PRIMARY KEY);
+                 INSERT INTO model_prices VALUES ('keep-model');
+                 CREATE TABLE usage_records (record_id TEXT PRIMARY KEY);
+                 INSERT INTO usage_records VALUES ('keep-usage');",
+            )
+            .execute(&mut conn)
+            .await
+            .unwrap();
+            if state != "missing" {
+                sqlx::raw_sql(legacy.sql).execute(&mut conn).await.unwrap();
+            }
+            if state == "populated" {
+                sqlx::query(
+                    "INSERT INTO ccusage_cache
+                     (cache_key, source, report_kind, payload_json, updated_at)
+                     VALUES ('all:host:daily', 'all', 'daily', '{}', 123)",
+                )
+                .execute(&mut conn)
+                .await
+                .unwrap();
+            }
+
+            let mut tx = conn.begin().await.unwrap();
+            sqlx::raw_sql(cleanup.sql).execute(&mut *tx).await.unwrap();
+            tx.commit().await.unwrap();
+            // 缺表时和重复执行都必须安全，覆盖新安装及清理后的数据库。
+            sqlx::raw_sql(cleanup.sql).execute(&mut conn).await.unwrap();
+            let cache_objects: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE name IN ('ccusage_cache', 'idx_ccusage_cache_source')",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+            assert_eq!(cache_objects, 0, "cache state: {state}");
+            let preserved_rows: i64 = sqlx::query_scalar(
+                "SELECT (SELECT COUNT(*) FROM projects WHERE id = 'keep-project')
+                      + (SELECT COUNT(*) FROM model_prices WHERE model = 'keep-model')
+                      + (SELECT COUNT(*) FROM usage_records WHERE record_id = 'keep-usage')",
+            )
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+            assert_eq!(preserved_rows, 3, "cache state: {state}");
+        }
+    }
 }

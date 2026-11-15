@@ -590,7 +590,6 @@ export interface CommandHistoryEntry {
 
 export type HistorySource = HistorySourceId;
 export type HistorySourceFilter = "all" | HistorySourceId;
-export type CcusageSource = "all" | "claude" | "codex";
 
 export interface HistoryRawPointer {
   role: string;

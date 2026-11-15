@@ -1,0 +1,31 @@
+{
+  "id": "remove-ccusage",
+  "name": "remove-ccusage",
+  "title": "移除 ccusage 看板及关联实现",
+  "description": "删除通用设置的 ccusage 选项、外部看板、WSL 工具链、专用 IPC 与缓存运行代码，分析入口统一使用内置看板。",
+  "status": "review",
+  "dev_type": "fullstack",
+  "scope": "stats",
+  "priority": "P2",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-15",
+  "completedAt": null,
+  "branch": "master",
+  "base_branch": "master",
+  "version": "TEMP",
+  "notes": "删除实现及复查发现的迁移断言问题已修复；34 项 Rust 迁移测试与严格架构检查通过。TEMP 已记录，按用户要求随本次变更提交；待人工桌面中英文验收，未执行远程同步。详见 validation.md。",
+  "relatedFiles": [
+    "src/app/App.tsx",
+    "src/features/settings/components/pages/GeneralSettingsPage.tsx",
+    "src/shared/preferences/settingsStore.ts",
+    "src/features/sync/lib/syncSettings.ts",
+    "src-tauri/src/app/migrations.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/commands/mod.rs",
+    "package.json",
+    "package-lock.json",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ]
+}

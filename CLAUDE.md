@@ -29,7 +29,7 @@ cd src-tauri && cargo test <test_name>   # 运行单个 Rust 测试
 ## 架构要点
 
 ### IPC 边界
-- 所有后端命令在 `src-tauri/src/lib.rs` 的 `invoke_handler![]` 集中注册——**新增命令必须在此登记，否则前端 invoke 会失败**。命令实现分散在 `src-tauri/src/commands/*.rs`（terminal/fs/shell/history/sync/version/background/hook_settings/ccusage/ccswitch/git/model_pricing/logging）。
+- 所有后端命令在 `src-tauri/src/lib.rs` 的 `invoke_handler![]` 集中注册——**新增命令必须在此登记，否则前端 invoke 会失败**。命令实现分散在 `src-tauri/src/commands/*.rs`（terminal/fs/shell/history/sync/version/background/hook_settings/ccswitch/git/model_pricing/logging）。
 - 后端 → 前端走事件：PTY 输出 `pty-output-{sessionId}`；CLI Hook 通知 `claude-hook-notification`；托盘退出 `tray-quit-requested`。
 
 ### 终端与 PTY
@@ -40,15 +40,15 @@ cd src-tauri && cargo test <test_name>   # 运行单个 Rust 测试
 ### CLI Hook 桥接（Claude / Codex）
 - `src-tauri/src/claude_hook.rs` 在启动时绑定 `127.0.0.1` 随机端口起一个 TCP server，用一次性 token 校验，接收 Claude/Codex 的 hook 上报（SessionStart/UserPromptSubmit/Notification/Stop/StopFailure/PermissionRequest），转成 `claude-hook-notification` 事件发给前端。
 - `hook_settings.rs` 负责把 hook 配置安装/卸载进 Claude/Codex 的配置目录；`hook_client.rs` 是上报端。
-- 前端在 `App.tsx` 监听该事件：`SessionStart`/`UserPromptSubmit` 仅用于绑定 sessionId 不弹 toast，其余事件弹通知。实时统计（CcusageStatsPanel）依赖 hook 上报的 sessionId，未安装 hook 时会引导去设置。
+- 前端在 `App.tsx` 监听该事件：`SessionStart`/`UserPromptSubmit` 仅用于绑定 sessionId 不弹 toast，其余事件弹通知。内置历史分析入口直接打开 StatsPanel。
 
 ### 数据层
 - SQLite 通过 `tauri-plugin-sql`，**migrations 定义在 `lib.rs` 的 `migrations()`，当前到 v33**。新增表/列必须追加新的 `Migration`（只增不改，向后兼容），不要修改历史 migration。`commands/db_repair.rs` 的漂移修复只覆盖 v13–v15 与两个 SSH 主机 migration（`KNOWN_DRIFT_START_VERSION` / `KNOWN_DRIFT_END_VERSION`），新增版本落在该窗口外时无需同步登记。
-- 前端用 `Database.load("sqlite:cli-manager.db")` 直接读写 SQLite（见 `src/lib/`）。表：`projects`、`groups`、`command_templates`、`command_history`、`session_meta`、`sync_meta`、`ccusage_cache`、`model_prices`。
+- 前端用 `Database.load("sqlite:cli-manager.db")` 直接读写 SQLite（见 `src/lib/`）。表：`projects`、`groups`、`command_templates`、`command_history`、`session_meta`、`sync_meta`、`model_prices`。
 - 用户偏好（设置/主题/快捷键/同步配置等）走 `tauri-plugin-store`，由 `stores/settingsStore.ts` 管理，与 SQLite 分离。
 
 ### 前端状态（Zustand，`src/stores/`）
-每个领域一个 store：`settingsStore`(偏好/主题/字体)、`projectStore`(项目树)、`terminalStore`+`terminalPaneTree`(终端/分屏)、`sessionStore`(会话持久化)、`historyStore`(历史会话浏览)、`syncStore`(WebDAV)、`templateStore`(命令模板三级作用域)、`commandHistoryStore`、`gitStore`、`ccusageStore`、`modelPricingStore`、`updateStore`。Store 之间通过 `useXxxStore.getState()` 直接互调（如 terminalStore 读 settings/session）。
+每个领域一个 store：`settingsStore`(偏好/主题/字体)、`projectStore`(项目树)、`terminalStore`+`terminalPaneTree`(终端/分屏)、`sessionStore`(会话持久化)、`historyStore`(历史会话浏览)、`syncStore`(WebDAV)、`templateStore`(命令模板三级作用域)、`commandHistoryStore`、`gitStore`、`modelPricingStore`、`updateStore`。Store 之间通过 `useXxxStore.getState()` 直接互调（如 terminalStore 读 settings/session）。
 
 ### 启动时序（`App.tsx` 的 `init()`）
 1. 先 `loadSettings()`；2. 并行 load sync + session，预热 model pricing；3. `projectStore.fetchAll()`；4. **`sessionStore.clear()`——启动时刻意不恢复历史终端**，避免重建 PTY 并重跑 startupCmd；5. 首屏渲染后再跑延迟任务（自动同步、检查更新）。

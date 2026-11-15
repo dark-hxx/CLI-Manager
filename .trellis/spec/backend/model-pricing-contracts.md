@@ -91,7 +91,6 @@ fn calculate_usage_cost(model: Option<&str>, usage: UsageTokenScan) -> UsageStat
 - Fuzzy scoring mixes token containment (shared tokens / shorter side), character Levenshtein similarity, and character Jaccard, with threshold `MIN_CANDIDATE_SCORE = 0.70`. Pure character-only scoring must not discard clear base-model candidates that only differ by marketing/build suffixes.
 - Model context limits for UI display use a shared frontend resolver: exact log value first, then model metadata cached in `model_prices.raw_json`, then local model-name rules, then unknown. Do not add a database migration only for context-window metadata unless a future feature needs querying/sorting by that field.
 - Context metadata parsing is field-whitelisted. LiteLLM rows may use `max_input_tokens`, `context_window`, or `max_tokens`; OpenRouter rows may use `context_length`. If a LiteLLM row has tiered pricing keys like `input_cost_per_token_above_272k_tokens`, use that lowest `above_<N>k_tokens` cutoff as the standard context display limit before `max_input_tokens`. Unknown/missing fields are ignored instead of guessed.
-- `ccusage` reports keep using the external ccusage tool's own cost fields. Do not override ccusage costs with the local `model_prices` table unless a future task explicitly changes that contract.
 
 ### 4. Validation & Error Matrix
 
