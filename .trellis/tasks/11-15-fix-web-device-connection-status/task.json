@@ -1,0 +1,28 @@
+{
+  "id": "fix-web-device-connection-status",
+  "name": "fix-web-device-connection-status",
+  "title": "修复 Web 设备已连接但设置页仍显示正在连接",
+  "description": "复用桌面 Web bridge 的状态查询，将 daemon / Tauri 权威快照同步给设置页，并保护异步回执及未保存草稿。",
+  "status": "review",
+  "dev_type": "frontend",
+  "scope": "web-device-status",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-11-15",
+  "completedAt": null,
+  "branch": "master",
+  "base_branch": "master",
+  "version": "V1.5.1",
+  "relatedFiles": [
+    "src/shared/lib/webDevice.ts",
+    "src/shared/lib/webDeviceStatus.ts",
+    "src/shared/lib/webDeviceStatus.test.mjs",
+    "src/features/settings/components/WebDeviceSettingsSection.tsx",
+    "src/features/settings/lib/webNetworkSettings.test.mjs",
+    ".trellis/spec/backend/web-service-contracts.md",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "V1.5.1 修复已实现；27 项定向测试、TypeScript 及 Vite 构建通过。严格架构检查有两处 HEAD 既有失败；全工作区 GitNexus 变更分析包含其他任务。实机状态/中英文切换待人工验收，详见 validation.md。mini-trellis session 140 已记录。用户随后授权提交并推送，仅暂存本修复及对应文档，不纳入其他未提交任务，不发布安装包。"
+}

@@ -215,6 +215,27 @@ Implemented configured newline mapping under Kitty, keyboard/mouse checkpoint pr
 - Manually validate all three configured newline chords, Enter once, IME, OMP version/keybindings, WSL/SSH and bilingual UI before closing #293.
 
 
+## Session 140: V1.5.1 修复 Web 设备连接状态同步
+<!-- trellis-session: v=2 fp=a24102335035b503 -->
+
+**Date**: 2026-11-15
+**Task**: V1.5.1 修复 Web 设备连接状态同步
+**Branch**: `master`
+
+### Summary
+
+确认正式版/开发版 daemon 已连接且配对成功，根因是设置页只监听 Tauri 事件而全局状态查询未传播。共享 webDeviceStatusSource 接入状态 IPC，复用 3 秒查询，保护迟到回执及草稿。27 项定向测试、TypeScript 与 Vite 构建通过；严格架构检查受两处 HEAD 既有问题阻挡，实机双语与启停验收待人工确认。
+Topics: [.trellis/spec/backend/web-service-contracts.md](../../spec/backend/web-service-contracts.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+
 ## Session 141: 修复Windowshelper运行库链接并验证本地打包
 <!-- trellis-session: v=2 fp=85fcea9c8d5f46e2 -->
 

@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~236 | Active |
+| `journal-3.md` | ~257 | Active |
 | `journal-2.md` | ~1975 | Archived |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -32,6 +32,7 @@
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
 | 141 | 2026-11-15 | 修复Windowshelper运行库链接并验证本地打包 | - | `master` |
+| 140 | 2026-11-15 | V1.5.1 修复 Web 设备连接状态同步 | - | `master` |
 | 137 | 2026-10-29 | Issue 293: settings-first terminal newline (V1.4.5) | `3ba3d707` | `master` |
 | 136 | 2026-10-16 | 终端字素宽度与 Pi 滚动条验证（#285/#286） | `b77fc5e7` | `master` |
 | 135 | 2026-10-16 | PR #284 多行启动命令 P2 修复 | `900deab0` | `pr-284-review-fixes` |

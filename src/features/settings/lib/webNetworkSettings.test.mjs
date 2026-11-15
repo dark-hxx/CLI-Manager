@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { test } from "node:test";
 import vm from "node:vm";
+import { createWebDeviceStatusSource } from "../../../shared/lib/webDeviceStatus.ts";
 
 const require = createRequire(import.meta.url);
 const ts = require("typescript");
@@ -116,7 +117,8 @@ function componentHarness(kind) {
   let language = zh;
   const toasts = [];
   const requests = [];
-  const currentStatus = kind === "server" ? listenerStatus : deviceStatus;
+  let currentStatus = kind === "server" ? listenerStatus : deviceStatus;
+  const statusSource = createWebDeviceStatusSource();
   const failure = kind === "server"
     ? "Enable trusted network HTTP explicitly, or configure an HTTPS browser origin"
     : "remote web device server must use TLS";
@@ -153,6 +155,13 @@ function componentHarness(kind) {
     start: async () => ({ ...currentStatus, running: true }),
     stop: async () => ({ ...currentStatus, running: false }),
   };
+  const deviceApi = {
+    ...api,
+    getStatus: () => statusSource.refresh(api.getStatus),
+    saveProfile: (request) => statusSource.request(() => api.saveProfile(request)),
+    start: () => statusSource.request(api.start),
+    stop: () => statusSource.request(api.stop),
+  };
   const jsx = (type, props) => ({ type, props });
   const components = new Proxy({}, { get: (_, name) => name });
   const translate = (key) => language[key] ?? key;
@@ -162,9 +171,10 @@ function componentHarness(kind) {
     sonner: { toast: { error: (...args) => toasts.push(args), success: (...args) => toasts.push(args) } },
     "../../../shared/i18n/index": { useI18n: () => ({ t: translate }) },
     "../../../shared/lib/webServer": { webServerApi: api },
-    "../../../shared/lib/webDevice": { webDeviceApi: api },
+    "../../../shared/lib/webDevice": { webDeviceApi: deviceApi },
+    "../../../shared/lib/webDeviceStatus": { webDeviceStatusSource: statusSource },
     "../../../shared/preferences/settingsStore": { useSettingsStore: () => 96 },
-    "../../../shared/lib/webTerminalFrames": {}, "./WebMobileAccess": {},
+    "../../../shared/lib/webTerminalFrames": {}, "./WebMobileAccess": {}, "./SettingsIcons": components,
     "../lib/webPairingLifecycle": { pairingRefreshDelay: () => null },
     "../lib/webSettingsDraft": drafts, "../lib/webNetworkGuidance": guidance,
     window: { setInterval: (handler) => { poll = handler; return 1; }, clearInterval() {} },
@@ -191,12 +201,64 @@ function componentHarness(kind) {
     find, flush, toasts, requests,
     change(type, key, value) { find(type, key).onChange(type === "Select" ? value : { currentTarget: { value, checked: value } }); render(); },
     click(key) { find("Button", key).onClick(); },
-    status(next) { listener({ payload: next }); render(); },
-    poll: async () => { await poll?.(); render(); },
+    status(next) { currentStatus = next; listener({ payload: next }); render(); },
+    event(payload) { listener({ payload }); render(); },
+    poll: async (next) => {
+      if (next) currentStatus = next;
+      if (kind === "device") await deviceApi.getStatus();
+      else await poll?.();
+      render();
+    },
+    unmount() { for (const hook of hooks) hook?.cleanup?.(); },
     language(next) { language = next; render(); },
     saveWith(action) { saveAction = action; },
   };
 }
+
+test("device badge and buttons follow daemon snapshots without Tauri status events in both languages", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  const prefix = "settings.webDevice";
+  for (const language of [zh, en]) {
+    h.language(language);
+    for (const [running, connected, paired, state] of [
+      [false, false, false, "stopped"], [true, false, false, "connecting"],
+      [true, true, false, "waitingPairing"], [true, true, true, "online"],
+      [true, false, false, "connecting"], [true, true, true, "online"],
+    ]) {
+      await h.poll({ ...deviceStatus, running, connected, paired });
+      await h.flush();
+      assert.equal(h.find("Badge").children, language[`${prefix}.state.${state}`]);
+      assert.equal(h.find("Button", `${prefix}.start`).disabled, running);
+      assert.equal(h.find("Button", `${prefix}.stop`).disabled, !running);
+      assert.equal(h.find("Badge").color, connected && paired ? "green" : running ? "yellow" : "gray");
+    }
+  }
+  h.unmount();
+});
+
+test("device native events refresh authority instead of applying another transport's payload", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  await h.poll({ ...deviceStatus, running: true, connected: true, paired: true });
+  h.event(deviceStatus);
+  await h.flush();
+  assert.equal(h.find("Badge").children, zh["settings.webDevice.state.online"]);
+  h.unmount();
+});
+
+test("late save response updates only its submitted draft and cannot regress newer connection state", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  let complete;
+  h.saveWith(() => new Promise((resolve) => { complete = resolve; }));
+  h.click("common.save");
+  await h.poll({ ...deviceStatus, running: true, connected: true, paired: true });
+  complete(deviceStatus);
+  await h.flush();
+  assert.equal(h.find("Badge").children, zh["settings.webDevice.state.online"]);
+  h.unmount();
+});
 
 for (const kind of ["server", "device"]) {
   test(`${kind} component guides plaintext setup and preserves input after failure, events and language changes`, async () => {

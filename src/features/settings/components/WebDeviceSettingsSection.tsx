@@ -6,6 +6,7 @@ import { SettingsGlyph } from "./SettingsIcons";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
 import { webDeviceApi, type WebDeviceStatus } from "../../../shared/lib/webDevice";
+import { webDeviceStatusSource } from "../../../shared/lib/webDeviceStatus";
 import { webServerApi } from "../../../shared/lib/webServer";
 import { WebMobileAccess } from "./WebMobileAccess";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
@@ -34,34 +35,43 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const [working, setWorking] = useState<string | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  // 连接事件和配对刷新只更新状态；保存回执通过版本检查同步草稿。
-  const applyStatus = useCallback((next: WebDeviceStatus, savedRevision?: number) => {
-    setStatus(next);
-    onStatusChange?.(next);
-    if (next.profile) {
+  // 后台快照只初始化草稿；保存回执通过提交版本检查同步，避免覆盖新编辑。
+  const applyProfile = useCallback((profile: WebDeviceStatus["profile"], savedRevision?: number) => {
+    if (profile) {
       const patch = {
-        serverUrl: next.profile.serverUrl, trustedNetwork: next.profile.trustedNetwork ?? false,
-        publicAccessUrl: next.profile.publicAccessUrl ?? "", deviceName: next.profile.name,
-        autoStart: next.profile.autoStart, uploadWallpaper: next.profile.uploadWallpaper,
+        serverUrl: profile.serverUrl, trustedNetwork: profile.trustedNetwork ?? false,
+        publicAccessUrl: profile.publicAccessUrl ?? "", deviceName: profile.name,
+        autoStart: profile.autoStart, uploadWallpaper: profile.uploadWallpaper,
       };
       dispatchDraft(savedRevision === undefined
         ? { type: "status", patch }
         : { type: "saved", patch, revision: savedRevision });
     }
-  }, [onStatusChange]);
+  }, []);
+
+  const applyStatus = useCallback((next: WebDeviceStatus) => {
+    setStatus(next);
+    onStatusChange?.(next);
+    applyProfile(next.profile);
+  }, [applyProfile, onStatusChange]);
 
   const refresh = useCallback(async () => {
     try {
-      applyStatus(await webDeviceApi.getStatus());
+      await webDeviceApi.getStatus();
     } catch (caught) {
       toast.error(t("settings.webDevice.toast.loadFailed"), { description: String(caught) });
     }
-  }, [applyStatus, t]);
+  }, [t]);
 
   useEffect(() => {
+    // 先订阅共享查询结果；原生事件只唤醒权威查询，不能用另一 transport 的载荷覆盖状态。
+    const unsubscribe = webDeviceStatusSource.subscribe(applyStatus);
+    const unlisten = listen(STATUS_EVENT, () => void refresh());
     void refresh();
-    const unlisten = listen<WebDeviceStatus>(STATUS_EVENT, (event) => applyStatus(event.payload));
-    return () => { void unlisten.then((dispose) => dispose()); };
+    return () => {
+      unsubscribe();
+      void unlisten.then((dispose) => dispose());
+    };
   }, [applyStatus, refresh]);
 
   useEffect(() => {
@@ -82,7 +92,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
     setWorking(key);
     try {
       const next = await action();
-      applyStatus(next, savedRevision);
+      if (savedRevision !== undefined) applyProfile(next.profile, savedRevision);
       toast.success(t(successKey));
     } catch (caught) {
       if (webNetworkErrorKey(caught)) setAdvancedOpen(true);

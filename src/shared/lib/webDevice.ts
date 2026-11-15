@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { webDeviceStatusSource } from "./webDeviceStatus";
 
 export interface WebDeviceProfile {
   serverUrl: string;
@@ -104,13 +105,15 @@ export interface WebHistorySessionSummary {
 }
 
 export const webDeviceApi = {
-  getStatus: () => invoke<WebDeviceStatus>("web_device_get_status"),
-  saveProfile: (request: WebDeviceProfileInput) => invoke<WebDeviceStatus>("web_device_save_profile", { request }),
-  start: () => invoke<WebDeviceStatus>("web_device_start"),
-  stop: () => invoke<WebDeviceStatus>("web_device_stop"),
-  restart: () => invoke<WebDeviceStatus>("web_device_restart"),
+  // 现有全局轮询发布 daemon/Tauri 权威状态，所有设置消费者复用同一快照。
+  getStatus: () => webDeviceStatusSource.refresh(() => invoke<WebDeviceStatus>("web_device_get_status")),
+  // 命令回执按请求顺序发布；保留原始保存响应供表单做 revision 校验。
+  saveProfile: (request: WebDeviceProfileInput) => webDeviceStatusSource.request(() => invoke<WebDeviceStatus>("web_device_save_profile", { request })),
+  start: () => webDeviceStatusSource.request(() => invoke<WebDeviceStatus>("web_device_start")),
+  stop: () => webDeviceStatusSource.request(() => invoke<WebDeviceStatus>("web_device_stop")),
+  restart: () => webDeviceStatusSource.request(() => invoke<WebDeviceStatus>("web_device_restart")),
   createPairing: () => invoke<{ code: string; expiresAt: number }>("web_device_create_pairing"),
-  clearPairing: () => invoke<WebDeviceStatus>("web_device_clear_pairing"),
+  clearPairing: () => webDeviceStatusSource.request(() => invoke<WebDeviceStatus>("web_device_clear_pairing")),
   mobileTicket: (revoke = false) => invoke<{ url: string; expiresAt: number } | null>("web_device_mobile_ticket", { revoke }),
   takeOperations: () => invoke<WebDeviceOperation[]>("web_device_take_operations"),
   takeTerminalCommands: () => invoke<WebTerminalCommand[]>("web_device_take_terminal_commands"),
