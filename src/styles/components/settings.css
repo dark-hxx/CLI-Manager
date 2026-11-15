@@ -138,6 +138,23 @@
   border-radius: 12px;
   background: var(--settings-group-bg);
 }
+/* Collapsible card: header and body share one surface so each fold has a clear boundary. */
+.settings-section--card {
+  border: 1px solid var(--settings-divider);
+  border-radius: 12px;
+  background: var(--settings-group-bg);
+  overflow: hidden;
+}
+.settings-section--card > .settings-section-heading { padding: 10px 16px; }
+.settings-section--card .settings-section-toggle { padding: 2px 0; }
+.settings-section--card .settings-section-toggle:hover .settings-section-title { color: var(--primary); }
+.settings-section--card > .settings-section-body {
+  padding: 4px 16px 8px;
+  border: 0;
+  border-top: 1px solid var(--settings-divider);
+  border-radius: 0;
+  background: transparent;
+}
 .settings-section-body > .mantine-Stack-root { gap: 0; }
 .settings-section-body > .mantine-Stack-root > * { padding-block: 13px; }
 .settings-section-body > .mantine-Stack-root > * + * { border-top: 1px solid var(--settings-divider); }

@@ -256,7 +256,7 @@ function CollapsibleSettingsSection({
       description={description}
       open={!collapsible || open}
       onToggle={collapsible ? onToggle : undefined}
-      className={className}
+      className={collapsible ? `settings-section--card ${className}` : className}
     >
       {children}
     </SettingsSection>

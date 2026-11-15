@@ -1,5 +1,28 @@
 import { create } from "zustand";
 import {
+  TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  SIDEBAR_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  migrateTerminalSettingsSectionsExpanded,
+  migrateSidebarSettingsSectionsExpanded,
+  migrateHookSettingsSectionsExpanded,
+  type TerminalSettingsSectionsExpanded,
+  type SidebarSettingsSectionsExpanded,
+  type HookSettingsSectionsExpanded,
+} from "./settingsSections";
+export {
+  TERMINAL_SETTINGS_SECTION_KEYS, TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  SIDEBAR_SETTINGS_SECTION_KEYS, SIDEBAR_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  HOOK_SETTINGS_SECTION_KEYS, HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT,
+  migrateTerminalSettingsSectionsExpanded, migrateSidebarSettingsSectionsExpanded,
+  migrateHookSettingsSectionsExpanded,
+} from "./settingsSections";
+export type {
+  TerminalSettingsSectionKey, TerminalSettingsSectionsExpanded,
+  SidebarSettingsSectionKey, SidebarSettingsSectionsExpanded,
+  HookSettingsSectionKey, HookSettingsSectionsExpanded,
+} from "./settingsSections";
+import {
   LAST_SETTINGS_TABS, type ThemeMode, type LightThemePalette, type DarkThemePalette,
   type TerminalThemeMode, type SidebarDensity, type ViewMode, type SettingsIconStyle,
   type LastSettingsTab, type TerminalSidePanelSkin, type TerminalStatsCardKey,
@@ -98,10 +121,6 @@ export type SystemResourceCardKey =
   | "processes";
 export type TerminalPanelWidthKey = "merged" | "stats" | "git" | "replay" | "files" | "systemResources" | "providers";
 export type TerminalPanelWidthSettings = Record<TerminalPanelWidthKey, number>;
-export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | "themes" | "previewTheme" | "background";
-export type TerminalSettingsSectionsExpanded = Record<TerminalSettingsSectionKey, boolean>;
-export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "kimi" | "pi" | "grok";
-export type HookSettingsSectionsExpanded = Record<HookSettingsSectionKey, boolean>;
 export const UI_FONT_SIZE_MIN = 11;
 export const UI_FONT_SIZE_MAX = 18;
 export const UI_FONT_SIZE_DEFAULT = 13;
@@ -120,40 +139,6 @@ export const TERMINAL_PANEL_WIDTH_DEFAULTS: TerminalPanelWidthSettings = {
   files: 220,
   systemResources: 300,
   providers: 320,
-};
-export const TERMINAL_SETTINGS_SECTION_KEYS: readonly TerminalSettingsSectionKey[] = [
-  "behavior",
-  "paneMarker",
-  "shells",
-  "themes",
-  "previewTheme",
-  "background",
-];
-export const TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT: TerminalSettingsSectionsExpanded = {
-  behavior: true,
-  paneMarker: false,
-  shells: false,
-  themes: false,
-  previewTheme: false,
-  background: false,
-};
-export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
-  "toast",
-  "notifications",
-  "claude",
-  "codex",
-  "kimi",
-  "pi",
-  "grok",
-];
-export const HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT: HookSettingsSectionsExpanded = {
-  toast: false,
-  notifications: false,
-  claude: false,
-  codex: false,
-  kimi: false,
-  pi: false,
-  grok: false,
 };
 export type ShortcutAction =
   | "newTerminal"
@@ -460,6 +445,8 @@ export interface Settings {
   terminalShellProfiles: TerminalShellProfile[];
   /** 终端设置页各可折叠区块的展开状态记忆。 */
   terminalSettingsSectionsExpanded: TerminalSettingsSectionsExpanded;
+  /** 侧边栏设置页各可折叠区块的展开状态记忆。 */
+  sidebarSettingsSectionsExpanded: SidebarSettingsSectionsExpanded;
   terminalPaneMarker: TerminalPaneMarkerSettings;
   terminalInputSuggestionsEnabled: boolean;
   terminalInputSuggestionProvider: TerminalInputSuggestionProvider;
@@ -685,6 +672,7 @@ const DEFAULTS: Settings = {
   },
   terminalShellProfiles: [],
   terminalSettingsSectionsExpanded: { ...TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT },
+  sidebarSettingsSectionsExpanded: { ...SIDEBAR_SETTINGS_SECTIONS_EXPANDED_DEFAULT },
   terminalPaneMarker: { ...DEFAULT_TERMINAL_PANE_MARKER_SETTINGS },
   terminalInputSuggestionsEnabled: true,
   terminalInputSuggestionProvider: "local",
@@ -1009,30 +997,6 @@ export function migrateTerminalPanelWidths(value: unknown): TerminalPanelWidthSe
     systemResources: clampNumber(raw.systemResources, TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources, TERMINAL_PANEL_WIDTH_MAX, TERMINAL_PANEL_WIDTH_DEFAULTS.systemResources),
     providers: clampNumber(raw.providers, TERMINAL_PANEL_WIDTH_DEFAULTS.providers, TERMINAL_PANEL_WIDTH_MAX, TERMINAL_PANEL_WIDTH_DEFAULTS.providers),
   };
-}
-
-export function migrateTerminalSettingsSectionsExpanded(value: unknown): TerminalSettingsSectionsExpanded {
-  const defaults = TERMINAL_SETTINGS_SECTIONS_EXPANDED_DEFAULT;
-  if (typeof value !== "object" || value === null) {
-    return { ...defaults };
-  }
-  const raw = value as Partial<Record<TerminalSettingsSectionKey, unknown>>;
-  return TERMINAL_SETTINGS_SECTION_KEYS.reduce<TerminalSettingsSectionsExpanded>((next, key) => {
-    next[key] = typeof raw[key] === "boolean" ? raw[key] : defaults[key];
-    return next;
-  }, { ...defaults });
-}
-
-export function migrateHookSettingsSectionsExpanded(value: unknown): HookSettingsSectionsExpanded {
-  const defaults = HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT;
-  if (typeof value !== "object" || value === null) {
-    return { ...defaults };
-  }
-  const raw = value as Partial<Record<HookSettingsSectionKey, unknown>>;
-  return HOOK_SETTINGS_SECTION_KEYS.reduce<HookSettingsSectionsExpanded>((next, key) => {
-    next[key] = typeof raw[key] === "boolean" ? raw[key] : defaults[key];
-    return next;
-  }, { ...defaults });
 }
 
 export function migrateTerminalStatsCardVisibility(value: unknown): TerminalStatsCardVisibilitySettings {
@@ -1567,6 +1531,9 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
     entries.terminalShellProfiles = migrateTerminalShellProfiles(entries.terminalShellProfiles);
     entries.terminalSettingsSectionsExpanded = migrateTerminalSettingsSectionsExpanded(
       entries.terminalSettingsSectionsExpanded
+    );
+    entries.sidebarSettingsSectionsExpanded = migrateSidebarSettingsSectionsExpanded(
+      entries.sidebarSettingsSectionsExpanded
     );
     entries.terminalPaneMarker = sanitizeTerminalPaneMarkerSettings(entries.terminalPaneMarker);
 

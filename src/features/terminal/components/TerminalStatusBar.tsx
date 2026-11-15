@@ -18,7 +18,7 @@ import {
   formatStatusBarBytes,
   formatStatusBarPercent,
   formatStatusBarRate,
-} from "../lib/terminalStatusBarItems";
+} from "../api/terminalStatusBarItems";
 
 const PLACEHOLDER = "—";
 const HIGH_USAGE_PERCENT = 85;

@@ -1,3 +1,7 @@
+import {
+  buildStatsProjectTree, countStatsProjects, collectStatsGroupIds,
+  normalizeProjectSearch, filterStatsProjectTree, type StatsProjectTreeNode,
+} from "../lib/statsProjectTree";
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, ChevronDown, ChevronRight, Coins, Database, Folder, Info, Layers, MessagesSquare, RefreshCw, ScrollText, Search, X } from "lucide-react";
@@ -75,10 +79,6 @@ const YEAR_INPUT_PATTERN = /^(\d{4})$/;
 const HOUR_MS = 60 * 60 * 1000;
 const REQUEST_LOG_SOURCE_IDS = new Set(["claude", "codex", "gemini", "opencode", "grok"]);
 
-type StatsProjectTreeNode =
-  | { type: "group"; group: Group; children: StatsProjectTreeNode[] }
-  | { type: "project"; project: Project };
-
 interface DateRangeInput {
   startDate: string;
   endDate: string;
@@ -105,89 +105,6 @@ const STATS_TIME_WINDOW_OPTIONS: { value: StatsTimeWindowMode; labelKey: Transla
   { value: "year", labelKey: "stats.window.year" },
   { value: "custom", labelKey: "stats.window.custom" },
 ];
-
-function buildStatsProjectTree(groups: Group[], projects: Project[]): StatsProjectTreeNode[] {
-  const childGroups = new Map<string | null, Group[]>();
-  const groupProjects = new Map<string | null, Project[]>();
-
-  for (const group of groups) {
-    const list = childGroups.get(group.parent_id) ?? [];
-    list.push(group);
-    childGroups.set(group.parent_id, list);
-  }
-
-  for (const project of projects) {
-    const list = groupProjects.get(project.group_id) ?? [];
-    list.push(project);
-    groupProjects.set(project.group_id, list);
-  }
-
-  const buildLevel = (parentId: string | null): StatsProjectTreeNode[] => {
-    const nodes: StatsProjectTreeNode[] = [];
-    const sortedGroups = [...(childGroups.get(parentId) ?? [])].sort(
-      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
-    );
-    const sortedProjects = [...(groupProjects.get(parentId) ?? [])].sort(
-      (a, b) => a.sort_order - b.sort_order || a.name.localeCompare(b.name)
-    );
-
-    for (const group of sortedGroups) {
-      nodes.push({ type: "group", group, children: buildLevel(group.id) });
-    }
-    for (const project of sortedProjects) {
-      nodes.push({ type: "project", project });
-    }
-    return nodes;
-  };
-
-  return buildLevel(null);
-}
-
-function countStatsProjects(node: StatsProjectTreeNode): number {
-  if (node.type === "project") return 1;
-  return node.children.reduce((sum, child) => sum + countStatsProjects(child), 0);
-}
-
-function collectStatsGroupIds(nodes: StatsProjectTreeNode[], out: string[] = []): string[] {
-  for (const node of nodes) {
-    if (node.type !== "group") continue;
-    out.push(node.group.id);
-    collectStatsGroupIds(node.children, out);
-  }
-  return out;
-}
-
-function normalizeProjectSearch(value: string): string {
-  return value.trim().toLowerCase();
-}
-
-function statsProjectMatchesSearch(project: Project, query: string): boolean {
-  if (!query) return true;
-  return (
-    project.name.toLowerCase().includes(query) ||
-    resolveHistoryProjectPath(project).toLowerCase().includes(query) ||
-    project.cli_tool.toLowerCase().includes(query)
-  );
-}
-
-function filterStatsProjectTree(nodes: StatsProjectTreeNode[], query: string): StatsProjectTreeNode[] {
-  if (!query) return nodes;
-
-  const result: StatsProjectTreeNode[] = [];
-  for (const node of nodes) {
-    if (node.type === "project") {
-      if (statsProjectMatchesSearch(node.project, query)) result.push(node);
-      continue;
-    }
-
-    const groupMatches = node.group.name.toLowerCase().includes(query);
-    const children = groupMatches ? node.children : filterStatsProjectTree(node.children, query);
-    if (groupMatches || children.length > 0) {
-      result.push({ ...node, children });
-    }
-  }
-  return result;
-}
 
 function StatsProjectFilterIcon({ project, size = 13 }: { project: Project; size?: number }) {
   // 与侧边栏、History 项目树共用同一套图标解析：单字符标记 → 内置 key → CLI 工具图标 → 终端兜底。

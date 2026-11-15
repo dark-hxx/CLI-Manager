@@ -12,7 +12,7 @@ import {
 } from "../../../../shared/preferences/settingsStore";
 import { useI18n } from "../../../../shared/i18n/index";
 import { DND_ACTIVATION_CONSTRAINT, DND_SORTABLE_TRANSITION } from "../../../workspace/api/dragInteraction";
-import { TERMINAL_STATUS_BAR_ITEM_META } from "../../../terminal/lib/terminalStatusBarItems";
+import { TERMINAL_STATUS_BAR_ITEM_META } from "../../../terminal/api/terminalStatusBarItems";
 
 function SortableStatusBarItemRow({
   id,

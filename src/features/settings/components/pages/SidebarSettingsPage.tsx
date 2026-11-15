@@ -23,6 +23,7 @@ import {
   TERMINAL_STATS_CARD_KEYS,
   useSettingsStore,
   type SidebarDensity,
+  type SidebarSettingsSectionKey,
   type SystemResourceCardKey,
   type TerminalSidePanelSkin,
   type TerminalStatsCardKey,
@@ -196,6 +197,7 @@ export function SidebarSettingsPage() {
   const systemResourceCardOrder = useSettingsStore((s) => s.systemResourceCardOrder);
   const terminalToolbarVisibility = useSettingsStore((s) => s.terminalToolbarVisibility);
   const systemResourceMonitoringEnabled = useSettingsStore((s) => s.systemResourceMonitoringEnabled);
+  const sidebarSettingsSectionsExpanded = useSettingsStore((s) => s.sidebarSettingsSectionsExpanded);
   const update = useSettingsStore((s) => s.update);
 
   const visibleCardCount = TERMINAL_STATS_CARD_KEYS.filter((key) => terminalStatsCardVisibility[key]).length;
@@ -270,9 +272,20 @@ export function SidebarSettingsPage() {
     void update("terminalToolbarVisibility", { ...terminalToolbarVisibility, [key]: checked });
   };
 
+  const toggleSection = (key: SidebarSettingsSectionKey) => {
+    const current = useSettingsStore.getState().sidebarSettingsSectionsExpanded;
+    void update("sidebarSettingsSectionsExpanded", { ...current, [key]: !current[key] });
+  };
+
+  const sectionToggleProps = (key: SidebarSettingsSectionKey) => ({
+    className: "settings-section--card",
+    open: sidebarSettingsSectionsExpanded[key],
+    onToggle: () => toggleSection(key),
+  });
+
   return (
     <Stack gap="md">
-      <SettingsSection title={t("settings.sidebar.behavior")}>
+      <SettingsSection title={t("settings.sidebar.behavior")} {...sectionToggleProps("behavior")}>
         <Stack gap="md">
           <Card className="border border-primary bg-surface-container-low" p="md" radius="lg">
             <Group justify="space-between" align="center" gap="md" wrap="nowrap">
@@ -386,7 +399,7 @@ export function SidebarSettingsPage() {
         </Stack>
       </SettingsSection>
 
-      <SettingsSection title={t("settings.sidebar.panelSkin")}>
+      <SettingsSection title={t("settings.sidebar.panelSkin")} {...sectionToggleProps("panelSkin")}>
         <Stack gap="md">
           <SimpleGrid cols={{ base: 1, sm: 2 }} spacing="xs">
             {SIDE_PANEL_SKIN_OPTIONS.map((option) => {
@@ -444,19 +457,19 @@ export function SidebarSettingsPage() {
         </Stack>
       </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection
+        title={t("settings.sidebar.statsCards")}
+        {...sectionToggleProps("statsCards")}
+        actions={
+          <Badge variant="light" color="cliPrimary">
+            {t("settings.sidebar.visibleCardsCount", {
+              visible: visibleCardCount,
+              total: TERMINAL_STATS_CARD_KEYS.length,
+            })}
+          </Badge>
+        }
+      >
         <Stack gap="sm">
-          <Group justify="space-between" align="center">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.sidebar.statsCards")}
-            </Text>
-            <Badge variant="light" color="cliPrimary">
-              {t("settings.sidebar.visibleCardsCount", {
-                visible: visibleCardCount,
-                total: TERMINAL_STATS_CARD_KEYS.length,
-              })}
-            </Badge>
-          </Group>
           <DndContext
             sensors={statsCardSensors}
             collisionDetection={closestCenter}
@@ -550,21 +563,21 @@ export function SidebarSettingsPage() {
             </Button>
           </Group>
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4">
+      <SettingsSection
+        title={t("settings.sidebar.resourceCards")}
+        {...sectionToggleProps("resourceCards")}
+        actions={
+          <Badge variant="light" color="cliPrimary">
+            {t("settings.sidebar.visibleCardsCount", {
+              visible: visibleResourceCardCount,
+              total: SYSTEM_RESOURCE_CARD_KEYS.length,
+            })}
+          </Badge>
+        }
+      >
         <Stack gap="sm">
-          <Group justify="space-between" align="center">
-            <Text size="sm" fw={600} c="var(--on-surface)">
-              {t("settings.sidebar.resourceCards")}
-            </Text>
-            <Badge variant="light" color="cliPrimary">
-              {t("settings.sidebar.visibleCardsCount", {
-                visible: visibleResourceCardCount,
-                total: SYSTEM_RESOURCE_CARD_KEYS.length,
-              })}
-            </Badge>
-          </Group>
           <DndContext
             sensors={statsCardSensors}
             collisionDetection={closestCenter}
@@ -657,9 +670,9 @@ export function SidebarSettingsPage() {
             </Button>
           </Group>
         </Stack>
-      </section>
+      </SettingsSection>
 
-      <SettingsSection title={t("settings.general.toolbar")}>
+      <SettingsSection title={t("settings.general.toolbar")} {...sectionToggleProps("toolbar")}>
         <Stack gap="sm">
           <Text size="xs" fw={600} c="var(--on-surface-variant)" mt="xs">
             {t("settings.general.terminalToolbar")}

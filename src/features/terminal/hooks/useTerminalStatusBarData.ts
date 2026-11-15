@@ -10,7 +10,7 @@ import { useSessionStore } from "../api/sessionStore";
 import { useProjectStore } from "../../projects/api/projectStore";
 import { useTerminalStore } from "../state";
 import { useAppMemory } from "./useAppMemory";
-import { resolveTerminalStatusBarDataNeeds } from "../lib/terminalStatusBarItems";
+import { resolveTerminalStatusBarDataNeeds } from "../api/terminalStatusBarItems";
 import { logWarn } from "../../../shared/platform/logger";
 
 const SYSTEM_POLL_INTERVAL_MS = 2000;

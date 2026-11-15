@@ -79,6 +79,7 @@ export const SETTING_BACKUP_POLICY = {
   terminalBackground: "excluded",
   terminalShellProfiles: "excluded",
   terminalSettingsSectionsExpanded: "preferences",
+  sidebarSettingsSectionsExpanded: "preferences",
   terminalPaneMarker: "preferences",
   terminalInputSuggestionsEnabled: "preferences",
   terminalInputSuggestionProvider: "preferences",
