@@ -62,6 +62,42 @@ fn convert_codex_history_to_claude_jsonl_readable_by_history_parser() {
 }
 
 #[test]
+// 直接读文件的详情沿用请求路径作会话身份，不带出 canonicalize 的 verbatim 前缀，才能和列表 file_path 对上。
+fn direct_file_detail_keeps_requested_path_identity() {
+    let temp_dir = TempDir::new().unwrap();
+    let roots = HistoryRoots {
+        claude_config_dir: Some(temp_dir.path().join(".claude")),
+        codex_config_dir: Some(temp_dir.path().join(".codex")),
+        grok_session_root: None,
+        kimi_config_dir: None,
+    };
+    if cfg!(target_os = "windows") {
+        std::fs::create_dir_all(
+            resolve_claude_history_root(&roots).join("F--ws-Labway-Fee-Control"),
+        )
+        .unwrap();
+    }
+    let mut source_detail = sample_detail("codex");
+    source_detail.cwd = Some(r"F:\ws\Labway\Fee-Control".to_string());
+    let result = convert_history_session(&source_detail, "claude", &roots).unwrap();
+
+    let files = collect_claude_session_files(&resolve_claude_history_root(&roots));
+    let requested = files[0].path.to_string_lossy().to_string();
+    let detail = read_session_detail_from_file(
+        requested.clone(),
+        "claude",
+        &result.project_key,
+        false,
+        &roots,
+    )
+    .unwrap();
+
+    assert_eq!(detail.file_path, requested);
+    assert!(!detail.file_path.starts_with(r"\\?\"));
+    assert_eq!(detail.messages.len(), 2);
+}
+
+#[test]
 // 验证 Claude 转 Codex 保留消息并生成元数据、恢复索引及配置路径。
 fn convert_claude_history_to_codex_jsonl_readable_by_history_parser() {
     let temp_dir = TempDir::new().unwrap();
