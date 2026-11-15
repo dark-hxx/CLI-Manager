@@ -1572,7 +1572,15 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
   const searchLabel = searchMode === "content" ? t("files.searchCodePlaceholder") : t("files.searchPlaceholder");
   const searchToggleLabel = searchControlsVisible ? t("files.hideSearch") : searchLabel;
   const displayPathName = getDisplayPathName(readOnly ? project.remote_path : project.path);
-  const hasHeaderExtras = searchControlsVisible || readOnly || Boolean(clipboard) || selectedEntries.length > 0 || mutationBusy;
+  const headerSubtitle = (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="truncate">{displayPathName}</span>
+      <span role="status" className="shrink-0">
+        {selectedEntries.length > 0 ? t("files.batch.selected", { count: selectedEntries.length }) : null}
+      </span>
+    </span>
+  );
+  const hasHeaderExtras = searchControlsVisible || readOnly || Boolean(clipboard) || mutationBusy;
   const headerActions = (
     <>
       <button
@@ -1640,7 +1648,6 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
         </div>
       )}
       {mutationBusy && <div role="status" className="mt-1 text-[10px] text-text-muted">{t("files.batch.working")}</div>}
-      {selectedEntries.length > 0 && <div role="status" className="mt-1 text-[10px] text-text-muted">{t("files.batch.selected", { count: selectedEntries.length })}</div>}
       {readOnly && <div className="mt-1 text-[10px] text-text-muted">{t("files.readOnly")}</div>}
       {!readOnly && clipboard && <div className="mt-1 truncate text-[10px] text-text-muted">{clipboard.mode === "copy" ? t("files.clipboard.copy") : t("files.clipboard.move")}：{t("files.batch.clipboardCount", { count: clipboard.entries.length })}</div>}
     </>
@@ -1682,7 +1689,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             icon={<Folder size={14} />}
             accent={TERM.blue}
             title={project.name}
-            subtitle={displayPathName}
+            subtitle={headerSubtitle}
             onTitleDoubleClick={readOnly ? undefined : openProjectRootFolder}
             actions={headerActions}
           />
@@ -1696,7 +1703,7 @@ export function FileExplorerSidebar({ mode = "sidebar", onClosePanel, onBackToPr
             </span>
             <div className="min-w-0 flex-1" onDoubleClick={readOnly ? undefined : openProjectRootFolder}>
               <div className="ui-file-explorer-title truncate text-xs font-semibold">{project.name}</div>
-              <div className="ui-file-explorer-subtitle truncate text-[10px]">{displayPathName}</div>
+              <div className="ui-file-explorer-subtitle truncate text-[10px]">{headerSubtitle}</div>
             </div>
             {headerActions}
           </div>
