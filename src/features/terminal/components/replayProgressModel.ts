@@ -20,9 +20,30 @@ export type ReplayProgressStepKind =
   | "snapshot"
   | "error";
 
+// 面向阅读的活动类别：同一工具名（如 exec_command）会按实际命令再细分。
+export type ReplayProgressActivity =
+  | "read"
+  | "edit"
+  | "search"
+  | "command"
+  | "web"
+  | "plan"
+  | "validation"
+  | "mcp"
+  | "skill"
+  | "subtask"
+  | "permission"
+  | "notification"
+  | "snapshot"
+  | "error"
+  | "file"
+  | "other";
+
 export interface ReplayProgressStep {
   id: string;
   kind: ReplayProgressStepKind;
+  activity: ReplayProgressActivity;
+  target: string | null;
   title: string;
   summary: string;
   status: ReplayProgressStatus;
@@ -37,9 +58,22 @@ export interface ReplayProgressStep {
   snapshotEvent: ReplayEvent | null;
 }
 
+export interface ReplayProgressPhase {
+  id: string;
+  activity: ReplayProgressActivity;
+  status: ReplayProgressStatus;
+  startedAt: string | null;
+  endedAt: string | null;
+  steps: ReplayProgressStep[];
+  failed: number;
+}
+
 export interface ReplayProgressTurn {
   id: string;
+  // 用户输入在历史会话 messages 中的下标；仅有 Hook 数据时为 null。
+  messageIndex: number | null;
   prompt: string;
+  images: number;
   response: string | null;
   assistantMessages: HistoryMessage[];
   status: ReplayProgressStatus;
@@ -47,6 +81,9 @@ export interface ReplayProgressTurn {
   endedAt: string | null;
   durationMs: number | null;
   steps: ReplayProgressStep[];
+  phases: ReplayProgressPhase[];
+  replayEvents: ReplayEvent[];
+  activityCounts: Partial<Record<ReplayProgressActivity, number>>;
   counts: {
     tools: number;
     files: number;
@@ -70,13 +107,13 @@ export interface ReplayProgressModel {
     files: number;
     validations: number;
     errors: number;
+    workMs: number;
   };
 }
 
 interface MutableTurn extends ReplayProgressTurn {
   historyIndex: number;
   replayPromptIndex: number | null;
-  replayEvents: ReplayEvent[];
 }
 
 interface MutableStep extends ReplayProgressStep {
@@ -84,7 +121,259 @@ interface MutableStep extends ReplayProgressStep {
   order: number;
 }
 
+interface PromptTurnLink {
+  eventIndex: number;
+  turnIndex: number;
+}
+
+interface UserPromptInfo {
+  text: string;
+  images: number;
+  localOutput: string | null;
+}
+
+// CLI 注入到用户消息里的上下文块，不属于用户真实输入。
+const PROMPT_NOISE_TAGS = [
+  "system-reminder",
+  "local-command-caveat",
+  "local-command-stdout",
+  "local-command-stderr",
+  "command-name",
+  "command-message",
+  "command-args",
+  "session-context",
+  "current-state",
+  "workflow",
+  "codex_internal_context",
+  "environment_context",
+  "user_instructions",
+  "user-prompt-submit-hook",
+  "ide_selection",
+  "ide_opened_file",
+  "bash-input",
+  "bash-stdout",
+  "bash-stderr",
+];
+const INJECTED_PROMPT_LINE = /^#*\s*(?:agents\.md instructions for |base directory for this skill|system prompt|developer instructions)/i;
+
+function tagContent(text: string, tag: string): string | null {
+  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`, "i").exec(text);
+  return match ? match[1].trim() : null;
+}
+
+// 从一条用户消息中还原用户真实输入：去掉注入上下文与图片占位，斜杠命令还原为 `/cmd args`。
+export function cleanUserPromptText(raw: string | null | undefined): UserPromptInfo {
+  let text = (raw ?? "").replace(/\r\n?/g, "\n");
+  const localOutput = tagContent(text, "local-command-stdout") ?? tagContent(text, "local-command-stderr");
+  const commandName = tagContent(text, "command-name");
+  const commandArgs = tagContent(text, "command-args");
+  const bashInput = tagContent(text, "bash-input");
+
+  const imageNumbers = new Set([...text.matchAll(/\[Image #(\d+)\]/gi)].map((match) => match[1]));
+  const sourceImages = [...text.matchAll(/\[Image:\s*source:[^\]]*\]/gi)].length;
+  const images = Math.max(imageNumbers.size, sourceImages);
+  text = text.replace(/\[Image(?: #\d+|:\s*source:[^\]]*)\]/gi, " ").replace(/<\/?image\b[^>]*>/gi, " ");
+
+  for (const tag of PROMPT_NOISE_TAGS) {
+    text = text
+      .replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?</${tag}>`, "gi"), " ")
+      .replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*$`, "i"), " ");
+  }
+  text = text.replace(/[ \t]+/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  if (INJECTED_PROMPT_LINE.test(text.split("\n", 1)[0] ?? "")) text = "";
+
+  if (commandName) {
+    const command = commandName.startsWith("/") ? commandName : `/${commandName}`;
+    text = [command, commandArgs, text].filter(Boolean).join(" ");
+  } else if (bashInput) {
+    text = `! ${bashInput}`;
+  }
+  return { text, images, localOutput: text ? null : localOutput };
+}
+
+function extractHistoryUserPrompt(message: HistoryMessage): UserPromptInfo {
+  const parts = message.parts ?? [];
+  if (parts.length > 0 && !parts.some((part) => part.kind === "text")) {
+    return { text: "", images: 0, localOutput: null };
+  }
+  const content = parts.length > 0
+    ? parts.filter((part) => part.kind === "text").map((part) => part.content).join("\n\n")
+    : message.content;
+  return cleanUserPromptText(content);
+}
+
+function promptMatchKey(text: string): string {
+  return text.replace(/\s+/g, "").slice(0, 40).toLowerCase();
+}
+
+function promptKeysMatch(left: string, right: string): boolean {
+  if (!left || !right) return false;
+  return left === right || (Math.min(left.length, right.length) >= 6 && (left.startsWith(right) || right.startsWith(left)));
+}
+
 const VALIDATION_PATTERN = /\b(?:npm\s+(?:run\s+)?(?:test|build|lint)|pnpm\s+(?:run\s+)?(?:test|build|lint)|yarn\s+(?:test|build|lint)|npx\s+tsc(?:\s+--noEmit)?|tsc\s+--noEmit|vitest|jest|pytest|cargo\s+(?:check|test|clippy|build)|go\s+test|dotnet\s+test|mvn\s+(?:test|verify)|gradle\s+test)\b/i;
+
+const READ_TOOL_PATTERN = /^(?:read|read_file|readfile|view|view_image|notebookread|ls|list_dir|list_directory)$/i;
+const EDIT_TOOL_PATTERN = /^(?:edit|multiedit|write|write_file|create_file|apply_patch|notebookedit|str_replace(?:_editor)?|replace)$/i;
+const SEARCH_TOOL_PATTERN = /^(?:grep|glob|search|find|file_search|codebase_search|search_files)$/i;
+const WEB_TOOL_PATTERN = /^(?:webfetch|websearch|web_search|web_fetch|fetch)$/i;
+const COMMAND_TOOL_PATTERN = /^(?:bash|shell|exec_command|local_shell|container\.exec|powershell|write_stdin|run_command|run_terminal_cmd|terminal)$/i;
+const PLAN_TOOL_PATTERN = /^(?:todowrite|todoread|update_plan|exitplanmode|enterplanmode)$/i;
+const SUBTASK_TOOL_PATTERN = /^(?:task|agent)$/i;
+const READ_COMMAND_PATTERN = /^(?:cat|head|tail|less|more|nl|sed\s+-n|type|get-content|gc|bat|wc|stat)\b/i;
+const SEARCH_COMMAND_PATTERN = /^(?:rg|grep|egrep|find|fd|ls|dir|tree|get-childitem|gci|select-string|git\s+(?:grep|ls-files))\b/i;
+const SHELL_WRAPPER_PATTERN = /^(?:(?:bash|sh|zsh)\s+-l?c|(?:powershell|pwsh)(?:\.exe)?(?:\s+-\w+)*?\s+-command|cmd(?:\.exe)?\s+\/c)\s+/i;
+const PHASE_ISOLATED: ReadonlySet<ReplayProgressActivity> = new Set(["snapshot", "error", "permission", "notification", "subtask"]);
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if (trimmed.length >= 2 && (quote === "\"" || quote === "'") && trimmed.endsWith(quote)) return trimmed.slice(1, -1);
+  return trimmed;
+}
+
+function decodeJsonString(raw: string): string {
+  try {
+    return JSON.parse(`"${raw}"`) as string;
+  } catch {
+    return raw;
+  }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// 输入摘要可能被截断成非法 JSON：先整体解析，失败再按字段名正则提取字符串或字符串数组的末项。
+function readInputField(input: string | null, keys: string[]): string | null {
+  const trimmed = input?.trim();
+  if (!trimmed?.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    for (const key of keys) {
+      const value = parsed[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+      if (Array.isArray(value)) {
+        const parts = value.filter((item): item is string => typeof item === "string" && Boolean(item.trim()));
+        if (parts.length > 0) return parts[parts.length - 1].trim();
+      }
+    }
+    return null;
+  } catch {
+    // 截断 JSON 走正则兜底。
+  }
+  for (const key of keys) {
+    const field = escapeRegExp(key);
+    const stringMatch = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(trimmed);
+    if (stringMatch?.[1]) return decodeJsonString(stringMatch[1]).trim();
+    const arrayMatch = new RegExp(`"${field}"\\s*:\\s*\\[([^\\]]*)`).exec(trimmed);
+    if (arrayMatch?.[1]) {
+      const parts = [...arrayMatch[1].matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((match) => decodeJsonString(match[1]));
+      if (parts.length > 0) return parts[parts.length - 1].trim();
+    }
+  }
+  return null;
+}
+
+function stripShellWrapper(command: string): string {
+  let result = command.trim();
+  for (let index = 0; index < 2; index += 1) {
+    const next = result.replace(SHELL_WRAPPER_PATTERN, "");
+    if (next === result) break;
+    result = unquote(next);
+  }
+  return result;
+}
+
+function extractCommand(step: Pick<ReplayProgressStep, "inputSummary">): string | null {
+  const command = readInputField(step.inputSummary, ["cmd", "command", "commandLine", "script"]);
+  if (command) return stripShellWrapper(command);
+  const raw = step.inputSummary?.trim();
+  return raw && !raw.startsWith("{") ? stripShellWrapper(raw) : null;
+}
+
+function extractPatchFiles(input: string | null): string[] {
+  if (!input) return [];
+  const text = input.replace(/\\n/g, "\n");
+  return [...text.matchAll(/\*\*\* (?:Update|Add|Delete) File: ([^\n"*]+)/g)].map((match) => match[1].trim());
+}
+
+function classifyToolActivity(step: ReplayProgressStep): ReplayProgressActivity {
+  const name = step.title.trim();
+  if (READ_TOOL_PATTERN.test(name)) return "read";
+  if (EDIT_TOOL_PATTERN.test(name)) return "edit";
+  if (SEARCH_TOOL_PATTERN.test(name)) return "search";
+  if (WEB_TOOL_PATTERN.test(name)) return "web";
+  if (PLAN_TOOL_PATTERN.test(name)) return "plan";
+  if (SUBTASK_TOOL_PATTERN.test(name)) return "subtask";
+  if (!COMMAND_TOOL_PATTERN.test(name)) return "other";
+  const command = extractCommand(step) ?? "";
+  if (/\bapply_patch\b/.test(command)) return "edit";
+  if (SEARCH_COMMAND_PATTERN.test(command)) return "search";
+  if (READ_COMMAND_PATTERN.test(command)) return "read";
+  return "command";
+}
+
+function extractStepTarget(step: ReplayProgressStep): string | null {
+  switch (step.activity) {
+    case "command":
+    case "validation":
+      return extractCommand(step);
+    case "read":
+    case "edit": {
+      const patchFiles = extractPatchFiles(step.inputSummary);
+      if (patchFiles.length > 0) return patchFiles.join(", ");
+      return readInputField(step.inputSummary, ["file_path", "path", "notebook_path", "file", "filename", "target_file"])
+        ?? extractCommand(step);
+    }
+    case "search":
+      return readInputField(step.inputSummary, ["pattern", "query", "regex", "glob"]) ?? extractCommand(step);
+    case "web":
+      return readInputField(step.inputSummary, ["url", "query", "q"]);
+    case "subtask":
+      return readInputField(step.inputSummary, ["description", "prompt"]) ?? step.inputSummary;
+    case "file":
+      return step.files.length === 1 ? step.files[0].file_path : null;
+    case "plan":
+      return null;
+    default:
+      return readInputField(step.inputSummary, ["description", "query", "path", "url"]);
+  }
+}
+
+function phaseStatus(steps: ReplayProgressStep[]): ReplayProgressStatus {
+  for (const status of ["running", "failed", "attention", "incomplete"] as const) {
+    if (steps.some((step) => step.status === status)) return status;
+  }
+  return steps[steps.length - 1]?.status ?? "completed";
+}
+
+// 连续同类活动合并为一个阶段；快照、异常、权限、子任务等关键节点始终单独成段。
+function buildPhases(steps: ReplayProgressStep[]): ReplayProgressPhase[] {
+  const groups: ReplayProgressStep[][] = [];
+  for (const step of steps) {
+    if (step.activity === "file") continue;
+    const previous = groups[groups.length - 1];
+    const head = previous?.[0];
+    if (head && head.activity === step.activity && !PHASE_ISOLATED.has(step.activity) && head.sourceLabel === step.sourceLabel) {
+      previous.push(step);
+    } else {
+      groups.push([step]);
+    }
+  }
+  return groups.map((group) => {
+    const ended = [...group].reverse().find((step) => step.endedAt ?? step.startedAt);
+    return {
+      id: `phase-${group[0].id}`,
+      activity: group[0].activity,
+      status: phaseStatus(group),
+      startedAt: group.find((step) => step.startedAt)?.startedAt ?? null,
+      endedAt: ended?.endedAt ?? ended?.startedAt ?? null,
+      steps: group,
+      failed: group.filter((step) => step.status === "failed").length,
+    };
+  });
+}
 
 function compactText(value: string | null | undefined, maxLength = 180): string {
   const normalized = value?.replace(/\s+/g, " ").trim() ?? "";
@@ -130,12 +419,11 @@ function historyTurnIndexForMessage(messageTurnIndexes: number[], messageIndex: 
   return messageTurnIndexes[messageIndex] ?? messageTurnIndexes.length - 1;
 }
 
-function replayTurnIndexForEvent(promptEvents: ReplayEvent[], event: ReplayEvent): number {
-  if (promptEvents.length === 0) return 0;
+function replayTurnIndexForEvent(promptTurns: PromptTurnLink[], event: ReplayEvent): number {
   let result = 0;
-  for (let index = 0; index < promptEvents.length; index += 1) {
-    if (promptEvents[index].eventIndex > event.eventIndex) break;
-    result = index;
+  for (const link of promptTurns) {
+    if (link.eventIndex > event.eventIndex) break;
+    result = link.turnIndex;
   }
   return result;
 }
@@ -193,61 +481,96 @@ function groupFileChangesByTurn(
 function buildTurns(events: ReplayEvent[], historyDetail: HistorySessionDetail | null): {
   turns: MutableTurn[];
   messageTurnIndexes: number[];
-  promptEvents: ReplayEvent[];
+  promptTurns: PromptTurnLink[];
 } {
   const promptEvents = events.filter((event) => event.kind === "prompt");
-  const historyTurns: Array<{ prompt: HistoryMessage; assistants: HistoryMessage[] }> = [];
+  const historyTurns: Array<{ prompt: HistoryMessage; messageIndex: number; info: UserPromptInfo; assistants: HistoryMessage[]; localOutput: string | null }> = [];
   const messageTurnIndexes: number[] = [];
 
   for (const [messageIndex, message] of (historyDetail?.messages ?? []).entries()) {
-    if (message.role.toLowerCase() === "user") {
-      historyTurns.push({ prompt: message, assistants: [] });
-    } else if (message.role.toLowerCase() === "assistant" && historyTurns.length > 0) {
+    const role = message.role.toLowerCase();
+    if (role === "user") {
+      const info = extractHistoryUserPrompt(message);
+      const last = historyTurns[historyTurns.length - 1];
+      if (info.text || info.images > 0) {
+        historyTurns.push({ prompt: message, messageIndex, info, assistants: [], localOutput: null });
+      } else if (info.localOutput && last && !last.localOutput) {
+        // 斜杠命令的本地输出（如 /model 的结果）作为该命令轮次的回复。
+        last.localOutput = info.localOutput;
+      }
+    } else if (role === "assistant" && historyTurns.length > 0) {
       historyTurns[historyTurns.length - 1].assistants.push(message);
     }
-    if (historyTurns.length > 0) messageTurnIndexes[messageIndex] = historyTurns.length - 1;
+    messageTurnIndexes[messageIndex] = Math.max(0, historyTurns.length - 1);
+  }
+
+  // Hook 的 prompt 不一定与历史中的每个用户轮一一对应（本地斜杠命令没有 Hook），按文本对齐，失败再顺延。
+  const promptTurns: PromptTurnLink[] = [];
+  const promptByTurn = new Map<number, { event: ReplayEvent; info: UserPromptInfo }>();
+  const extraPrompts: Array<{ event: ReplayEvent; info: UserPromptInfo }> = [];
+  let cursor = -1;
+  for (const event of promptEvents) {
+    const info = cleanUserPromptText(payloadString(event, "message") ?? event.detail ?? event.title);
+    const key = promptMatchKey(info.text);
+    let matched = -1;
+    if (key) {
+      for (let index = cursor + 1; index < historyTurns.length; index += 1) {
+        if (promptKeysMatch(key, promptMatchKey(historyTurns[index].info.text))) {
+          matched = index;
+          break;
+        }
+      }
+    }
+    if (matched < 0 && cursor + 1 < historyTurns.length) matched = cursor + 1;
+    if (matched >= 0) {
+      cursor = matched;
+      promptByTurn.set(matched, { event, info });
+      promptTurns.push({ eventIndex: event.eventIndex, turnIndex: matched });
+    } else {
+      extraPrompts.push({ event, info });
+      promptTurns.push({ eventIndex: event.eventIndex, turnIndex: historyTurns.length + extraPrompts.length - 1 });
+    }
   }
 
   const count = Math.max(
-    historyTurns.length,
-    promptEvents.length,
+    historyTurns.length + extraPrompts.length,
     events.length > 0 || Boolean(historyDetail?.messages.length) ? 1 : 0
   );
   const turns: MutableTurn[] = [];
   for (let index = 0; index < count; index += 1) {
     const historyTurn = historyTurns[index];
-    const replayPrompt = promptEvents[index];
-    const prompt = compactText(
-      historyTurn?.prompt.content ?? payloadString(replayPrompt, "message") ?? replayPrompt?.detail ?? replayPrompt?.title ?? historyDetail?.messages[0]?.content ?? events[0]?.detail ?? events[0]?.title,
-      600
-    );
+    const replay = historyTurn ? promptByTurn.get(index) : extraPrompts[index - historyTurns.length];
+    const replayPrompt = replay?.event;
+    const info = historyTurn?.info ?? replay?.info ?? cleanUserPromptText(events[0]?.detail ?? events[0]?.title);
     const assistantMessages = historyTurn?.assistants ?? [];
-    const response = assistantMessages.length > 0
-      ? compactText(assistantMessages[assistantMessages.length - 1].content, 600)
-      : null;
+    const lastAssistant = assistantMessages[assistantMessages.length - 1]?.content ?? historyTurn?.localOutput ?? null;
     turns.push({
       id: replayPrompt ? `turn-${replayPrompt.eventIndex}` : `turn-history-${index}`,
+      messageIndex: historyTurn?.messageIndex ?? null,
       historyIndex: index,
       replayPromptIndex: replayPrompt?.eventIndex ?? null,
       replayEvents: [],
-      prompt,
-      response,
+      prompt: compactText(info.text, 600),
+      images: info.images,
+      response: lastAssistant ? compactText(lastAssistant, 600) : null,
       assistantMessages,
       status: "incomplete",
       startedAt: historyTurn?.prompt.timestamp ?? replayPrompt?.timestamp ?? null,
       endedAt: assistantMessages[assistantMessages.length - 1]?.timestamp ?? null,
       durationMs: null,
       steps: [],
+      phases: [],
+      activityCounts: {},
       counts: { tools: 0, files: 0, validations: 0, subtasks: 0, errors: 0 },
     });
   }
 
   for (const event of events) {
-    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptEvents, event));
+    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptTurns, event));
     turns[turnIndex]?.replayEvents.push(event);
   }
 
-  return { turns, messageTurnIndexes, promptEvents };
+  return { turns, messageTurnIndexes, promptTurns };
 }
 
 function createHistoryToolStep(tool: HistoryToolEvent, turnIndex: number, order: number): MutableStep {
@@ -264,6 +587,8 @@ function createHistoryToolStep(tool: HistoryToolEvent, turnIndex: number, order:
     turnIndex,
     order,
     kind,
+    activity: kind === "tool" ? "other" : kind,
+    target: null,
     title: tool.name,
     summary: compactText(tool.output_summary ?? tool.input_summary ?? tool.name),
     status: tool.status === "failed" ? "failed" : tool.status === "completed" || Boolean(tool.output_summary) ? "completed" : "running",
@@ -337,6 +662,16 @@ function finalizeTurns(turns: MutableTurn[], steps: MutableStep[]): ReplayProgre
           : "incomplete";
     turn.endedAt = stopFailure?.timestamp ?? stop?.timestamp ?? turn.endedAt;
     turn.durationMs = durationBetween(turn.startedAt, turn.endedAt);
+    for (const step of turn.steps) {
+      step.activity = step.kind === "tool" ? classifyToolActivity(step) : step.kind;
+      step.target = extractStepTarget(step);
+    }
+    turn.phases = buildPhases(turn.steps);
+    const activityCounts: Partial<Record<ReplayProgressActivity, number>> = {};
+    for (const step of turn.steps) {
+      if (step.activity !== "file") activityCounts[step.activity] = (activityCounts[step.activity] ?? 0) + 1;
+    }
+    turn.activityCounts = activityCounts;
     const filePaths = new Set(turn.steps.flatMap((step) => step.files.map((file) => file.file_path)));
     turn.counts = {
       tools: turn.steps.filter((step) => step.kind === "tool" || step.kind === "mcp" || step.kind === "skill").length,
@@ -356,11 +691,11 @@ export function buildReplayProgressModel(
   sessionStatus: ReplayEventStatus | null = null
 ): ReplayProgressModel {
   if (events.length === 0 && !historyDetail?.messages.length) {
-    return { turns: [], current: null, counts: { turns: 0, tools: 0, files: 0, validations: 0, errors: 0 } };
+    return { turns: [], current: null, counts: { turns: 0, tools: 0, files: 0, validations: 0, errors: 0, workMs: 0 } };
   }
 
   const sortedEvents = [...events].sort((a, b) => a.eventIndex - b.eventIndex);
-  const { turns, messageTurnIndexes, promptEvents } = buildTurns(sortedEvents, historyDetail);
+  const { turns, messageTurnIndexes, promptTurns } = buildTurns(sortedEvents, historyDetail);
   const steps: MutableStep[] = [];
   const toolStepsByCallId = new Map<string, MutableStep>();
 
@@ -373,7 +708,7 @@ export function buildReplayProgressModel(
 
   for (const event of sortedEvents) {
     if (event.kind !== "tool" && event.kind !== "mcp" && event.kind !== "skill") continue;
-    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptEvents, event));
+    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptTurns, event));
     const callId = payloadString(event, "toolUseId");
     let step = callId ? toolStepsByCallId.get(callId) : undefined;
     if (!step) {
@@ -382,6 +717,8 @@ export function buildReplayProgressModel(
         turnIndex,
         order: 10_000 + event.eventIndex,
         kind: event.kind,
+        activity: "other",
+        target: null,
         title: payloadString(event, "toolName") ?? event.title,
         summary: compactText(event.detail || event.title),
         status: event.status,
@@ -403,7 +740,7 @@ export function buildReplayProgressModel(
 
   const subtaskSteps = new Map<string, MutableStep>();
   for (const event of sortedEvents) {
-    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptEvents, event));
+    const turnIndex = Math.min(turns.length - 1, replayTurnIndexForEvent(promptTurns, event));
     if (event.kind === "subtask") {
       const agentId = payloadString(event, "agentId");
       const key = agentId ?? `event-${event.eventIndex}`;
@@ -414,6 +751,8 @@ export function buildReplayProgressModel(
           turnIndex,
           order: 20_000 + event.eventIndex,
           kind: "subtask",
+          activity: "subtask",
+          target: null,
           title: payloadString(event, "agentType") ?? event.title,
           summary: compactText(event.detail || event.title),
           status: event.status,
@@ -447,6 +786,8 @@ export function buildReplayProgressModel(
         turnIndex,
         order: 30_000 + event.eventIndex,
         kind: event.kind,
+        activity: event.kind,
+        target: null,
         title: event.title,
         summary: compactText(event.detail || event.title),
         status: event.status,
@@ -479,6 +820,8 @@ export function buildReplayProgressModel(
       turnIndex,
       order: 25_000 + turnIndex,
       kind: "file",
+      activity: "file",
+      target: null,
       title: files.length === 1 ? files[0].file_path : `${files.length} files`,
       summary: files.map((file) => file.file_path).join(", "),
       status: "completed",
@@ -524,6 +867,7 @@ export function buildReplayProgressModel(
       files: files.size,
       validations: allSteps.filter((step) => step.kind === "validation").length,
       errors: allSteps.filter((step) => step.kind === "error" || step.status === "failed").length,
+      workMs: finalizedTurns.reduce((sum, turn) => sum + (turn.durationMs ?? 0), 0),
     },
   };
 }

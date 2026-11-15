@@ -54,6 +54,7 @@ export function TerminalTabsView({
   setDiscardTarget,
   historyOpen,
   onOpenHistorySettings,
+  handleOpenHistoryMessage,
   gitWorkspaceOpen,
   gitWorkspaceHeight,
   beginGitWorkspaceResize,
@@ -239,6 +240,7 @@ export function TerminalTabsView({
                   filesPanelContent={<FileExplorerSidebar mode="panel" onClosePanel={closeFilesPanel} />}
                   onTabChange={handleSidePanelTabChange}
                   onOpenProviderSettings={onOpenProviderSettings}
+                  onOpenHistoryMessage={handleOpenHistoryMessage}
                 />
               ) : null,
               !sidePanelMerged && gitOpen && panelGitSupported ? (
@@ -279,7 +281,7 @@ export function TerminalTabsView({
                   resizeTitle={t("terminal.panel.resizeReplayTitle")}
                 >
                   <Suspense fallback={null}>
-                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} />
+                    <SessionReplayPanel activeSessionId={panelSessionId} open={replayOpen} onOpenHistoryMessage={handleOpenHistoryMessage} />
                   </Suspense>
                 </ResizableTerminalPanelFrame>
               ) : null,

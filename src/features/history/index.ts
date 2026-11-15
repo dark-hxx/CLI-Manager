@@ -13,6 +13,7 @@ export {
   type FetchHistoryRequestLogStatsOptions,
 } from "./types/historyStoreTypes";
 export { summarySessionKey } from "./lib/historyNormalization";
+export { openHistoryMessage, type HistoryMessageTarget } from "./api/openHistoryMessage";
 export {
   syncHistoryRequestLogs,
   fetchHistoryRequestLogStats,

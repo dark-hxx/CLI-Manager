@@ -5,6 +5,7 @@ import { ResizableTerminalPanelFrame } from "./ResizableTerminalPanelFrame";
 import { SystemResourcesPanel } from "./SystemResourcesPanel";
 import { ProviderQuickSwitchPanel } from "./ProviderQuickSwitchPanel";
 import type { NativeProviderAppType } from "../../settings/api/nativeProviderTypes";
+import type { HistoryMessageTarget } from "../../history/index";
 import { useI18n } from "../../../shared/i18n/index";
 import type { WorkspaceDockSide } from "../../../shared/lib/workspaceLayout";
 import { TERMINAL_PANEL_WIDTH_DEFAULTS } from "../../../shared/preferences/settingsStore";
@@ -46,6 +47,7 @@ interface TerminalSidePanelProps {
   filesPanelContent?: ReactNode;
   onTabChange: (tab: TerminalSidePanelTab) => void;
   onOpenProviderSettings?: () => void;
+  onOpenHistoryMessage?: (target: HistoryMessageTarget) => void;
 }
 
 export function TerminalSidePanel({
@@ -62,6 +64,7 @@ export function TerminalSidePanel({
   filesPanelContent = null,
   onTabChange,
   onOpenProviderSettings,
+  onOpenHistoryMessage,
 }: TerminalSidePanelProps) {
   const { t } = useI18n();
   const tabListRef = useRef<HTMLDivElement | null>(null);
@@ -188,7 +191,7 @@ export function TerminalSidePanel({
         )}
         {replayEnabled && (
           <Suspense fallback={null}>
-            <SessionReplayPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "replay"} />
+            <SessionReplayPanel activeSessionId={activeSessionId} open={open} visible={activeTab === "replay"} onOpenHistoryMessage={onOpenHistoryMessage} />
           </Suspense>
         )}
         {gitEnabled && activeTab === "git" && (

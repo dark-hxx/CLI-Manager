@@ -7,6 +7,12 @@
 import type { CSSProperties } from "react";
 import type { ITheme } from "@xterm/xterm";
 import {
+  ensureColorContrast,
+  hexToRgb,
+  rgbToHex,
+  type TerminalRgbColor,
+} from "./terminalColor";
+import {
   getTerminalTheme,
   isKnownTerminalThemePreset,
   isLightTerminalTheme,
@@ -36,6 +42,8 @@ export interface TerminalPreviewThemeResolution {
   tone: "light" | "dark";
   isIndependent: boolean;
   panelStyle: CSSProperties;
+  /** Legible accent overrides; spread after `panelStyle` where accents are UI chrome. */
+  accentStyle: CSSProperties;
 }
 
 function previewThemeColor(value: string | undefined, fallback: string): string {
@@ -82,6 +90,30 @@ export function buildTerminalPreviewPanelStyle(theme: ITheme): CSSProperties {
   } as CSSProperties;
 }
 
+const PREVIEW_ACCENT_MINIMUM_CONTRAST = 4;
+const PREVIEW_ACCENT_KEYS = ["green", "yellow", "red", "magenta", "cyan", "blue"] as const;
+
+/**
+ * Opt-in accent overrides for panels that use the semantic colors as UI chrome (status
+ * pills, icon tiles, link-like text) rather than as terminal glyph colors. ANSI "normal"
+ * colors are tuned for text on the terminal background; on a dark card some presets fall
+ * far below legible contrast (Campbell blue #0037DA, red #C50F1F), so each accent keeps its
+ * hue and only shifts lightness until it reads on `--term-panel-card`.
+ */
+export function buildTerminalPreviewAccentStyle(theme: ITheme): CSSProperties {
+  const background = hexToRgb(previewThemeColor(theme.background, "#0c0e10")) ?? [12, 14, 16];
+  const foreground = hexToRgb(previewThemeColor(theme.foreground, "#f8fafc")) ?? [248, 250, 252];
+  // Same mix as --term-panel-card above.
+  const mix = (index: number) => background[index] * 0.91 + foreground[index] * 0.09;
+  const card: TerminalRgbColor = [mix(0), mix(1), mix(2)];
+  const style: Record<string, string> = {};
+  for (const key of PREVIEW_ACCENT_KEYS) {
+    const rgb = hexToRgb(theme[key]);
+    if (rgb) style[`--term-panel-${key}`] = rgbToHex(ensureColorContrast(rgb, card, PREVIEW_ACCENT_MINIMUM_CONTRAST));
+  }
+  return style as CSSProperties;
+}
+
 // Anything that is not a known preset id — including a stale id from settings sync or a
 // renamed preset — means "follow the terminal", never a broken panel.
 export function isIndependentTerminalPreviewTheme(previewThemeName: string): boolean {
@@ -110,5 +142,6 @@ export function resolveTerminalPreviewTheme({
     tone: isLightTerminalTheme(theme) ? "light" : "dark",
     isIndependent,
     panelStyle: buildTerminalPreviewPanelStyle(theme),
+    accentStyle: buildTerminalPreviewAccentStyle(theme),
   };
 }

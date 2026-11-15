@@ -29,12 +29,14 @@ const themesPath = transpile("../src/shared/lib/terminalThemes.ts", "terminalThe
   ['from "./terminalColor"', 'from "./terminalColor.mjs"'],
 ]);
 const previewPath = transpile("../src/shared/lib/terminalPreviewTheme.ts", "terminalPreviewTheme.ts", [
+  ['from "./terminalColor"', 'from "./terminalColor.mjs"'],
   ['from "./terminalThemes"', 'from "./terminalThemes.mjs"'],
 ]);
 
 const { getTerminalTheme, isLightTerminalTheme } = await import(pathToFileURL(themesPath).href);
 const {
   FOLLOW_TERMINAL_PREVIEW_THEME,
+  buildTerminalPreviewAccentStyle,
   buildTerminalPreviewPanelStyle,
   isIndependentTerminalPreviewTheme,
   resolveTerminalPreviewTheme,
@@ -106,6 +108,28 @@ test("panel style scopes the terminal panel variables the preview panels read", 
   for (const variable of ["--term-panel-card", "--term-panel-border", "--ui-scrollbar-thumb"]) {
     assert.ok(typeof style[variable] === "string" && style[variable].length > 0, variable);
   }
+});
+
+test("accent style lifts unreadable ANSI accents on dark cards and keeps legible ones", async () => {
+  const { getContrastRatio, hexToRgb } = await import(pathToFileURL(join(tempDir, "terminalColor.mjs")).href);
+  const campbell = getTerminalTheme(DARK_TERMINAL_THEME, "dark", "warm-paper", "night-indigo");
+  const card = hexToRgb(campbell.background).map((channel, index) => channel * 0.91 + hexToRgb(campbell.foreground)[index] * 0.09);
+  const style = buildTerminalPreviewAccentStyle(campbell);
+
+  // Campbell 的蓝/红在深色卡片上低于 3:1，提亮后达到 4:1 且仍是蓝/红色相。
+  for (const key of ["blue", "red", "magenta"]) {
+    const value = hexToRgb(style[`--term-panel-${key}`]);
+    assert.ok(getContrastRatio(value, card) >= 4, key);
+  }
+  const [r, g, b] = hexToRgb(style["--term-panel-blue"]);
+  assert.ok(b > r && b > g);
+  // 已经可读的颜色原样保留。
+  assert.equal(style["--term-panel-green"], campbell.green.toUpperCase());
+
+  const light = buildTerminalPreviewAccentStyle({ background: "#ffffff", foreground: "#101010", yellow: "#C19C00" });
+  const lightCard = [255 * 0.91 + 16 * 0.09, 255 * 0.91 + 16 * 0.09, 255 * 0.91 + 16 * 0.09];
+  assert.ok(getContrastRatio(hexToRgb(light["--term-panel-yellow"]), lightCard) >= 4);
+  assert.equal(light["--term-panel-blue"], undefined);
 });
 
 test("preview panels resolve their theme through the shared hook only", () => {

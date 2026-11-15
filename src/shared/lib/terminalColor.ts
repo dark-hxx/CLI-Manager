@@ -69,6 +69,64 @@ export const getRelativeLuminance = ([r, g, b]: TerminalRgbColor): number => {
   return 0.2126 * srgbR + 0.7152 * srgbG + 0.0722 * srgbB;
 };
 
+export const getContrastRatio = (first: TerminalRgbColor, second: TerminalRgbColor): number => {
+  const [lighter, darker] = [getRelativeLuminance(first), getRelativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+};
+
+export const rgbToHex = (rgb: TerminalRgbColor): string => (
+  `#${rgb.map((channel) => Math.round(channel).toString(16).padStart(2, "0")).join("")}`.toUpperCase()
+);
+
+const rgbToHsl = ([r, g, b]: TerminalRgbColor): [number, number, number] => {
+  const [red, green, blue] = [r / 255, g / 255, b / 255];
+  const max = Math.max(red, green, blue);
+  const min = Math.min(red, green, blue);
+  const lightness = (max + min) / 2;
+  if (max === min) return [0, 0, lightness];
+  const delta = max - min;
+  const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  const hue = max === red
+    ? (green - blue) / delta + (green < blue ? 6 : 0)
+    : max === green
+      ? (blue - red) / delta + 2
+      : (red - green) / delta + 4;
+  return [hue / 6, saturation, lightness];
+};
+
+const hslToRgb = ([hue, saturation, lightness]: [number, number, number]): TerminalRgbColor => {
+  if (saturation === 0) return [lightness * 255, lightness * 255, lightness * 255];
+  const q = lightness < 0.5 ? lightness * (1 + saturation) : lightness + saturation - lightness * saturation;
+  const p = 2 * lightness - q;
+  const channel = (offset: number) => {
+    const t = (hue + offset + 1) % 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+    return p;
+  };
+  return [channel(1 / 3) * 255, channel(0) * 255, channel(-1 / 3) * 255];
+};
+
+// Keeps hue and saturation and only walks lightness away from the surface until the
+// contrast target is met, so a theme's accent stays recognisable while becoming legible.
+export const ensureColorContrast = (
+  color: TerminalRgbColor,
+  surface: TerminalRgbColor,
+  minimumRatio: number,
+): TerminalRgbColor => {
+  if (getContrastRatio(color, surface) >= minimumRatio) return color;
+  const lighten = getRelativeLuminance(surface) < 0.5;
+  const [hue, saturation, lightness] = rgbToHsl(color);
+  let candidate = color;
+  for (let step = 1; step <= 50; step += 1) {
+    const nextLightness = Math.max(0, Math.min(1, lightness + (lighten ? step : -step) * 0.02));
+    candidate = hslToRgb([hue, saturation, nextLightness]);
+    if (getContrastRatio(candidate, surface) >= minimumRatio) break;
+  }
+  return candidate;
+};
+
 export const resolveXtermPaletteRgb = (
   index: number,
   theme: ITheme | undefined,

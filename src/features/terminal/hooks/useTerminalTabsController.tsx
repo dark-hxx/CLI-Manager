@@ -40,7 +40,7 @@ import { resolveProviderSwitchAppType } from "../../providers/api/providerSwitch
 import { inferVendor } from "../../../shared/ui/VendorIcon";
 import { useAppPrompt } from "../../../shared/ui/useAppPrompt";
 import { useAppConfirm } from "../../../shared/ui/useAppConfirm";
-import { useHistoryStore } from "../../history/index";
+import { openHistoryMessage, useHistoryStore, type HistoryMessageTarget } from "../../history/index";
 import { useGitWorkspaceStore } from "../../git/api/gitWorkspaceStore";
 import { useSaveSessionToSidebar } from "../../projects/api/useSaveSessionToSidebar";
 import {
@@ -1430,6 +1430,14 @@ export function useTerminalTabsController({
     });
   }, [activeSession, activeWorktree?.path, closeGitWorkspace, closeHistory, historyOpen, openHistory, projects, rejectUnsupportedCapability, terminalSidePanelSingleOpen]);
 
+  // 时间轴跳转：历史已打开但停留在终端页时，isOpen 不变不会触发自动切页，这里显式切到历史。
+  const handleOpenHistoryMessage = useCallback((target: HistoryMessageTarget) => {
+    closeGitWorkspace();
+    setActiveWorkspaceTab("history");
+    const fail = (description?: string) => toast.error(t("aiReplay.timeline.openInHistoryFailed"), { description });
+    void openHistoryMessage(target).then((found) => { if (!found) fail(); }, (err) => fail(String(err)));
+  }, [closeGitWorkspace, t]);
+
   const handleOpenSplitPicker = useCallback((sessionId: string, direction: TerminalPaneSplitDirection, anchor?: SplitPickerAnchor) => {
     if (guardTerminalLayoutChange()) return;
     clearSplitPickerOpenSchedule();
@@ -1918,6 +1926,7 @@ export function useTerminalTabsController({
     setDiscardTarget,
     historyOpen,
     onOpenHistorySettings,
+    handleOpenHistoryMessage,
     onActivateSession,
     gitWorkspaceOpen,
     gitWorkspaceHeight,
