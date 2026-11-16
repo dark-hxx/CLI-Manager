@@ -49,8 +49,21 @@
 
 重新发布后的测试在 ZIP 逐项内容校验之后，失败于 `result.stdout.includes(archive)`。根因位于测试的路径身份比较：runner 临时目录可使用小写盘符，PowerShell 路径规范化返回大写盘符；Windows 文件系统认为两者相同，区分大小写的文本包含断言误报失败。
 
-- 旧断言复现：对子进程设置同一临时目录的小写盘符 `c:`，原脚本打包与 ZIP 内容校验通过，最后输出路径断言发生与 CI 完全相同的失败。
+- 旧断言复现：对子进程设置同一临时目录的小写盘符 `c:`，原脚本打包与 ZIP 内容校验通过，最后输出路径断言失败；此复现证明大小写缺陷，但当时没有确认云端完整路径，未覆盖实际的 8.3 别名差异。
 - 修复位置：仅修改 `scripts/package-portable.test.mjs`，规范化输出路径并按 Windows 大小写不敏感语义比较；夹具固定使用小写盘符，永久覆盖该场景。打包脚本未修改。
 - 发现清单：测试路径断言和临时夹具需要修复；PowerShell 路径解析、ZIP 制作、输出路径返回确认正确；发布工作流仍运行同一测试入口，无需修改。V1.5.1 CHANGELOG 与 Windows 功能清单同步补充。
 - GitNexus File impact 为 LOW，零索引内上游调用；源码确认该测试只由 Windows 发布工作流运行。
 - 固定小写盘符后的完整验证：PowerShell 7 与 Windows PowerShell 5.1 分别 15/15 通过，零跳过；工作流检查及严格架构检查通过，1522 个源文件零违规。Graph diff 返回 No changes detected，未映射到匿名测试/夹具函数体，不将零结果当作无影响证据。
+
+## CI 8.3 长短路径跟进
+
+Action 43857305870 / Windows job 133266893343 在 ZIP 内容校验后仍失败。完整日志显示实际路径为 `C:\Users\runneradmin\...`，期望路径为 `C:\Users\RUNNER~1\...`；仅规范化分隔符及大小写无法判断 Windows 文件身份。根因属于 Node/PowerShell 测试交接边界，打包入口已成功生成正确 ZIP，修复落在测试的输出路径比较。
+
+- 本地先复现：用 Windows 文件系统已有的真实 8.3 别名作为 TEMP/TMP，旧测试再次在 ZIP 内容通过后失败，差异为 `cli-manager-short-path-*` 与 `CLI-MA~1`，与云端同类。
+- 修复：两条路径均通过 `realpathSync.native` 解析后比较；保留小写盘符夹具，新增真实 8.3 脚本入口回归，断言文本路径不同但真实 ZIP 相同且所有内容一致。仅在卷明确禁用 8.3 别名时跳过新增场景。
+- 场景复核：盘符大小写、长短目录别名、相对/绝对路径、空格路径均覆盖；POSIX 平台按既有约定跳过 Windows PowerShell 测试。应用焦点、分屏、WSL 项目、Worktree 与 Hook 不参与该构建期路径比较。
+- 发现清单：修改测试输出比较、8.3 回归、V1.5.1 两份变更记录及便携包测试契约；打包脚本、Web/Tap 构建、工作流调用与签名流程确认无需修改。
+- 改动前 File impact 为 LOW，零索引内上游调用，保留此前匿名测试体与跨语言调用未完整映射的覆盖限制。
+- 修复后完整检查：PowerShell 7 与 Windows PowerShell 5.1 分别 16/16 通过，零跳过；真实 8.3 TEMP/TMP 下两项路径测试 2/2 通过。工作流前置校验通过；严格架构检查仍为 1522 个源文件、零超限、零违规。
+- 本地实际打包：使用现有 release EXE 与现有 Web/Tap 构建，生成 `dist/portable-verify-v1.5.1/CLI-Manager-V1.5.1-Windows-x64-portable.zip`（38,112,947 字节）；Python ZIP 校验确认 38 个文件与全部指定源逐字节一致。EXE 为 2026-09-20 既有构建、Web 为 2026-10-20 既有构建，该验证只确认打包交接，不能作为当前 V1.5.1 完整编译或签名验证。
+- 提交前 `git diff --check` 通过。GitNexus `detect-changes --scope all` 返回 No changes detected，未完整映射匿名测试体，结合实际 diff、工作流调用及回归检查审查，不将零结果视为无影响。

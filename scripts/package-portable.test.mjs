@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,7 +114,27 @@ test("fresh release binaries package the built Classic/Tap and source resources"
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   const archive = path.join(input.root, "dist/portable/CLI-Manager-V1.5.1-Windows-x64-portable.zip");
   assert.deepEqual(archiveFiles(archive), input.expected);
-  assert.equal(path.normalize(result.stdout.trim()).toLowerCase(), path.normalize(archive).toLowerCase());
+  assert.equal(realpathSync.native(result.stdout.trim()).toLowerCase(), realpathSync.native(archive).toLowerCase());
+});
+
+test("Windows 8.3 and long output paths identify the same portable archive", { skip: !windows }, (t) => {
+  const input = fixture(t);
+  const alias = spawnSync(powershell, ["-NoProfile", "-NonInteractive", "-Command",
+    "(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:CLI_MANAGER_PORTABLE_TEST_ROOT).ShortPath",
+  ], { encoding: "utf8", env: { ...process.env, CLI_MANAGER_PORTABLE_TEST_ROOT: input.root } });
+  assert.equal(alias.status, 0, alias.error?.message ?? alias.stderr);
+  const shortRoot = alias.stdout.trim();
+  if (path.normalize(shortRoot).toLowerCase() === realpathSync.native(input.root).toLowerCase()) {
+    t.skip("8.3 directory aliases are disabled on this volume");
+    return;
+  }
+  const result = runPackage({ ...input, script: path.join(shortRoot, "scripts/package-portable.ps1") });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+  const archive = path.join(shortRoot, "dist/portable/CLI-Manager-V1.5.1-Windows-x64-portable.zip");
+  assert.deepEqual(archiveFiles(archive), input.expected);
+  // 文本路径确实不同；两者必须由文件系统解析到同一个真实 ZIP。
+  assert.notEqual(path.normalize(result.stdout.trim()).toLowerCase(), path.normalize(archive).toLowerCase());
+  assert.equal(realpathSync.native(result.stdout.trim()).toLowerCase(), realpathSync.native(archive).toLowerCase());
 });
 
 test("stale Cargo resource copies are ignored and repeated packaging replaces old output", { skip: !windows }, (t) => {

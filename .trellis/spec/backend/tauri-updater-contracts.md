@@ -53,7 +53,7 @@ get_app_version() -> AppVersion // distribution = standalone | portable | aur
 - Run the portable packaging script against a release directory and inspect ZIP entries.
 - Verify ZIP layout/content and rejection of missing inputs before existing output is changed.
 - Run `node --test scripts/package-portable.test.mjs` on Windows: exercise the real PowerShell entry without Cargo resource copies, compare every ZIP file with its producer, and check explicit paths, stale copies, missing inputs and repeat builds. The Windows release job runs this regression before signed bundling.
-- Compare reported Windows archive paths after separator normalization with case-insensitive semantics. Runner temporary directories may use lowercase drive letters while PowerShell returns uppercase; fixtures must cover this difference without weakening ZIP content checks.
+- Compare reported Windows archive paths using filesystem canonicalization (`realpathSync.native`) with case-insensitive semantics. Runner temporary directories may use lowercase drive letters or 8.3 aliases such as `RUNNER~1`, while PowerShell returns uppercase drives and long directory names. Separator normalization and lowercasing alone cannot resolve aliases; fixtures must cover a real 8.3 entry when the volume supports it without weakening ZIP content checks.
 - Release workflow verification must require `CLI-Manager-V<version>-Windows-x64-portable.zip` before publishing.
 
 ### 7. Wrong vs Correct
