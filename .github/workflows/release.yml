@@ -176,6 +176,10 @@ jobs:
         if: matrix.platform == 'windows-latest'
         run: npm run web:build
 
+      - name: Test Windows portable packaging
+        if: matrix.platform == 'windows-latest'
+        run: node --test scripts/package-portable.test.mjs
+
       - name: Test Codex app-server proxy
         if: matrix.platform == 'windows-latest'
         run: npm run test:codex-proxy:e2e

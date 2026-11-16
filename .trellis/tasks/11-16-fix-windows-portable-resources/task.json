@@ -1,0 +1,26 @@
+{
+  "id": "fix-windows-portable-resources",
+  "name": "fix-windows-portable-resources",
+  "title": "修复 V1.5.1 Windows 便携包资源输入",
+  "description": "使用明确的 Web/Tap 与资源输入目录制作便携 ZIP，修复发布构建成功后仍因 Cargo 输出目录缺少 Web 文件而失败的问题。",
+  "status": "completed",
+  "dev_type": "backend",
+  "scope": "windows-portable-packaging",
+  "priority": "P1",
+  "creator": "hxx",
+  "assignee": "hxx",
+  "createdAt": "2026-11-16",
+  "completedAt": "2026-11-16",
+  "branch": "master",
+  "base_branch": "master",
+  "version": "V1.5.1",
+  "relatedFiles": [
+    "scripts/package-portable.ps1",
+    "scripts/package-portable.test.mjs",
+    ".github/workflows/release.yml",
+    ".github/scripts/release-workflow.test.mjs",
+    "CHANGELOG.md",
+    "docs/功能清单.md"
+  ],
+  "notes": "用户授权更新代码并修复；master 已从 8dc3b4dd 快进到远程 20a419fb。资源输入与回归完成，15 项真实打包测试分别在 PowerShell 7.7.0 与 Windows PowerShell 5.1 通过，工作流检查、7 项既有本地构建测试及严格架构检查通过。本地验收后，用户删除远程 V1.5.1 标签并授权提交、推送和重建该标签；版本源全部保持 1.5.1。Graph 覆盖及交付证据见 validation.md。当前 Mini-Trellis 已移除 task.py，按既有任务格式直接保存规划与状态。"
+}

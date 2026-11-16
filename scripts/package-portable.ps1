@@ -3,22 +3,26 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Version,
     [string]$SourceDir = "src-tauri/target/release",
-    [string]$OutputDir = "dist/portable"
+    [string]$OutputDir = "dist/portable",
+    [string]$ResourcesDir = "src-tauri/resources",
+    [string]$WebDistDir = "apps/web/dist"
 )
 
 $ErrorActionPreference = "Stop"
 
 $repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$resolvedSourceDir = if ([System.IO.Path]::IsPathRooted($SourceDir)) {
-    [System.IO.Path]::GetFullPath($SourceDir)
-} else {
-    [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $SourceDir))
+
+# 二进制与资源来自各自生产者；所有相对输入均相对仓库根解析，不依赖调用者工作目录。
+function Resolve-PortablePath([string]$InputPath) {
+    if ([System.IO.Path]::IsPathRooted($InputPath)) {
+        return [System.IO.Path]::GetFullPath($InputPath)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $InputPath))
 }
-$resolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
-    [System.IO.Path]::GetFullPath($OutputDir)
-} else {
-    [System.IO.Path]::GetFullPath((Join-Path $repositoryRoot $OutputDir))
-}
+$resolvedSourceDir = Resolve-PortablePath $SourceDir
+$resolvedOutputDir = Resolve-PortablePath $OutputDir
+$resourcesDir = Resolve-PortablePath $ResourcesDir
+$webDistDir = Resolve-PortablePath $WebDistDir
 
 $normalizedVersion = $Version.Trim().TrimStart([char[]]@("V", "v"))
 if ($normalizedVersion -notmatch "^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$") {
@@ -31,10 +35,14 @@ $executableNames = @(
     "cli-manager-daemon.exe",
     "cli-manager-web-daemon.exe"
 )
-$resourcesDir = Join-Path $resolvedSourceDir "resources"
-$webDistDir = Join-Path $resolvedSourceDir "apps/web/dist"
-foreach ($relativePath in ($executableNames + @("apps/web/dist/index.html", "apps/web/dist/tap/index.html"))) {
+foreach ($relativePath in $executableNames) {
     $requiredPath = Join-Path $resolvedSourceDir $relativePath
+    if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
+        throw "Missing portable package input: $requiredPath"
+    }
+}
+foreach ($relativePath in @("index.html", "tap/index.html")) {
+    $requiredPath = Join-Path $webDistDir $relativePath
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Missing portable package input: $requiredPath"
     }

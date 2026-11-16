@@ -18,7 +18,7 @@ type AppDistribution = "standalone" | "portable" | "aur";
 get_app_version() -> AppVersion // distribution = standalone | portable | aur
 ```
 
-- Packaging entry: `scripts/package-portable.ps1 -Version <semver> -SourceDir <release> -OutputDir <dir>`.
+- Packaging entry: `scripts/package-portable.ps1 -Version <semver> -SourceDir <release> -OutputDir <dir> [-ResourcesDir <resources>] [-WebDistDir <web-dist>]`.
 
 ### 3. Contracts
 
@@ -27,6 +27,7 @@ get_app_version() -> AppVersion // distribution = standalone | portable | aur
 - Standalone and AUR behavior stays unchanged: standalone downloads/installs/relaunches; AUR skips updater operations and opens the AUR package page.
 - The Windows x64 ZIP contains one `CLI-Manager/` root with `cli-manager.exe`, `cli-manager-codex-proxy.exe`, `cli-manager-daemon.exe`, `cli-manager-web-daemon.exe`, `portable.flag`, `resources/`, and `apps/web/dist/` (including `index.html` and `assets/`). It must not contain an installer or a user `data-root.json`.
 - Validate all four executables and the Web entry as files, and `resources/` and Web `assets/` as directories before replacing existing output. Web resources live beside `resources/`, not inside it; preserve the runtime's `apps/web/dist` path.
+- Inputs have separate owners: `SourceDir` defaults to `src-tauri/target/release` for binaries, `ResourcesDir` to `src-tauri/resources`, and `WebDistDir` to the root `web:build` output `apps/web/dist` (Classic and Tap). Relative paths resolve from the repository root, absolute paths remain explicit. Do not assume Cargo stages resources beside the EXEs or silently consume old staged copies; custom distributions may explicitly pass their resource directories. Validate both HTML entries and both assets directories before replacing output, and copy the complete Web subtree, including Tap fonts/chunks.
 - The portable ZIP is uploaded to the same draft GitHub Release but is not referenced from `latest.json`; Tauri installer selection must continue using signed installer artifacts only.
 
 ### 4. Validation & Error Matrix
@@ -51,6 +52,7 @@ get_app_version() -> AppVersion // distribution = standalone | portable | aur
 - Type-check updater distribution branches with `npx tsc --noEmit`.
 - Run the portable packaging script against a release directory and inspect ZIP entries.
 - Verify ZIP layout/content and rejection of missing inputs before existing output is changed.
+- Run `node --test scripts/package-portable.test.mjs` on Windows: exercise the real PowerShell entry without Cargo resource copies, compare every ZIP file with its producer, and check explicit paths, stale copies, missing inputs and repeat builds. The Windows release job runs this regression before signed bundling.
 - Release workflow verification must require `CLI-Manager-V<version>-Windows-x64-portable.zip` before publishing.
 
 ### 7. Wrong vs Correct

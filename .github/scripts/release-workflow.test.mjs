@@ -21,6 +21,14 @@ const verifyAgent = stepIndex(/name: Verify bundled SSH Agent files\b/, "downloa
 const proxy = stepIndex(/run: npm run test:codex-proxy:e2e\b/, "the real Windows proxy test must remain enabled");
 const devProxy = stepIndex(/run: npm run test:tauri-dev-proxy\b/, "the Windows dev proxy test must remain enabled");
 const bundle = stepIndex(/uses: tauri-apps\/tauri-action@/, "the signed Tauri build must remain enabled");
+const portableTest = stepIndex(/run: node --test scripts\/package-portable\.test\.mjs\b/, "Windows portable packaging must have a real regression test");
+const portable = stepIndex(/name: Package Windows portable ZIP\b/, "the real Windows portable ZIP must be packaged");
+
+assert.ok(portableTest < bundle, "portable regression must gate the expensive signed build");
+assert.ok(bundle < portable, "package portable binaries after the Tauri build");
+assert.match(steps[portableTest], /if: matrix\.platform == 'windows-latest'/);
+assert.match(steps[portable], /if: matrix\.platform == 'windows-latest'/);
+assert.doesNotMatch(steps[portableTest], /continue-on-error:\s*true/);
 
 assert.ok(agent < verifyAgent, "verify Agent assets after download");
 for (const consumer of [proxy, devProxy]) {
