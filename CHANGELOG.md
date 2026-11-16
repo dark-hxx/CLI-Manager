@@ -4,6 +4,7 @@
 
 ### Windows 便携包资源
 
+- 修正便携包回归测试对 Windows 输出路径的大小写敏感匹配；临时目录盘符为小写、PowerShell 返回大写盘符时，按同一路径校验，避免 ZIP 内容正确但 CI 误报失败。夹具固定覆盖此盘符差异。
 - 修复 Windows 发布已完成安装包构建、制作便携 ZIP 时仍因 `target/release/apps/web/dist/index.html` 缺失而失败的问题；便携包直接读取已构建的 Web/Tap 输出及原始资源目录，二进制与资源输入可独立指定。
 - 保留便携包内 `resources/`、`apps/web/dist/` 及 Tap 嵌套脚本、字体布局；新增真实 PowerShell 打包回归并接入 Windows 发布检查，覆盖无 Cargo 资源副本、过期副本、空格路径和缺失输入不破坏已有输出。
 

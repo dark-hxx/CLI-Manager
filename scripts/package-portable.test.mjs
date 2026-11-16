@@ -33,7 +33,9 @@ const webFiles = {
 
 // 只在独立临时仓库内准备输入，并在删除前确认目录仍位于本测试的明确前缀。
 function fixture(t, { source = "src-tauri/target/release", resources = "src-tauri/resources", web = "apps/web/dist" } = {}) {
-  const temporaryPrefix = path.join(os.tmpdir(), "cli-manager-portable-");
+  // runner 的临时目录可带小写盘符，PowerShell 会规范化盘符大小写。
+  const temporaryPrefix = path.join(os.tmpdir(), "cli-manager-portable-")
+    .replace(/^[A-Z]:/, drive => drive.toLowerCase());
   const root = mkdtempSync(temporaryPrefix);
   t.after(() => {
     assert.ok(path.resolve(root).startsWith(temporaryPrefix));
@@ -112,7 +114,7 @@ test("fresh release binaries package the built Classic/Tap and source resources"
   assert.equal(result.status, 0, result.error?.message ?? result.stderr);
   const archive = path.join(input.root, "dist/portable/CLI-Manager-V1.5.1-Windows-x64-portable.zip");
   assert.deepEqual(archiveFiles(archive), input.expected);
-  assert.ok(result.stdout.includes(archive));
+  assert.equal(path.normalize(result.stdout.trim()).toLowerCase(), path.normalize(archive).toLowerCase());
 });
 
 test("stale Cargo resource copies are ignored and repeated packaging replaces old output", { skip: !windows }, (t) => {
