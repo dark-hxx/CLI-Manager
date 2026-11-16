@@ -44,6 +44,10 @@ export function webDeviceNeedsNetworkTrust(serverUrl: string, publicUrl: string,
 export function webNetworkErrorKey(error: unknown): TranslationKey | null {
   switch (String(error)) {
     case "web_server_still_stopping": return "settings.webServer.error.stopping";
+    case "Web server admin username must contain 1 to 128 bytes":
+      return "settings.webServer.error.adminUsername";
+    case "Web server admin password cannot exceed 1024 bytes":
+      return "settings.webServer.error.adminPassword";
     case "Enable trusted network HTTP explicitly, or configure an HTTPS browser origin":
       return "settings.webServer.error.trustedNetworkRequired";
     case "Allowed Origin is required when listening on all network interfaces":

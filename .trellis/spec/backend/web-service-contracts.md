@@ -78,6 +78,7 @@
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
 - Finished `terminal.transcript` operations, with their `operation.updated` browser events, are deleted two minutes after completion; events are selected by the IDs of the operations being deleted, so a transcript operation still waiting or running keeps all of its events. Pruning runs when a new transcript operation arrives, at most once per 30 seconds; other operation kinds keep their existing retention.
+- Retention runs outside the HTTP read critical path in bounded transactions. Partial JSON-expression indexes cover operation IDs and per-device workspace snapshots; cleanup must not scan historical payloads while holding a writer. Authentication reads never await optional activity metadata writes; only due, scoped sessions schedule a globally single-flight update, without weakening expiry/ownership/scope checks.
 
 ## 3. Contracts
 
@@ -142,6 +143,7 @@ The server also accepts `--bind host:port` and `--port number`. Precedence is co
 
 - Browser session Cookie is `HttpOnly`, `SameSite=Strict`, path `/`, seven-day max age; `Secure` follows configuration.
 - Device tokens are random secrets; SQLite stores SHA-256 hashes only.
+- Desktop-managed listeners reconcile their stored admin credentials at startup after reserving listeners. Update the existing user ID, not the account/device inventory; changed username/password atomically revokes browser sessions and unused mobile tickets. Unchanged credentials preserve their hash and sessions. Standalone environment credentials remain bootstrap-only. Failed desktop configuration application restores both the saved config and changed native password credential, and reports any rollback failure.
 - Pairing codes are normalized to 6-12 ASCII letters/digits, short-lived, and single-use.
 - Desktop status clears an expired pairing code in both the in-process and helper-daemon paths; the settings UI refreshes at the expiry boundary and never presents an expired code as usable.
 - If token delivery to the live device queue fails, the pairing claim must be rolled back; do not leave a paired device that never received its token.

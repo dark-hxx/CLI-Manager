@@ -106,3 +106,71 @@ Topics: [.trellis/research/file-tree-first-paint.md](../../research/file-tree-fi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Web 认证与连接状态可靠性修复
+<!-- trellis-session: v=2 fp=b82b74767d4aa73b -->
+
+**Date**: 2026-11-16
+**Task**: Web 认证与连接状态可靠性修复
+**Branch**: `fix/web-auth-connection-reliability`
+
+### Summary
+
+已修复受管管理员凭据同步、SQLite 事件清理及认证写锁、daemon 状态快照共享；71 项服务端和 31 项前端/构建定向测试通过，三端生产构建通过。保留主干既有 3 项架构问题，准备提交后构建 1.5.0 NSIS；不操作用户服务，不推送。
+Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/web-auth-connection-reliability.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 6: Web 认证修复 1.5.0 NSIS 构建与解包核验
+<!-- trellis-session: v=2 fp=80bd0370161365f8 -->
+
+**Date**: 2026-11-16
+**Task**: Web 认证修复 1.5.0 NSIS 构建与解包核验
+**Branch**: `fix/web-auth-connection-reliability`
+
+### Summary
+
+源码8d8cd446先提交后完成原生主程序与全部helper构建；1.5.0 NSIS完整性、19个Web/Tap文件、447个桌面资源键及4个exe一致性检查通过。71项服务端与31项前端回归通过；3项既有架构问题保留。未安装、未推送，待用户验收。
+Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/web-auth-connection-reliability.md)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d8cd446` | fix(web): synchronize admin credentials and live device status |
+
+### Status
+
+[OK] **Completed**
+
+
+## Session 7: 合并 Web 认证修复与远程主干并验证推送范围
+<!-- trellis-session: v=2 fp=2b41bb5d7c07727c -->
+
+**Date**: 2026-11-16
+**Task**: 合并 Web 认证修复与远程主干并验证推送范围
+**Branch**: `master`
+
+### Summary
+
+用户授权只发布master；同步14个远程提交至f88f4faf，解决6处重叠冲突，统一沿用主干状态来源，保留本地密码和SQLite修复。237项回归、三端类型、桌面构建、普通/strict零违规通过；未重新打包、不推开发分支。
+Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/web-auth-connection-reliability.md)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d8cd446` | fix(web): synchronize admin credentials and live device status |
+| `c3b8dc0b` | docs(web): record auth reliability NSIS verification |
+
+### Status
+
+[OK] **Completed**

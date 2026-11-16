@@ -117,6 +117,7 @@ function componentHarness(kind) {
   let language = zh;
   const toasts = [];
   const requests = [];
+  let statusReads = 0;
   let currentStatus = kind === "server" ? listenerStatus : deviceStatus;
   const statusSource = createWebDeviceStatusSource();
   const failure = kind === "server"
@@ -149,7 +150,7 @@ function componentHarness(kind) {
     },
   };
   const api = {
-    getStatus: async () => currentStatus,
+    getStatus: async () => { statusReads++; return currentStatus; },
     saveConfig: async (request) => { requests.push(request); return saveAction(request); },
     saveProfile: async (request) => { requests.push(request); return saveAction(request); },
     start: async () => ({ ...currentStatus, running: true }),
@@ -199,6 +200,7 @@ function componentHarness(kind) {
   render();
   return {
     find, flush, toasts, requests,
+    statusReads: () => statusReads,
     change(type, key, value) { find(type, key).onChange(type === "Select" ? value : { currentTarget: { value, checked: value } }); render(); },
     click(key) { find("Button", key).onClick(); },
     status(next) { currentStatus = next; listener({ payload: next }); render(); },
@@ -214,6 +216,46 @@ function componentHarness(kind) {
     saveWith(action) { saveAction = action; },
   };
 }
+
+test("device background snapshots update badges without saving or overwriting drafts", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  h.change("TextInput", "settings.webDevice.serverUrl", "https://unsaved.example.com");
+  for (const [running, connected, paired] of [
+    [true, true, false], [true, true, true], [true, false, true], [false, false, false],
+  ]) {
+    await h.poll({ ...deviceStatus, running, connected, paired });
+    await h.flush();
+    assert.equal(h.find("TextInput", "settings.webDevice.serverUrl").value, "https://unsaved.example.com");
+  }
+  assert.equal(h.requests.length, 0, "observing daemon state never saves configuration");
+  h.unmount();
+});
+
+test("unmounted device settings ignore native callbacks before async unlisten settles", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  const reads = h.statusReads();
+  h.unmount();
+  h.event({ ...deviceStatus, running: true, connected: true, paired: true });
+  await h.flush();
+  assert.equal(h.statusReads(), reads);
+  assert.equal(h.find("Badge").children, zh["settings.webDevice.state.stopped"]);
+});
+
+test("credential errors are localized without opening unrelated network settings", async () => {
+  const h = componentHarness("server");
+  await h.flush();
+  h.saveWith(async () => { throw "Web server admin password cannot exceed 1024 bytes"; });
+  for (const language of [zh, en]) {
+    h.language(language);
+    h.click("common.save");
+    await h.flush();
+    assert.equal(h.toasts.at(-1)[1].description, language["settings.webServer.error.adminPassword"]);
+    assert.equal(h.find("Collapse").expanded, false);
+  }
+  h.unmount();
+});
 
 test("device badge and buttons follow daemon snapshots without Tauri status events in both languages", async () => {
   const h = componentHarness("device");

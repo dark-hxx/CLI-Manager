@@ -64,11 +64,15 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   }, [t]);
 
   useEffect(() => {
+    let disposed = false;
     // 先订阅共享查询结果；原生事件只唤醒权威查询，不能用另一 transport 的载荷覆盖状态。
     const unsubscribe = webDeviceStatusSource.subscribe(applyStatus);
-    const unlisten = listen(STATUS_EVENT, () => void refresh());
+    const unlisten = listen(STATUS_EVENT, () => {
+      if (!disposed) void refresh();
+    });
     void refresh();
     return () => {
+      disposed = true;
       unsubscribe();
       void unlisten.then((dispose) => dispose());
     };

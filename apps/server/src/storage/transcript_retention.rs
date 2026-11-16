@@ -14,6 +14,8 @@ const TRANSCRIPT_OPERATION_KINDS: [&str; 1] = ["terminal.transcript"];
 const RETENTION_MS: i64 = 120_000;
 /// 兩次清理至少間隔 30 秒，輪詢再頻繁也不會每次都掃資料表。
 const PRUNE_INTERVAL_MS: i64 = 30_000;
+const PRUNE_BATCH_SIZE: u64 = 256;
+const MAX_PRUNE_BATCHES: usize = 4;
 
 /// 這個 operation 的結果是否屬於會被定期清掉的轉錄快照。
 pub fn is_transcript_operation(kind: &str) -> bool {
@@ -21,19 +23,51 @@ pub fn is_transcript_operation(kind: &str) -> bool {
 }
 
 impl Storage {
+    pub fn schedule_transcript_prune(&self, now: i64) {
+        if !self.claim_transcript_prune(now) {
+            return;
+        }
+        let storage = self.clone();
+        tokio::spawn(async move {
+            if let Err(error) = storage.prune_transcript_batches(now).await {
+                tracing::warn!(%error, "transcript operation prune failed");
+            }
+        });
+    }
+
     /// 刪除已結束超過保留期的轉錄 operation 與對應事件，回傳刪掉的 operation 數；
     /// 距離上次清理不到間隔時直接略過。只清已結束的，仍在等待或執行中的不動。
     pub async fn prune_transcript_operations(&self, now: i64) -> Result<u64, AppError> {
-        let last = self.transcript_pruned_at.load(Ordering::Relaxed);
-        if now - last < PRUNE_INTERVAL_MS
-            || self
-                .transcript_pruned_at
-                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
-                .is_err()
-        {
+        if !self.claim_transcript_prune(now) {
             return Ok(0);
         }
-        let cutoff = now - RETENTION_MS;
+        self.prune_transcript_batches(now).await
+    }
+
+    fn claim_transcript_prune(&self, now: i64) -> bool {
+        let last = self.transcript_pruned_at.load(Ordering::Relaxed);
+        now - last >= PRUNE_INTERVAL_MS
+            && self
+                .transcript_pruned_at
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+    }
+
+    async fn prune_transcript_batches(&self, now: i64) -> Result<u64, AppError> {
+        let mut removed = 0;
+        for _ in 0..MAX_PRUNE_BATCHES {
+            let batch = self.prune_transcript_batch(now - RETENTION_MS).await?;
+            removed += batch;
+            if batch < PRUNE_BATCH_SIZE {
+                break;
+            }
+            // Release the writer between bounded batches for device/HTTP work.
+            tokio::task::yield_now().await;
+        }
+        Ok(removed)
+    }
+
+    async fn prune_transcript_batch(&self, cutoff: i64) -> Result<u64, AppError> {
         let mut tx = self.pool.begin().await?;
         // 先刪事件，而且只刪這次要清掉的 operation 的事件：仍在等待或執行中的轉錄 operation，
         // 事件全部保留，重播時狀態不會缺漏。
@@ -45,18 +79,21 @@ impl Storage {
                    WHERE kind = 'terminal.transcript'
                      AND status IN ('succeeded', 'failed', 'rejected', 'timed_out', 'canceled')
                      AND updated_at < ?1
+                   ORDER BY updated_at, id LIMIT ?2
                )",
         )
         .bind(cutoff)
+        .bind(PRUNE_BATCH_SIZE as i64)
         .execute(&mut *tx)
         .await?;
         let removed = sqlx::query(
             "DELETE FROM operations
-             WHERE kind = 'terminal.transcript'
+             WHERE id IN (SELECT id FROM operations WHERE kind = 'terminal.transcript'
                AND status IN ('succeeded', 'failed', 'rejected', 'timed_out', 'canceled')
-               AND updated_at < ?1",
+               AND updated_at < ?1 ORDER BY updated_at, id LIMIT ?2)",
         )
         .bind(cutoff)
+        .bind(PRUNE_BATCH_SIZE as i64)
         .execute(&mut *tx)
         .await?
         .rows_affected();
@@ -259,6 +296,51 @@ mod tests {
                 .await
                 .unwrap(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn cleanup_uses_json_indexes_and_commits_bounded_batches() {
+        let (storage, user_id) = storage_with_device().await;
+        let now = now_ms();
+        sqlx::query(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 1100)
+             INSERT INTO operations (id, user_id, device_id, kind, status, idempotency_key, payload_json, created_at, updated_at)
+             SELECT 'old-' || x, ?1, 'device-1', 'terminal.transcript', 'succeeded', 'key-' || x, '{}', 0, ?2 FROM n",
+        ).bind(&user_id).bind(now - RETENTION_MS - 1).execute(storage.pool()).await.unwrap();
+        sqlx::query(
+            "INSERT INTO browser_events (user_id, occurred_at, payload_json)
+             SELECT ?1, 0, json_object('type', 'operation.updated', 'operation', json_object('id', id)) FROM operations",
+        ).bind(&user_id).execute(storage.pool()).await.unwrap();
+        for (query, index) in [
+            ("EXPLAIN QUERY PLAN DELETE FROM browser_events WHERE json_extract(payload_json, '$.type') = 'operation.updated' AND json_extract(payload_json, '$.operation.id') IN (SELECT id FROM operations WHERE kind = 'terminal.transcript' AND status IN ('succeeded', 'failed', 'rejected', 'timed_out', 'canceled') AND updated_at < 100 ORDER BY updated_at, id LIMIT 256)", "idx_browser_events_operation_retention"),
+            ("EXPLAIN QUERY PLAN DELETE FROM browser_events WHERE user_id = 'u' AND sequence < 100 AND json_extract(payload_json, '$.type') = 'workspace.updated' AND json_extract(payload_json, '$.deviceId') = 'device-1'", "idx_browser_events_workspace_retention"),
+        ] {
+            use sqlx::Row;
+            let rows = sqlx::query(query).fetch_all(storage.pool()).await.unwrap();
+            let details: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
+            assert!(details.iter().any(|detail| detail.contains(index)), "{details:?}");
+            assert!(!details.iter().any(|detail| detail == "SCAN browser_events"), "{details:?}");
+        }
+        assert_eq!(
+            storage.prune_transcript_operations(now).await.unwrap(),
+            1024
+        );
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM operations")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        let events: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM browser_events")
+            .fetch_one(storage.pool())
+            .await
+            .unwrap();
+        assert_eq!((remaining, events), (76, 76));
+        assert_eq!(
+            storage
+                .prune_transcript_operations(now + PRUNE_INTERVAL_MS)
+                .await
+                .unwrap(),
+            76
         );
     }
 }
