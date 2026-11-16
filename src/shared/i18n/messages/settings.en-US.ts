@@ -734,6 +734,8 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.webServer.error.trustedNetworkRequired": "For this bind address, enable “Allow trusted network HTTP access” under “Advanced network settings”, or configure an HTTPS browser URL. Enable it only for a trusted LAN or encrypted overlay network.",
   "settings.webServer.error.originRequired": "When listening on all interfaces, enter the actual browser URL (scheme, IP or domain, and port) under “Advanced network settings”. Do not use 0.0.0.0 or :: as the browser address.",
   "settings.webServer.error.invalidOrigin": "The browser URL must be an HTTP/HTTPS origin with only a scheme, IP or domain, and port. Do not include a path, credentials, query, or fragment.",
+  "settings.webServer.error.adminUsername": "The admin username is required and must not exceed 128 UTF-8 bytes.",
+  "settings.webServer.error.adminPassword": "The admin password must not exceed 1024 UTF-8 bytes. Shorten it and save again.",
   "settings.webServer.state.unconfigured": "Password required",
   "settings.webServer.toast.loadFailed": "Failed to load Web service status",
   "settings.webServer.toast.actionFailed": "Web service operation failed",

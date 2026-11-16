@@ -18,6 +18,7 @@ async fn optional_tap_spa_and_assets_do_not_fall_back_to_classic_web() {
         web_dist: dist,
         admin_username: "admin".into(),
         admin_password: "test-only".into(),
+        sync_admin_credentials: false,
         cookie_secure: false,
         trusted_network: false,
         allowed_origin: None,

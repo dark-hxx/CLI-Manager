@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-11-13
+- **Total Sessions**: 5
+- **Last Active**: 2026-11-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~108 | Active |
+| `journal-1.md` | ~129 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-11-16 | Web 认证与连接状态可靠性修复 | - | `fix/web-auth-connection-reliability` |
 | 4 | 2026-11-13 | 用户验收文件树首屏修复并合入主干 | `6b119883` | `master` |
 | 3 | 2026-11-13 | 修复文件树首屏被 Git 查询阻塞 | - | `fix/file-tree-first-paint` |
 | 2 | 2026-11-12 | 修复 Windows helper WebView2 构建兼容 | - | `fix/windows-helper-webview2-compat` |

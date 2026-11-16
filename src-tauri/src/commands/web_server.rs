@@ -330,6 +330,7 @@ fn server_config(
         web_dist,
         admin_username: config.admin_username.clone(),
         admin_password: password,
+        sync_admin_credentials: true,
         cookie_secure,
         allowed_origin,
     })
@@ -496,6 +497,24 @@ pub struct SaveWebServerConfigRequest {
     pub allowed_origin: Option<String>,
 }
 
+fn restore_saved_config(
+    config: &WebServerConfig,
+    password: Option<&Option<String>>,
+) -> Result<(), String> {
+    let config_error = save_config(config).err();
+    let password_error = password.and_then(|password| match password {
+        Some(value) => crate::credential_store::set(PASSWORD_ACCOUNT, value).err(),
+        None => crate::credential_store::delete(PASSWORD_ACCOUNT).err(),
+    });
+    match (config_error, password_error) {
+        (None, None) => Ok(()),
+        (config, password) => Err(format!(
+            "restore Web configuration failed: {}; credential restore: {}",
+            config.as_deref().unwrap_or("ok"), password.as_deref().unwrap_or("ok")
+        )),
+    }
+}
+
 #[tauri::command]
 pub fn web_server_get_status(
     manager: State<'_, WebServerManager>,
@@ -537,20 +556,38 @@ pub fn web_server_save_config(
         admin_username: request.admin_username.trim().to_string(),
         allowed_origin,
     };
-    if config.admin_username.is_empty() {
-        return Err("Web server admin username cannot be empty".to_string());
+    if config.admin_username.is_empty() || config.admin_username.len() > 128 {
+        return Err("Web server admin username must contain 1 to 128 bytes".to_string());
     }
-    save_config(&config)?;
-    if let Some(password) = request
-        .admin_password
-        .filter(|value| !value.trim().is_empty())
-    {
-        crate::credential_store::set(PASSWORD_ACCOUNT, &password)?;
+    let password = request.admin_password.filter(|value| !value.trim().is_empty());
+    if password.as_ref().is_some_and(|value| value.len() > 1024) {
+        return Err("Web server admin password cannot exceed 1024 bytes".to_string());
+    }
+    // Validation has not changed persistent state; preserve its original error
+    // for localized network guidance rather than attempting a rollback.
+    validate_config(&config)?;
+    let previous_password = if password.is_some() {
+        Some(crate::credential_store::get(PASSWORD_ACCOUNT)?)
+    } else {
+        None
+    };
+    if let Err(error) = save_config(&config) {
+        let rollback = restore_saved_config(&previous, None);
+        return Err(format!("save Web configuration failed: {error}; rollback: {}",
+            rollback.err().as_deref().unwrap_or("ok")));
+    }
+    if let Some(password) = password {
+        if let Err(error) = crate::credential_store::set(PASSWORD_ACCOUNT, &password) {
+            let rollback = restore_saved_config(&previous, previous_password.as_ref());
+            return Err(format!("save Web credential failed: {error}; rollback: {}",
+                rollback.err().as_deref().unwrap_or("ok")));
+        }
     }
     if was_running {
-        stop_locked(&manager)?;
-        if let Err(error) = start_locked(&app, &manager) {
-            save_config(&previous)?;
+        if let Err(error) = stop_locked(&manager).and_then(|_| start_locked(&app, &manager)) {
+            if let Err(rollback) = restore_saved_config(&previous, previous_password.as_ref()) {
+                return Err(format!("apply Web server configuration failed: {error}; {rollback}"));
+            }
             let rollback_error = start_locked(&app, &manager).err();
             return Err(match rollback_error {
                 Some(rollback_error) => format!(

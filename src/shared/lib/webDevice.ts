@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { beginWebDeviceStatusRequest, publishWebDeviceStatus } from "./webDeviceStatus";
 
 export interface WebDeviceProfile {
   serverUrl: string;
@@ -103,14 +104,22 @@ export interface WebHistorySessionSummary {
   freshness: string;
 }
 
+async function invokeStatus(command: string, args?: Record<string, unknown>): Promise<WebDeviceStatus> {
+  const revision = beginWebDeviceStatusRequest();
+  const status = await invoke<WebDeviceStatus>(command, args);
+  // A command's completed state supersedes probes that ran while it was in flight.
+  publishWebDeviceStatus(status, command === "web_device_get_status" ? revision : undefined);
+  return status;
+}
+
 export const webDeviceApi = {
-  getStatus: () => invoke<WebDeviceStatus>("web_device_get_status"),
-  saveProfile: (request: WebDeviceProfileInput) => invoke<WebDeviceStatus>("web_device_save_profile", { request }),
-  start: () => invoke<WebDeviceStatus>("web_device_start"),
-  stop: () => invoke<WebDeviceStatus>("web_device_stop"),
-  restart: () => invoke<WebDeviceStatus>("web_device_restart"),
+  getStatus: () => invokeStatus("web_device_get_status"),
+  saveProfile: (request: WebDeviceProfileInput) => invokeStatus("web_device_save_profile", { request }),
+  start: () => invokeStatus("web_device_start"),
+  stop: () => invokeStatus("web_device_stop"),
+  restart: () => invokeStatus("web_device_restart"),
   createPairing: () => invoke<{ code: string; expiresAt: number }>("web_device_create_pairing"),
-  clearPairing: () => invoke<WebDeviceStatus>("web_device_clear_pairing"),
+  clearPairing: () => invokeStatus("web_device_clear_pairing"),
   mobileTicket: (revoke = false) => invoke<{ url: string; expiresAt: number } | null>("web_device_mobile_ticket", { revoke }),
   takeOperations: () => invoke<WebDeviceOperation[]>("web_device_take_operations"),
   takeTerminalCommands: () => invoke<WebTerminalCommand[]>("web_device_take_terminal_commands"),

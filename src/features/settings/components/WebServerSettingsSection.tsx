@@ -71,7 +71,9 @@ export function WebServerSettingsSection() {
     try { applyStatus(await action(), savedRevision); toast.success(t(successKey)); }
     catch (caught) {
       const errorKey = webNetworkErrorKey(caught);
-      if (errorKey && errorKey !== "settings.webServer.error.stopping") setAdvancedOpen(true);
+      if (errorKey === "settings.webServer.error.trustedNetworkRequired"
+        || errorKey === "settings.webServer.error.originRequired"
+        || errorKey === "settings.webServer.error.invalidOrigin") setAdvancedOpen(true);
       toast.error(t("settings.webServer.toast.actionFailed"), { description: errorText(caught) });
       await refresh();
     }

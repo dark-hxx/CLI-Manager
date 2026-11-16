@@ -6,6 +6,7 @@ import { SettingsGlyph } from "./SettingsIcons";
 import { toast } from "sonner";
 import { useI18n, type TranslationKey } from "../../../shared/i18n/index";
 import { webDeviceApi, type WebDeviceStatus } from "../../../shared/lib/webDevice";
+import { publishWebDeviceStatus, subscribeWebDeviceStatus } from "../../../shared/lib/webDeviceStatus";
 import { webServerApi } from "../../../shared/lib/webServer";
 import { WebMobileAccess } from "./WebMobileAccess";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
@@ -35,7 +36,7 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // 连接事件和配对刷新只更新状态；保存回执通过版本检查同步草稿。
-  const applyStatus = useCallback((next: WebDeviceStatus, savedRevision?: number) => {
+  const applyStatus = useCallback((next: WebDeviceStatus) => {
     setStatus(next);
     onStatusChange?.(next);
     if (next.profile) {
@@ -44,24 +45,31 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
         publicAccessUrl: next.profile.publicAccessUrl ?? "", deviceName: next.profile.name,
         autoStart: next.profile.autoStart, uploadWallpaper: next.profile.uploadWallpaper,
       };
-      dispatchDraft(savedRevision === undefined
-        ? { type: "status", patch }
-        : { type: "saved", patch, revision: savedRevision });
+      dispatchDraft({ type: "status", patch });
     }
   }, [onStatusChange]);
 
   const refresh = useCallback(async () => {
     try {
-      applyStatus(await webDeviceApi.getStatus());
+      await webDeviceApi.getStatus();
     } catch (caught) {
       toast.error(t("settings.webDevice.toast.loadFailed"), { description: String(caught) });
     }
-  }, [applyStatus, t]);
+  }, [t]);
 
   useEffect(() => {
+    let disposed = false;
+    const unsubscribe = subscribeWebDeviceStatus(applyStatus);
+    // In-process builds emit native events; daemon builds share API snapshots.
+    const unlisten = listen<WebDeviceStatus>(STATUS_EVENT, (event) => {
+      if (!disposed) publishWebDeviceStatus(event.payload);
+    });
     void refresh();
-    const unlisten = listen<WebDeviceStatus>(STATUS_EVENT, (event) => applyStatus(event.payload));
-    return () => { void unlisten.then((dispose) => dispose()); };
+    return () => {
+      disposed = true;
+      unsubscribe();
+      void unlisten.then((dispose) => dispose());
+    };
   }, [applyStatus, refresh]);
 
   useEffect(() => {
@@ -82,7 +90,13 @@ export function WebDeviceSettingsSection({ onStatusChange }: Props) {
     setWorking(key);
     try {
       const next = await action();
-      applyStatus(next, savedRevision);
+      if (savedRevision !== undefined && next.profile) {
+        dispatchDraft({ type: "saved", revision: savedRevision, patch: {
+          serverUrl: next.profile.serverUrl, trustedNetwork: next.profile.trustedNetwork ?? false,
+          publicAccessUrl: next.profile.publicAccessUrl ?? "", deviceName: next.profile.name,
+          autoStart: next.profile.autoStart, uploadWallpaper: next.profile.uploadWallpaper,
+        } });
+      }
       toast.success(t(successKey));
     } catch (caught) {
       if (webNetworkErrorKey(caught)) setAdvancedOpen(true);

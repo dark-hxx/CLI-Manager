@@ -726,6 +726,8 @@ export const zh = {
   "settings.webServer.error.trustedNetworkRequired": "该监听地址需要在“高级网络设置”中开启“允许受信任内网 HTTP 访问”，或配置 HTTPS 浏览器访问地址。仅在信任该局域网或加密组网时开启。",
   "settings.webServer.error.originRequired": "监听所有网卡时，请在“高级网络设置”中填写浏览器实际访问的地址（协议、IP 或域名及端口），不要填写 0.0.0.0 或 ::。",
   "settings.webServer.error.invalidOrigin": "浏览器访问地址必须是完整的 HTTP/HTTPS 来源，仅包含协议、IP 或域名及端口，不包含路径、账号、查询参数或片段。",
+  "settings.webServer.error.adminUsername": "管理员用户名不能为空，且 UTF-8 长度不能超过 128 字节。",
+  "settings.webServer.error.adminPassword": "管理员密码的 UTF-8 长度不能超过 1024 字节。请缩短密码后重新保存。",
   "settings.webServer.state.unconfigured": "未配置密码",
   "settings.webServer.toast.loadFailed": "Web 服务状态加载失败",
   "settings.webServer.toast.actionFailed": "Web 服务操作失败",

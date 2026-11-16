@@ -482,11 +482,9 @@ pub async fn create_operation(
     if !state.registry.is_device_online(&request.device_id).await {
         return Err(AppError::conflict("device_offline", "device is offline"));
     }
-    // 轉錄結果只是當下的快照；趁新的輪詢進來時清掉過期的，清理失敗不影響這次請求。
+    // Retention is bounded background work, never a prerequisite for a read.
     if is_transcript_operation(&request.kind) {
-        if let Err(error) = state.storage.prune_transcript_operations(now_ms()).await {
-            tracing::warn!(%error, "transcript operation prune failed");
-        }
+        state.storage.schedule_transcript_prune(now_ms());
     }
     let mut operation = state
         .storage

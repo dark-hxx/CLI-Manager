@@ -12,6 +12,7 @@ fn test_config() -> Config {
         web_dist: "missing-dist".into(),
         admin_username: "admin".into(),
         admin_password: "test-password".into(),
+        sync_admin_credentials: false,
         cookie_secure: false,
         trusted_network: false,
         allowed_origin: None,
@@ -223,6 +224,50 @@ fn assert_socket_closed(mut socket: TcpStream) {
         }
     }
     panic!("socket continued sending after shutdown");
+}
+
+fn login_status(bind: SocketAddr, password: &str) -> u16 {
+    let body = serde_json::json!({ "username": "admin", "password": password }).to_string();
+    let mut stream = TcpStream::connect_timeout(&bind, Duration::from_secs(3)).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    write!(stream, "POST /api/auth/login HTTP/1.1\r\nHost: {bind}\r\nOrigin: http://{bind}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    response.split_whitespace().nth(1).unwrap().parse().unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn managed_restart_applies_password_and_keeps_paired_device_credentials() {
+    let mut config = test_config();
+    config.sync_admin_credentials = true;
+    let storage = Storage::open(&config.database_path).await.unwrap();
+    storage.configure_admin("admin", "test-password", true).await.unwrap();
+    let user = storage.find_user_by_username("admin").await.unwrap().unwrap();
+    storage.upsert_device_hello("managed-device", "PC", "windows", "test", &[], None, None, None, None).await.unwrap();
+    sqlx::query("UPDATE devices SET user_id = ?1, device_token_hash = ?2 WHERE id = 'managed-device'")
+        .bind(&user.id).bind(auth::hash_secret("managed-device-token"))
+        .execute(storage.pool()).await.unwrap();
+    for password in ["test-password", "test-updated", "test-updated"] {
+        config.admin_password = password.into();
+        let (stop, server) = start(config.clone()).await;
+        let bind = config.bind;
+        let password = password.to_string();
+        tokio::task::spawn_blocking(move || {
+            assert_eq!(login_status(bind, &password), 200);
+            if password != "test-password" { assert_eq!(login_status(bind, "test-password"), 401); }
+            let mut socket = upgrade(bind, "/ws/device", "");
+            write_json_frame(&mut socket, &serde_json::json!({
+                "type": "hello", "protocolVersion": cli_manager_web_protocol::DEVICE_PROTOCOL_VERSION, "deviceId": "managed-device",
+                "deviceToken": "managed-device-token", "name": "PC", "platform": "windows",
+                "appVersion": "test", "capabilities": []
+            }));
+            assert_eq!(read_until_type(&mut socket, "hello_ok")["paired"], true);
+        }).await.unwrap();
+        stop.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(4), server).await.unwrap().unwrap().unwrap();
+        assert_eq!(storage.find_user_by_username("admin").await.unwrap().unwrap().id, user.id);
+    }
+    storage.pool().close().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

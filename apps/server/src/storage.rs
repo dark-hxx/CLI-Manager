@@ -11,11 +11,13 @@ use sha2::{Digest, Sha384};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Row, SqlitePool};
 use std::path::Path;
-use std::sync::atomic::AtomicI64;
+use std::sync::atomic::{AtomicBool, AtomicI64};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
+mod admin_credentials;
+mod session_activity;
 mod transcript_retention;
 pub use transcript_retention::is_transcript_operation;
 
@@ -39,6 +41,7 @@ const KNOWN_MIGRATIONS: &[(i64, &[u8])] = &[
         7,
         include_bytes!("../migrations/0007_operation_delivery_stages.sql"),
     ),
+    (8, include_bytes!("../migrations/0008_browser_event_retention.sql")),
 ];
 
 #[derive(Debug, Clone)]
@@ -65,6 +68,7 @@ pub struct Storage {
     pool: SqlitePool,
     /// 上次清理對話轉錄 operation 的時間（毫秒），供節流使用，見 `transcript_retention`。
     transcript_pruned_at: Arc<AtomicI64>,
+    activity_update_pending: Arc<AtomicBool>,
 }
 
 impl Storage {
@@ -90,6 +94,7 @@ impl Storage {
         Ok(Self {
             pool,
             transcript_pruned_at: Arc::new(AtomicI64::new(0)),
+            activity_update_pending: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -109,6 +114,7 @@ impl Storage {
         Ok(Self {
             pool,
             transcript_pruned_at: Arc::new(AtomicI64::new(0)),
+            activity_update_pending: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -176,7 +182,7 @@ impl Storage {
     pub async fn user_for_session(&self, token_hash: &str) -> Result<Option<UserView>, AppError> {
         let now = now_ms();
         let row = sqlx::query(
-            "SELECT users.id, users.username
+            "SELECT users.id, users.username, browser_sessions.device_scope, browser_sessions.last_seen_at
              FROM browser_sessions
              JOIN users ON users.id = browser_sessions.user_id
              WHERE browser_sessions.token_hash = ?1 AND browser_sessions.expires_at > ?2
@@ -186,9 +192,12 @@ impl Storage {
         .bind(now)
         .fetch_optional(&self.pool)
         .await?;
-        if row.is_some() {
-            sqlx::query("UPDATE browser_sessions SET last_seen_at = ? WHERE token_hash = ? AND device_scope IS NOT NULL AND (last_seen_at IS NULL OR last_seen_at < ?)")
-                .bind(now).bind(token_hash).bind(now - 60_000).execute(&self.pool).await?;
+        if let Some(row) = &row {
+            let scoped: Option<String> = row.get("device_scope");
+            let last_seen: Option<i64> = row.get("last_seen_at");
+            if scoped.is_some() && last_seen.is_none_or(|seen| seen < now - 60_000) {
+                self.schedule_session_activity(token_hash.to_string(), now);
+            }
         }
         Ok(row.map(|row| UserView {
             id: row.get("id"),

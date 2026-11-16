@@ -151,17 +151,15 @@ where
         } else {
             None
         };
-        let admin_password = config.admin_password.clone();
-        let password_hash =
-            tokio::task::spawn_blocking(move || auth::hash_password(&admin_password))
-                .await
-                .map_err(|error| format!("hash admin password failed: {error}"))?
-                .map_err(|error| error.to_string())?;
         let storage = storage::Storage::open(&config.database_path)
             .await
             .map_err(|error| error.to_string())?;
         storage
-            .ensure_single_user(&config.admin_username, &password_hash)
+            .configure_admin(
+                &config.admin_username,
+                &config.admin_password,
+                config.sync_admin_credentials,
+            )
             .await
             .map_err(|error| error.to_string())?;
         storage

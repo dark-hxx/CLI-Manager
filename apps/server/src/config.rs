@@ -23,6 +23,8 @@ pub struct Config {
     pub web_dist: PathBuf,
     pub admin_username: String,
     pub admin_password: String,
+    /// Only the desktop-managed listener owns changes to an existing admin.
+    pub sync_admin_credentials: bool,
     pub cookie_secure: bool,
     pub trusted_network: bool,
     pub allowed_origin: Option<String>,
@@ -55,6 +57,7 @@ impl Config {
             web_dist,
             admin_username,
             admin_password,
+            sync_admin_credentials: false,
             cookie_secure,
             trusted_network: std::env::var("CLI_MANAGER_WEB_TRUSTED_NETWORK")
                 .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -123,6 +126,7 @@ impl Config {
             web_dist: PathBuf::from("web/dist"),
             admin_username: "admin".to_string(),
             admin_password: "test-password".to_string(),
+            sync_admin_credentials: false,
             cookie_secure: false,
             trusted_network: false,
             allowed_origin: None,
@@ -137,6 +141,7 @@ impl Config {
             web_dist: PathBuf::from("missing-dist"),
             admin_username: "admin".to_string(),
             admin_password: "test-password".to_string(),
+            sync_admin_credentials: false,
             cookie_secure: false,
             trusted_network: false,
             allowed_origin: None,

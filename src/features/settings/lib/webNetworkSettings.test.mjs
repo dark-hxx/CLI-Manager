@@ -86,6 +86,8 @@ test("both locales translate existing backend errors without hiding unknown diag
     "Allowed Origin must contain only an HTTP or HTTPS scheme, host, and optional port",
     "remote web device server must use TLS",
     "public access URL requires HTTPS or explicit trusted network mode",
+    "Web server admin username must contain 1 to 128 bytes",
+    "Web server admin password cannot exceed 1024 bytes",
   ]) {
     const key = guidance.webNetworkErrorKey(message);
     assert.ok(zh[key], key);
@@ -121,6 +123,12 @@ function componentHarness(kind) {
     ? "Enable trusted network HTTP explicitly, or configure an HTTPS browser origin"
     : "remote web device server must use TLS";
   let saveAction = async () => { throw failure; };
+  const statusChannel = load("../../../shared/lib/webDeviceStatus.ts");
+  const deviceResult = async (action) => {
+    const next = await action();
+    statusChannel.publishWebDeviceStatus(next);
+    return next;
+  };
   const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
   const react = {
     useState(initial) {
@@ -147,11 +155,11 @@ function componentHarness(kind) {
     },
   };
   const api = {
-    getStatus: async () => currentStatus,
+    getStatus: async () => kind === "device" ? deviceResult(async () => currentStatus) : currentStatus,
     saveConfig: async (request) => { requests.push(request); return saveAction(request); },
-    saveProfile: async (request) => { requests.push(request); return saveAction(request); },
-    start: async () => ({ ...currentStatus, running: true }),
-    stop: async () => ({ ...currentStatus, running: false }),
+    saveProfile: async (request) => { requests.push(request); return deviceResult(() => saveAction(request)); },
+    start: async () => kind === "device" ? deviceResult(async () => ({ ...currentStatus, running: true })) : { ...currentStatus, running: true },
+    stop: async () => kind === "device" ? deviceResult(async () => ({ ...currentStatus, running: false })) : { ...currentStatus, running: false },
   };
   const jsx = (type, props) => ({ type, props });
   const components = new Proxy({}, { get: (_, name) => name });
@@ -163,8 +171,10 @@ function componentHarness(kind) {
     "../../../shared/i18n/index": { useI18n: () => ({ t: translate }) },
     "../../../shared/lib/webServer": { webServerApi: api },
     "../../../shared/lib/webDevice": { webDeviceApi: api },
+    "../../../shared/lib/webDeviceStatus": statusChannel,
     "../../../shared/preferences/settingsStore": { useSettingsStore: () => 96 },
     "../../../shared/lib/webTerminalFrames": {}, "./WebMobileAccess": {},
+    "./SettingsIcons": { SettingsGlyph: "SettingsGlyph" },
     "../lib/webPairingLifecycle": { pairingRefreshDelay: () => null },
     "../lib/webSettingsDraft": drafts, "../lib/webNetworkGuidance": guidance,
     window: { setInterval: (handler) => { poll = handler; return 1; }, clearInterval() {} },
@@ -195,8 +205,54 @@ function componentHarness(kind) {
     poll: async () => { await poll?.(); render(); },
     language(next) { language = next; render(); },
     saveWith(action) { saveAction = action; },
+    backgroundStatus(next) { statusChannel.publishWebDeviceStatus(next); render(); },
+    dispose() { for (const hook of hooks) hook?.cleanup?.(); },
   };
 }
+
+test("device connection badge follows background probes without saving or changing drafts", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  h.change("TextInput", "settings.webDevice.serverUrl", "https://unsaved.example.com");
+  h.click("settings.webDevice.start");
+  await h.flush();
+  assert.equal(h.find("Badge").children, zh["settings.webDevice.state.connecting"]);
+  for (const [state, expected] of [
+    [{ running: true, connected: true, paired: false }, "waitingPairing"],
+    [{ running: true, connected: true, paired: true }, "online"],
+    [{ running: true, connected: false, paired: true }, "connecting"],
+    [{ running: true, connected: true, paired: true }, "online"],
+    [{ running: false, connected: false, paired: true }, "stopped"],
+  ]) {
+    h.backgroundStatus({ ...deviceStatus, ...state });
+    assert.equal(h.find("Badge").children, zh[`settings.webDevice.state.${expected}`]);
+    assert.equal(h.find("TextInput", "settings.webDevice.serverUrl").value, "https://unsaved.example.com");
+  }
+  assert.equal(h.requests.length, 0, "no save is needed to observe the daemon");
+  h.dispose();
+});
+
+test("unmounted device settings do not consume late native events", async () => {
+  const h = componentHarness("device");
+  await h.flush();
+  h.dispose();
+  h.status({ ...deviceStatus, running: true, connected: true, paired: true });
+  assert.equal(h.find("Badge").children, zh["settings.webDevice.state.stopped"]);
+});
+
+test("credential errors are localized without opening unrelated network settings", async () => {
+  const h = componentHarness("server");
+  await h.flush();
+  h.saveWith(async () => { throw "Web server admin password cannot exceed 1024 bytes"; });
+  for (const language of [zh, en]) {
+    h.language(language);
+    h.click("common.save");
+    await h.flush();
+    assert.equal(h.toasts.at(-1)[1].description, language["settings.webServer.error.adminPassword"]);
+    assert.equal(h.find("Collapse").expanded, false);
+  }
+  h.dispose();
+});
 
 for (const kind of ["server", "device"]) {
   test(`${kind} component guides plaintext setup and preserves input after failure, events and language changes`, async () => {

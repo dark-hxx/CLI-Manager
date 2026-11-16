@@ -69,6 +69,7 @@
 - Required uniqueness: browser token hash, pairing code hash, `(device_id, stream)` cursor, `(user_id, idempotency_key)` operation, browser event sequence.
 - Startup must mark persisted devices offline before accepting new connections.
 - Finished `terminal.transcript` operations, with their `operation.updated` browser events, are deleted two minutes after completion; events are selected by the IDs of the operations being deleted, so a transcript operation still waiting or running keeps all of its events. Pruning runs when a new transcript operation arrives, at most once per 30 seconds; other operation kinds keep their existing retention.
+- Retention runs outside the HTTP read critical path in bounded transactions. Partial JSON-expression indexes cover operation IDs and per-device workspace snapshots; cleanup must not scan historical payloads while holding a writer. Authentication reads never await optional activity metadata writes; only due, scoped sessions schedule a globally single-flight update, without weakening expiry/ownership/scope checks.
 
 ## 3. Contracts
 
@@ -106,6 +107,7 @@
 - Test embedded Web networking with `src-tauri/Cargo.lock`, not only the standalone server lock. The desktop must retain mio 1.2.2 or a newer version containing atomic `WSA_FLAG_NO_HANDLE_INHERIT` socket creation; inheritable listener/client/accepted sockets leak into helpers launched after the service starts and can retain a port after successful thread shutdown.
 - Managed start/stop/restart/config application is serialized. A timed-out stop retains its worker handle, reports `stopping`, and forbids another start until cleanup completes. UI status refresh must not overwrite unsaved connection configuration.
 - Desktop Web server/device forms initialize from status only before editing. Background events, polling, failed actions and lifecycle results update runtime status without replacing drafts. Successful saves reconcile only the submitted draft revision; newer edits survive. Non-loopback HTTP/WS setup exposes the relevant advanced settings and localized guidance; listener/device trust remain separate explicit opt-ins, never inferred from LAN/overlay addresses.
+- Device API status snapshots (including the existing 3-second bridge probes) are shared with settings. The daemon need not emit Tauri events for the badge to update. Late probes cannot replace newer command/native-event snapshots; settings do not add a second periodic status poller or require saving to refresh.
 - Terminal bridges split individual large frames before encoding, preserve original byte order/dimensions and ACK only after the final fragment of the original output frame has been queued. Detached/retired output queues cannot ACK newer attaches.
 - `invalid_terminal_output` is a recoverable session output failure: notify the browser with terminal error status and retain the device connection. Diagnostics contain bounds/size/dimensions, never terminal contents. Authentication and other protocol rejection remain fatal. Local Web helper protocol 6 supports restricted inspection/shutdown upgrades from 1–5.
 
@@ -130,6 +132,7 @@ The server also accepts `--bind host:port` and `--port number`. Precedence is co
 
 - Browser session Cookie is `HttpOnly`, `SameSite=Strict`, path `/`, seven-day max age; `Secure` follows configuration.
 - Device tokens are random secrets; SQLite stores SHA-256 hashes only.
+- Desktop-managed listeners reconcile their stored admin credentials at startup after reserving listeners. Update the existing user ID, not the account/device inventory; changed username/password atomically revokes browser sessions and unused mobile tickets. Unchanged credentials preserve their hash and sessions. Standalone environment credentials remain bootstrap-only. Failed desktop configuration application restores both the saved config and changed native password credential, and reports any rollback failure.
 - Pairing codes are normalized to 6-12 ASCII letters/digits, short-lived, and single-use.
 - Desktop status clears an expired pairing code in both the in-process and helper-daemon paths; the settings UI refreshes at the expiry boundary and never presents an expired code as usable.
 - If token delivery to the live device queue fails, the pairing claim must be rolled back; do not leave a paired device that never received its token.

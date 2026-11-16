@@ -106,3 +106,24 @@ Topics: [.trellis/research/file-tree-first-paint.md](../../research/file-tree-fi
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Web 认证与连接状态可靠性修复
+<!-- trellis-session: v=2 fp=b82b74767d4aa73b -->
+
+**Date**: 2026-11-16
+**Task**: Web 认证与连接状态可靠性修复
+**Branch**: `fix/web-auth-connection-reliability`
+
+### Summary
+
+已修复受管管理员凭据同步、SQLite 事件清理及认证写锁、daemon 状态快照共享；71 项服务端和 31 项前端/构建定向测试通过，三端生产构建通过。保留主干既有 3 项架构问题，准备提交后构建 1.5.0 NSIS；不操作用户服务，不推送。
+Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/web-auth-connection-reliability.md)
+
+### Git Commits
+
+(No commits - planning session)
+
+### Status
+
+[OK] **Completed**
