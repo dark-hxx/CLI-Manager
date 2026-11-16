@@ -127,3 +127,26 @@ Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/we
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Web 认证修复 1.5.0 NSIS 构建与解包核验
+<!-- trellis-session: v=2 fp=80bd0370161365f8 -->
+
+**Date**: 2026-11-16
+**Task**: Web 认证修复 1.5.0 NSIS 构建与解包核验
+**Branch**: `fix/web-auth-connection-reliability`
+
+### Summary
+
+源码8d8cd446先提交后完成原生主程序与全部helper构建；1.5.0 NSIS完整性、19个Web/Tap文件、447个桌面资源键及4个exe一致性检查通过。71项服务端与31项前端回归通过；3项既有架构问题保留。未安装、未推送，待用户验收。
+Topics: [.trellis/research/web-auth-connection-reliability.md](../../research/web-auth-connection-reliability.md)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8d8cd446` | fix(web): synchronize admin credentials and live device status |
+
+### Status
+
+[OK] **Completed**

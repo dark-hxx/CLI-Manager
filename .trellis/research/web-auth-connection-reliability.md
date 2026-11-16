@@ -30,4 +30,12 @@
 - 测试夹具曾误用仅单测可见的初始化接口、设备列名和旧 WS 协议版本，已按真实接口修正；Windows 临时 SQLite 清理等待 worker 释放句柄，不放宽生产逻辑来通过测试。
 - 普通和 strict 架构检查仍报主干既有 3 项：`StatsPanel.tsx` 2020 行、`settingsStore.ts` 2063 行、`TerminalStatusBarSettingsPage.tsx` 私有跨域导入。这三文件均与本轮基线一致，未新增豁免或夹带修复；本轮源码编码与行数检查通过。
 - GitNexus 降级后图分析列出变更文件但未给出完整动态符号影响，并遗漏 untracked/staged 情况；补用实际 Git diff、IPC 注册与组件引用、完整服务回归及共享 API 调用链复核，不能将空 impacted_symbols 当作无影响。
-- 原生系统凭据库失败恢复由源码审查及 Windows 编译验证，不对用户凭据库注入错误；安装后网络与 UI 体验待用户验证。NSIS 构建及解包核验尚待执行。
+- 原生系统凭据库失败恢复由源码审查及 Windows 编译验证，不对用户凭据库注入错误；安装后网络与 UI 体验待用户验证。
+
+## 安装包交付
+
+- 源码先提交为 `8d8cd446e086aa1783ca5765d95ccd94d32d2d5d`，随后完成 Windows 主程序和三个 helper 的 release 编译，仅构建 1.5.0 NSIS；未复用旧后端，未安装、未推送。
+- 安装包：`src-tauri/target/local/release/bundle/nsis/CLI-Manager_1.5.0_x64-setup.exe`，2026-11-16 10:16:30 +08:00，31,722,411 字节。
+- SHA-256：`551006F4EA9692B3296341A53F454AA3DB7A22FD563B0AA2CF56B04AAE1671E4`。
+- 7-Zip 完整性和解包检查通过：经典 Web/Tap 全部 19 个文件与构建目录逐项一致，含 Tap 字体及嵌套资源；447 个桌面 JS 资源键已嵌入；四个 exe 与本轮编译产物一致（主程序仅允许 Tauri 的 NSIS bundle 标记差异），新凭据同步、后台活跃时间和迁移索引标记均存在。详细证据位于本地 `.codex/web-auth-package-verification.json`。
+- 当前修复分支未配置上游，工作区在构建前干净；未擅自同步远程。安装后用此前保存的新密码重新登录 Web，旧浏览器授权失效属预期，已有设备无需重新配对；实际 NetBird/手机和安装版 UI 留待用户验收。
