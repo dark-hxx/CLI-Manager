@@ -520,7 +520,7 @@ export function TerminalTabsView({
           </TerminalWorkspaceFrame>
         </div>
       </div>
-      {!fullscreen && <TerminalStatusBar onActivateSession={onActivateSession} menuStyle={splitPickerMenuStyle} />}
+      {!fullscreen && !historyActive && <TerminalStatusBar onActivateSession={onActivateSession} menuStyle={splitPickerMenuStyle} />}
     </div>
   );
 }
