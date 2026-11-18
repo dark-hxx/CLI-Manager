@@ -33,7 +33,9 @@ import { Button } from "../../../shared/ui/button";
 import { toast } from "sonner";
 import { logError, logInfo, logWarn } from "../../../shared/platform/logger";
 import { pickByLanguage, useI18n, type TranslationKey } from "../../../shared/i18n/index";
-import { ArrowUp, ChevronRight, FolderOpen } from "lucide-react";
+import { ArrowUp, ChevronRight, FolderMinus, FolderOpen } from "lucide-react";
+import { NodeAppearanceIcon } from "../api/NodeAppearanceIcon";
+import { resolveNodeAppearance } from "../api/nodeAppearance";
 import {
   getCliArgsHistorySuggestions,
   type CliArgsHistoryEntry,
@@ -1447,45 +1449,61 @@ function GroupSelector({
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
+        aria-expanded={open}
         className="ui-input ui-focus-ring flex h-9 w-full items-center justify-between px-3 text-left text-sm text-text-primary outline-none"
       >
-        <span className={value ? "" : "opacity-50"}>{displayName}</span>
-        <ChevronDown size={12} strokeWidth={1.8} className="text-text-muted" />
+        <span className={`min-w-0 truncate ${value ? "" : "text-text-muted"}`} title={displayName}>{displayName}</span>
+        <ChevronDown size={12} strokeWidth={1.8} className={`shrink-0 text-text-muted transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
 
       {open && (
         <div
           ref={panelRef}
-          className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-bg-secondary py-1 animate-slide-down"
+          className="ui-select-popover ui-thin-scroll absolute left-0 top-full z-[60] mt-1 max-h-56 w-full space-y-0.5 overflow-y-auto rounded-xl border border-border p-1"
         >
           {/* No group option */}
           <button
             type="button"
             onClick={() => { onChange(null); setOpen(false); }}
-            className={`mx-1 w-[calc(100%-0.5rem)] rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${!value ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
+            className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg px-2 text-left text-xs"
+            data-selected={value === null}
+            aria-pressed={value === null}
           >
-            {t("configModal.group.none")}
+            <span className="ui-tree-leading-icon" aria-hidden="true"><FolderMinus size={13} /></span>
+            <span className="min-w-0 flex-1 truncate">{t("configModal.group.none")}</span>
+            {value === null && <Check size={14} className="shrink-0 text-primary" aria-hidden="true" />}
           </button>
 
           {flatList.map(({ group: g, depth }) => {
             const bindingPath = resolveGroupBoundPath(groups, g.id);
+            const appearance = resolveNodeAppearance(g);
+            const selected = value === g.id;
             return (
               <button
                 key={g.id}
                 type="button"
                 onClick={() => { onChange(g.id); setOpen(false); }}
-                className={`mx-1 flex w-[calc(100%-0.5rem)] items-center gap-2 rounded-lg py-2 text-left text-sm transition-colors hover:bg-surface-container-highest ${value === g.id ? "bg-surface-container-highest text-primary" : "text-text-secondary"}`}
-                style={{ paddingLeft: 8 + depth * 16, paddingRight: 8 }}
+                className="ui-tree-node ui-tree-project ui-focus-ring flex h-7 w-full items-center gap-1.5 rounded-lg pr-2 text-left text-xs"
+                style={{ paddingInlineStart: 8 + depth * 22 }}
+                data-selected={selected}
+                aria-pressed={selected}
               >
-                <span className="min-w-0 flex-1 truncate">{g.name}</span>
+                <span className="ui-tree-leading-icon relative" aria-hidden="true" style={{ color: appearance.colorVar || undefined }}>
+                  {depth > 0 && (
+                    <span className="absolute -left-3 -top-1 h-4 w-2.5 rounded-bl-sm border-b border-l border-text-muted/60" />
+                  )}
+                  <NodeAppearanceIcon mark={appearance.emoji} iconKey={appearance.iconKey} fallback="folder" size={13} />
+                </span>
+                <span className={`min-w-0 flex-1 truncate ${groupMap.has(g.id) ? "font-semibold" : "font-medium"}`} title={g.name}>{g.name}</span>
                 {bindingPath && (
                   <span
-                    className="max-w-[55%] shrink-0 truncate text-xs text-text-muted opacity-75"
+                    className="max-w-[45%] truncate text-[11px] text-text-muted"
                     title={bindingPath}
                   >
                     {bindingPath}
                   </span>
                 )}
+                {selected && <Check size={14} className="shrink-0 text-primary" aria-hidden="true" />}
               </button>
             );
           })}
