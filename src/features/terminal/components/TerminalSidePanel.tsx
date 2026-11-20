@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
-import { Activity, ArrowLeftRight, BarChart3, Cpu, Folder, GitBranch } from "../../../shared/ui/homeIcons";
+import { Activity, ArrowLeftRight, BarChart3, Cpu, Folder, GitBranch, TERMINAL_PANEL_ICON_COLORS as PANEL_COLORS } from "../../../shared/ui/homeIcons";
 import { TERM_PANEL, panelColorTint } from "../../stats/api/termStatsUi";
 import { ResizableTerminalPanelFrame } from "./ResizableTerminalPanelFrame";
 import { SystemResourcesPanel } from "./SystemResourcesPanel";
@@ -76,14 +76,14 @@ export function TerminalSidePanel({
   const filesEnabled = visibleTabs.includes("files");
   const providersEnabled = visibleTabs.includes("providers");
   const allTabs = [
-    { key: "stats" as const, label: t("terminal.panel.sideStats"), color: TERM_PANEL.cyan, icon: <BarChart3 size={12} strokeWidth={1.8} /> },
+    { key: "stats" as const, label: t("terminal.panel.sideStats"), color: PANEL_COLORS.stats, icon: <BarChart3 size={16} strokeWidth={1.8} /> },
     ...(systemResourcesEnabled
-      ? [{ key: "systemResources" as const, label: t("terminal.panel.systemResources"), color: TERM_PANEL.green, icon: <Cpu size={12} strokeWidth={1.8} /> }]
+      ? [{ key: "systemResources" as const, label: t("terminal.panel.systemResources"), color: PANEL_COLORS.systemResources, icon: <Cpu size={16} strokeWidth={1.8} /> }]
       : []),
-    { key: "replay" as const, label: t("terminal.panel.replay"), color: TERM_PANEL.magenta, icon: <Activity size={12} strokeWidth={1.8} /> },
-    { key: "git" as const, label: t("terminal.panel.gitChanges"), color: TERM_PANEL.yellow, icon: <GitBranch size={12} strokeWidth={1.8} /> },
-    { key: "files" as const, label: t("terminal.panel.files"), color: TERM_PANEL.blue, icon: <Folder size={12} strokeWidth={1.8} />, disabled: filesTabDisabled },
-    { key: "providers" as const, label: t("terminal.panel.providers"), color: TERM_PANEL.green, icon: <ArrowLeftRight size={12} strokeWidth={1.8} /> },
+    { key: "replay" as const, label: t("terminal.panel.replay"), color: PANEL_COLORS.replay, icon: <Activity size={16} strokeWidth={1.8} /> },
+    { key: "git" as const, label: t("terminal.panel.gitChanges"), color: PANEL_COLORS.git, icon: <GitBranch size={16} strokeWidth={1.8} /> },
+    { key: "files" as const, label: t("terminal.panel.files"), color: PANEL_COLORS.files, icon: <Folder size={16} strokeWidth={1.8} />, disabled: filesTabDisabled },
+    { key: "providers" as const, label: t("terminal.panel.providers"), color: PANEL_COLORS.providers, icon: <ArrowLeftRight size={16} strokeWidth={1.8} /> },
   ];
   const tabs = allTabs.filter((tab) => visibleTabs.includes(tab.key));
   const tabLayoutKey = tabs.map((tab) => `${tab.key}:${tab.label}`).join("|");

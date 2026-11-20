@@ -219,24 +219,28 @@
   --terminal-action-color: var(--term-panel-yellow, #e5c453);
 }
 
+/* 面板类按钮颜色与 homeIcons.tsx 的 TERMINAL_PANEL_ICON_COLORS 保持一致（合并面板 Tab 共用） */
 .ui-action-replay {
-  --terminal-action-color: var(--term-panel-magenta, #c77dbb);
+  --terminal-action-color: #FF375F;
 }
 
 .ui-action-git {
-  --terminal-action-color: var(--term-panel-yellow, #e5c453);
+  --terminal-action-color: #FF9500;
 }
 
 .ui-action-files {
-  --terminal-action-color: var(--term-panel-cyan, #5ac8e0);
+  --terminal-action-color: #4B95FB;
 }
 
 .ui-action-stats {
-  --terminal-action-color: var(--term-panel-green, #3dd68c);
+  --terminal-action-color: #34C759;
 }
 
 .ui-action-system-resources {
-  --terminal-action-color: var(--term-panel-blue, #5b8def);
+  --terminal-action-color: #FF9F0A;
+}
+.ui-action-providers {
+  --terminal-action-color: #5856D6;
 }
 
 .ui-action-background-tasks {

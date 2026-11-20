@@ -30,8 +30,21 @@ interface HomeIconSpec {
   body?: ReactNode | ((uid: string) => ReactNode);
 }
 
+/**
+ * 终端面板（统计/系统资源/回放/Git/文件/供应商）的统一主色：
+ * 合并面板顶部 Tab 与终端操作侧栏共用，保证两处图标与选中态一致。
+ */
+export const TERMINAL_PANEL_ICON_COLORS = {
+  stats: "#34C759",
+  systemResources: "#FF9F0A",
+  replay: "#FF375F",
+  git: "#FF9500",
+  files: "#4B95FB",
+  providers: "#5856D6",
+} as const;
+
 /** 实心剪影 + 顶部白色高光，高光渐变按实例 id 引用，避免多实例串用。 */
-function Solid({ uid, d, opacity }: { uid: string; d: string; opacity?: number }) {
+export function Solid({ uid, d, opacity }: { uid: string; d: string; opacity?: number }) {
   return (
     <g opacity={opacity}>
       <path d={d} fill="currentColor" stroke="none" />
@@ -40,7 +53,7 @@ function Solid({ uid, d, opacity }: { uid: string; d: string; opacity?: number }
   );
 }
 
-function Sheen({ uid }: { uid: string }) {
+export function Sheen({ uid }: { uid: string }) {
   return (
     <defs>
       <linearGradient id={`${uid}-sheen`} x1="0" y1="0" x2="0" y2="1">
@@ -52,7 +65,7 @@ function Sheen({ uid }: { uid: string }) {
 }
 
 /** 圆角矩形转路径，供 Solid 复用。 */
-function rect(x: number, y: number, w: number, h: number, r: number) {
+export function rect(x: number, y: number, w: number, h: number, r: number) {
   return `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${h - 2 * r}a${r} ${r} 0 0 1-${r} ${r}h-${w - 2 * r}a${r} ${r} 0 0 1-${r}-${r}v-${h - 2 * r}a${r} ${r} 0 0 1 ${r}-${r}Z`;
 }
 
@@ -113,13 +126,13 @@ function createHomeIcon(
   return Icon;
 }
 
-const KNOCKOUT = { stroke: "#fff", fill: "none" } as const;
+export const KNOCKOUT = { stroke: "#fff", fill: "none" } as const;
 
 export const Activity = createHomeIcon(
   "Activity",
   Classic.Activity,
   {
-    color: "#FF375F",
+    color: TERMINAL_PANEL_ICON_COLORS.replay,
     body: (uid) => (
       <>
         <Sheen uid={uid} />
@@ -148,7 +161,7 @@ export const ArrowLeftRight = createHomeIcon(
   "ArrowLeftRight",
   Classic.ArrowLeftRight,
   {
-    color: "#5856D6",
+    color: TERMINAL_PANEL_ICON_COLORS.providers,
     body: (
       <>
         <path d="M4.5 7.5h14.5m-3.4-3.4L19 7.5l-3.4 3.4" strokeWidth="1.85" />
@@ -162,7 +175,7 @@ export const BarChart3 = createHomeIcon(
   "BarChart3",
   Classic.BarChart3,
   {
-    color: "#34C759",
+    color: TERMINAL_PANEL_ICON_COLORS.stats,
     body: (uid) => (
       <>
         <Sheen uid={uid} />
@@ -256,7 +269,7 @@ export const Cpu = createHomeIcon(
   "Cpu",
   Classic.Cpu,
   {
-    color: "#FF9F0A",
+    color: TERMINAL_PANEL_ICON_COLORS.systemResources,
     body: (uid) => (
       <>
         <Sheen uid={uid} />
@@ -398,7 +411,7 @@ export const GitBranch = createHomeIcon(
   "GitBranch",
   Classic.GitBranch,
   {
-    color: "#FF9500",
+    color: TERMINAL_PANEL_ICON_COLORS.git,
     body: (uid) => (
       <>
         <Sheen uid={uid} />
