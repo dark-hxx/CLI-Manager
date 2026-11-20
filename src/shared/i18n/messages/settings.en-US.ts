@@ -395,7 +395,7 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.general.closeCompactMode": "Disable compact mode",
   "settings.general.openCompactMode": "Enable compact mode",
   "settings.general.sidebarDensity": "Sidebar Density",
-  "settings.general.mergePanels": "Merge realtime stats and Git changes panels",
+  "settings.general.mergePanels": "Sidebar quick switching",
   "settings.general.mergePanelsDescription": "Enabled by default: both panels become one side panel with tabs. Disable to show realtime stats and Git changes independently side by side.",
   "settings.general.disableMergePanels": "Disable panel merge",
   "settings.general.enableMergePanels": "Enable panel merge",

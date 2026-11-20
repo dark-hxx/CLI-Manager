@@ -387,7 +387,7 @@ export const zh = {
   "settings.general.closeCompactMode": "关闭精简模式",
   "settings.general.openCompactMode": "开启精简模式",
   "settings.general.sidebarDensity": "侧栏密度",
-  "settings.general.mergePanels": "合并实时统计与 Git 变更面板",
+  "settings.general.mergePanels": "侧边栏快捷切换",
   "settings.general.mergePanelsDescription": "默认开启：两者合并为一个可切换 Tab 的侧边面板。关闭后实时统计与 Git 变更各自独立，可同时并排显示。",
   "settings.general.disableMergePanels": "关闭面板合并",
   "settings.general.enableMergePanels": "开启面板合并",
