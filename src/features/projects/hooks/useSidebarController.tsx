@@ -482,13 +482,29 @@ export function useSidebarController({
       const newIndex = ids.indexOf(overId);
       if (newIndex === -1) return;
 
-      const preservesInheritedPrefix = (orderedIds: string[], movedId: string) => {
+      // 被移动节点落到 targetParent 后的继承态：移到根层时 store 会把继承路径
+      // 固化为自定义路径，因此不能沿用移动前的状态判断。
+      const isInheritedAfterMove = (id: string, targetParent: string | null) => {
+        if (targetParent === null) return false;
+        const group = groups.find((item) => item.id === id);
+        if (group) return !(group.bound_path ?? "").trim();
+        const project = projects.find((item) => item.id === id);
+        return project?.path_mode === "inherit";
+      };
+
+      const preservesInheritedPrefix = (
+        orderedIds: string[],
+        movedId: string,
+        targetParent: string | null
+      ) => {
         // 只有被移动的节点本身是继承节点时才限制落点；自定义节点可以正常
         // 在继承节点前后排序，不应因为目标节点类型不同而失去拖拽能力。
-        if (!isInheritedNode(movedId)) return true;
+        const isInherited = (id: string) =>
+          id === movedId ? isInheritedAfterMove(id, targetParent) : isInheritedNode(id);
+        if (!isInherited(movedId)) return true;
         let sawCustom = false;
         for (const id of orderedIds) {
-          if (isInheritedNode(id)) {
+          if (isInherited(id)) {
             if (sawCustom) return false;
           } else {
             sawCustom = true;
@@ -511,7 +527,7 @@ export function useSidebarController({
         }
         const reordered = [...ids];
         reordered.splice(newIndex, 0, activeId);
-        if (!preservesInheritedPrefix(reordered, activeId)) return;
+        if (!preservesInheritedPrefix(reordered, activeId, targetParent)) return;
         void (async () => {
           if (isGroup(activeId)) await moveGroupToParent(activeId, targetParent);
           else if (isProject(activeId)) await moveProjectToGroup(activeId, targetParent);
@@ -525,7 +541,7 @@ export function useSidebarController({
       const reordered = [...ids];
       reordered.splice(oldIndex, 1);
       reordered.splice(newIndex, 0, activeId);
-      if (!preservesInheritedPrefix(reordered, activeId)) return;
+      if (!preservesInheritedPrefix(reordered, activeId, overContext.parentId)) return;
       void reorderItems(overContext.parentId, reordered);
     },
     [groups, projects, tree, reorderItems, moveGroupToParent, moveProjectToGroup]
