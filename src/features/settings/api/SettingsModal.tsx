@@ -180,7 +180,6 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     title: "settings.tabs.modelPricing.title",
     description: "settings.tabs.modelPricing.description",
     icon: Coins,
-    searchPlaceholder: "settings.tabs.modelPricing.search",
   },
   // Retain the persisted sidebar ID; this page now owns Web connections only.
   "cc-connect": {
@@ -362,7 +361,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "templates") return <TemplateSettingsPage searchValue={searchValue} />;
     if (activeTab === "native-providers") return <NativeProviderSettingsPage searchValue={searchValue} />;
     if (activeTab === "sponsors" && SPONSORS_ENABLED) return <SponsorsSettingsPage />;
-    if (activeTab === "model-pricing") return <ModelPricingSettingsPage searchValue={searchValue} />;
+    if (activeTab === "model-pricing") return <ModelPricingSettingsPage />;
     if (activeTab === "cc-connect") return <RemoteConnectionsSettingsPage />;
     if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;
     if (activeTab === "sync") return <SyncSettingsPage />;

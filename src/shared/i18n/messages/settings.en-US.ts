@@ -96,7 +96,6 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.tabs.modelPricing.label": "Model Prices",
   "settings.tabs.modelPricing.title": "Model Prices",
   "settings.tabs.modelPricing.description": "Manage local model pricing, identify history models, and sync candidates from LiteLLM / OpenRouter.",
-  "settings.tabs.modelPricing.search": "Search model prices",
   "settings.tabs.remoteConnections.label": "Remote",
   "settings.tabs.remoteConnections.title": "Remote Access",
   "settings.tabs.remoteConnections.description": "Manage the Web service and pair browsers or mobile devices.",

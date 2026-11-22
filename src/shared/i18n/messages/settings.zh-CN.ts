@@ -94,7 +94,6 @@ export const zh = {
   "settings.tabs.modelPricing.label": "模型价格",
   "settings.tabs.modelPricing.title": "模型价格",
   "settings.tabs.modelPricing.description": "管理本地模型定价、识别历史模型，并从 LiteLLM / OpenRouter 同步候选价格。",
-  "settings.tabs.modelPricing.search": "搜索模型价格",
   "settings.tabs.remoteConnections.label": "远程连接",
   "settings.tabs.remoteConnections.title": "远程连接",
   "settings.tabs.remoteConnections.description": "管理 Web 服务，并配对浏览器或移动设备。",

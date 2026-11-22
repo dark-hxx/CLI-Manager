@@ -25,6 +25,7 @@ import {
   Plus,
   RefreshCw,
   ScanLine,
+  Search,
   Sparkles,
   Trash2,
   X,
@@ -33,10 +34,6 @@ import { useModelPricingStore, type ModelPriceSyncCandidate } from "../../../sta
 import { VendorIcon, inferVendor } from "../../../../shared/ui/VendorIcon";
 import { normalizeModelId, type ModelPrice } from "../../../stats/api/modelPricing";
 import { pickByLanguage, useI18n, type AppLanguage } from "../../../../shared/i18n/index";
-
-interface Props {
-  searchValue: string;
-}
 
 type FilterMode = "all" | "missing" | "saved" | "candidates";
 
@@ -68,6 +65,8 @@ const EMPTY_DRAFT: PriceDraft = {
 
 // 模型价格页样式：表格走苹果风「无斑马纹 + hairline 分隔 + 柔和悬浮」，全部映射主题 token。
 const modelPricingStyles = `
+/* 页面撑满设置内容区，表格区域随窗口高度自适应并内部滚动 */
+.settings-page:has(> .mp-page) { height: 100%; }
 .settings-scope .mp-segmented {
   flex-shrink: 0;
   max-width: 100%;
@@ -320,7 +319,7 @@ function PriceCell({ value }: { value: number }) {
   );
 }
 
-export function ModelPricingSettingsPage({ searchValue }: Props) {
+export function ModelPricingSettingsPage() {
   const { language } = useI18n();
   const text = (zh: string, en: string) => pickText(language, zh, en);
   const {
@@ -352,6 +351,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
   const [deleting, setDeleting] = useState(false);
   const [applyingAll, setApplyingAll] = useState(false);
   const [syncingButton, setSyncingButton] = useState<string | null>(null);
+  const [searchValue, setSearchValue] = useState("");
 
   useEffect(() => {
     if (!loaded && !loading) {
@@ -545,7 +545,7 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
   const showTable = filter === "all" || filter === "saved";
 
   return (
-    <Stack gap="lg" h="100%" style={{ minHeight: 0 }}>
+    <Stack gap="lg" h="100%" className="mp-page" style={{ minHeight: 0 }}>
       <style>{modelPricingStyles}</style>
 
       <section className="ui-surface-card rounded-2xl border border-border p-4">
@@ -597,8 +597,8 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
         </Group>
       </section>
 
-      <section className="ui-surface-card rounded-2xl border border-border p-4" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        <Group justify="space-between" align="center" mb="md">
+      <section className="ui-surface-card rounded-2xl border border-border p-4" style={{ flex: 1, minHeight: 360, display: "flex", flexDirection: "column" }}>
+        <Group justify="space-between" align="center" gap="sm" mb="md">
           <SegmentedControl<FilterMode>
             className="mp-segmented"
             value={filter}
@@ -612,7 +612,16 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
               { value: "candidates", label: text(`候选 (${candidateTargetCount})`, `Candidates (${candidateTargetCount})`) },
             ]}
           />
-          <Group gap="xs">
+          <Group gap="xs" wrap="wrap" justify="flex-end" className="min-w-0">
+            <TextInput
+              value={searchValue}
+              onChange={(event) => setSearchValue(event.currentTarget.value)}
+              placeholder={text("搜索模型价格", "Search model prices")}
+              size="xs"
+              leftSection={<Search size={14} strokeWidth={1.75} />}
+              aria-label={text("搜索模型价格", "Search model prices")}
+              style={{ width: 240, maxWidth: "100%" }}
+            />
             {candidateTargetCount > 0 && (
               <Button className="mp-soft-button" size="compact-sm" color="cliPrimary" leftSection={<CircleCheck size={14} />} loading={applyingAll} onClick={() => void handleApplyAllCandidates()}>
                 {text(`全部应用候选 (${candidateTargetCount})`, `Apply All Candidates (${candidateTargetCount})`)}
@@ -626,10 +635,9 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
           </Group>
         </Group>
 
-        <Box style={{ flex: 1, minHeight: 0, overflowY: "auto" }} className="ui-thin-scroll">
+        <Box style={{ flex: 1, minHeight: 0, overflow: "auto" }} className="ui-thin-scroll">
         {showTable && (
-          <Table.ScrollContainer minWidth={720} maxHeight="min(480px, 60vh)" type="native">
-            <Table className="mp-table" verticalSpacing="sm" stickyHeader>
+            <Table className="mp-table" verticalSpacing="sm" stickyHeader miw={720}>
               <Table.Thead>
                 <Table.Tr>
                   <Table.Th>{text("模型", "Model")}</Table.Th>
@@ -694,7 +702,6 @@ export function ModelPricingSettingsPage({ searchValue }: Props) {
                 )}
               </Table.Tbody>
             </Table>
-          </Table.ScrollContainer>
         )}
 
         {(filter === "all" || filter === "missing") && visibleMissing.length > 0 && (
