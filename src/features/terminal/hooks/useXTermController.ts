@@ -1468,8 +1468,12 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
           return false;
         }
       }
-      if (e.type !== "keydown" || !e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return true;
+      if (e.type !== "keydown" || e.shiftKey || e.altKey) return true;
       const key = e.key.toLowerCase();
+      const isPlainCtrl = e.ctrlKey && !e.metaKey;
+      // 显式消费 macOS 粘贴，避免 Kitty 把 Cmd+V 编码为按键并取消原生粘贴。
+      const isMacPaste = isMacSelectAll && e.metaKey && !e.ctrlKey && key === "v";
+      if (!isPlainCtrl && !isMacPaste) return true;
       if (key === "f") {
         e.preventDefault();
         openSearch();
