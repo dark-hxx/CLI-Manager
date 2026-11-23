@@ -116,6 +116,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
     splits: {},
     hiddenBackgroundSessionIds: new Set<string>(),
     daemonAttachPendingSessionIds: new Set<string>(),
+    recreatedPtyDisplayPendingSessionIds: new Set<string>(),
     subagentTranscripts: {},
     statsPanelRefreshSeq: 0,
 
@@ -396,6 +397,8 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
       }
       const newDaemonAttachPending = new Set(state.daemonAttachPendingSessionIds);
       newDaemonAttachPending.delete(id);
+      const newRecreatedPtyDisplayPending = new Set(state.recreatedPtyDisplayPendingSessionIds);
+      newRecreatedPtyDisplayPending.delete(id);
 
       state.statusListeners[id]?.();
 
@@ -411,6 +414,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         subagentTranscripts: newSubagentTranscripts,
         splits: {},
         daemonAttachPendingSessionIds: newDaemonAttachPending,
+        recreatedPtyDisplayPendingSessionIds: newRecreatedPtyDisplayPending,
         ...(newHidden !== prevHidden ? { hiddenBackgroundSessionIds: newHidden } : {}),
       });
 
@@ -1008,6 +1012,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
       const newSubagentTranscripts = { ...get().subagentTranscripts };
       const newHidden = new Set(state.hiddenBackgroundSessionIds);
       const newDaemonAttachPending = new Set(state.daemonAttachPendingSessionIds);
+      const newRecreatedPtyDisplayPending = new Set(state.recreatedPtyDisplayPendingSessionIds);
       for (const closedSessionId of closedSessionIds) {
         delete newStatuses[closedSessionId];
         delete newListeners[closedSessionId];
@@ -1018,6 +1023,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         delete newSubagentTranscripts[closedSessionId];
         newHidden.delete(closedSessionId);
         newDaemonAttachPending.delete(closedSessionId);
+        newRecreatedPtyDisplayPending.delete(closedSessionId);
       }
 
       const closedSet = new Set(closedSessionIds);
@@ -1042,6 +1048,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         splits: {},
         hiddenBackgroundSessionIds: newHidden,
         daemonAttachPendingSessionIds: newDaemonAttachPending,
+        recreatedPtyDisplayPendingSessionIds: newRecreatedPtyDisplayPending,
         subagentTranscripts: newSubagentTranscripts,
       });
 
@@ -1122,6 +1129,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         const restoredStatuses: Record<string, SessionStatus> = {};
         const restoredListeners: Record<string, UnlistenFn> = {};
         const daemonAttachPendingSessionIds = new Set<string>();
+        const recreatedPtyDisplayPendingSessionIds = new Set<string>();
         let restoredTabState: Pick<TerminalStore, "tabStatuses" | "tabNotifications" | "tabStatusDetails"> = {
           tabStatuses: {},
           tabNotifications: {},
@@ -1187,7 +1195,6 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
                 // Keep checkpoint identity for old-daemon compatibility, not for
                 // static display: pending attach restores the daemon replay only.
                 initialTerminalOutput: ps.initialTerminalOutput,
-                deferStartupUntilInitialOutput: false,
               };
               const unlisten = await terminalProcessManager.subscribeStatus(ps.id, (payload) => {
                 const status = payload.status as SessionStatus;
@@ -1261,7 +1268,8 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
               projectId: ps.projectId,
               worktreeId: ps.worktreeId,
               cwd: ps.cwd,
-              startupCmd: restoredStartupCmd,
+              // 普通 shell 恢复不重跑启动命令（编译/服务类命令有副作用）；空串阻止回落到项目默认启动命令。
+              startupCmd: cliKind ? restoredStartupCmd : "",
               envVars: ps.envVars,
               shell: ps.shell,
               providerSnapshot: ps.providerSnapshot,
@@ -1288,26 +1296,11 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
           newIdMap[ps.id] = newSessionId;
 
           const shellKey = normalizeShellKey(resolvedShell) ?? null;
-          // 支持的 CLI 走原生 resume；缺少明确 DSH 身份时新建；普通 shell 贴回 scrollback。
-          let launchStartupCmd: string | undefined;
-          let initialTerminalOutput: string | undefined;
-          let deferStartupUntilInitialOutput = false;
-
-          if (cliKind || isDeepSeekTuiCommand(restoredStartupCmd)) {
-            // CLI resume / DSH 新建均不贴旧 scrollback，避免旧 TUI 状态覆盖新输出。
-            // TUI 重绘说明见 research/tui-startup-clear-sequences.md。
-            launchStartupCmd = launch.startupCmd;
-          } else {
-            // 普通 shell 会话：静态贴回历史滚动内容（shell 不清屏，历史可见），startupCmd 保持首轮行为。
-            launchStartupCmd = launch.startupCmd;
-            initialTerminalOutput = restoredStartupCmd && launch.startupHandledByLaunch
-              ? undefined
-              : ps.initialTerminalOutput;
-            // 有历史画面时：先静态贴回 initialTerminalOutput，再由 XTermTerminal 在贴回完成后重放 startupCmd，
-            // 避免"setTimeout 写入"与"贴回大段文本"竞态导致启动命令淹没在历史输出里。
-            deferStartupUntilInitialOutput = !!ps.initialTerminalOutput && !!launchStartupCmd;
-          }
-
+          // 支持的 CLI 走原生 resume；缺少明确 DSH 身份时新建；普通 shell 只贴回 scrollback。
+          // CLI resume / DSH 新建均不贴旧 scrollback，避免旧 TUI 状态覆盖新输出。
+          // TUI 重绘说明见 research/tui-startup-clear-sequences.md。
+          const launchStartupCmd = launch.startupCmd;
+          const initialTerminalOutput = cliKind ? undefined : ps.initialTerminalOutput;
           const hasInitialOutput = !!initialTerminalOutput;
           const restoredSession: TerminalSession = {
             id: newSessionId,
@@ -1318,7 +1311,9 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
             cwd: ps.cwd,
             shell: resolvedShell,
             envVars: ps.envVars,
-            startupCmd: launch.persistedStartupCmd ?? (launch.startupHandledByLaunch ? restoredStartupCmd : launchStartupCmd),
+            // 普通 shell 未执行启动命令，原命令仍保留给 Tab 识别、复制标签与下次恢复。
+            startupCmd: !cliKind ? restoredStartupCmd
+              : launch.persistedStartupCmd ?? (launch.startupHandledByLaunch ? restoredStartupCmd : launchStartupCmd),
             ...getRestoredAgentTerminalMetadata(ps, ps.projectId),
             environmentType: launch.environmentType ?? ps.environmentType,
             sshHostId: launch.sshHostId ?? ps.sshHostId,
@@ -1336,7 +1331,6 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
             remoteHistoryConsumerId: ps.remoteHistoryConsumerId,
             remoteHistorySourceInstanceId: ps.remoteHistorySourceInstanceId,
             initialTerminalOutput,
-            deferStartupUntilInitialOutput,
           };
 
           let unlisten: UnlistenFn;
@@ -1365,11 +1359,11 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
           restoredSessions.push(restoredSession);
           restoredStatuses[newSessionId] = "running";
           restoredListeners[newSessionId] = unlisten;
+          // 新 PTY 从空视口开始：首次挂载需把贴回的历史推入回滚区，Pane 重挂则按原样恢复。
+          if (hasInitialOutput) recreatedPtyDisplayPendingSessionIds.add(newSessionId);
 
-          // 执行启动命令：CLI resume 命令 / 无历史画面的普通命令走这里直接写入；
-          // 有历史画面时（仅 shell 分支）改由 XTermTerminal 在贴回完成后重放（deferStartupUntilInitialOutput），
-          // 这里不再 setTimeout 写入，避免同一条 startupCmd 被执行两次。
-          if (launchStartupCmd && !launch.startupHandledByLaunch && !hasInitialOutput) {
+          // 只有 CLI resume / DSH 命令会走到这里；SSH 的启动命令已由连接命令执行。
+          if (launchStartupCmd && !launch.startupHandledByLaunch) {
             setTimeout(() => {
               terminalProcessManager.write(newSessionId, formatStartupInputForPty(launchStartupCmd!, shellKey)).catch((err) => {
                 logError("Failed to write startup command on restore", {
@@ -1420,6 +1414,7 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
           sessionStatuses: restoredStatuses,
           statusListeners: restoredListeners,
           daemonAttachPendingSessionIds,
+          recreatedPtyDisplayPendingSessionIds,
           ...restoredTabState,
           splits: {},
         });
@@ -1490,7 +1485,6 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
         cliSessionId: persisted?.cliSessionId,
         remoteHistoryConsumerId: persisted?.remoteHistoryConsumerId,
         remoteHistorySourceInstanceId: persisted?.remoteHistorySourceInstanceId,
-        deferStartupUntilInitialOutput: false,
       };
       const unlisten = await terminalProcessManager.subscribeStatus(sessionId, (payload) => {
         const status = payload.status as SessionStatus;

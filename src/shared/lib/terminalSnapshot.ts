@@ -47,3 +47,21 @@ export function restoreKnownTerminalCheckpoint(output: string, savedSnapshot?: s
   if (!savedSnapshot || !output.endsWith(savedSnapshot)) return output;
   return restoreTerminalSnapshot(output);
 }
+
+/**
+ * A recreated PTY assumes an empty viewport with its cursor at 1;1, and ConPTY
+ * forwards PSReadLine/CMD line redraws as absolute CUP. Push the restored rows
+ * into scrollback (xterm's ED2 scroll mode) and home the cursor before any PTY
+ * output, otherwise those redraws overwrite the restored text.
+ */
+export function releaseViewportForRecreatedPty(
+  terminal: Pick<Terminal, "options" | "write">,
+  done: () => void,
+): void {
+  const scrollOnEraseInDisplay = terminal.options.scrollOnEraseInDisplay;
+  terminal.options.scrollOnEraseInDisplay = true;
+  terminal.write("\x1b[2J\x1b[H", () => {
+    terminal.options.scrollOnEraseInDisplay = scrollOnEraseInDisplay;
+    done();
+  });
+}

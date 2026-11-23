@@ -472,8 +472,6 @@ export interface TerminalSession {
   disconnectReason?: SshDisconnectReason;
   /** 终端首次挂载时写入 xterm scrollback 的本地文本，不发送到 PTY。 */
   initialTerminalOutput?: string;
-  /** true 时启动命令由 XTermTerminal 在 initialTerminalOutput 写完后再发送。 */
-  deferStartupUntilInitialOutput?: boolean;
   cliSessionId?: string;
   /** 本次会话使用的原生 Provider 快照；恢复时复用，避免后续切换污染旧会话。 */
   providerSnapshot?: NativeProviderLaunchSnapshot;

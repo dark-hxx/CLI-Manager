@@ -13,7 +13,7 @@ import { installTerminalUnicode } from "../../../shared/lib/terminalUnicode";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
-import { restoreTerminalSnapshot, serializeTerminalSnapshot } from "../../../shared/lib/terminalSnapshot";
+import { releaseViewportForRecreatedPty, restoreTerminalSnapshot, serializeTerminalSnapshot } from "../../../shared/lib/terminalSnapshot";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { invoke } from "@tauri-apps/api/core";
 import { useShallow } from "zustand/shallow";
@@ -49,10 +49,10 @@ import { didRenderFullTerminalViewport, refreshTerminalViewport } from "../lib/t
 import {
   getLinuxGraphicsDiagnostics, isLinuxGraphicsConstrained, shouldDisableTerminalWebgl,
 } from "../../../shared/platform/linuxGraphics";
-import { getOsPlatform, normalizeShellKey, type OsPlatform } from "../../../shared/platform/shell";
+import { getOsPlatform, type OsPlatform } from "../../../shared/platform/shell";
 import { useFontSizeControlVisibility } from "../../../shared/ui/FontSizeControl";
 import { useProjectStore } from "../../projects/api/projectStore";
-import { formatStartupInputForPty, useTerminalStore } from "../state";
+import { useTerminalStore } from "../state";
 import { isTerminalMarkdownPreviewSupported } from "../components/TerminalMarkdownPreview";
 import {
   createTerminalCliContext, isClaudeTerminalContext, isCodexTerminalContext, isGrokLaunchCommand,
@@ -1128,15 +1128,19 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
     searchAddonRef.current = searchAddon;
     applyCodexCursorVisibility(terminal);
     scheduleFit(true);
-    const sessionSnapshot = useTerminalStore.getState().sessions.find((item) => item.id === sessionId);
     const initialTerminalOutput = useTerminalStore.getState().daemonAttachPendingSessionIds.has(sessionId)
-      ? undefined : sessionSnapshot?.initialTerminalOutput;
-    const writeDeferredStartup = () => {
-      if (!sessionSnapshot?.deferStartupUntilInitialOutput || !sessionSnapshot.startupCmd) return;
-      terminalProcessManager.write(
-        sessionId,
-        formatStartupInputForPty(sessionSnapshot.startupCmd, normalizeShellKey(sessionSnapshot.shell) ?? null),
-      ).catch((err) => reportPtyWriteError("deferredStartup", err));
+      ? undefined : useTerminalStore.getState().sessions.find((item) => item.id === sessionId)?.initialTerminalOutput;
+    // Only the first mount after restoreSessions recreated the PTY. Later pane
+    // remounts show the same live PTY: its snapshot is restored exactly and the
+    // screen must not move.
+    const recreatedPtyDisplay = !!initialTerminalOutput
+      && useTerminalStore.getState().recreatedPtyDisplayPendingSessionIds.has(sessionId);
+    const completeRecreatedPtyDisplay = () => {
+      useTerminalStore.setState((state) => ({
+        recreatedPtyDisplayPendingSessionIds: new Set(
+          [...state.recreatedPtyDisplayPendingSessionIds].filter((id) => id !== sessionId)
+        ),
+      }));
     };
     let resolveInitialDisplayReady: (() => void) | null = null;
     const initialDisplayReady = new Promise<void>((resolve) => {
@@ -1160,28 +1164,24 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
             logError("Failed to snapshot terminal buffer before dispose", { sessionId, err });
           }
         };
-        if (!hasSnapshot) {
+        if (!hasSnapshot || !recreatedPtyDisplay) {
+          if (hasSnapshot) terminal.scrollToBottom();
           markInitialDisplayReady();
           return;
         }
-        // RAF-A (scheduleFit) fires before RAF-B below. If a horizontal resize occurs
-        // in RAF-A, xterm reflows the buffer and may move the cursor away from the
-        // clean bottom line written by the snapshot restore sequence. RAF-B runs after
-        // RAF-A, so re-push the cursor to the bottom before releasing the PTY output
-        // gate. This must stay in the snapshot path: a new shell has no stale cursor
-        // to repair and should keep its normal initial cursor position.
-        terminal.write("\x1b[999B\r\n", () => {
+        // Runs after the RAF-A fit so a reflow cannot bring restored rows back.
+        releaseViewportForRecreatedPty(terminal, () => {
           if (terminalRef.current !== terminal) return;
           terminal.scrollToBottom();
+          completeRecreatedPtyDisplay();
           markInitialDisplayReady();
         });
       });
     };
     let initialDisplayRestoreRaf: number | null = null;
     if (initialTerminalOutput) {
-      // The serialized shell snapshot contains cursor coordinates from the old
-      // terminal geometry. Fit first, then end on a clean line so output from
-      // the recreated PTY cannot overwrite restored text at that stale cursor.
+      // Fit first, then restore the snapshot; finishInitialDisplayRestore decides
+      // where PTY output may start.
       initialDisplayRestoreRaf = window.requestAnimationFrame(() => {
         initialDisplayRestoreRaf = null;
         if (terminalRef.current !== terminal) return;
@@ -1196,17 +1196,19 @@ export function useXTermController({ sessionId, isActive = true, isVisible = tru
         }
         const restoredOutput = displayTransformOutputRef.current(restoreTerminalSnapshot(initialTerminalOutput));
         const restoredCursor = shouldHideCodexCursor(terminal) ? "\x1b[?25l" : "\x1b[?25h";
-        terminal.write(`${restoredOutput}\x1b[?6l\x1b[r\x1b[0m${restoredCursor}\x1b[999B\r\n`, () => {
+        // A recreated PTY starts with default modes. A live PTY keeps the serialized
+        // cursor, scroll region and SGR: DECOM/DECSTBM resets would home its cursor
+        // away from where the PTY continues drawing.
+        const freshPtyModes = recreatedPtyDisplay ? "\x1b[?6l\x1b[r\x1b[0m" : "";
+        terminal.write(`${restoredOutput}${freshPtyModes}${restoredCursor}`, () => {
           if (terminalRef.current !== terminal) return;
           terminal.scrollToBottom();
           refreshTerminalViewport(terminal);
           scheduleViewportRefresh();
-          writeDeferredStartup();
           finishInitialDisplayRestore(true);
         });
       });
     } else {
-      writeDeferredStartup();
       finishInitialDisplayRestore(false);
     }
     if (isActive && isVisible) {

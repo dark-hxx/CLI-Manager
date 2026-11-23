@@ -21,17 +21,31 @@ test("PTY output subscription waits for display restore and remains cancellable"
   assert.match(source, /if \(attachOutputTimer !== null\) \{[\s\S]*?window\.clearTimeout\(attachOutputTimer\);[\s\S]*?ptyOutput\?\.dispose\(\);/);
 });
 
-test("restored shell snapshots fit the current pane and leave a clean output line", () => {
+test("restored snapshots fit the current pane; only a recreated PTY gets fresh default modes", () => {
   assert.match(source, /initialDisplayRestoreRaf = window\.requestAnimationFrame\(\(\) => \{[\s\S]*?fitAddon\.proposeDimensions\(\)[\s\S]*?terminal\.resize\(dimensions\.cols, dimensions\.rows\);/);
   assert.match(source, /const restoredCursor = shouldHideCodexCursor\(terminal\) \? "\\x1b\[\?25l" : "\\x1b\[\?25h";/);
-  assert.match(source, /const restoredOutput = displayTransformOutputRef\.current\(restoreTerminalSnapshot\(initialTerminalOutput\)\);[\s\S]*?terminal\.write\(`\$\{restoredOutput\}\\x1b\[\?6l\\x1b\[r\\x1b\[0m\$\{restoredCursor\}\\x1b\[999B\\r\\n`/);
-  assert.match(source, /terminal\.write\([\s\S]*?writeDeferredStartup\(\);[\s\S]*?finishInitialDisplayRestore\(true\);/);
+  assert.match(source, /const freshPtyModes = recreatedPtyDisplay \? "\\x1b\[\?6l\\x1b\[r\\x1b\[0m" : "";/);
+  assert.match(source, /const restoredOutput = displayTransformOutputRef\.current\(restoreTerminalSnapshot\(initialTerminalOutput\)\);[\s\S]*?terminal\.write\(`\$\{restoredOutput\}\$\{freshPtyModes\}\$\{restoredCursor\}`/);
+  assert.match(source, /scheduleViewportRefresh\(\);\s*finishInitialDisplayRestore\(true\);/);
   assert.match(source, /if \(initialDisplayRestoreRaf !== null\) \{[\s\S]*?window\.cancelAnimationFrame\(initialDisplayRestoreRaf\);/);
 });
 
-test("only restored snapshots repair the cursor after fit before releasing output", () => {
+test("a live PTY remount releases output at the serialized cursor without parking it", () => {
   const finish = source.slice(source.indexOf("const finishInitialDisplayRestore ="), source.indexOf("let initialDisplayRestoreRaf:"));
-  assert.match(finish, /if \(!hasSnapshot\) \{\s*markInitialDisplayReady\(\);\s*return;/);
-  assert.match(finish, /terminal\.write\("\\x1b\[999B\\r\\n", \(\) => \{\s*if \(terminalRef\.current !== terminal\) return;\s*terminal\.scrollToBottom\(\);\s*markInitialDisplayReady\(\);/);
-  assert.match(source, /\} else \{\s*writeDeferredStartup\(\);\s*finishInitialDisplayRestore\(false\);/);
+  assert.match(finish, /if \(!hasSnapshot \|\| !recreatedPtyDisplay\) \{\s*if \(hasSnapshot\) terminal\.scrollToBottom\(\);\s*markInitialDisplayReady\(\);\s*return;/);
+  assert.match(source, /\} else \{\s*finishInitialDisplayRestore\(false\);/);
+  // Cursor parking desynchronizes xterm from the live PTY's own cursor model.
+  assert.doesNotMatch(source, /999B/);
+});
+
+test("a recreated PTY clears the restored viewport once before releasing output and never sends input", () => {
+  assert.match(source, /const recreatedPtyDisplay = !!initialTerminalOutput\s*&& useTerminalStore\.getState\(\)\.recreatedPtyDisplayPendingSessionIds\.has\(sessionId\);/);
+  const finish = source.slice(source.indexOf("const finishInitialDisplayRestore ="), source.indexOf("let initialDisplayRestoreRaf:"));
+  assert.match(finish, /releaseViewportForRecreatedPty\(terminal, \(\) => \{\s*if \(terminalRef\.current !== terminal\) return;\s*terminal\.scrollToBottom\(\);\s*completeRecreatedPtyDisplay\(\);\s*markInitialDisplayReady\(\);\s*\}\);/);
+
+  const complete = source.slice(source.indexOf("const completeRecreatedPtyDisplay ="), source.indexOf("let resolveInitialDisplayReady"));
+  assert.match(complete, /recreatedPtyDisplayPendingSessionIds: new Set\(\s*\[\.\.\.state\.recreatedPtyDisplayPendingSessionIds\]\.filter\(\(id\) => id !== sessionId\)/);
+  // Restore never replays a startup command from the display path.
+  assert.doesNotMatch(complete, /terminalProcessManager\.write/);
+  assert.doesNotMatch(source, /deferStartupUntilInitialOutput|formatStartupInputForPty/);
 });

@@ -86,5 +86,4 @@ test("live daemon restore preserves saved checkpoint identity without enabling s
     { id: "test", initialTerminalOutput: snapshot }, {}, {}, () => ({}),
   );
   assert.equal(session.initialTerminalOutput, snapshot);
-  assert.equal(session.deferStartupUntilInitialOutput, false);
 });

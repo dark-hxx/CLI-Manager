@@ -211,6 +211,8 @@ export interface TerminalStore {
   hiddenBackgroundSessionIds: Set<string>;
   /** 仅运行态：XTerm 输出监听就绪后才可执行 daemon attach。 */
   daemonAttachPendingSessionIds: Set<string>;
+  /** 仅运行态：重建 PTY 的快照会话尚未完成首次挂载（贴回历史推入回滚区、清空视口）；Pane 重挂不再重复。 */
+  recreatedPtyDisplayPendingSessionIds: Set<string>;
   subagentTranscripts: Record<string, SubagentTranscriptContent>;
   createSession: (projectId?: string, cwd?: string, title?: string, startupCmd?: string, envVars?: Record<string, string>, shell?: string, paneId?: string, worktreeId?: string, sshHostId?: string, cliSessionId?: string, remoteHistoryConsumerId?: string, remoteHistorySourceInstanceId?: string) => Promise<string>;
   closeSession: (id: string) => Promise<void>;

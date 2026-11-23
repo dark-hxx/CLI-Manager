@@ -41,7 +41,10 @@
   - CLI 会话(codex/claude)：**不贴** `initialTerminalOutput`（`deferStartupUntilInitialOutput=false`），startupCmd 用 resume：
     - 有 `cliSessionId` → `codex resume --no-alt-screen <id>` / `claude --resume <id>`
     - 无 `cliSessionId` → 兜底续最近一次 `codex resume --no-alt-screen --last` / `claude --continue`
-  - shell 会话：贴回 `initialTerminalOutput`（shell 不清屏，历史可见）。
+  - shell 会话（`detectCliResumeKind` 为 null）：贴回 `initialTerminalOutput`（shell 不清屏，历史可见），**不重跑启动命令**。`resolvePtyLaunch` 收到显式空串 `startupCmd: ""`（`undefined`/`null` 会回落到项目默认启动命令，SSH 同理）；会话 `startupCmd` 元数据保留原命令，供 Tab 识别、复制标签与下次恢复。
+- **★重建 PTY 的 shell 快照必须先推入回滚区再放行 PTY 输出。** 新建 ConPTY 认定视口为空、光标在 1;1，且把 PSReadLine/CMD 输入行重绘转成绝对 CUP（实测随包 ConPTY 1.24：`\x1b[1;49H`；系统 ConPTY 首帧 `\x1b[2J\x1b[H`）。`restoreSessions` 把带快照的重建会话放进运行态 `recreatedPtyDisplayPendingSessionIds`；`XTermTerminal` 首次挂载写完快照与新 PTY 默认模式（`\x1b[?6l\x1b[r\x1b[0m`）、完成 fit 后调用 `releaseViewportForRecreatedPty`（临时开启 xterm `scrollOnEraseInDisplay` 写 `\x1b[2J\x1b[H`），再移出标记、放行输出。该标记不得写入 `sessions.json`；挂载中断则保留，重挂后重做。
+- **★Pane 重挂（分屏/拖动标签）面对的是同一个 live PTY：必须按快照原样恢复光标、滚动区、原点模式与 SGR。** 不得追加 `\x1b[?6l`/`\x1b[r`（xterm 中 DECOM/DECSTBM 复位会把光标归位到 1;1）、`\x1b[0m` 或 `\x1b[999B\r\n` 光标停靠，不得清空视口。否则 xterm 光标与 PTY 自身的光标模型错位：PSReadLine 的绝对 CUP、Ink（Claude Code）按当前光标上移擦除的重绘都会写错行。
+- 显示路径（`XTermTerminal`）从不向 PTY 发送启动命令。`restoreSessions` 只对 CLI resume / DSH 命令且 `launch.startupHandledByLaunch=false` 时 `setTimeout` 写入；SSH 启动命令已嵌入连接命令，不得再补发。
 - `restoreSessions` 重建 session 时**必须保留 `cliSessionId`**——漏掉会导致落盘时 id 丢失、下次恢复只能走兜底。
 - 从历史记录“继续对话”新建的 Tab 在创建时就必须持有对应 `cliSessionId`。同一项目、同一 cwd 下创建多个不同历史会话时，每个 Tab 的身份必须保持独立，不得依赖后续 Hook 或 `--last` 猜测。
 - Hook 首次绑定或 `/clear` 后切换到新的非空 `cliSessionId` 时，本地、WSL 和 SSH 会话都必须立即保存更新后的完整 sessions 快照；不得只更新 Zustand 运行态内存。保存判断必须对账 `sessionStore.sessions`，不能只看运行态 ID 是否变化：HMR、旧事件或保存失败可能造成“运行态已有 ID、磁盘仍为空”。仅当持久化 ID 与 Hook ID 已一致时，本地会话才跳过写盘；SSH 原有远端身份元数据保存行为保持不变。
@@ -67,6 +70,8 @@
 - CLI 会话 + 有合法 cliSessionId(trim 后非空) → resume `<id>`；否则 → `--last`/`--continue`。
 - Hook sessionId 首次出现或发生变化 → 更新运行态并立即排队保存；运行态 ID 相同但持久化 ID 缺失/不同 → 自愈保存；空 ID → 不覆盖；运行态和持久化 ID 都一致 → 不为本地会话新增保存。
 - 本地/WSL 历史继续对话 → `startupCmd` 与 `cliSessionId` 使用同一个选中历史 Session ID；SSH 分支继续使用预检确认后的 `sourceSessionId`。
+- 重建 PTY + 普通 shell（含 SSH）→ 不执行原启动命令，也不执行项目默认启动命令；`startupCmd` 元数据保留原值。
+- 重建 PTY + 有 shell 快照 → 首次挂载：历史进入回滚区、视口为空、光标 1;1，随后放行输出；之后的 Pane 重挂 → 原样恢复快照（光标/滚动区/SGR 与 live PTY 一致），不清视口、不停靠光标。
 - 项目不存在 / 路径无效 → 跳过或 toast 警告，不 crash。
 - 快照序列化单个失败 → 标回脏下轮重试，不拖垮整轮落盘。
 - 无可恢复会话 → 不弹窗、不调用 `restoreSessions`、不空转定时器。
@@ -82,11 +87,15 @@
 - Good: codex 会话关闭重开 → 走 `codex resume --no-alt-screen <id>`，CLI 自己重画上次对话且可继续。
 - Good: Hook 先绑定 ID，再关闭应用并恢复 → 快照保留该 ID，恢复命令不会漂移到 `--last`。
 - Good: 同一项目下分别继续历史会话 A、再新建会话 B，关闭并恢复 → 两个 Tab 分别恢复 A、B，不会都进入最近的 B。
-- Base: shell 会话关闭重开 → 贴回历史画面，可继续输入。
+- Base: shell 会话关闭重开 → 历史在回滚区上方完整可见，新提示符从空白视口顶部开始，可继续输入；之前的编译/启动命令不会自动重跑。
 - Base: 同一会话的 Stop/UserPromptSubmit 重复携带相同 ID，且 `sessionStore` 已持有该 ID → 本地会话不重复保存身份快照。
 - Base: 开发版启动时安装版存在 `sessions.json` → 不读取该文件，只检查 `sessions.dev.json`。
 - Base: 恢复开关关闭 → 当前环境快照被清理，启动不提示，SQLite 历史会话不受影响。
 - Bad: 给 codex/claude 会话贴 `initialTerminalOutput` 再裸重跑 → 历史被 TUI 重绘覆盖（本任务真机复现）。
+- Bad: 贴回 shell 快照后只把光标停到底部干净行就放行新 PTY 输出 → ConPTY 的绝对 CUP 把 PowerShell/CMD 输入行和后续输出写到历史行上，形成重叠（`b008cc02`/`f47c6bd8` 两次只修光标，症状仍在）。
+- Bad: 恢复普通 shell 时重跑上次启动命令（编译/dev server）→ 有副作用，且新输出与贴回历史叠加；用户明确要求恢复时不自动重跑（2026-11-23）。
+- Bad: 为“不重跑”给 `resolvePtyLaunch` 传 `undefined` → 回落到项目默认启动命令，照样自动执行。
+- Bad: Pane 重挂沿用新 PTY 的快照后缀 `\x1b[?6l\x1b[r\x1b[0m` + `\x1b[999B\r\n` → 光标先被归位、再停到底部并多滚一行，live PTY 后续的绝对/相对重绘全部错行。
 - Bad: `restoreSessions` 重建时漏带 `cliSessionId` → resume 永远走兜底 `--last`，可能续错会话。
 - Bad: Hook 只把 `cliSessionId` 写进 Zustand 内存，等待其他偶然保存路径 → 应用关闭时磁盘仍是旧快照，恢复可能续错最近会话。
 - Bad: 用运行态 `resolveCliSessionRebind(...).changed` 作为唯一保存条件 → 运行态/磁盘一旦分叉，相同 ID 的后续 Hook 永远不会修复磁盘。
@@ -96,12 +105,15 @@
 
 - `npx tsc --noEmit`（前端唯一静态校验）。
 - `node scripts/resumeCliArgs.test.mjs`（恢复参数去重、普通参数保留、Provider 参数单次追加）。
+- `node --test scripts/terminalRecreatedPtyRestore.test.mjs`：用真实 xterm.js 回放实测 ConPTY 序列，断言旧逻辑会重叠、新逻辑历史完整保留在回滚区且新输出从视口顶部开始；系统 ConPTY 首帧清屏不擦历史；用真实 SerializeAddon 序列化后重挂，断言后续 PSReadLine 绝对 CUP 与 Ink 相对擦除的结果和未重挂终端逐字一致、滚动区保留；并断言 shell 恢复传空串、不写启动命令、一次性标记的接线。
+- `node --test scripts/terminalRemountSnapshot.test.mjs`：断言新 PTY 默认模式只用于重建路径、重建路径在 fit 后清视口再放行输出、live 重挂不停靠光标，且显示路径不向 PTY 写启动命令。
 - `node --test scripts/terminalCliSession.test.mjs`：断言首次绑定和 `/clear` 重绑返回 `changed=true`、运行态相同 ID 返回 `changed=false`、持久化 ID 缺失时仍返回 `changed=true`，并断言 Hook 对账 `sessionStore.sessions` 后接入串行保存且 Codex 恢复优先使用明确 ID。
 - `node --test scripts/historyResumeProject.test.mjs`：断言本地/WSL 项目匹配，并断言历史继续对话创建 Tab 时把所选 `session_id` 传入 `cliSessionId` 参数。
 - Rust：会话文件名选择测试必须断言安装环境为 `sessions.json`、开发环境为 `sessions.dev.json`。
 - 手动：`ask` 模式仅在启动时弹一次；确认后恢复，拒绝后再启动不再询问同批旧标签且 `session_meta` 不受影响；切换设置页不重复弹窗。
 - 手动：恢复弹窗在常规桌面宽度下提示语单行，缩窄窗口后自然收缩且无横向溢出；打开时焦点落在“恢复”，直接按 Enter 执行恢复；抽查其他确认弹窗保持原默认焦点和宽度。
-- 手动：`auto` 模式启动不弹窗并直接恢复；codex/claude 会话走 resume、历史不被清屏覆盖且可继续；shell 会话贴回历史；强杀后恢复到 ≤10s 前快照。
+- 手动：`auto` 模式启动不弹窗并直接恢复；codex/claude 会话走 resume、历史不被清屏覆盖且可继续；shell 会话贴回历史且不自动重跑编译/启动命令；强杀后恢复到 ≤10s 前快照。
+- 手动：PowerShell 标签停在提示符时分屏或拖到另一 Pane，再输入命令 → 回显与输出紧接提示符，不落到下一行或覆盖历史；Claude Code 标签同样操作后界面重绘不残留旧框。
 - 手动：无会话不弹窗；分别运行安装版与 `tauri dev`，确认两边的恢复提示和清理操作互不影响；关闭恢复开关后重启确认不再提示，常规设置页的恢复方式选择器置灰。
 
 ### 7. Wrong vs Correct

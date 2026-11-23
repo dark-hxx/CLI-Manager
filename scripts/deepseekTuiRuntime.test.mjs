@@ -361,7 +361,7 @@ test("bridge upgrades regenerate one cache patch while stable restore and sideba
   for (const expression of expressions) {
     const exports = {};
     runInNewContext(ts.transpileModule(`export const value = ${expression};`, { compilerOptions: { module: ts.ModuleKind.CommonJS } }).outputText,
-      { exports, launch: second, launchStartupCmd: second.startupCmd, restoredStartupCmd: restoreCommand, startupCmd: source, options: { startupCmd: source } });
+      { exports, launch: second, launchStartupCmd: second.startupCmd, restoredStartupCmd: restoreCommand, startupCmd: source, options: { startupCmd: source }, cliKind: "deepseek-tui" });
     assert.equal(exports.value, source);
   }
 });
