@@ -93,6 +93,7 @@ pub(super) fn convert_history_session(
     let fingerprint = session_file_fingerprint(&file_ref.path);
     let title = codex_history_index_text(detail).unwrap_or_else(|| detail.title.clone());
     let summary = HistorySessionSummary {
+        file_size: Some(fingerprint.size),
         session_id: session_id.clone(),
         parent_session_id: None,
         source: target_source.clone(),

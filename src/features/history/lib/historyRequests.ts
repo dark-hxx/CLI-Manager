@@ -141,7 +141,7 @@ export async function fetchRemoteHistoryStatsPayload(
 
 export async function fetchLatestProjectSessionDetail(
   projectPath: string,
-  prev?: { filePath: string; updatedAt: number },
+  prev?: { filePath: string; updatedAt: number; fileSize?: number },
   source?: HistorySource | null,
   cliSessionId?: string | null,
   options?: {
@@ -240,7 +240,8 @@ export async function fetchLatestProjectSessionDetail(
       return null;
     }
     const summaryChanged =
-      !prev || summary.file_path !== prev.filePath || summary.updated_at !== prev.updatedAt;
+      !prev || summary.file_path !== prev.filePath || summary.updated_at !== prev.updatedAt ||
+      summary.file_size !== prev.fileSize;
     if (prev && !summaryChanged && !freshDetail) {
       logInfo("history.realtime.lookup.unchanged", {
         source: summary.source,
@@ -264,6 +265,7 @@ export async function fetchLatestProjectSessionDetail(
     // 聚合详情的 updated_at 取父子转录最大值，而新鲜度键比较的是父会话 summary；
     // 子代理更新时会令两者永远不等、每轮轮询都整树重扫，故回填父会话时间作为比较基准。
     if (aggregateSubtasks) detail.updated_at = summary.updated_at;
+    detail.file_size = summary.file_size;
     logInfo("history.realtime.lookup.detail", {
       source: detail.source,
       projectPath,

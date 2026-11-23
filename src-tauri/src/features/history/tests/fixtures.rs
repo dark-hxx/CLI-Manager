@@ -10,6 +10,7 @@ pub(super) fn request_log_dedup_fixture(
 ) -> HistoryStatsSessionFact {
     HistoryStatsSessionFact {
         summary: HistorySessionSummary {
+            file_size: None,
             session_id: session_id.to_string(),
             parent_session_id: None,
             source: source.to_string(),

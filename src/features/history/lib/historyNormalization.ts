@@ -119,12 +119,14 @@ export function normalizeSessionRef(raw: unknown): HistorySessionRef | null {
 export function normalizeSummary(raw: unknown): HistorySessionSummary {
   const rec = (raw ?? {}) as Record<string, unknown>;
   const remoteIdentityRaw = rec.remote_identity ?? rec.remoteIdentity;
+  const fileSize = rec.file_size ?? rec.fileSize;
   return {
     session_id: asString(rec.session_id ?? rec.sessionId),
     source: asString(rec.source) as HistorySource,
     project_key: asString(rec.project_key ?? rec.projectKey),
     title: asString(rec.title),
     file_path: asString(rec.file_path ?? rec.filePath),
+    file_size: typeof fileSize === "number" ? fileSize : undefined,
     parent_session_id: asString(rec.parent_session_id ?? rec.parentSessionId ?? "") || null,
     cwd: asString(rec.cwd ?? "") || null,
     created_at: asNumber(rec.created_at ?? rec.createdAt),

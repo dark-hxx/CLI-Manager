@@ -1343,7 +1343,7 @@ export function SessionReplayPanel({ activeSessionId, open, visible = true, onOp
     const timer = window.setTimeout(() => {
       const loadDetail = async () => {
         const previousRef = previous
-          ? { filePath: previous.file_path, updatedAt: previous.updated_at }
+          ? { filePath: previous.file_path, updatedAt: previous.updated_at, fileSize: previous.file_size }
           : undefined;
         if (remoteProject) {
           if (remoteHistoryContextRef.current?.launch.projectId !== remoteProject.id) {

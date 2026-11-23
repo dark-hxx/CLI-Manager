@@ -198,6 +198,7 @@ pub(super) fn opencode_summary_from_parsed(
     parsed: &OpenCodeParsedSession,
 ) -> HistorySessionSummary {
     HistorySessionSummary {
+        file_size: None,
         session_id: parsed.computed.session_id.clone(),
         parent_session_id: parsed.computed.parent_session_id.clone(),
         source: "opencode".to_string(),

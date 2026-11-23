@@ -615,6 +615,7 @@ export interface HistoryRemoteIdentity {
 }
 
 export interface HistorySessionSummary {
+  file_size?: number;
   session_id: string;
   source: HistorySource;
   project_key: string;

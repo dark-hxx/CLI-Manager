@@ -558,6 +558,7 @@ pub(super) async fn get_session_by_file_path(
         return Ok(None);
     };
     let summary = HistorySessionSummary {
+        file_size: None,
         session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
         source: row.try_get("source").map_err(|err| err.to_string())?,
         project_key: row.try_get("project_key").map_err(|err| err.to_string())?,
@@ -753,6 +754,7 @@ async fn stats_session_facts_from_v2(
     let mut facts = Vec::new();
     for row in rows {
         let summary = HistorySessionSummary {
+            file_size: None,
             session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
             source: row.try_get("source").map_err(|err| err.to_string())?,
             project_key: row.try_get("project_key").map_err(|err| err.to_string())?,

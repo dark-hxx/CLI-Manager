@@ -420,6 +420,7 @@ pub async fn history_list_sessions(
                             .map_err(|err| err.to_string())?;
                     session.created_at = fingerprint.created_at;
                     session.updated_at = fingerprint.updated_at;
+                    session.file_size = Some(fingerprint.size);
                 }
             }
             let _ = catalog::ensure_refresh(app, roots, false, false).await;

@@ -177,7 +177,8 @@ pub(super) async fn history_list_sessions_legacy(
                 }
             }
 
-            let summary = summary_from_computation(&entry.file_ref, &entry.computed);
+            let mut summary = summary_from_computation(&entry.file_ref, &entry.computed);
+            summary.file_size = Some(entry.fingerprint.size);
             if let Some(q) = &query_lower {
                 let title = summary.title.to_lowercase();
                 let session_id = summary.session_id.to_lowercase();

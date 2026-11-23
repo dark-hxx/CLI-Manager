@@ -39,6 +39,8 @@ pub struct HistoryMessage {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistorySessionSummary {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_session_id: Option<String>,

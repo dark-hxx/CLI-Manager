@@ -595,7 +595,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       freshDetailRef.current = false;
       const current = latestRef.current;
       const prev = current
-        ? { filePath: current.file_path, updatedAt: current.updated_at }
+        ? { filePath: current.file_path, updatedAt: current.updated_at, fileSize: current.file_size }
         : undefined;
       let result: HistorySessionDetail | "unchanged" | null;
       try {
@@ -697,7 +697,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     return () => {
       cancelled = true;
     };
-  }, [isSshProject, latestSession?.updated_at, panelActive, project, sourceFilter, todayUsageScope, todayUsageScopeKey]);
+  }, [isSshProject, latestSession?.updated_at, latestSession?.file_size, panelActive, project, sourceFilter, todayUsageScope, todayUsageScopeKey]);
 
   // 空闲时数据轮询返回 unchanged 不会触发重渲染，需独立 tick 让头部相对时间文案随时间走字
   useEffect(() => {

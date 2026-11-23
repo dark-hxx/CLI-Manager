@@ -75,6 +75,7 @@ pub(super) fn merge_fetch_limit(limit: Option<usize>, offset: Option<usize>) -> 
 // 将数据库行转换为会话摘要，并将负消息数归零。
 pub(super) fn session_summary_from_row(row: SqliteRow) -> Result<HistorySessionSummary, String> {
     Ok(HistorySessionSummary {
+        file_size: None,
         session_id: row.try_get("session_id").map_err(|err| err.to_string())?,
         source: row.try_get("source").map_err(|err| err.to_string())?,
         project_key: row.try_get("project_key").map_err(|err| err.to_string())?,

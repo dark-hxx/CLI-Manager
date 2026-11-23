@@ -50,6 +50,7 @@ mod tests {
     // 只构造查询策略所需摘要，不读取用户目录或启动 Tauri。
     fn summary(session_id: &str) -> HistorySessionSummary {
         HistorySessionSummary {
+            file_size: None,
             session_id: session_id.to_string(),
             parent_session_id: None,
             source: "codex".to_string(),

@@ -82,6 +82,26 @@ fn new_bound_rollout_has_messages_and_usage_without_any_catalog() {
 }
 
 #[test]
+fn bound_rollout_exposes_size_after_append_with_unchanged_mtime() {
+    use std::io::Write;
+
+    let temp = TempDir::new().unwrap();
+    let path = write_rollout(temp.path(), SESSION_ID, SESSION_ID, "F:/repo");
+    let before = find_bound_codex_session(temp.path(), SESSION_ID, None).unwrap();
+    let mut file = std::fs::OpenOptions::new().append(true).open(path).unwrap();
+    let mtime = file.metadata().unwrap().modified().unwrap();
+    let row = b"\n{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"more\"}]}}";
+    file.write_all(row).unwrap();
+    file.set_modified(mtime).unwrap();
+    drop(file);
+
+    let after = find_bound_codex_session(temp.path(), SESSION_ID, None).unwrap();
+    assert_eq!(after.updated_at, before.updated_at);
+    assert_eq!(after.file_size.unwrap(), before.file_size.unwrap() + row.len() as u64);
+    assert_eq!(after.message_count, before.message_count + 1);
+}
+
+#[test]
 fn missing_wrong_identity_or_wrong_project_never_uses_another_session() {
     let temp = TempDir::new().unwrap();
     write_rollout(temp.path(), OTHER_ID, OTHER_ID, "F:/repo");

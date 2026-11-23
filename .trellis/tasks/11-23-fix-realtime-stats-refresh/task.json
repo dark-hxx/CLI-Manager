@@ -1,0 +1,12 @@
+{
+  "id": "fix-realtime-stats-refresh",
+  "title": "修复侧边栏实时统计漏掉会话日志追加",
+  "description": "Windows 上 Codex 会话文件增长时修改时间可能暂时不变。将已有文件指纹的字节数传给本地轮询，与上次详情一起缓存；路径、时间、大小均相同时跳过详情读取。",
+  "status": "completed",
+  "completedAt": "2026-11-23",
+  "validation": "22 项前端定向测试、5 项 Rust 精确会话查询测试及 TypeScript 类型检查通过。严格架构检查报告原有 useSidebarController.tsx 超限 7 行。",
+  "scope": "history",
+  "createdAt": "2026-11-23",
+  "branch": "master",
+  "version": "TEMP"
+}

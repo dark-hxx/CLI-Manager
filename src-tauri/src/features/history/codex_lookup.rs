@@ -113,6 +113,7 @@ pub(super) fn find_bound_codex_session(
         }
         let mut summary = summary_from_computation(&file_ref, &computed);
         summary.updated_at = fingerprint.updated_at;
+        summary.file_size = Some(fingerprint.size);
         result = Some(summary);
     }
     result

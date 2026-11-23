@@ -500,6 +500,7 @@ pub(super) fn summary_from_computation(
     computed: &CachedSessionComputation,
 ) -> HistorySessionSummary {
     HistorySessionSummary {
+        file_size: None,
         session_id: computed.session_id.clone(),
         parent_session_id: computed.parent_session_id.clone(),
         source: file_ref.source.clone(),
