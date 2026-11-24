@@ -203,12 +203,29 @@ pub(super) fn message_title_candidate(message: &HistoryMessage) -> Option<String
 
 // 优先从 objective 标签内容提取标题，未命中时处理完整文本。
 pub(super) fn title_candidate_from_text(text: &str) -> Option<String> {
+    if let Some(command) = slash_command_title_candidate(text) {
+        return Some(command);
+    }
     if let Some(objective) = extract_simple_tag_block(text, "objective") {
         if let Some(candidate) = title_candidate_from_lines(objective) {
             return Some(candidate);
         }
     }
     title_candidate_from_lines(text)
+}
+
+// 带参数的斜杠命令以 "/命令 参数首行" 作标题；无参数命令（/clear、/model 等）交由噪声块跳过。
+pub(super) fn slash_command_title_candidate(text: &str) -> Option<String> {
+    let name = extract_simple_tag_block(text, "command-name")?.trim();
+    let args = extract_simple_tag_block(text, "command-args")?
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())?;
+    if name.is_empty() {
+        return None;
+    }
+    let name = name.trim_start_matches('/');
+    Some(format!("/{name} {args}"))
 }
 
 // 截取首对指定简单标签之间的原始文本。
@@ -414,8 +431,14 @@ pub(super) fn is_title_noise_block_tag(tag: &str) -> bool {
     matches!(
         tag,
         "codex_internal_context"
+            | "command-args"
+            | "command-message"
+            | "command-name"
             | "current-state"
             | "instructions"
+            | "local-command-caveat"
+            | "local-command-stderr"
+            | "local-command-stdout"
             | "session-context"
             | "system-reminder"
             | "workflow"

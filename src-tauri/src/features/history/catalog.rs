@@ -39,7 +39,8 @@ use tokio::sync::Mutex as AsyncMutex;
 
 const CATALOG_DB_FILE: &str = "history-catalog.db";
 // 5：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计，读取 SKILL.md 计入 Skill。
-const CATALOG_PARSER_VERSION: i64 = 5;
+// 6：标题跳过 Claude 本地命令注入块（local-command-caveat 等），带参斜杠命令显示为 "/命令 参数"。
+const CATALOG_PARSER_VERSION: i64 = 6;
 const HISTORY_INDEX_SCHEMA_VERSION: i64 = 6;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;

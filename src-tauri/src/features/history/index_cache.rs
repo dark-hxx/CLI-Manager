@@ -87,7 +87,8 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 旧快照里同一个文件的 input/output 被记两次且 cached_input_tokens 未归一化，
 // 而快照复用只比对文件指纹——不改这个版本号，未再写入的旧会话会永远留着翻倍的用量。
 // 16：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计、读取 SKILL.md 计入 Skill，旧快照计数缺失。
-pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 16;
+// 17：标题跳过 Claude 本地命令注入块、带参斜杠命令显示为 "/命令 参数"，旧快照标题停留在 <local-command-caveat>。
+pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 17;
 pub(super) const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 pub(super) static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();
