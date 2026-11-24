@@ -286,7 +286,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   projectPath: string;
   currentBranch: string | null;
   shell: string;
-  sessionId: string;
+  sessionId: string | null;
   worktree: WorktreeRecord | null;
   onSaveToSidebar?: () => void;
   canSaveToSidebar?: boolean;
@@ -310,7 +310,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   const messageCount = statsSession?.messages.length ?? 0;
   // 实时统计面板优先显示当前实时分支，回退到会话记录的静态分支
   const branch = currentBranch ?? session.branch ?? "—";
-  const sessionIdTitle = `${sessionId}\n\n${t("termStats.copySessionIdHint")}`;
+  const sessionIdTitle = sessionId ? `${sessionId}\n\n${t("termStats.copySessionIdHint")}` : undefined;
 
   // 双击打开项目文件夹
   const handleOpenFolder = useCallback(() => {
@@ -321,6 +321,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
   }, [canOpenFolder, projectPath]);
 
   const handleCopySessionId = useCallback(() => {
+    if (!sessionId) return;
     void navigator.clipboard
       .writeText(sessionId)
       .then(() => toast.success(t("termStats.copySessionIdSuccess")))
@@ -367,7 +368,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
             title={sessionIdTitle}
             onDoubleClick={handleCopySessionId}
           >
-            {sessionId}
+            {sessionId ?? "—"}
           </span>
           {onSaveToSidebar && (
             <button
@@ -785,7 +786,8 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             projectPath={resolvedProjectPath}
             currentBranch={currentBranch}
             shell={shellLabel || "—"}
-            sessionId={terminalSession?.cliSessionId ?? session.session_id}
+            // 只展示本终端 Hook 绑定的会话；未绑定时回退的「项目最近会话」可能属于其他终端，不能冒充本终端 ID。
+            sessionId={boundCliSessionId || null}
             worktree={activeWorktree}
             onSaveToSidebar={hasBoundCliSessionId ? handleSaveToSidebar : undefined}
             canSaveToSidebar={canSaveToSidebar}

@@ -122,6 +122,80 @@ test("多个活跃候选时拒绝猜测", () => {
   assert.deepEqual(result, { tabId: null, reason: "ambiguous" });
 });
 
+test("守护进程上报的外部 Codex Hook 绑定到正在输出的普通 Shell，而非同目录旧 Codex Tab", () => {
+  const result = resolveCliHookTarget({
+    rawTabId: "external:codex:new-session",
+    primaryTabId: "external:codex:new-session",
+    source: "codex",
+    cwd: "D:/work/project",
+    sessionId: "new-session",
+    receivedAt: 10_000,
+    candidates: [
+      candidate("old-codex", { source: "codex", cliSessionId: "old-session", outputActivityAt: 1_000 }),
+      candidate("plain-shell", { source: null, outputActivityAt: 9_800 }),
+    ],
+  });
+  assert.deepEqual(result, { tabId: "plain-shell", reason: "recent-output" });
+});
+
+test("来源未知的 Shell 绑定会话后，后续 Hook 按 sessionId 命中", () => {
+  const result = resolveCliHookTarget({
+    rawTabId: "external:codex:new-session",
+    primaryTabId: "external:codex:new-session",
+    source: "codex",
+    cwd: "D:/work/project",
+    sessionId: "new-session",
+    receivedAt: 100_000,
+    candidates: [
+      candidate("old-codex", { source: "codex", cliSessionId: "old-session" }),
+      candidate("plain-shell", { source: null, cliSessionId: "new-session" }),
+    ],
+  });
+  assert.deepEqual(result, { tabId: "plain-shell", reason: "bound-session" });
+});
+
+test("无输出活动时来源未知的 Shell 不靠路径认领外部 Hook", () => {
+  const onlyShell = resolveCliHookTarget({
+    rawTabId: "external:claude:ide-session",
+    primaryTabId: "external:claude:ide-session",
+    source: "claude",
+    cwd: "D:/work/project",
+    sessionId: "ide-session",
+    receivedAt: 100_000,
+    candidates: [candidate("plain-shell", { source: null, outputActivityAt: 1_000 })],
+  });
+  assert.deepEqual(onlyShell, { tabId: null, reason: "not-found" });
+
+  const withSourceTab = resolveCliHookTarget({
+    rawTabId: "external:claude:ide-session",
+    primaryTabId: "external:claude:ide-session",
+    source: "claude",
+    cwd: "D:/work/project",
+    sessionId: "ide-session",
+    receivedAt: 100_000,
+    candidates: [
+      candidate("plain-shell", { source: null }),
+      candidate("claude-tab", { source: "claude" }),
+    ],
+  });
+  assert.deepEqual(withSourceTab, { tabId: "claude-tab", reason: "unique-path" });
+});
+
+test("同来源 Tab 与普通 Shell 同时有输出时回退到同来源唯一候选", () => {
+  const result = resolveCliHookTarget({
+    rawTabId: "external:codex:session",
+    primaryTabId: "external:codex:session",
+    source: "codex",
+    cwd: "D:/work/project",
+    receivedAt: 10_000,
+    candidates: [
+      candidate("codex-tab", { source: "codex", outputActivityAt: 9_900 }),
+      candidate("dev-server", { source: null, outputActivityAt: 9_950 }),
+    ],
+  });
+  assert.deepEqual(result, { tabId: "codex-tab", reason: "unique-path" });
+});
+
 test("Windows、WSL 挂载盘和 WSL UNC 路径使用一致口径", () => {
   assert.equal(normalizeHookBindingPath("C:\\repo"), normalizeHookBindingPath("/mnt/c/repo"));
   assert.equal(
