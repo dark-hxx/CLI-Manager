@@ -1,4 +1,7 @@
 export const zh = {
+  "stats.usagePartial": "有 {count} 个会话仅有活动记录。Token 与费用仅统计有用量证据的部分。",
+  "stats.usageUnknown": "这些会话没有可核实的 Token 或费用数据。",
+  "stats.activityMessages": "{count} 条消息",
   "systemResources.title": "系统资源",
   "systemResources.localMachine": "本机资源",
   "systemResources.refresh": "刷新系统资源",

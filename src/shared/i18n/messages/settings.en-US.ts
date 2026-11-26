@@ -111,7 +111,7 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.tabs.historySources.description": "Manage CLI history session locations, index sources, backups, and recovery.",
   "settings.tabs.hooks.label": "Hook",
   "settings.tabs.hooks.title": "Hook",
-  "settings.tabs.hooks.description": "Install or remove Claude Code / Codex / Kimi Code / Pi / Grok Build bridges for CLI-Manager tab notifications.",
+  "settings.tabs.hooks.description": "Install or remove Claude Code / Codex / Kimi Code / Pi / Grok Build / Antigravity CLI bridges for CLI-Manager tab notifications.",
   "settings.tabs.statusline.label": "Statusline",
   "settings.tabs.statusline.title": "Claude Statusline",
   "settings.tabs.statusline.description": "Visually configure and install the Claude Code statusline in CLI-Manager.",

@@ -186,6 +186,9 @@ pub(super) fn session_matches_project_path(
     file_ref: &SessionFileRef,
     target_project_path: &str,
 ) -> bool {
+    if file_ref.source == "antigravity" {
+        return antigravity_workspace_from_path(&file_ref.path).is_some_and(|cwd| super::antigravity::cwd_matches(&file_ref.path, &cwd, target_project_path));
+    }
     // 目标项目路径可能是 Windows 形式（D:\..），而 claude 在 WSL 内按 Linux cwd
     // (/mnt/d/..) 编码会话目录，故同时尝试 Windows 与 WSL 两种形式——二者指向同一物理
     // 目录，任一命中即视为同项目。target_project_path 已被 normalize_history_path 归一化。

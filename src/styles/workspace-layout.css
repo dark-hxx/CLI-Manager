@@ -151,7 +151,7 @@
 }
 
 .ui-workspace-settings-overlay[data-workspace-background="true"] .ui-settings-nav {
-  background: var(--surface-container-low) !important;
+  background: var(--settings-nav-bg, var(--surface-container-low)) !important;
   background-image: none !important;
 }
 

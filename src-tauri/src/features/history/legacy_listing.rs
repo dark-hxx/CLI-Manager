@@ -12,13 +12,15 @@ pub(super) async fn history_list_sessions_legacy(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     project_path: Option<String>,
     query: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
 ) -> Result<Vec<HistorySessionSummary>, String> {
     tokio::task::spawn_blocking(move || {
-        let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root).with_kimi_config_dir(kimi_config_dir);
+        let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root).with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         let source_filter = source.map(|v| v.to_lowercase());
         let target_project_path = project_path
             .map(|v| normalize_history_path(&v))

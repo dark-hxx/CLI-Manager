@@ -392,7 +392,7 @@
 
 [data-theme="light"][data-light-palette="saas-analytics-dashboard"] {
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #f6f9fc;
+  --surface-container-low: #f1f5fa;
   --surface-container-high: #edf3fa;
   --surface-container-highest: #e2eaf4;
   --primary-dim: color-mix(in srgb, var(--primary) 76%, #0f172a 24%);
@@ -409,7 +409,7 @@
 /* Apple 系列：纯白扁平、去阴影、focus 收敛 */
 [data-theme="light"][data-light-palette="apple-pure"] {
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #fbfbfd;
+  --surface-container-low: #f3f3f6;
   --surface-container-high: #f5f5f7;
   --surface-container-highest: #ebebf0;
   --primary-dim: color-mix(in srgb, var(--primary) 72%, #ffffff 28%);
@@ -425,7 +425,7 @@
 
 [data-theme="light"][data-light-palette="apple-mist"] {
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #f7f9fc;
+  --surface-container-low: #f1f4f8;
   --surface-container-high: #f2f4f7;
   --surface-container-highest: #e8ebef;
   --primary-dim: color-mix(in srgb, var(--primary) 72%, #ffffff 28%);
@@ -441,7 +441,7 @@
 
 [data-theme="light"][data-light-palette="apple-warm"] {
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #faf8f3;
+  --surface-container-low: #f4f1ea;
   --surface-container-high: #f6f3ed;
   --surface-container-highest: #eeeae1;
   --primary-dim: color-mix(in srgb, var(--primary) 70%, #fdfcf9 30%);
@@ -457,7 +457,7 @@
 
 [data-theme="light"][data-light-palette="apple-mono"] {
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #fbfbfc;
+  --surface-container-low: #f3f3f5;
   --surface-container-high: #f7f7f8;
   --surface-container-highest: #ededef;
   --primary-dim: color-mix(in srgb, var(--primary) 70%, #ffffff 30%);
@@ -529,7 +529,7 @@
   --warning: #7b5400;
   --on-primary: #ffffff;
   --surface-container-lowest: #ffffff;
-  --surface-container-low: #ffffff;
+  --surface-container-low: #f0f3f7;
   --surface-container-high: #e9edf2;
   --surface-container-highest: #e9edf2;
   --on-surface-variant: #414c59;
@@ -589,7 +589,7 @@
   --warning: #795b17;
   --on-primary: #ffffff;
   --surface-container-lowest: #f8fafc;
-  --surface-container-low: #f8fafc;
+  --surface-container-low: #eceff4;
   --surface-container-high: #e2e7ee;
   --surface-container-highest: #e2e7ee;
   --on-surface-variant: #434c5e;
@@ -649,7 +649,7 @@
   --warning: #805c20;
   --on-primary: #ffffff;
   --surface-container-lowest: #fffaf3;
-  --surface-container-low: #fffaf3;
+  --surface-container-low: #f6eee6;
   --surface-container-high: #f0e7df;
   --surface-container-highest: #f0e7df;
   --on-surface-variant: #605b76;

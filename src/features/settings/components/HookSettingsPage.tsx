@@ -1,17 +1,20 @@
 import { useActiveCodexHookProfile } from "../../terminal/api/codexHookProfile";
 import { useHookStatusRequest } from "../api/useHookStatusRequest";
+import { AntigravityHookSection } from "./AntigravityHookSection";
+import { CliHookBridgeCard } from "./CliHookBridgeCard";
 import { CodexHookScopeStatus } from "./CodexHookScopeStatus";
-import { useEffect, useMemo, useState } from "react";
+import { LegacyCliHookBody, type LegacyHookModuleItem } from "./LegacyCliHookBody";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { toast } from "sonner";
 import {
-  Box, Button, Card, Divider, Group, NumberInput, SegmentedControl, SimpleGrid, Stack, Switch,
+  Badge, Box, Button, Card, Divider, Group, NumberInput, SegmentedControl, Stack, Switch,
   Text, TextInput,
 } from "@mantine/core";
 import {
-  Play, CheckCircle, HelpCircle, ChevronDown, ChevronUp, Folder, FileCode, Check, X, Activity,
-  Bell, ShieldAlert, ToggleRight, AlertTriangle, XCircle, Layers, Volume2, Trash2,
+  Play, CheckCircle, Folder, Activity,
+  Bell, ShieldAlert, ToggleRight, XCircle, Layers, Volume2, Trash2,
 } from "lucide-react";
 import { SettingsGlyph } from "./SettingsIcons";
 import { useSettingsStore, type HookEventType, type HookSettingsSectionKey } from "../../../shared/preferences/settingsStore";
@@ -22,7 +25,7 @@ import {
   type HookTool, type HookModule, type HookSettingsStatus, pickText, isWindowsPlatform,
   type NotificationSoundStatus, getNotificationSoundFileName, getNotificationSoundErrorDescription,
 } from "../lib/hookSettingsModel";
-import { PathRow, HookCard, StatusPill, SettingsSwitchRow, CollapsibleHookSection } from "./HookSettingsControls";
+import { SettingsSwitchRow, CollapsibleHookSection } from "./HookSettingsControls";
 
 export function HookSettingsPage() {
   const { language, t } = useI18n();
@@ -39,6 +42,7 @@ export function HookSettingsPage() {
   const [piSelectedDir, setPiSelectedDir] = useState<string | null>(piHookConfigDir);
   const [grokSelectedDir, setGrokSelectedDir] = useState<string | null>(grokHookConfigDir);
   const [loading, setLoading] = useState(false);
+  const [agyRefreshNonce, setAgyRefreshNonce] = useState(0);
   const [claudeWorking, setClaudeWorking] = useState(false);
   const [codexWorking, setCodexWorking] = useState(false);
   const [kimiWorking, setKimiWorking] = useState(false);
@@ -53,6 +57,7 @@ export function HookSettingsPage() {
   const kimiHookBridgeEnabled = useSettingsStore((s) => s.kimiHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
+  const antigravityHookBridgeEnabled = useSettingsStore((s) => s.antigravityHookBridgeEnabled);
   const systemNotificationsEnabled = useSettingsStore((s) => s.systemNotificationsEnabled);
   const systemNotificationSoundPath = useSettingsStore((s) => s.systemNotificationSoundPath);
   const suppressSystemNotificationsWhenFocused = useSettingsStore((s) => s.suppressSystemNotificationsWhenFocused);
@@ -65,16 +70,7 @@ export function HookSettingsPage() {
   const claudeHookAutoRepairNoticeShown = useSettingsStore((s) => s.claudeHookAutoRepairNoticeShown);
   const updateSetting = useSettingsStore((s) => s.update);
   const [autoCloseSecondsDraft, setAutoCloseSecondsDraft] = useState(String(hookPopupAutoCloseSeconds));
-  const [claudePathsOpen, setClaudePathsOpen] = useState(false);
-  const [claudeInfoOpen, setClaudeInfoOpen] = useState(false);
-  const [codexPathsOpen, setCodexPathsOpen] = useState(false);
-  const [codexInfoOpen, setCodexInfoOpen] = useState(false);
-  const [kimiPathsOpen, setKimiPathsOpen] = useState(false);
-  const [kimiInfoOpen, setKimiInfoOpen] = useState(false);
-  const [piPathsOpen, setPiPathsOpen] = useState(false);
-  const [piInfoOpen, setPiInfoOpen] = useState(false);
-  const [grokPathsOpen, setGrokPathsOpen] = useState(false);
-  const [grokInfoOpen, setGrokInfoOpen] = useState(false);
+  const [grokPathsSignal, setGrokPathsSignal] = useState(0);
   const [notificationSoundStatus, setNotificationSoundStatus] = useState<NotificationSoundStatus>(
     systemNotificationSoundPath ? "checking" : "idle",
   );
@@ -141,9 +137,12 @@ export function HookSettingsPage() {
 
   const codexProfileName = useActiveCodexHookProfile();
   const { status, invokeStatus } = useHookStatusRequest({
-    selectedDir: claudeHookConfigDir ?? undefined, codexSelectedDir: codexHookConfigDir ?? undefined,
-    kimiSelectedDir: kimiHookConfigDir ?? undefined, piSelectedDir: piHookConfigDir ?? undefined,
-    grokSelectedDir: grokHookConfigDir ?? undefined, codexProfileName,
+    selectedDir: claudeHookConfigDir ?? undefined,
+    codexSelectedDir: codexHookConfigDir ?? undefined,
+    kimiSelectedDir: kimiHookConfigDir ?? undefined,
+    piSelectedDir: piHookConfigDir ?? undefined,
+    grokSelectedDir: grokHookConfigDir ?? undefined,
+    codexProfileName,
     ccSwitchDbPath: ccSwitchDbPath ?? undefined,
   });
 
@@ -176,7 +175,10 @@ export function HookSettingsPage() {
       }
       if (nextStatus.claudeAutoRepaired && !claudeHookAutoRepairNoticeShown) {
         toast.info(text("Claude Hook 已自动恢复", "Claude Hook Restored"), {
-          description: text("检测到 Hook 被外部工具覆盖，已重新写入全局 Hook 配置。", "The Hook was overwritten by another tool and has been restored to the global Hook config."),
+          description: text(
+            "检测到 Hook 被外部工具覆盖，已重新写入全局 Hook 配置。",
+            "The Hook was overwritten by another tool and has been restored to the global Hook config.",
+          ),
         });
         await updateSetting("claudeHookAutoRepairNoticeShown", true);
       }
@@ -188,9 +190,19 @@ export function HookSettingsPage() {
   };
 
   useEffect(() => {
-    void refreshStatus(claudeHookConfigDir ?? undefined, codexHookConfigDir ?? undefined,
-      piHookConfigDir ?? undefined, grokHookConfigDir ?? undefined, kimiHookConfigDir ?? undefined);
+    void refreshStatus(
+      claudeHookConfigDir ?? undefined,
+      codexHookConfigDir ?? undefined,
+      piHookConfigDir ?? undefined,
+      grokHookConfigDir ?? undefined,
+      kimiHookConfigDir ?? undefined,
+    );
   }, [invokeStatus]);
+
+  const handleRefreshAll = () => {
+    setAgyRefreshNonce((n) => n + 1);
+    void refreshStatus();
+  };
 
   const handleSelectNotificationSound = async () => {
     setNotificationSoundBusy("select");
@@ -285,7 +297,9 @@ export function HookSettingsPage() {
       await updateSetting("kimiHookConfigDir", dir);
       await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, grokSelectedDirArg, dir);
     } catch (error) {
-      toast.error(text("选择 Kimi Code 目录失败", "Failed to choose Kimi Code directory"), { description: getErrorMessage(error) });
+      toast.error(text("选择 Kimi Code 目录失败", "Failed to choose Kimi Code directory"), {
+        description: getErrorMessage(error),
+      });
     }
   };
 
@@ -319,132 +333,6 @@ export function HookSettingsPage() {
     await refreshStatus(selectedDirArg, codexSelectedDirArg, dir ?? undefined);
   };
 
-  const handleClaudeInstall = async () => {
-    setClaudeWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_install", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      await updateSetting("claudeHookAutoRepairKnownInstalled", true);
-      await updateSetting("claudeHookAutoRepairNoticeShown", false);
-      toast.success(text("Claude Hook 已安装", "Claude Hook installed"));
-    } catch (error) {
-      toast.error(text("安装 Claude Hook 失败", "Failed to install Claude Hook"), { description: getErrorMessage(error) });
-    } finally {
-      setClaudeWorking(false);
-    }
-  };
-
-  const handleClaudeUninstall = async () => {
-    setClaudeWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_uninstall", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      await updateSetting("claudeHookAutoRepairKnownInstalled", false);
-      await updateSetting("claudeHookAutoRepairNoticeShown", false);
-      toast.success(text("Claude Hook 已删除", "Claude Hook removed"));
-    } catch (error) {
-      toast.error(text("删除 Claude Hook 失败", "Failed to remove Claude Hook"), { description: getErrorMessage(error) });
-    } finally {
-      setClaudeWorking(false);
-    }
-  };
-
-  const handleCodexInstall = async () => {
-    setCodexWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_install_codex", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      toast.success(text("Codex Hook 已安装", "Codex Hook installed"));
-    } catch (error) {
-      toast.error(text("安装 Codex Hook 失败", "Failed to install Codex Hook"), { description: getErrorMessage(error) });
-    } finally {
-      setCodexWorking(false);
-    }
-  };
-
-  const handleCodexUninstall = async () => {
-    setCodexWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_uninstall_codex", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      toast.success(text("Codex Hook 已删除", "Codex Hook removed"));
-    } catch (error) {
-      toast.error(text("删除 Codex Hook 失败", "Failed to remove Codex Hook"), { description: getErrorMessage(error) });
-    } finally {
-      setCodexWorking(false);
-    }
-  };
-
-  const handleKimiInstall = async () => {
-    setKimiWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_install_kimi", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      toast.success(text("Kimi Code Hook 已安装", "Kimi Code Hook installed"), {
-        description: text("新会话会自动生效；活动中的 Kimi TUI 请执行 /reload。", "New sessions pick it up automatically; run /reload in active Kimi TUI sessions."),
-      });
-    } catch (error) {
-      toast.error(text("安装 Kimi Code Hook 失败", "Failed to install Kimi Code Hook"), { description: getKimiHookErrorMessage(error, t) });
-    } finally {
-      setKimiWorking(false);
-    }
-  };
-
-  const handleKimiUninstall = async () => {
-    setKimiWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_uninstall_kimi", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
-      });
-      if (!nextStatus) return;
-      toast.success(text("Kimi Code Hook 已删除", "Kimi Code Hook removed"));
-    } catch (error) {
-      toast.error(text("删除 Kimi Code Hook 失败", "Failed to remove Kimi Code Hook"), { description: getKimiHookErrorMessage(error, t) });
-    } finally {
-      setKimiWorking(false);
-    }
-  };
-
   const handleSelectPiDir = async () => {
     try {
       const dir = await invoke<string | null>("hook_settings_select_dir", {
@@ -456,48 +344,6 @@ export function HookSettingsPage() {
       await refreshStatus(selectedDirArg, codexSelectedDirArg, dir);
     } catch (error) {
       toast.error(text("选择 Pi 目录失败", "Failed to choose Pi directory"), { description: getErrorMessage(error) });
-    }
-  };
-
-  const handlePiInstall = async () => {
-    setPiWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_install_pi", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-      });
-      if (!nextStatus) return;
-      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
-      toast.success(text("Pi Hook 已安装", "Pi Hook installed"));
-    } catch (error) {
-      toast.error(text("安装 Pi Hook 失败", "Failed to install Pi Hook"), {
-        description: getPiHookErrorMessage(error, t),
-      });
-    } finally {
-      setPiWorking(false);
-    }
-  };
-
-  const handlePiUninstall = async () => {
-    setPiWorking(true);
-    try {
-      const nextStatus = await invokeStatus("hook_settings_uninstall_pi", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-      });
-      if (!nextStatus) return;
-      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
-      toast.success(text("Pi Hook 已删除", "Pi Hook removed"));
-    } catch (error) {
-      toast.error(text("删除 Pi Hook 失败", "Failed to remove Pi Hook"), { description: getErrorMessage(error) });
-    } finally {
-      setPiWorking(false);
     }
   };
 
@@ -522,16 +368,157 @@ export function HookSettingsPage() {
     await refreshStatus(selectedDirArg, codexSelectedDirArg, piSelectedDirArg, next ?? undefined);
   };
 
+  const dirPayload = {
+    selectedDir: selectedDirArg,
+    codexSelectedDir: codexSelectedDirArg,
+    kimiSelectedDir: kimiSelectedDirArg,
+    piSelectedDir: piSelectedDirArg,
+    grokSelectedDir: grokSelectedDirArg,
+  };
+
+  const handleClaudeInstall = async () => {
+    setClaudeWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_install", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      await updateSetting("claudeHookAutoRepairKnownInstalled", true);
+      await updateSetting("claudeHookAutoRepairNoticeShown", false);
+      toast.success(text("Claude Hook 已安装", "Claude Hook installed"));
+    } catch (error) {
+      toast.error(text("安装 Claude Hook 失败", "Failed to install Claude Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setClaudeWorking(false);
+    }
+  };
+
+  const handleClaudeUninstall = async () => {
+    setClaudeWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_uninstall", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      await updateSetting("claudeHookAutoRepairKnownInstalled", false);
+      await updateSetting("claudeHookAutoRepairNoticeShown", false);
+      toast.success(text("Claude Hook 已删除", "Claude Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Claude Hook 失败", "Failed to remove Claude Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setClaudeWorking(false);
+    }
+  };
+
+  const handleCodexInstall = async () => {
+    setCodexWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_install_codex", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      toast.success(text("Codex Hook 已安装", "Codex Hook installed"));
+    } catch (error) {
+      toast.error(text("安装 Codex Hook 失败", "Failed to install Codex Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setCodexWorking(false);
+    }
+  };
+
+  const handleCodexUninstall = async () => {
+    setCodexWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_uninstall_codex", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      toast.success(text("Codex Hook 已删除", "Codex Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Codex Hook 失败", "Failed to remove Codex Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setCodexWorking(false);
+    }
+  };
+
+  const handleKimiInstall = async () => {
+    setKimiWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_install_kimi", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      toast.success(text("Kimi Code Hook 已安装", "Kimi Code Hook installed"), {
+        description: text(
+          "新会话会自动生效；活动中的 Kimi TUI 请执行 /reload。",
+          "New sessions pick it up automatically; run /reload in active Kimi TUI sessions.",
+        ),
+      });
+    } catch (error) {
+      toast.error(text("安装 Kimi Code Hook 失败", "Failed to install Kimi Code Hook"), {
+        description: getKimiHookErrorMessage(error, t),
+      });
+    } finally {
+      setKimiWorking(false);
+    }
+  };
+
+  const handleKimiUninstall = async () => {
+    setKimiWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_uninstall_kimi", {
+        ...dirPayload,
+        ccSwitchDbPath: ccSwitchDbPath ?? undefined,
+      });
+      if (!nextStatus) return;
+      toast.success(text("Kimi Code Hook 已删除", "Kimi Code Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Kimi Code Hook 失败", "Failed to remove Kimi Code Hook"), {
+        description: getKimiHookErrorMessage(error, t),
+      });
+    } finally {
+      setKimiWorking(false);
+    }
+  };
+
+  const handlePiInstall = async () => {
+    setPiWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_install_pi", dirPayload);
+      if (!nextStatus) return;
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
+      toast.success(text("Pi Hook 已安装", "Pi Hook installed"));
+    } catch (error) {
+      toast.error(text("安装 Pi Hook 失败", "Failed to install Pi Hook"), {
+        description: getPiHookErrorMessage(error, t),
+      });
+    } finally {
+      setPiWorking(false);
+    }
+  };
+
+  const handlePiUninstall = async () => {
+    setPiWorking(true);
+    try {
+      const nextStatus = await invokeStatus("hook_settings_uninstall_pi", dirPayload);
+      if (!nextStatus) return;
+      if (nextStatus.pi.configDir) setPiSelectedDir(nextStatus.pi.configDir);
+      toast.success(text("Pi Hook 已删除", "Pi Hook removed"));
+    } catch (error) {
+      toast.error(text("删除 Pi Hook 失败", "Failed to remove Pi Hook"), { description: getErrorMessage(error) });
+    } finally {
+      setPiWorking(false);
+    }
+  };
+
   const handleGrokInstall = async () => {
     setGrokWorking(true);
     try {
-      const nextStatus = await invokeStatus("hook_settings_install_grok", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-      });
+      const nextStatus = await invokeStatus("hook_settings_install_grok", dirPayload);
       if (!nextStatus) return;
       const hooksFile = nextStatus.grok.configPath?.trim();
       const configFile = nextStatus.grok.featureConfigPath?.trim();
@@ -541,13 +528,19 @@ export function HookSettingsPage() {
             ? text(`Hook 文件：${hooksFile}`, `Hook file: ${hooksFile}`)
             : text("Hook 文件：~/.grok/hooks/cli-manager.json", "Hook file: ~/.grok/hooks/cli-manager.json"),
           configFile
-            ? text(`兼容隔离：${configFile}（compat.claude/cursor.hooks=false）`, `Isolation: ${configFile} (compat.claude/cursor.hooks=false)`)
+            ? text(
+                `兼容隔离：${configFile}（compat.claude/cursor.hooks=false）`,
+                `Isolation: ${configFile} (compat.claude/cursor.hooks=false)`,
+              )
             : text("兼容隔离：~/.grok/config.toml", "Isolation: ~/.grok/config.toml"),
-          text("注意：Grok 不使用 settings.json，请查看 hooks 目录而非 Claude 配置。", "Note: Grok does not use settings.json; check the hooks directory, not Claude config."),
+          text(
+            "注意：Grok 不使用 settings.json，请查看 hooks 目录而非 Claude 配置。",
+            "Note: Grok does not use settings.json; check the hooks directory, not Claude config.",
+          ),
         ].join("\n"),
         duration: 12_000,
       });
-      setGrokPathsOpen(true);
+      setGrokPathsSignal((n) => n + 1);
     } catch (error) {
       toast.error(text("安装 Grok Hook 失败", "Failed to install Grok Hook"), { description: getErrorMessage(error) });
     } finally {
@@ -558,13 +551,7 @@ export function HookSettingsPage() {
   const handleGrokUninstall = async () => {
     setGrokWorking(true);
     try {
-      const nextStatus = await invokeStatus("hook_settings_uninstall_grok", {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
-      });
+      const nextStatus = await invokeStatus("hook_settings_uninstall_grok", dirPayload);
       if (!nextStatus) return;
       toast.success(text("Grok Hook 已删除", "Grok Hook removed"));
     } catch (error) {
@@ -586,14 +573,14 @@ export function HookSettingsPage() {
   ) => {
     const command =
       tool === "claude"
-        ? (installed ? "hook_settings_uninstall" : "hook_settings_install")
+        ? installed ? "hook_settings_uninstall" : "hook_settings_install"
         : tool === "codex"
-          ? (installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex")
+          ? installed ? "hook_settings_uninstall_codex" : "hook_settings_install_codex"
           : tool === "kimi"
-            ? (installed ? "hook_settings_uninstall_kimi" : "hook_settings_install_kimi")
+            ? installed ? "hook_settings_uninstall_kimi" : "hook_settings_install_kimi"
             : tool === "pi"
-            ? (installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi")
-            : (installed ? "hook_settings_uninstall_grok" : "hook_settings_install_grok");
+              ? installed ? "hook_settings_uninstall_pi" : "hook_settings_install_pi"
+              : installed ? "hook_settings_uninstall_grok" : "hook_settings_install_grok";
     const setWorking =
       tool === "claude"
         ? setClaudeWorking
@@ -602,19 +589,15 @@ export function HookSettingsPage() {
           : tool === "kimi"
             ? setKimiWorking
             : tool === "pi"
-            ? setPiWorking
-            : setGrokWorking;
+              ? setPiWorking
+              : setGrokWorking;
     const toolLabel =
       tool === "claude" ? "Claude" : tool === "codex" ? "Codex" : tool === "kimi" ? "Kimi Code" : tool === "pi" ? "Pi" : "Grok";
 
     setWorking(true);
     try {
       const nextStatus = await invokeStatus(command, {
-        selectedDir: selectedDirArg,
-        codexSelectedDir: codexSelectedDirArg,
-        kimiSelectedDir: kimiSelectedDirArg,
-        piSelectedDir: piSelectedDirArg,
-        grokSelectedDir: grokSelectedDirArg,
+        ...dirPayload,
         ccSwitchDbPath: ccSwitchDbPath ?? undefined,
         module,
       });
@@ -628,7 +611,7 @@ export function HookSettingsPage() {
         t(installed ? "settings.hooks.module.removed" : "settings.hooks.module.installed", {
           tool: toolLabel,
           module: moduleLabel,
-        })
+        }),
       );
     } catch (error) {
       toast.error(
@@ -636,7 +619,14 @@ export function HookSettingsPage() {
           tool: toolLabel,
           module: moduleLabel,
         }),
-        { description: tool === "pi" ? getPiHookErrorMessage(error, t) : tool === "kimi" ? getKimiHookErrorMessage(error, t) : getErrorMessage(error) }
+        {
+          description:
+            tool === "pi"
+              ? getPiHookErrorMessage(error, t)
+              : tool === "kimi"
+                ? getKimiHookErrorMessage(error, t)
+                : getErrorMessage(error),
+        },
       );
     } finally {
       setWorking(false);
@@ -664,75 +654,8 @@ export function HookSettingsPage() {
   const piStatus = pi?.status ?? "directoryMissing";
   const grokStatus = grok?.status ?? "directoryMissing";
   const anyWorking = loading || claudeWorking || codexWorking || kimiWorking || piWorking || grokWorking;
-  const claudeSessionStartInstalled = Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled);
-  const claudeRunningInstalled = Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled);
-  const claudeAttentionInstalled = Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled);
-  // Claude — 拆分为独立事件
-  const claudeStopInstalled = Boolean(claude?.finishedScriptInstalled && claude.stopHookInstalled);
-  const claudeFailureInstalled = Boolean(claude?.finishedScriptInstalled && claude.failureHookInstalled);
-  const claudeSubagentInstalled = Boolean(claude?.subagentStartHookInstalled);
-  const codexSessionStartInstalled = Boolean(codex?.attentionScriptInstalled && codex.sessionStartHookInstalled);
-  const codexRunningInstalled = Boolean(codex?.attentionScriptInstalled && codex.runningHookInstalled);
-  const codexAttentionInstalled = Boolean(codex?.attentionScriptInstalled && codex.attentionHookInstalled);
-  // Codex — 拆分为独立事件
-  const codexStopInstalled = Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled);
-  const codexSubagentInstalled = Boolean(codex?.subagentStartHookInstalled);
-  const kimiSessionStartInstalled = Boolean(kimi?.sessionStartHookInstalled);
-  const kimiRunningInstalled = Boolean(kimi?.runningHookInstalled);
-  const kimiAttentionInstalled = Boolean(kimi?.attentionHookInstalled);
-  const kimiStopInstalled = Boolean(kimi?.stopHookInstalled);
-  const kimiFailureInstalled = Boolean(kimi?.failureHookInstalled);
-  const kimiSubagentInstalled = Boolean(kimi?.subagentStartHookInstalled);
-  const piSessionStartInstalled = Boolean(pi?.attentionScriptInstalled && pi.sessionStartHookInstalled);
-  const piRunningInstalled = Boolean(pi?.attentionScriptInstalled && pi.runningHookInstalled);
-  const piStopInstalled = Boolean(pi?.finishedScriptInstalled && pi.stopHookInstalled);
-  const grokSessionStartInstalled = Boolean(grok?.attentionScriptInstalled && grok.sessionStartHookInstalled);
-  const grokRunningInstalled = Boolean(grok?.attentionScriptInstalled && grok.runningHookInstalled);
-  const grokAttentionInstalled = Boolean(grok?.attentionScriptInstalled && grok.attentionHookInstalled);
-  const grokStopInstalled = Boolean(grok?.finishedScriptInstalled && grok.stopHookInstalled);
-  const grokFailureInstalled = Boolean(grok?.finishedScriptInstalled && grok.failureHookInstalled);
-  const grokSubagentInstalled = Boolean(grok?.subagentStartHookInstalled);
   const grokIsolationInstalled = Boolean(grok?.hooksFeatureInstalled);
-  const claudeToolLabel = "Claude";
-  const codexToolLabel = "Codex";
-  const kimiToolLabel = "Kimi Code";
-  const piToolLabel = "Pi";
-  const grokToolLabel = "Grok";
-  const claudeSessionStartLabel = text("会话启动", "Session Start");
-  const claudeRunningLabel = text("运行中", "Running");
-  const claudeAttentionLabel = text("待审批", "Awaiting Approval");
-  const claudeStopLabel = text("任务完成", "Task Completed");
-  const claudeFailureLabel = text("执行失败", "Failed");
-  const claudeSubagentLabel = text("子 Agent", "Subagent");
-  const codexSessionStartLabel = text("会话启动", "Session Start");
-  const codexRunningLabel = text("运行中", "Running");
-  const codexAttentionLabel = text("需要审批", "Approval Needed");
-  const codexStopLabel = text("完成", "Completed");
-  const codexSubagentLabel = text("子 Agent", "Subagent");
-  const codexHooksFeatureLabel = text("Hooks 功能", "Hooks Feature");
-  const kimiSessionStartLabel = text("会话启动", "Session Start");
-  const kimiRunningLabel = text("运行中", "Running");
-  const kimiAttentionLabel = text("审批生命周期", "Approval Lifecycle");
-  const kimiStopLabel = text("完成 / 中断", "Completed / Interrupted");
-  const kimiFailureLabel = text("执行失败", "Failed");
-  const kimiSubagentLabel = text("子 Agent", "Subagent");
-  const piSessionStartLabel = text("会话启动", "Session Start");
-  const piRunningLabel = text("运行中", "Running");
-  const piStopLabel = text("任务完成", "Task Completed");
-  const grokSessionStartLabel = text("会话启动", "Session Start");
-  const grokRunningLabel = text("运行中", "Running");
-  const grokAttentionLabel = text("待审批", "Awaiting Approval");
-  const grokStopLabel = text("任务完成", "Task Completed");
-  const grokFailureLabel = text("执行失败", "Failed");
-  const grokSubagentLabel = text("子 Agent", "Subagent");
-  const grokIsolationLabel = text("跨工具 Hook 隔离", "Cross-tool Hook Isolation");
-  const buildModuleActionLabel = (toolLabel: string, moduleLabel: string, installed: boolean) =>
-    t(installed ? "settings.hooks.card.clickToUninstall" : "settings.hooks.card.clickToInstall", {
-      tool: toolLabel,
-      module: moduleLabel,
-    });
 
-  // 切换一组 HookEventType 的系统通知状态
   const toggleNotifyEvents = (events: HookEventType[], enabled: boolean) => {
     const update = { ...systemNotificationEvents };
     for (const event of events) {
@@ -742,29 +665,117 @@ export function HookSettingsPage() {
   };
   const notifyState = (events: HookEventType[]) => events.every((e) => systemNotificationEvents[e]);
   const hookEventNotificationsEnabled = systemNotificationsEnabled || taskbarAttentionEnabled;
+
+  const buildModule = (
+    tool: HookTool,
+    toolLabel: string,
+    module: HookModule,
+    icon: ReactNode,
+    label: string,
+    checked: boolean,
+    disabled: boolean,
+    notifyEvents?: HookEventType[],
+  ): LegacyHookModuleItem => ({
+    key: `${tool}-${module}`,
+    icon,
+    label,
+    checked,
+    disabled,
+    onClick: () => void handleModuleToggle(tool, module, checked, label),
+    actionLabel: t(checked ? "settings.hooks.card.clickToUninstall" : "settings.hooks.card.clickToInstall", {
+      tool: toolLabel,
+      module: label,
+    }),
+    ...(notifyEvents
+      ? {
+          notifyEnabled: notifyState(notifyEvents),
+          onToggleNotify: () => toggleNotifyEvents(notifyEvents, !notifyState(notifyEvents)),
+          notifyDisabled: !hookEventNotificationsEnabled,
+        }
+      : {}),
+  });
+
+  const claudeModuleDisabled = anyWorking || claudeStatus === "directoryMissing";
+  const codexModuleDisabled = anyWorking || codexStatus === "directoryMissing";
+  const kimiModuleDisabled = anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported";
+  const piModuleDisabled = anyWorking || piStatus === "directoryMissing";
+  const grokModuleDisabled = anyWorking || grokStatus === "directoryMissing";
+
+  const claudeModules: LegacyHookModuleItem[] = [
+    buildModule("claude", "Claude", "sessionStart", <Play size={20} />, text("会话启动", "Session Start"), Boolean(claude?.attentionScriptInstalled && claude.sessionStartHookInstalled), claudeModuleDisabled, ["SessionStart"]),
+    buildModule("claude", "Claude", "running", <Activity size={20} />, text("运行中", "Running"), Boolean(claude?.attentionScriptInstalled && claude.runningHookInstalled), claudeModuleDisabled, ["UserPromptSubmit"]),
+    buildModule("claude", "Claude", "attention", <Bell size={20} />, text("待审批", "Awaiting Approval"), Boolean(claude?.attentionScriptInstalled && claude.attentionHookInstalled), claudeModuleDisabled, ["Notification"]),
+    buildModule("claude", "Claude", "stop", <CheckCircle size={20} />, text("任务完成", "Task Completed"), Boolean(claude?.finishedScriptInstalled && claude.stopHookInstalled), claudeModuleDisabled, ["Stop"]),
+    buildModule("claude", "Claude", "failure", <XCircle size={20} />, text("执行失败", "Failed"), Boolean(claude?.finishedScriptInstalled && claude.failureHookInstalled), claudeModuleDisabled, ["StopFailure"]),
+    buildModule("claude", "Claude", "subagent", <Layers size={20} />, text("子 Agent", "Subagent"), Boolean(claude?.subagentStartHookInstalled), claudeModuleDisabled),
+  ];
+
+  const codexModules: LegacyHookModuleItem[] = [
+    buildModule("codex", "Codex", "sessionStart", <Play size={20} />, text("会话启动", "Session Start"), Boolean(codex?.attentionScriptInstalled && codex.sessionStartHookInstalled), codexModuleDisabled, ["SessionStart"]),
+    buildModule("codex", "Codex", "running", <Activity size={20} />, text("运行中", "Running"), Boolean(codex?.attentionScriptInstalled && codex.runningHookInstalled), codexModuleDisabled, ["UserPromptSubmit"]),
+    buildModule("codex", "Codex", "attention", <ShieldAlert size={20} />, text("需要审批", "Approval Needed"), Boolean(codex?.attentionScriptInstalled && codex.attentionHookInstalled), codexModuleDisabled, ["PermissionRequest"]),
+    buildModule("codex", "Codex", "stop", <CheckCircle size={20} />, text("完成", "Completed"), Boolean(codex?.finishedScriptInstalled && codex.stopHookInstalled), codexModuleDisabled, ["Stop"]),
+    buildModule("codex", "Codex", "subagent", <Layers size={20} />, text("子 Agent", "Subagent"), Boolean(codex?.subagentStartHookInstalled), codexModuleDisabled),
+    buildModule("codex", "Codex", "hooksFeature", <ToggleRight size={20} />, text("Hooks 功能", "Hooks Feature"), Boolean(codex?.hooksFeatureInstalled), codexModuleDisabled),
+  ];
+
+  const kimiModules: LegacyHookModuleItem[] = [
+    buildModule("kimi", "Kimi Code", "sessionStart", <Play size={20} />, text("会话启动", "Session Start"), Boolean(kimi?.sessionStartHookInstalled), kimiModuleDisabled, ["SessionStart"]),
+    buildModule("kimi", "Kimi Code", "running", <Activity size={20} />, text("运行中", "Running"), Boolean(kimi?.runningHookInstalled), kimiModuleDisabled, ["UserPromptSubmit"]),
+    buildModule("kimi", "Kimi Code", "attention", <ShieldAlert size={20} />, text("审批生命周期", "Approval Lifecycle"), Boolean(kimi?.attentionHookInstalled), kimiModuleDisabled, ["PermissionRequest"]),
+    buildModule("kimi", "Kimi Code", "stop", <CheckCircle size={20} />, text("完成 / 中断", "Completed / Interrupted"), Boolean(kimi?.stopHookInstalled), kimiModuleDisabled, ["Stop"]),
+    buildModule("kimi", "Kimi Code", "failure", <XCircle size={20} />, text("执行失败", "Failed"), Boolean(kimi?.failureHookInstalled), kimiModuleDisabled, ["StopFailure"]),
+    buildModule("kimi", "Kimi Code", "subagent", <Layers size={20} />, text("子 Agent", "Subagent"), Boolean(kimi?.subagentStartHookInstalled), kimiModuleDisabled),
+  ];
+
+  const piModules: LegacyHookModuleItem[] = [
+    buildModule("pi", "Pi", "sessionStart", <Play size={20} />, text("会话启动", "Session Start"), Boolean(pi?.attentionScriptInstalled && pi.sessionStartHookInstalled), piModuleDisabled, ["SessionStart"]),
+    buildModule("pi", "Pi", "running", <Activity size={20} />, text("运行中", "Running"), Boolean(pi?.attentionScriptInstalled && pi.runningHookInstalled), piModuleDisabled, ["UserPromptSubmit"]),
+    buildModule("pi", "Pi", "stop", <CheckCircle size={20} />, text("任务完成", "Task Completed"), Boolean(pi?.finishedScriptInstalled && pi.stopHookInstalled), piModuleDisabled, ["Stop"]),
+  ];
+
+  const grokModules: LegacyHookModuleItem[] = [
+    buildModule("grok", "Grok", "sessionStart", <Play size={20} />, text("会话启动", "Session Start"), Boolean(grok?.attentionScriptInstalled && grok.sessionStartHookInstalled), grokModuleDisabled, ["SessionStart"]),
+    buildModule("grok", "Grok", "running", <Activity size={20} />, text("运行中", "Running"), Boolean(grok?.attentionScriptInstalled && grok.runningHookInstalled), grokModuleDisabled, ["UserPromptSubmit"]),
+    buildModule("grok", "Grok", "attention", <Bell size={20} />, text("待审批", "Awaiting Approval"), Boolean(grok?.attentionScriptInstalled && grok.attentionHookInstalled), grokModuleDisabled, ["Notification"]),
+    buildModule("grok", "Grok", "stop", <CheckCircle size={20} />, text("任务完成", "Task Completed"), Boolean(grok?.finishedScriptInstalled && grok.stopHookInstalled), grokModuleDisabled, ["Stop"]),
+    buildModule("grok", "Grok", "failure", <XCircle size={20} />, text("执行失败", "Failed"), Boolean(grok?.finishedScriptInstalled && grok.failureHookInstalled), grokModuleDisabled, ["StopFailure"]),
+    buildModule("grok", "Grok", "subagent", <Layers size={20} />, text("子 Agent", "Subagent"), Boolean(grok?.subagentStartHookInstalled), grokModuleDisabled),
+  ];
+
+  const enabledBridgeCount = [
+    claudeHookBridgeEnabled,
+    codexHookBridgeEnabled,
+    kimiHookBridgeEnabled,
+    piHookBridgeEnabled,
+    grokHookBridgeEnabled,
+    antigravityHookBridgeEnabled,
+  ].filter(Boolean).length;
+
   return (
     <Stack gap="lg">
-      <Group justify="flex-end">
-        <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={anyWorking}>
-          {loading ? t("settings.hooks.status.refreshingAll") : t("settings.hooks.status.refreshAll")}
-        </Button>
-      </Group>
       <CollapsibleHookSection
         title={text("Hook 通知弹框", "Hook Toast Notifications")}
-        description={text("控制 Claude Code、Codex CLI、Kimi Code、Pi Agent 和 Grok Build Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。", "Controls top-right toast cards for Claude Code, Codex CLI, Kimi Code, Pi Agent, and Grok Build Hook events. Terminal tab dots are not affected.")}
+        description={t("settings.hooks.toastSection.description")}
         open={hookSettingsSectionsExpanded.toast}
         onToggle={() => toggleHookSection("toast")}
       >
         <Stack gap="md">
           <SettingsSwitchRow
             title={text("通知弹框", "Toast Notifications")}
-            description={text("关闭后不再弹出 Hook 通知卡片，只更新标签栏小圆点颜色。", "When disabled, Hook notification cards stop popping up; only tab dot color updates.")}
+            description={text(
+              "关闭后不再弹出 Hook 通知卡片，只更新标签栏小圆点颜色。",
+              "When disabled, Hook notification cards stop popping up; only tab dot color updates.",
+            )}
             checked={hookPopupNotificationsEnabled}
             onCheckedChange={(checked) => void updateSetting("hookPopupNotificationsEnabled", checked)}
           />
           <SettingsSwitchRow
             title={text("自动关闭", "Auto-close")}
-            description={text("开启后 Hook 通知和子任务转录窗格会在指定时间后自动关闭。", "When enabled, Hook notifications and sub-agent transcript panes close after the configured delay.")}
+            description={text(
+              "开启后 Hook 通知和子任务转录窗格会在指定时间后自动关闭。",
+              "When enabled, Hook notifications and sub-agent transcript panes close after the configured delay.",
+            )}
             checked={hookPopupAutoCloseEnabled}
             onCheckedChange={(checked) => void updateSetting("hookPopupAutoCloseEnabled", checked)}
           />
@@ -781,28 +792,32 @@ export function HookSettingsPage() {
                   {text("默认关闭时间", "Default Close Delay")}
                 </Text>
                 <Text mt={4} size="xs" c="var(--text-muted)">
-                  {text("单位：秒，默认 60 秒；同时用于 Hook 通知和子任务转录窗格。", "Seconds. Default is 60. Applies to Hook notifications and sub-agent transcript panes.")}
+                  {text(
+                    "单位：秒，默认 60 秒；同时用于 Hook 通知和子任务转录窗格。",
+                    "Seconds. Default is 60. Applies to Hook notifications and sub-agent transcript panes.",
+                  )}
                 </Text>
               </Box>
               <Group gap="xs">
-              <TextInput
-                type="number"
-                min={5}
-                max={3600}
-                step={1}
-                value={autoCloseSecondsDraft}
-                disabled={!hookPopupAutoCloseEnabled}
-                onChange={(e) => setAutoCloseSecondsDraft(e.target.value)}
-                onBlur={handleCommitAutoCloseSeconds}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    handleCommitAutoCloseSeconds();
-                  }
-                }}
-                w={96}
-                size="xs"
-                aria-label={text("Hook 通知和子任务转录默认关闭时间", "Hook notification and sub-agent transcript default close delay")}
-              />
+                <TextInput
+                  type="number"
+                  min={5}
+                  max={3600}
+                  step={1}
+                  value={autoCloseSecondsDraft}
+                  disabled={!hookPopupAutoCloseEnabled}
+                  onChange={(e) => setAutoCloseSecondsDraft(e.target.value)}
+                  onBlur={handleCommitAutoCloseSeconds}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleCommitAutoCloseSeconds();
+                  }}
+                  w={96}
+                  size="xs"
+                  aria-label={text(
+                    "Hook 通知和子任务转录默认关闭时间",
+                    "Hook notification and sub-agent transcript default close delay",
+                  )}
+                />
                 <Text size="xs" c="var(--on-surface-variant)">
                   {text("秒", "sec")}
                 </Text>
@@ -976,10 +991,7 @@ export function HookSettingsPage() {
                       {t("settings.hooks.systemNotifications.sound.preview")}
                     </Button>
                   </Group>
-                  <Text
-                    size="xs"
-                    c={notificationSoundStatus === "invalid" ? "red" : "var(--text-muted)"}
-                  >
+                  <Text size="xs" c={notificationSoundStatus === "invalid" ? "red" : "var(--text-muted)"}>
                     {!systemNotificationSoundPath
                       ? t("settings.hooks.systemNotifications.sound.notSetDescription")
                       : notificationSoundStatus === "checking"
@@ -1014,965 +1026,267 @@ export function HookSettingsPage() {
         </Stack>
       </CollapsibleHookSection>
 
-      <CollapsibleHookSection
-        title={text("Claude Code Hook 桥接", "Claude Code Hook Bridge")}
-        description={text("Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 上报。", "Claude Code running, approval, completion, and failure states are reported through Hook.")}
-        open={hookSettingsSectionsExpanded.claude}
-        onToggle={() => toggleHookSection("claude")}
-        collapsible={claudeHookBridgeEnabled}
-        action={(
-          <Switch
-            color="cliPrimary"
-            checked={claudeHookBridgeEnabled}
-            onChange={(event) => void updateSetting("claudeHookBridgeEnabled", event.currentTarget.checked)}
-            aria-label={t("settings.hooks.bridge.enabled")}
-          />
-        )}
-        right={<StatusPill status={claudeStatus} />}
-      >
-        <Stack gap="lg">
-          {claudeHookBridgeEnabled && (
-            <>
-              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
-            <HookCard
-              icon={<Play />}
-              label={claudeSessionStartLabel}
-              checked={claudeSessionStartInstalled}
-              notifyEnabled={notifyState(["SessionStart"])}
-              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("claude", "sessionStart", claudeSessionStartInstalled, claudeSessionStartLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSessionStartLabel, claudeSessionStartInstalled)}
-            />
-            <HookCard
-              icon={<Activity />}
-              label={claudeRunningLabel}
-              checked={claudeRunningInstalled}
-              notifyEnabled={notifyState(["UserPromptSubmit"])}
-              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("claude", "running", claudeRunningInstalled, claudeRunningLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeRunningLabel, claudeRunningInstalled)}
-            />
-            <HookCard
-              icon={<Bell />}
-              label={claudeAttentionLabel}
-              checked={claudeAttentionInstalled}
-              notifyEnabled={notifyState(["Notification"])}
-              onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("claude", "attention", claudeAttentionInstalled, claudeAttentionLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeAttentionLabel, claudeAttentionInstalled)}
-            />
-            <HookCard
-              icon={<CheckCircle />}
-              label={claudeStopLabel}
-              checked={claudeStopInstalled}
-              notifyEnabled={notifyState(["Stop"])}
-              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("claude", "stop", claudeStopInstalled, claudeStopLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeStopLabel, claudeStopInstalled)}
-            />
-            <HookCard
-              icon={<XCircle size={26} />}
-              label={claudeFailureLabel}
-              checked={claudeFailureInstalled}
-              notifyEnabled={notifyState(["StopFailure"])}
-              onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("claude", "failure", claudeFailureInstalled, claudeFailureLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeFailureLabel, claudeFailureInstalled)}
-            />
-            <HookCard
-              icon={<Layers size={26} />}
-              label={claudeSubagentLabel}
-              checked={claudeSubagentInstalled}
-              onClick={() => void handleModuleToggle("claude", "subagent", claudeSubagentInstalled, claudeSubagentLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || claudeStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(claudeToolLabel, claudeSubagentLabel, claudeSubagentInstalled)}
-            />
-          </SimpleGrid>
-
-          <Group gap="xs">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setClaudePathsOpen(!claudePathsOpen)}
-              leftSection={claudePathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            >
-              {text("查看配置路径", "View Config Paths")}
-            </Button>
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setClaudeInfoOpen(!claudeInfoOpen)}
-              leftSection={<HelpCircle size={14} />}
-            >
-              {text("安装说明", "Install Notes")}
-            </Button>
+      <div className="hook-bridge-group">
+        <div className="hook-bridge-group-header">
+          <Group gap="xs" align="center">
+            <Text size="sm" fw={600} c="var(--on-surface)">
+              {t("settings.hooks.bridge.groupTitle")}
+            </Text>
+            <Badge variant="light" color="gray" radius="xl" size="xs">
+              {t("settings.hooks.bridge.enabledCount", { enabled: enabledBridgeCount, total: 6 })}
+            </Badge>
           </Group>
+          <Button variant="default" color="gray" size="xs" onClick={handleRefreshAll} disabled={anyWorking}>
+            {loading ? t("settings.hooks.status.refreshingAll") : t("settings.hooks.status.refreshAll")}
+          </Button>
+        </div>
 
-          {claudePathsOpen && (
-            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-              <Stack gap="xs">
-                <PathRow label={text("Claude 配置目录", "Claude Config Directory")} value={claude?.configDir ?? selectedDir} />
-                <PathRow label={text("hooks 目录", "hooks Directory")} value={claude?.hooksDir ?? null} />
-                <PathRow label="settings.json" value={claude?.configPath ?? null} />
-              </Stack>
-            </Card>
-          )}
-
-          {claudeInfoOpen && (
-            <Card className="bg-surface-container-low/50" p="md" radius="lg">
-              <Stack gap="md">
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
-                    <Check size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("安装内容", "Installed Content")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          {text("settings.json 注册 __hook 命令", "settings.json registers the __hook command")}
-                        </Text>
-                      </Group>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("指向本程序，跨平台无需脚本", "Points to this app directly; no cross-platform script is needed")}
-                        </Text>
-                      </Group>
-                    </Stack>
-                  </Stack>
-                </Group>
-
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
-                    <X size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("删除时保留", "Kept on Removal")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• 用户自己的 hooks", "• User-owned hooks")}
-                      </Text>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• 其它工具注册的 hook 命令", "• Hook commands registered by other tools")}
-                      </Text>
-
-                    </Stack>
-                  </Stack>
-                </Group>
-              </Stack>
-            </Card>
-          )}
-
-          <TextInput
-            size="xs"
-            label={text("Claude 配置目录（可手动粘贴，支持 WSL UNC）", "Claude config directory (manual paste supported, including WSL UNC)")}
-            placeholder={text("\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.claude", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.claude")}
-            value={selectedDir ?? ""}
-            onChange={(e) => setSelectedDir(e.currentTarget.value || null)}
-            onBlur={(e) => void handleManualClaudeDirCommit(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleManualClaudeDirCommit(e.currentTarget.value);
-            }}
-            disabled={loading || claudeWorking || codexWorking || piWorking}
-          />
-
-          <Group gap="xs">
-            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {text("选择 Claude 目录", "Choose Claude Directory")}
-            </Button>
-            <Button color="cliPrimary" size="xs" onClick={handleClaudeInstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
-              {claudeWorking ? text("处理中...", "Processing...") : text("安装 Claude Hook", "Install Claude Hook")}
-            </Button>
-            <Button variant="light" color="red" size="xs" onClick={handleClaudeUninstall} disabled={loading || claudeWorking || claudeStatus === "directoryMissing"}>
-              {text("删除 Claude Hook", "Remove Claude Hook")}
-            </Button>
-            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
-            </Button>
-              </Group>
-            </>
-          )}
-        </Stack>
-      </CollapsibleHookSection>
-
-      <CollapsibleHookSection
-        title={text("Codex CLI Hook 桥接", "Codex CLI Hook Bridge")}
-        description={text("Codex 的运行中、待审批和完成状态通过 Hook 上报。", "Codex running, approval, and completion states are reported through Hook.")}
-        open={hookSettingsSectionsExpanded.codex}
-        onToggle={() => toggleHookSection("codex")}
-        collapsible={codexHookBridgeEnabled}
-        action={(
-          <Switch
-            color="cliPrimary"
-            checked={codexHookBridgeEnabled}
-            onChange={(event) => void updateSetting("codexHookBridgeEnabled", event.currentTarget.checked)}
-            aria-label={t("settings.hooks.bridge.enabled")}
-          />
-        )}
-        right={<StatusPill status={codexStatus} />}
-      >
-        <Stack gap="lg">
-          <CodexHookScopeStatus status={codex} />
-          {codexHookBridgeEnabled && (
-            <>
-              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
-            <HookCard
-              icon={<Play />}
-              label={codexSessionStartLabel}
-              checked={codexSessionStartInstalled}
-              notifyEnabled={notifyState(["SessionStart"])}
-              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("codex", "sessionStart", codexSessionStartInstalled, codexSessionStartLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexSessionStartLabel, codexSessionStartInstalled)}
-            />
-            <HookCard
-              icon={<Activity />}
-              label={codexRunningLabel}
-              checked={codexRunningInstalled}
-              notifyEnabled={notifyState(["UserPromptSubmit"])}
-              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("codex", "running", codexRunningInstalled, codexRunningLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexRunningLabel, codexRunningInstalled)}
-            />
-            <HookCard
-              icon={<ShieldAlert />}
-              label={codexAttentionLabel}
-              checked={codexAttentionInstalled}
-              notifyEnabled={notifyState(["PermissionRequest"])}
-              onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("codex", "attention", codexAttentionInstalled, codexAttentionLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexAttentionLabel, codexAttentionInstalled)}
-            />
-            <HookCard
-              icon={<CheckCircle />}
-              label={codexStopLabel}
-              checked={codexStopInstalled}
-              notifyEnabled={notifyState(["Stop"])}
-              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("codex", "stop", codexStopInstalled, codexStopLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexStopLabel, codexStopInstalled)}
-            />
-            <HookCard
-              icon={<Layers size={26} />}
-              label={codexSubagentLabel}
-              checked={codexSubagentInstalled}
-              onClick={() => void handleModuleToggle("codex", "subagent", codexSubagentInstalled, codexSubagentLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexSubagentLabel, codexSubagentInstalled)}
-            />
-            <HookCard
-              icon={<ToggleRight />}
-              label={codexHooksFeatureLabel}
-              checked={Boolean(codex?.hooksFeatureInstalled)}
-              onClick={() => void handleModuleToggle("codex", "hooksFeature", Boolean(codex?.hooksFeatureInstalled), codexHooksFeatureLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || codexStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(codexToolLabel, codexHooksFeatureLabel, Boolean(codex?.hooksFeatureInstalled))}
-            />
-          </SimpleGrid>
-
-          <Group gap="xs">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setCodexPathsOpen(!codexPathsOpen)}
-              leftSection={codexPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            >
-              {text("查看配置路径", "View Config Paths")}
-            </Button>
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setCodexInfoOpen(!codexInfoOpen)}
-              leftSection={<HelpCircle size={14} />}
-            >
-              {text("安装说明", "Install Notes")}
-            </Button>
-          </Group>
-
-          {codexPathsOpen && (
-            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-              <Stack gap="xs">
-                <PathRow label={text("Codex 配置目录", "Codex Config Directory")} value={codex?.configDir ?? codexSelectedDir} />
-                <PathRow label={text("hooks 目录", "hooks Directory")} value={codex?.hooksDir ?? null} />
-                <PathRow label="hooks.json" value={codex?.configPath ?? null} />
-                <PathRow label="config.toml" value={codex?.featureConfigPath ?? null} />
-              </Stack>
-            </Card>
-          )}
-
-          {codexInfoOpen && (
-            <Card className="bg-surface-container-low/50" p="md" radius="lg">
-              <Stack gap="md">
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
-                    <Check size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("安装内容", "Installed Content")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          {text("hooks.json 注册 __hook 命令", "hooks.json registers the __hook command")}
-                        </Text>
-                      </Group>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("指向本程序，跨平台无需脚本", "Points to this app directly; no cross-platform script is needed")}
-                        </Text>
-                      </Group>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("config.toml 中开启 ", "Enable ")}<span className="font-mono">[features].hooks = true</span>{text("", " in config.toml")}
-                        </Text>
-                      </Group>
-                    </Stack>
-                  </Stack>
-                </Group>
-
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
-                    <AlertTriangle size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("注意事项", "Notes")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• 不修改项目级 ", "• Does not modify project-level ")}<span className="font-mono">.codex/hooks.json</span>
-                      </Text>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• Codex 0.129+ 仍需在 TUI 执行 ", "• Codex 0.129+ still requires running ")}<span className="font-mono">/hooks</span>{text(" 批准脚本", " in the TUI to approve scripts")}
-                      </Text>
-                    </Stack>
-                  </Stack>
-                </Group>
-              </Stack>
-            </Card>
-          )}
-
-          <TextInput
-            size="xs"
-            label={text("Codex 配置目录（可手动粘贴，支持 WSL UNC）", "Codex config directory (manual paste supported, including WSL UNC)")}
-            placeholder={text("\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.codex", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.codex")}
-            value={codexSelectedDir ?? ""}
-            onChange={(e) => setCodexSelectedDir(e.currentTarget.value || null)}
-            onBlur={(e) => void handleManualCodexDirCommit(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleManualCodexDirCommit(e.currentTarget.value);
-            }}
-            disabled={loading || claudeWorking || codexWorking || piWorking}
-          />
-
-          <Group gap="xs">
-            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectCodexDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {text("选择 Codex 目录", "Choose Codex Directory")}
-            </Button>
-            <Button color="cliPrimary" size="xs" onClick={handleCodexInstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
-              {codexWorking ? text("处理中...", "Processing...") : text("安装 Codex Hook", "Install Codex Hook")}
-            </Button>
-            <Button variant="light" color="red" size="xs" onClick={handleCodexUninstall} disabled={loading || codexWorking || codexStatus === "directoryMissing"}>
-              {text("删除 Codex Hook", "Remove Codex Hook")}
-            </Button>
-            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
-            </Button>
-              </Group>
-            </>
-          )}
-        </Stack>
-      </CollapsibleHookSection>
-
-
-      <CollapsibleHookSection
-        title={text("Kimi Code Hook 桥接", "Kimi Code Hook Bridge")}
-        description={text("通过当前 Kimi Code 的 TOML Hook 上报运行、审批、完成、中断、失败和子 Agent 状态。", "Reports running, approval, completion, interruption, failure, and sub-agent states through current Kimi Code TOML hooks.")}
-        open={hookSettingsSectionsExpanded.kimi}
-        onToggle={() => toggleHookSection("kimi")}
-        collapsible={kimiHookBridgeEnabled}
-        action={(
-          <Switch
-            color="cliPrimary"
-            checked={kimiHookBridgeEnabled}
-            onChange={(event) => void updateSetting("kimiHookBridgeEnabled", event.currentTarget.checked)}
-            aria-label={t("settings.hooks.bridge.enabled")}
-          />
-        )}
-        right={<StatusPill status={kimiStatus} />}
-      >
-        <Stack gap="lg">
-          {kimiHookBridgeEnabled && (
-            <>
-              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
-                <HookCard
-                  icon={<Play />}
-                  label={kimiSessionStartLabel}
-                  checked={kimiSessionStartInstalled}
-                  notifyEnabled={notifyState(["SessionStart"])}
-                  onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("kimi", "sessionStart", kimiSessionStartInstalled, kimiSessionStartLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiSessionStartLabel, kimiSessionStartInstalled)}
-                />
-                <HookCard
-                  icon={<Activity />}
-                  label={kimiRunningLabel}
-                  checked={kimiRunningInstalled}
-                  notifyEnabled={notifyState(["UserPromptSubmit"])}
-                  onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("kimi", "running", kimiRunningInstalled, kimiRunningLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiRunningLabel, kimiRunningInstalled)}
-                />
-                <HookCard
-                  icon={<ShieldAlert />}
-                  label={kimiAttentionLabel}
-                  checked={kimiAttentionInstalled}
-                  notifyEnabled={notifyState(["PermissionRequest"])}
-                  onToggleNotify={() => toggleNotifyEvents(["PermissionRequest"], !notifyState(["PermissionRequest"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("kimi", "attention", kimiAttentionInstalled, kimiAttentionLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiAttentionLabel, kimiAttentionInstalled)}
-                />
-                <HookCard
-                  icon={<CheckCircle />}
-                  label={kimiStopLabel}
-                  checked={kimiStopInstalled}
-                  notifyEnabled={notifyState(["Stop"])}
-                  onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("kimi", "stop", kimiStopInstalled, kimiStopLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiStopLabel, kimiStopInstalled)}
-                />
-                <HookCard
-                  icon={<XCircle size={26} />}
-                  label={kimiFailureLabel}
-                  checked={kimiFailureInstalled}
-                  notifyEnabled={notifyState(["StopFailure"])}
-                  onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
-                  notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("kimi", "failure", kimiFailureInstalled, kimiFailureLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiFailureLabel, kimiFailureInstalled)}
-                />
-                <HookCard
-                  icon={<Layers size={26} />}
-                  label={kimiSubagentLabel}
-                  checked={kimiSubagentInstalled}
-                  onClick={() => void handleModuleToggle("kimi", "subagent", kimiSubagentInstalled, kimiSubagentLabel)}
-                  disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
-                  actionLabel={buildModuleActionLabel(kimiToolLabel, kimiSubagentLabel, kimiSubagentInstalled)}
-                />
-              </SimpleGrid>
-
-              <Group gap="xs">
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  size="xs"
-                  onClick={() => setKimiPathsOpen(!kimiPathsOpen)}
-                  leftSection={kimiPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                >
-                  {text("查看配置路径", "View Config Paths")}
-                </Button>
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  size="xs"
-                  onClick={() => setKimiInfoOpen(!kimiInfoOpen)}
-                  leftSection={<HelpCircle size={14} />}
-                >
-                  {text("安装说明", "Install Notes")}
-                </Button>
-              </Group>
-
-              {kimiPathsOpen && (
-                <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-                  <Stack gap="xs">
-                    <PathRow label={text("Kimi Code 配置目录", "Kimi Code Config Directory")} value={kimi?.configDir ?? kimiSelectedDir} />
-                    <PathRow label="config.toml" value={kimi?.configPath ?? null} />
-                  </Stack>
-                </Card>
+        <div className="hook-bridge-list">
+          <CliHookBridgeCard
+            cliIcon="claude-code"
+            title={text("Claude Code Hook 桥接", "Claude Code Hook Bridge")}
+            description={text(
+              "Claude Code 的运行中、待审批、完成和异常退出状态通过 Hook 上报。",
+              "Claude Code running, approval, completion, and failure states are reported through Hook.",
+            )}
+            status={claudeStatus}
+            enabled={claudeHookBridgeEnabled}
+            onEnabledChange={(checked) => void updateSetting("claudeHookBridgeEnabled", checked)}
+            switchAriaLabel={t("settings.hooks.bridge.claudeEnabled")}
+            open={hookSettingsSectionsExpanded.claude}
+            onToggle={() => toggleHookSection("claude")}
+          >
+            <LegacyCliHookBody
+              tool="claude"
+              modules={claudeModules}
+              paths={[
+                { label: text("Claude 配置目录", "Claude Config Directory"), value: claude?.configDir ?? selectedDir },
+                { label: text("hooks 目录", "hooks Directory"), value: claude?.hooksDir ?? null },
+                { label: "settings.json", value: claude?.configPath ?? null },
+              ]}
+              dirLabel={text(
+                "Claude 配置目录（可手动粘贴，支持 WSL UNC）",
+                "Claude config directory (manual paste supported, including WSL UNC)",
               )}
-
-              {kimiInfoOpen && (
-                <Card className="bg-surface-container-low/50" p="md" radius="lg">
-                  <Stack gap="sm">
-                    <Text size="xs" c="var(--on-surface-variant)">
-                      {text("仅支持当前 Kimi Code；安装前会通过 kimi doctor 校验临时配置，旧 kimi-cli 不受支持且不会迁移 ~/.kimi。", "Only current Kimi Code is supported. A temporary config is validated with kimi doctor before installation; legacy kimi-cli is unsupported and ~/.kimi is never migrated.")}
-                    </Text>
-                    <Text size="xs" c="var(--on-surface-variant)">
-                      {text("自定义目录只决定 Hook 配置写入位置，不会自动切换本地 Kimi 的 KIMI_CODE_HOME、凭据或会话。", "The custom directory only selects where Hook config is managed; it does not change local KIMI_CODE_HOME, credentials, or sessions.")}
-                    </Text>
-                    <Text size="xs" c="var(--on-surface-variant)">
-                      {text("CLI-Manager 只删除带精确 owner 标记的条目，并保留用户与第三方 Hook。安装后新会话自动生效；活动 TUI 请执行 /reload。", "CLI-Manager removes only entries with its exact owner marker and preserves user and third-party hooks. New sessions pick up changes automatically; run /reload in active TUI sessions.")}
-                    </Text>
-                  </Stack>
-                </Card>
+              dirPlaceholder={text(
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.claude",
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.claude",
               )}
-
-              <TextInput
-                size="xs"
-                label={text("Kimi Code 配置目录（仅管理 Hook，可手动粘贴 WSL UNC）", "Kimi Code config directory (Hook management only; WSL UNC paste supported)")}
-                placeholder={text("\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.kimi-code", "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.kimi-code")}
-                value={kimiSelectedDir ?? ""}
-                onChange={(event) => setKimiSelectedDir(event.currentTarget.value || null)}
-                onBlur={(event) => void handleManualKimiDirCommit(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleManualKimiDirCommit(event.currentTarget.value);
-                }}
-                disabled={anyWorking}
-              />
-
-              <Group gap="xs">
-                <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectKimiDir} disabled={anyWorking}>
-                  {text("选择 Kimi Code 目录", "Choose Kimi Code Directory")}
-                </Button>
-                <Button color="cliPrimary" size="xs" onClick={handleKimiInstall} disabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}>
-                  {kimiWorking ? text("处理中...", "Processing...") : text("安装 Kimi Code Hook", "Install Kimi Code Hook")}
-                </Button>
-                <Button variant="light" color="red" size="xs" onClick={handleKimiUninstall} disabled={anyWorking || kimiStatus === "directoryMissing"}>
-                  {text("删除 Kimi Code Hook", "Remove Kimi Code Hook")}
-                </Button>
-                <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={anyWorking}>
-                  {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
-                </Button>
-              </Group>
-            </>
-          )}
-        </Stack>
-      </CollapsibleHookSection>
-
-
-      <CollapsibleHookSection
-        title={text("Pi Agent Hook 桥接", "Pi Agent Hook Bridge")}
-        description={text("通过 Pi Extension 上报会话启动、运行中与完成状态，绑定 sessionId 以支持实时统计。", "Reports session start, running, and completion through a Pi Extension, binding sessionId for live stats.")}
-        open={hookSettingsSectionsExpanded.pi}
-        onToggle={() => toggleHookSection("pi")}
-        collapsible={piHookBridgeEnabled}
-        action={(
-          <Switch
-            color="cliPrimary"
-            checked={piHookBridgeEnabled}
-            onChange={(event) => void updateSetting("piHookBridgeEnabled", event.currentTarget.checked)}
-            aria-label={t("settings.hooks.bridge.enabled")}
-          />
-        )}
-        right={<StatusPill status={piStatus} />}
-      >
-        <Stack gap="lg">
-          {piHookBridgeEnabled && (
-            <>
-              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
-            <HookCard
-              icon={<Play />}
-              label={piSessionStartLabel}
-              checked={piSessionStartInstalled}
-              notifyEnabled={notifyState(["SessionStart"])}
-              onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("pi", "sessionStart", piSessionStartInstalled, piSessionStartLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(piToolLabel, piSessionStartLabel, piSessionStartInstalled)}
+              dirValue={selectedDir ?? ""}
+              onDirChange={(value) => setSelectedDir(value || null)}
+              onDirCommit={(raw) => void handleManualClaudeDirCommit(raw)}
+              onSelectDir={() => void handleSelectDir()}
+              chooseDirLabel={text("选择 Claude 目录", "Choose Claude Directory")}
+              onInstall={() => void handleClaudeInstall()}
+              installLabel={text("安装 Claude Hook", "Install Claude Hook")}
+              installDisabled={anyWorking || claudeStatus === "directoryMissing"}
+              working={claudeWorking}
+              onUninstall={() => void handleClaudeUninstall()}
+              uninstallLabel={text("删除 Claude Hook", "Remove Claude Hook")}
+              uninstallDisabled={anyWorking || claudeStatus === "directoryMissing"}
+              onRefresh={() => void refreshStatus()}
+              loading={loading}
+              anyWorking={anyWorking}
             />
-            <HookCard
-              icon={<Activity />}
-              label={piRunningLabel}
-              checked={piRunningInstalled}
-              notifyEnabled={notifyState(["UserPromptSubmit"])}
-              onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("pi", "running", piRunningInstalled, piRunningLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(piToolLabel, piRunningLabel, piRunningInstalled)}
-            />
-            <HookCard
-              icon={<CheckCircle />}
-              label={piStopLabel}
-              checked={piStopInstalled}
-              notifyEnabled={notifyState(["Stop"])}
-              onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-              onClick={() => void handleModuleToggle("pi", "stop", piStopInstalled, piStopLabel)}
-              disabled={loading || claudeWorking || codexWorking || piWorking || piStatus === "directoryMissing"}
-              actionLabel={buildModuleActionLabel(piToolLabel, piStopLabel, piStopInstalled)}
-            />
-          </SimpleGrid>
+          </CliHookBridgeCard>
 
-          <Group gap="xs">
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setPiPathsOpen(!piPathsOpen)}
-              leftSection={piPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-            >
-              {text("查看配置路径", "View Config Paths")}
-            </Button>
-            <Button
-              variant="subtle"
-              color="gray"
-              size="xs"
-              onClick={() => setPiInfoOpen(!piInfoOpen)}
-              leftSection={<HelpCircle size={14} />}
-            >
-              {text("安装说明", "Install Notes")}
-            </Button>
-          </Group>
-
-          {piPathsOpen && (
-            <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-              <Stack gap="xs">
-                <PathRow label={text("Pi 配置目录", "Pi Config Directory")} value={pi?.configDir ?? piSelectedDir} />
-                <PathRow label={text("extensions 目录", "extensions Directory")} value={pi?.hooksDir ?? null} />
-                <PathRow label="cli-manager-hook.ts" value={pi?.configPath ?? null} />
-              </Stack>
-            </Card>
-          )}
-
-          {piInfoOpen && (
-            <Card className="bg-surface-container-low/50" p="md" radius="lg">
-              <Stack gap="md">
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--success)", marginTop: 2 }}>
-                    <Check size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("安装内容", "Installed Content")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                          {text("~/.pi/agent/extensions/cli-manager-hook.ts", "~/.pi/agent/extensions/cli-manager-hook.ts")}
-                        </Text>
-                      </Group>
-                      <Group gap="xs">
-                        <FileCode size={12} style={{ color: "var(--text-muted)" }} />
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("监听 session_start / agent_start / agent_settled 并上报 CLI-Manager", "Listens to session_start / agent_start / agent_settled and reports to CLI-Manager")}
-                        </Text>
-                      </Group>
-                    </Stack>
-                  </Stack>
-                </Group>
-
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: "var(--warning)", marginTop: 2 }}>
-                    <AlertTriangle size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {text("注意事项", "Notes")}
-                    </Text>
-                    <Stack gap={2}>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• Pi 使用 Extension 机制，不是 Claude/Codex 的 shell hook 命令", "• Pi uses the Extension mechanism, not Claude/Codex shell hook commands")}
-                      </Text>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• 安装后新开的 Pi 会话会自动加载；已运行会话可执行 ", "• Newly started Pi sessions load it automatically; for existing sessions run ")}
-                        <span className="font-mono">/reload</span>
-                      </Text>
-                      <Text size="xs" c="var(--on-surface-variant)">
-                        {text("• 实时统计依赖 PTY 注入的 CLI_MANAGER_* 环境变量与 sessionId 绑定", "• Live stats require PTY-injected CLI_MANAGER_* env vars and sessionId binding")}
-                      </Text>
-                    </Stack>
-                  </Stack>
-                </Group>
-              </Stack>
-            </Card>
-          )}
-
-          <TextInput
-            size="xs"
-            label={text("Pi 配置目录（可手动粘贴，默认 ~/.pi/agent）", "Pi config directory (manual paste supported, default ~/.pi/agent)")}
-            placeholder={text("C:\\Users\\你\\.pi\\agent", "C:\\Users\\you\\.pi\\agent")}
-            value={piSelectedDir ?? ""}
-            onChange={(e) => setPiSelectedDir(e.currentTarget.value || null)}
-            onBlur={(e) => void handleManualPiDirCommit(e.currentTarget.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") void handleManualPiDirCommit(e.currentTarget.value);
-            }}
-            disabled={loading || claudeWorking || codexWorking || piWorking}
-          />
-
-          <Group gap="xs">
-            <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectPiDir} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {text("选择 Pi 目录", "Choose Pi Directory")}
-            </Button>
-            <Button color="cliPrimary" size="xs" onClick={handlePiInstall} disabled={loading || piWorking || piStatus === "directoryMissing"}>
-              {piWorking ? text("处理中...", "Processing...") : text("安装 Pi Hook", "Install Pi Hook")}
-            </Button>
-            <Button variant="light" color="red" size="xs" onClick={handlePiUninstall} disabled={loading || piWorking || piStatus === "directoryMissing"}>
-              {text("删除 Pi Hook", "Remove Pi Hook")}
-            </Button>
-            <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={loading || claudeWorking || codexWorking || piWorking}>
-              {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
-            </Button>
-          </Group>
-            </>
-          )}
-        </Stack>
-      </CollapsibleHookSection>
-
-      <CollapsibleHookSection
-        title={text("Grok Build Hook 桥接", "Grok Build Hook Bridge")}
-        description={text(
-          "对齐 Claude 的 Hook 模块；安装时写入 ~/.grok/hooks 并关闭 Grok 对 Claude/Cursor hooks 的兼容扫描。",
-          "Aligns with Claude Hook modules; install writes ~/.grok/hooks and disables Grok scanning of Claude/Cursor hooks.",
-        )}
-        open={hookSettingsSectionsExpanded.grok}
-        onToggle={() => toggleHookSection("grok")}
-        collapsible={grokHookBridgeEnabled}
-        action={(
-          <Switch
-            color="cliPrimary"
-            checked={grokHookBridgeEnabled}
-            onChange={(event) => void updateSetting("grokHookBridgeEnabled", event.currentTarget.checked)}
-            aria-label={t("settings.hooks.bridge.enabled")}
-          />
-        )}
-        right={<StatusPill status={grokStatus} />}
-      >
-        <Stack gap="lg">
-          {grokHookBridgeEnabled && (
-            <>
-              <SimpleGrid cols={{ base: 2, sm: 3 }} spacing="md">
-                <HookCard
-                  icon={<Play />}
-                  label={grokSessionStartLabel}
-                  checked={grokSessionStartInstalled}
-                  notifyEnabled={notifyState(["SessionStart"])}
-                  onToggleNotify={() => toggleNotifyEvents(["SessionStart"], !notifyState(["SessionStart"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("grok", "sessionStart", grokSessionStartInstalled, grokSessionStartLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokSessionStartLabel, grokSessionStartInstalled)}
-                />
-                <HookCard
-                  icon={<Activity />}
-                  label={grokRunningLabel}
-                  checked={grokRunningInstalled}
-                  notifyEnabled={notifyState(["UserPromptSubmit"])}
-                  onToggleNotify={() => toggleNotifyEvents(["UserPromptSubmit"], !notifyState(["UserPromptSubmit"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("grok", "running", grokRunningInstalled, grokRunningLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokRunningLabel, grokRunningInstalled)}
-                />
-                <HookCard
-                  icon={<Bell />}
-                  label={grokAttentionLabel}
-                  checked={grokAttentionInstalled}
-                  notifyEnabled={notifyState(["Notification"])}
-                  onToggleNotify={() => toggleNotifyEvents(["Notification"], !notifyState(["Notification"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("grok", "attention", grokAttentionInstalled, grokAttentionLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokAttentionLabel, grokAttentionInstalled)}
-                />
-                <HookCard
-                  icon={<CheckCircle />}
-                  label={grokStopLabel}
-                  checked={grokStopInstalled}
-                  notifyEnabled={notifyState(["Stop"])}
-                  onToggleNotify={() => toggleNotifyEvents(["Stop"], !notifyState(["Stop"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("grok", "stop", grokStopInstalled, grokStopLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokStopLabel, grokStopInstalled)}
-                />
-                <HookCard
-                  icon={<XCircle size={26} />}
-                  label={grokFailureLabel}
-                  checked={grokFailureInstalled}
-                  notifyEnabled={notifyState(["StopFailure"])}
-                  onToggleNotify={() => toggleNotifyEvents(["StopFailure"], !notifyState(["StopFailure"]))}
-              notifyDisabled={!hookEventNotificationsEnabled}
-                  onClick={() => void handleModuleToggle("grok", "failure", grokFailureInstalled, grokFailureLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokFailureLabel, grokFailureInstalled)}
-                />
-                <HookCard
-                  icon={<Layers size={26} />}
-                  label={grokSubagentLabel}
-                  checked={grokSubagentInstalled}
-                  onClick={() => void handleModuleToggle("grok", "subagent", grokSubagentInstalled, grokSubagentLabel)}
-                  disabled={anyWorking || grokStatus === "directoryMissing"}
-                  actionLabel={buildModuleActionLabel(grokToolLabel, grokSubagentLabel, grokSubagentInstalled)}
-                />
-              </SimpleGrid>
-
-              <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-                <Group gap="sm" wrap="nowrap" align="flex-start">
-                  <Box style={{ color: grokIsolationInstalled ? "var(--success)" : "var(--warning)", marginTop: 2 }}>
-                    <ShieldAlert size={18} />
-                  </Box>
-                  <Stack gap={4}>
-                    <Text size="xs" fw={500} c="var(--on-surface)">
-                      {grokIsolationLabel}
-                    </Text>
-                    <Text size="xs" c="var(--on-surface-variant)">
-                      {grokIsolationInstalled
-                        ? text(
-                            "已关闭 compat.claude.hooks 与 compat.cursor.hooks；卸载 Hook 时不会自动恢复。",
-                            "compat.claude.hooks and compat.cursor.hooks are disabled; uninstall will not re-enable them.",
-                          )
-                        : text(
-                            "安装 Grok Hook 后会写入 config.toml，禁止 Grok 读取 Claude/Cursor 的 hooks。",
-                            "Installing Grok Hook writes config.toml so Grok no longer loads Claude/Cursor hooks.",
-                          )}
-                    </Text>
-                  </Stack>
-                </Group>
-              </Card>
-
-              <Group gap="xs">
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  size="xs"
-                  onClick={() => setGrokPathsOpen(!grokPathsOpen)}
-                  leftSection={grokPathsOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                >
-                  {text("查看配置路径", "View Config Paths")}
-                </Button>
-                <Button
-                  variant="subtle"
-                  color="gray"
-                  size="xs"
-                  onClick={() => setGrokInfoOpen(!grokInfoOpen)}
-                  leftSection={<HelpCircle size={14} />}
-                >
-                  {text("安装说明", "Install Notes")}
-                </Button>
-              </Group>
-
-              {grokPathsOpen && (
-                <Card className="bg-surface-container-low/50" p="sm" radius="lg">
-                  <Stack gap="xs">
-                    <PathRow label={text("Grok 配置目录", "Grok Config Directory")} value={grok?.configDir ?? grokSelectedDir} />
-                    <PathRow label={text("hooks 目录", "hooks Directory")} value={grok?.hooksDir ?? null} />
-                    <PathRow label="cli-manager.json" value={grok?.configPath ?? null} />
-                    <PathRow label="config.toml" value={grok?.featureConfigPath ?? null} />
-                  </Stack>
-                </Card>
+          <CliHookBridgeCard
+            cliIcon="codex"
+            title={text("Codex CLI Hook 桥接", "Codex CLI Hook Bridge")}
+            description={text(
+              "Codex 的运行中、待审批和完成状态通过 Hook 上报。",
+              "Codex running, approval, and completion states are reported through Hook.",
+            )}
+            status={codexStatus}
+            enabled={codexHookBridgeEnabled}
+            onEnabledChange={(checked) => void updateSetting("codexHookBridgeEnabled", checked)}
+            switchAriaLabel={t("settings.hooks.bridge.codexEnabled")}
+            open={hookSettingsSectionsExpanded.codex}
+            onToggle={() => toggleHookSection("codex")}
+          >
+            <LegacyCliHookBody
+              tool="codex"
+              topSlot={<CodexHookScopeStatus status={codex} />}
+              modules={codexModules}
+              paths={[
+                { label: text("Codex 配置目录", "Codex Config Directory"), value: codex?.configDir ?? codexSelectedDir },
+                { label: text("hooks 目录", "hooks Directory"), value: codex?.hooksDir ?? null },
+                { label: "hooks.json", value: codex?.configPath ?? null },
+                { label: "config.toml", value: codex?.featureConfigPath ?? null },
+              ]}
+              dirLabel={text(
+                "Codex 配置目录（可手动粘贴，支持 WSL UNC）",
+                "Codex config directory (manual paste supported, including WSL UNC)",
               )}
-
-              {grokInfoOpen && (
-                <Card className="bg-surface-container-low/50" p="md" radius="lg">
-                  <Stack gap="md">
-                    <Group gap="sm" wrap="nowrap" align="flex-start">
-                      <Box style={{ color: "var(--success)", marginTop: 2 }}>
-                        <Check size={18} />
-                      </Box>
-                      <Stack gap={4}>
-                        <Text size="xs" fw={500} c="var(--on-surface)">
-                          {text("安装内容", "Installed Content")}
-                        </Text>
-                        <Stack gap={2}>
-                          <Text size="xs" c="var(--on-surface-variant)" ff="var(--font-ui-mono)">
-                            {text("~/.grok/hooks/cli-manager.json（不是 settings.json）", "~/.grok/hooks/cli-manager.json (not settings.json)")}
-                          </Text>
-                          <Text size="xs" c="var(--on-surface-variant)">
-                            {text("注册 __hook --source grok 事件；Grok 扫描 hooks/*.json", "Registers __hook --source grok events; Grok scans hooks/*.json")}
-                          </Text>
-                          <Text size="xs" c="var(--on-surface-variant)">
-                            {text("~/.grok/config.toml：compat.claude.hooks / compat.cursor.hooks = false", "~/.grok/config.toml: compat.claude.hooks / compat.cursor.hooks = false")}
-                          </Text>
-                        </Stack>
-                      </Stack>
-                    </Group>
-                    <Group gap="sm" wrap="nowrap" align="flex-start">
-                      <Box style={{ color: "var(--warning)", marginTop: 2 }}>
-                        <X size={18} />
-                      </Box>
-                      <Stack gap={4}>
-                        <Text size="xs" fw={500} c="var(--on-surface)">
-                          {text("删除时", "On Removal")}
-                        </Text>
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("• 仅移除 CLI-Manager 的 Grok hook 条目", "• Only removes CLI-Manager Grok hook entries")}
-                        </Text>
-                        <Text size="xs" c="var(--on-surface-variant)">
-                          {text("• 不恢复跨工具 hook 兼容（避免再次串线）", "• Does not re-enable cross-tool hook compatibility")}
-                        </Text>
-                      </Stack>
-                    </Group>
-                  </Stack>
-                </Card>
+              dirPlaceholder={text(
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.codex",
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.codex",
               )}
+              dirValue={codexSelectedDir ?? ""}
+              onDirChange={(value) => setCodexSelectedDir(value || null)}
+              onDirCommit={(raw) => void handleManualCodexDirCommit(raw)}
+              onSelectDir={() => void handleSelectCodexDir()}
+              chooseDirLabel={text("选择 Codex 目录", "Choose Codex Directory")}
+              onInstall={() => void handleCodexInstall()}
+              installLabel={text("安装 Codex Hook", "Install Codex Hook")}
+              installDisabled={anyWorking || codexStatus === "directoryMissing"}
+              working={codexWorking}
+              onUninstall={() => void handleCodexUninstall()}
+              uninstallLabel={text("删除 Codex Hook", "Remove Codex Hook")}
+              uninstallDisabled={anyWorking || codexStatus === "directoryMissing"}
+              onRefresh={() => void refreshStatus()}
+              loading={loading}
+              anyWorking={anyWorking}
+            />
+          </CliHookBridgeCard>
 
-              <TextInput
-                size="xs"
-                label={text("Grok 配置目录（可手动粘贴，默认 ~/.grok）", "Grok config directory (manual paste supported, default ~/.grok)")}
-                placeholder={text("C:\\Users\\你\\.grok", "C:\\Users\\you\\.grok")}
-                value={grokSelectedDir ?? ""}
-                onChange={(e) => setGrokSelectedDir(e.currentTarget.value || null)}
-                onBlur={(e) => void handleManualGrokDirCommit(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") void handleManualGrokDirCommit(e.currentTarget.value);
-                }}
-                disabled={anyWorking}
-              />
+          <CliHookBridgeCard
+            cliIcon="kimi"
+            title={text("Kimi Code Hook 桥接", "Kimi Code Hook Bridge")}
+            description={text(
+              "通过当前 Kimi Code 的 TOML Hook 上报运行、审批、完成、中断、失败和子 Agent 状态。",
+              "Reports running, approval, completion, interruption, failure, and sub-agent states through current Kimi Code TOML hooks.",
+            )}
+            status={kimiStatus}
+            enabled={kimiHookBridgeEnabled}
+            onEnabledChange={(checked) => void updateSetting("kimiHookBridgeEnabled", checked)}
+            switchAriaLabel={t("settings.hooks.bridge.kimiEnabled")}
+            open={hookSettingsSectionsExpanded.kimi}
+            onToggle={() => toggleHookSection("kimi")}
+          >
+            <LegacyCliHookBody
+              tool="kimi"
+              modules={kimiModules}
+              paths={[
+                { label: text("Kimi Code 配置目录", "Kimi Code Config Directory"), value: kimi?.configDir ?? kimiSelectedDir },
+                { label: "config.toml", value: kimi?.configPath ?? null },
+              ]}
+              dirLabel={text(
+                "Kimi Code 配置目录（仅管理 Hook，可手动粘贴 WSL UNC）",
+                "Kimi Code config directory (Hook management only; WSL UNC paste supported)",
+              )}
+              dirPlaceholder={text(
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\用户名\\.kimi-code",
+                "\\\\wsl.localhost\\Ubuntu-22.04\\home\\user\\.kimi-code",
+              )}
+              dirValue={kimiSelectedDir ?? ""}
+              onDirChange={(value) => setKimiSelectedDir(value || null)}
+              onDirCommit={(raw) => void handleManualKimiDirCommit(raw)}
+              onSelectDir={() => void handleSelectKimiDir()}
+              chooseDirLabel={text("选择 Kimi Code 目录", "Choose Kimi Code Directory")}
+              onInstall={() => void handleKimiInstall()}
+              installLabel={text("安装 Kimi Code Hook", "Install Kimi Code Hook")}
+              installDisabled={anyWorking || kimiStatus === "directoryMissing" || kimiStatus === "unsupported"}
+              working={kimiWorking}
+              onUninstall={() => void handleKimiUninstall()}
+              uninstallLabel={text("删除 Kimi Code Hook", "Remove Kimi Code Hook")}
+              uninstallDisabled={anyWorking || kimiStatus === "directoryMissing"}
+              onRefresh={() => void refreshStatus()}
+              loading={loading}
+              anyWorking={anyWorking}
+            />
+          </CliHookBridgeCard>
 
-              <Group gap="xs">
-                <Button variant="light" color="cliPrimary" size="xs" onClick={handleSelectGrokDir} disabled={anyWorking}>
-                  {text("选择 Grok 目录", "Choose Grok Directory")}
-                </Button>
-                <Button color="cliPrimary" size="xs" onClick={handleGrokInstall} disabled={loading || grokWorking || grokStatus === "directoryMissing"}>
-                  {grokWorking ? text("处理中...", "Processing...") : text("安装 Grok Hook", "Install Grok Hook")}
-                </Button>
-                <Button variant="light" color="red" size="xs" onClick={handleGrokUninstall} disabled={loading || grokWorking || grokStatus === "directoryMissing"}>
-                  {text("删除 Grok Hook", "Remove Grok Hook")}
-                </Button>
-                <Button variant="default" color="gray" size="xs" onClick={() => void refreshStatus()} disabled={anyWorking}>
-                  {loading ? text("刷新中...", "Refreshing...") : text("刷新状态", "Refresh Status")}
-                </Button>
-              </Group>
-            </>
-          )}
-        </Stack>
-      </CollapsibleHookSection>
+          <CliHookBridgeCard
+            cliIcon="pi"
+            title={text("Pi Agent Hook 桥接", "Pi Agent Hook Bridge")}
+            description={text(
+              "通过 Pi Extension 上报会话启动、运行中与完成状态，绑定 sessionId 以支持实时统计。",
+              "Reports session start, running, and completion through a Pi Extension, binding sessionId for live stats.",
+            )}
+            status={piStatus}
+            enabled={piHookBridgeEnabled}
+            onEnabledChange={(checked) => void updateSetting("piHookBridgeEnabled", checked)}
+            switchAriaLabel={t("settings.hooks.bridge.piEnabled")}
+            open={hookSettingsSectionsExpanded.pi}
+            onToggle={() => toggleHookSection("pi")}
+          >
+            <LegacyCliHookBody
+              tool="pi"
+              modules={piModules}
+              paths={[
+                { label: text("Pi 配置目录", "Pi Config Directory"), value: pi?.configDir ?? piSelectedDir },
+                { label: text("extensions 目录", "extensions Directory"), value: pi?.hooksDir ?? null },
+                { label: "cli-manager-hook.ts", value: pi?.configPath ?? null },
+              ]}
+              dirLabel={text(
+                "Pi 配置目录（可手动粘贴，默认 ~/.pi/agent）",
+                "Pi config directory (manual paste supported, default ~/.pi/agent)",
+              )}
+              dirPlaceholder={text("C:\\Users\\你\\.pi\\agent", "C:\\Users\\you\\.pi\\agent")}
+              dirValue={piSelectedDir ?? ""}
+              onDirChange={(value) => setPiSelectedDir(value || null)}
+              onDirCommit={(raw) => void handleManualPiDirCommit(raw)}
+              onSelectDir={() => void handleSelectPiDir()}
+              chooseDirLabel={text("选择 Pi 目录", "Choose Pi Directory")}
+              onInstall={() => void handlePiInstall()}
+              installLabel={text("安装 Pi Hook", "Install Pi Hook")}
+              installDisabled={anyWorking || piStatus === "directoryMissing"}
+              working={piWorking}
+              onUninstall={() => void handlePiUninstall()}
+              uninstallLabel={text("删除 Pi Hook", "Remove Pi Hook")}
+              uninstallDisabled={anyWorking || piStatus === "directoryMissing"}
+              onRefresh={() => void refreshStatus()}
+              loading={loading}
+              anyWorking={anyWorking}
+            />
+          </CliHookBridgeCard>
 
+          <CliHookBridgeCard
+            cliIcon="grok"
+            title={text("Grok Build Hook 桥接", "Grok Build Hook Bridge")}
+            description={text(
+              "对齐 Claude 的 Hook 模块；安装时写入 ~/.grok/hooks 并关闭 Grok 对 Claude/Cursor hooks 的兼容扫描。",
+              "Aligns with Claude Hook modules; install writes ~/.grok/hooks and disables Grok scanning of Claude/Cursor hooks.",
+            )}
+            status={grokStatus}
+            enabled={grokHookBridgeEnabled}
+            onEnabledChange={(checked) => void updateSetting("grokHookBridgeEnabled", checked)}
+            switchAriaLabel={t("settings.hooks.bridge.grokEnabled")}
+            open={hookSettingsSectionsExpanded.grok}
+            onToggle={() => toggleHookSection("grok")}
+          >
+            <LegacyCliHookBody
+              tool="grok"
+              modules={grokModules}
+              grokIsolationInstalled={grokIsolationInstalled}
+              openPathsSignal={grokPathsSignal}
+              paths={[
+                { label: text("Grok 配置目录", "Grok Config Directory"), value: grok?.configDir ?? grokSelectedDir },
+                { label: text("hooks 目录", "hooks Directory"), value: grok?.hooksDir ?? null },
+                { label: "cli-manager.json", value: grok?.configPath ?? null },
+                { label: "config.toml", value: grok?.featureConfigPath ?? null },
+              ]}
+              dirLabel={text(
+                "Grok 配置目录（可手动粘贴，默认 ~/.grok）",
+                "Grok config directory (manual paste supported, default ~/.grok)",
+              )}
+              dirPlaceholder={text("C:\\Users\\你\\.grok", "C:\\Users\\you\\.grok")}
+              dirValue={grokSelectedDir ?? ""}
+              onDirChange={(value) => setGrokSelectedDir(value || null)}
+              onDirCommit={(raw) => void handleManualGrokDirCommit(raw)}
+              onSelectDir={() => void handleSelectGrokDir()}
+              chooseDirLabel={text("选择 Grok 目录", "Choose Grok Directory")}
+              onInstall={() => void handleGrokInstall()}
+              installLabel={text("安装 Grok Hook", "Install Grok Hook")}
+              installDisabled={anyWorking || grokStatus === "directoryMissing"}
+              working={grokWorking}
+              onUninstall={() => void handleGrokUninstall()}
+              uninstallLabel={text("删除 Grok Hook", "Remove Grok Hook")}
+              uninstallDisabled={anyWorking || grokStatus === "directoryMissing"}
+              onRefresh={() => void refreshStatus()}
+              loading={loading}
+              anyWorking={anyWorking}
+            />
+          </CliHookBridgeCard>
+
+          <AntigravityHookSection
+            open={hookSettingsSectionsExpanded.antigravity}
+            onToggle={() => toggleHookSection("antigravity")}
+            refreshNonce={agyRefreshNonce}
+          />
+        </div>
+      </div>
     </Stack>
   );
 }

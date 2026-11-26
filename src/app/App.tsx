@@ -261,6 +261,7 @@ function getCliHookSourceName(payload: CliHookPayload): string {
   if (payload.source === "pi") return "Pi Agent";
   if (payload.source === "grok") return "Grok Build";
   if (payload.source === "opencode") return "OpenCode";
+  if (payload.source === "antigravity") return "Antigravity CLI";
   return "Claude Code";
 }
 
@@ -889,8 +890,13 @@ function App() {
     if (!IN_TAURI) return;
     const unlistenHook = listen<CliHookPayload>("claude-hook-notification", (event) => {
       const payload = event.payload;
+      // agy 只接受当前窗口确切拥有的 PTY；拒绝/重复事件不能借用外部 Hook 的通知兜底。
+      const agy = payload.source === "antigravity";
+      const agyTabId = agy ? useTerminalStore.getState().handleCliHookEvent(payload) : null;
+      if (agy && !agyTabId) return;
       const decision = resolveCliHookStatus(payload);
       void useReplayStore.getState().recordCliHookEvent(payload);
+      if (agy && (payload.event === "SessionStart" || payload.event === "PreInvocation" || payload.event === "Interrupt")) return;
       const isClaudeToolSubagentEvent =
         payload.source === "claude" &&
         (payload.event === "ToolStart" || payload.event === "ToolStop") &&
@@ -918,7 +924,7 @@ function App() {
         }
         return;
       }
-      const boundTabId = useTerminalStore.getState().handleCliHookEvent(payload);
+      const boundTabId = agyTabId ?? useTerminalStore.getState().handleCliHookEvent(payload);
       // Goal Stop 可能在同一 goal 的多个阶段重复到达；状态仍交给终端状态机，通知只保留一次。
       const tabId = boundTabId ?? payload.tabId?.trim() ?? null;
       if (!tabId || !claimCodexGoalNotification(payload, tabId, decision)) return;

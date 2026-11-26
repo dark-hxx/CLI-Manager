@@ -10,6 +10,7 @@ async fn normalized_mcp_survives_catalog_materialization() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let file = resolve_claude_history_root(&roots)

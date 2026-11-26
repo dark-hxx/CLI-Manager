@@ -1,0 +1,12 @@
+{
+  "id": "settings-theme-hook-redesign-agy-fix",
+  "name": "settings-theme-hook-redesign-agy-fix",
+  "title": "V1.5.2 · 设置页配色对比度、Hook 卡片统一改版与 Antigravity Hook 协议修复",
+  "description": "修复设置页明暗主题 5 级表面与 3 级边框层级对比度，统一 6 个 CLI Hook 桥接卡片交互与视觉，并修复 Antigravity CLI Hook Stop 原因解析、冲突升级锁死及安装脚本兼容性。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "styles, settings, hooks, terminal",
+  "createdAt": "2026-11-25",
+  "branch": "master",
+  "base_branch": "master"
+}

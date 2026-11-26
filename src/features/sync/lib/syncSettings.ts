@@ -99,6 +99,7 @@ export const SETTING_BACKUP_POLICY = {
   kimiHookBridgeEnabled: "excluded",
   piHookBridgeEnabled: "excluded",
   grokHookBridgeEnabled: "excluded",
+  antigravityHookBridgeEnabled: "excluded",
   systemNotificationsEnabled: "preferences",
   systemNotificationSoundPath: "excluded",
   suppressSystemNotificationsWhenFocused: "preferences",

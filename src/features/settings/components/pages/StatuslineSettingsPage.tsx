@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
@@ -57,6 +57,7 @@ import {
   type StatuslineWidget,
 } from "../../lib/statusline";
 import { CodexStatuslineEditor } from "./CodexStatuslineEditor";
+import { AgyStatuslineEditor } from "./AgyStatuslineEditor";
 import { StatuslinePreview, type StatuslinePreviewState } from "./StatuslinePreview";
 import { useSettingsStore, type StatuslineEditorSource } from "../../../../shared/preferences/settingsStore";
 import { SettingsListItem } from "../SettingsListItem";
@@ -1154,7 +1155,9 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
     width: 100,
   });
 
-  const handleSourceChange = (value: string) => {
+  const agyLeaveGuard = useRef<(() => boolean | Promise<boolean>) | null>(null);
+  const handleSourceChange = async (value: string) => {
+    if (source === "agy" && agyLeaveGuard.current && !await agyLeaveGuard.current()) return;
     void updateSetting("statuslineEditorSource", value as StatuslineEditorSource);
   };
 
@@ -1250,7 +1253,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
           <Text size="xs" c="var(--on-surface-variant)">
             {t("settings.statusline.chooseTool")}
           </Text>
-          <Group gap="xs">
+          {source !== "agy" && <Group gap="xs">
             <Button
               size="xs"
               variant="light"
@@ -1269,7 +1272,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
             >
               {t("settings.statuslineProfiles.exportLibrary")}
             </Button>
-          </Group>
+          </Group>}
         </Group>
         <SegmentedControl
           fullWidth
@@ -1304,6 +1307,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
                 </Group>
               ),
             },
+            { value: "agy", label: "Antigravity CLI" },
           ]}
           aria-label={t("settings.statusline.chooseTool")}
         />
@@ -1316,7 +1320,7 @@ export function StatuslineSettingsPage({ searchValue = "" }: { searchValue?: str
           onPreviewStateChange={setClaudePreviewState}
           reloadToken={profileReloadToken}
         />
-      ) : (
+      ) : source === "agy" ? <AgyStatuslineEditor leaveGuard={agyLeaveGuard} /> : (
         <CodexStatuslineEditor
           searchValue={searchValue}
           previewState={codexPreviewState}

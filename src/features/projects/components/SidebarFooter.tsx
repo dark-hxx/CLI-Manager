@@ -77,6 +77,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   const kimiHookBridgeEnabled = useSettingsStore((s) => s.kimiHookBridgeEnabled);
   const piHookBridgeEnabled = useSettingsStore((s) => s.piHookBridgeEnabled);
   const grokHookBridgeEnabled = useSettingsStore((s) => s.grokHookBridgeEnabled);
+  const agyEnabled = useSettingsStore((s) => s.antigravityHookBridgeEnabled);
   const claudeHookAutoRepairKnownInstalled = useSettingsStore((s) => s.claudeHookAutoRepairKnownInstalled);
   const claudeHookAutoRepairNoticeShown = useSettingsStore((s) => s.claudeHookAutoRepairNoticeShown);
   const updateSetting = useSettingsStore((s) => s.update);
@@ -218,7 +219,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
   };
 
   const statusTitle = allBridgesDisabled
-    ? t("sidebar.hook.disabled")
+    ? t(agyEnabled ? "settings.hooks.agy.manage" : "sidebar.hook.disabled")
     : pendingReview
       ? t("settings.hooks.codex.reviewHint")
       : lightStatus === "installed"
@@ -236,7 +237,7 @@ function HookStatusLight({ onOpenSettings }: { onOpenSettings: (tab?: SettingsTa
       onClick={handleClick}
       disabled={loading || working}
       className="ui-focus-ring ui-icon-action ui-sidebar-action-hook shrink-0"
-      data-hook-status={lightStatus}
+      data-hook-status={agyEnabled && allBridgesDisabled ? undefined : lightStatus}
       title={working ? t("sidebar.hook.working") : title}
       aria-label={title}
     >

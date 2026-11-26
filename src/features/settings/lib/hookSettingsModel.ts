@@ -2,6 +2,8 @@ import { pickByLanguage, type AppLanguage, type TranslationKey } from "../../../
 
 export type HookInstallStatus = "directoryMissing" | "notInstalled" | "partialInstalled" | "installed" | "unsupported";
 
+export type HookBridgeBadgeStatus = HookInstallStatus | "conflict" | "pending" | "error";
+
 export type HookTool = "claude" | "codex" | "kimi" | "pi" | "grok";
 
 export type HookModule = "sessionStart" | "running" | "attention" | "stop" | "failure" | "subagent" | "hooksFeature";
@@ -49,6 +51,29 @@ export const STATUS_COLORS: Record<HookInstallStatus, string> = {
   installed: "green",
   unsupported: "red",
 };
+
+export const BADGE_STATUS_LABELS: Record<HookBridgeBadgeStatus, { zh: string; en: string }> = {
+  ...STATUS_LABELS,
+  conflict: { zh: "配置冲突", en: "Config Conflict" },
+  pending: { zh: "检测中…", en: "Checking…" },
+  error: { zh: "读取失败", en: "Read Failed" },
+};
+
+export const BADGE_STATUS_COLORS: Record<HookBridgeBadgeStatus, string> = {
+  ...STATUS_COLORS,
+  conflict: "red",
+  pending: "gray",
+  error: "red",
+};
+
+export function getBadgeStatusLabel(status: HookBridgeBadgeStatus, language: AppLanguage): string {
+  const entry = BADGE_STATUS_LABELS[status];
+  return pickByLanguage(language, entry.zh, entry.en);
+}
+
+export function getBadgeStatusColor(status: HookBridgeBadgeStatus): string {
+  return BADGE_STATUS_COLORS[status];
+}
 
 export function pickText(language: AppLanguage, zh: string, en: string) {
   return pickByLanguage(language, zh, en);

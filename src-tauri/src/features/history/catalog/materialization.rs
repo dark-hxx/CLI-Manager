@@ -10,7 +10,7 @@ pub(super) async fn active_v2_source_instances(
     conn: &mut SqliteConnection,
 ) -> Result<Vec<V2SourceInstance>, String> {
     let rows = sqlx::query(
-        "SELECT id, source_id, settings_hash
+        "SELECT id, source_id, settings_hash, locations_json
          FROM history_source_instances
          WHERE activation_state = 'active'
            AND scope_kind = 'configured'
@@ -23,6 +23,7 @@ pub(super) async fn active_v2_source_instances(
     rows.into_iter()
         .map(|row| {
             Ok(V2SourceInstance {
+                locations_json: row.try_get("locations_json").map_err(|err| err.to_string())?,
                 id: row.try_get("id").map_err(|err| err.to_string())?,
                 source_id: row.try_get("source_id").map_err(|err| err.to_string())?,
                 settings_hash: row
@@ -507,6 +508,7 @@ pub(super) async fn shadow_build_v2_for_instance(
     codex_thread_name_changed: bool,
 ) -> Result<(), String> {
     let started_at = now_millis();
+    if instance.source_id == "antigravity" && !super::antigravity::instance_matches(&instance.locations_json, roots) { return Ok(()); }
     let run_id = format!("shadow-{}-{}-{}", instance.id, generation, started_at);
     let sessions = legacy_sessions_for_v2(conn, roots_key, &instance.source_id).await?;
     let discovered_sessions = sessions.len();

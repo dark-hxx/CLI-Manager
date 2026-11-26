@@ -77,7 +77,13 @@ pub(crate) fn validate_session_file_ref(
 ) -> Result<SessionFileRef, String> {
     let source = source.trim().to_lowercase();
     let project_key = project_key.trim();
-    let base = history_source_base(&source, roots)?
+    let selected = history_source_base(&source, roots)?;
+    if source == "antigravity" {
+        return super::antigravity::exact_ref(&selected, Path::new(file_path)).map(|(file, _)| file)
+            .filter(|file| file.project_key == project_key)
+            .ok_or_else(|| "session_file_outside_history_scope".into());
+    }
+    let base = selected
         .canonicalize()
         .map_err(|_| "history_source_not_found".to_string())?;
     resolve_session_file_ref(
@@ -130,7 +136,7 @@ pub(super) fn history_source_base(source: &str, roots: &HistoryRoots) -> Result<
         "codex" => Ok(resolve_codex_history_root(roots)),
         "gemini" => Ok(resolve_gemini_history_root()),
         "copilot" => Ok(resolve_copilot_history_root()),
-        "antigravity" => Ok(resolve_antigravity_history_root()),
+        "antigravity" => Ok(resolve_antigravity_history_root(roots)),
         "grok" => Ok(resolve_grok_history_root(roots)),
         "kimi" => Ok(kimi::resolve_kimi_history_root(roots)),
         "pi" => Ok(resolve_pi_history_root()),

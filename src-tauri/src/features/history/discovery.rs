@@ -107,7 +107,7 @@ pub(super) fn scan_session_files(
         .unwrap_or(true)
     {
         files.extend(collect_antigravity_session_files(
-            &resolve_antigravity_history_root(),
+            &resolve_antigravity_history_root(roots),
         ));
     }
     if source_filter.as_ref().map(|v| v == "grok").unwrap_or(true) {

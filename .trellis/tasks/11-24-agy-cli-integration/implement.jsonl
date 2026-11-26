@@ -1,0 +1,4 @@
+{"file":".trellis/spec/frontend/startup-command-text-contracts.md","reason":"Preserve shell quoting and cwd for launch and exact resume."}
+{"file":".trellis/spec/backend/cli-hook-contracts.md","reason":"Validate source, owner, event and Tab independently."}
+{"file":".trellis/spec/backend/statusline-contracts.md","reason":"Isolate profiles, ownership and local config writes."}
+{"file":".trellis/spec/backend/history-stats-contracts.md","reason":"Distinguish per-tab statistics from offline aggregation."}

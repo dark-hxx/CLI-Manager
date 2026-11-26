@@ -1026,6 +1026,7 @@ export interface HistoryStatsHourlyActivityItem {
 }
 
 export interface HistoryStatsPayload {
+  unmeasured_sessions?: number;
   range_days: number;
   total_sessions: number;
   total_messages: number;

@@ -2,11 +2,11 @@
 
 ## 1. Scope / Trigger
 
-- Applies to the Settings > Statusline designer, Claude widget editor, Codex native item editor, and terminal-style preview.
+- Applies to the Settings > Statusline designer, Claude widget editor, Codex native item editor, Antigravity CLI editor, and terminal-style preview.
 
 ## 2. Signatures
 
-    type StatuslineEditorSource = "claude" | "codex";
+    type StatuslineEditorSource = "claude" | "codex" | "agy";
     interface StatuslinePreviewState { themeId: string; width: number }
 
 `StatuslinePreview` accepts rendered text, preview state, change callback, empty text and aria label.
@@ -20,7 +20,8 @@
 - Claude/Codex statusline sorting must use the project's `@dnd-kit` PointerSensor pattern, not HTML5 `draggable`; Tauri `dragDropEnabled` intercepts native WebView drag/drop on Windows. Claude dragging must accept empty line containers and show the current target line before drop.
 - Tool switching must not copy or normalize one tool's configuration into the other.
 - Claude and Codex keep independent named profile lists. Switching one tool's active profile must not affect the other tool.
-- Profile save and switch apply immediately. Switching away from a dirty draft requires save/discard/cancel handling; the active profile cannot be deleted.
+- agy has a separate editor and per-environment named layouts. Saving a layout does not install a command. Viewing, previewing and choosing a draft do not change the external CLI settings; only explicit Apply or Restore can do so. Do not route agy through the Claude/Codex profile import/export commands. See the [backend statusline contract](../backend/statusline-contracts.md).
+- For Claude and Codex, profile save and switch apply immediately. Switching away from a dirty draft requires save/discard/cancel handling; the active profile cannot be deleted.
 - On first adoption, the editor displays the parsed actual configuration instead of replacing it with defaults. Valid external drift is offered as a new profile and never silently overwrites the active snapshot.
 - Whole-library import/export is shared at page level. Import conflicts are resolved per profile before a single commit, and import never auto-switches the active profile.
 - Claude preview consumes backend ANSI output; Codex preview consumes ordered official placeholder values.

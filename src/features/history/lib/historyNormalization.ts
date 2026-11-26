@@ -119,6 +119,9 @@ export function normalizeSessionRef(raw: unknown): HistorySessionRef | null {
 export function normalizeSummary(raw: unknown): HistorySessionSummary {
   const rec = (raw ?? {}) as Record<string, unknown>;
   const remoteIdentityRaw = rec.remote_identity ?? rec.remoteIdentity;
+  const rawRef = rec.session_ref ?? rec.sessionRef;
+  const sessionRef = normalizeSessionRef(rawRef);
+  const invalidAgyRef = rec.source === "antigravity" && rawRef != null && sessionRef === null;
   const fileSize = rec.file_size ?? rec.fileSize;
   return {
     session_id: asString(rec.session_id ?? rec.sessionId),
@@ -133,14 +136,14 @@ export function normalizeSummary(raw: unknown): HistorySessionSummary {
     updated_at: asNumber(rec.updated_at ?? rec.updatedAt),
     message_count: asNumber(rec.message_count ?? rec.messageCount),
     branch: asString(rec.branch || "") || null,
-    session_ref: normalizeSessionRef(rec.session_ref ?? rec.sessionRef),
+    session_ref: sessionRef,
     materialization_level: asString(rec.materialization_level ?? rec.materializationLevel) || undefined,
     freshness_state: asString(rec.freshness_state ?? rec.freshnessState) || undefined,
     as_of: rec.as_of == null && rec.asOf == null ? null : asNumber(rec.as_of ?? rec.asOf),
     remote_identity: remoteIdentityRaw && typeof remoteIdentityRaw === "object"
       ? remoteIdentityRaw as HistorySessionSummary["remote_identity"]
       : null,
-    read_only: rec.read_only === true || rec.readOnly === true,
+    read_only: rec.read_only === true || rec.readOnly === true || invalidAgyRef,
     usage: normalizeSessionUsage(rec.usage),
   };
 }
@@ -533,6 +536,7 @@ export function normalizeStats(raw: unknown): HistoryStatsPayload {
     : [];
   return {
     range_days: asNumber(rec.range_days ?? rec.rangeDays),
+    unmeasured_sessions: asNumber(rec.unmeasured_sessions ?? rec.unmeasuredSessions),
     total_sessions: asNumber(rec.total_sessions ?? rec.totalSessions),
     total_messages: asNumber(rec.total_messages ?? rec.totalMessages),
     total_input_tokens: asNumber(rec.total_input_tokens ?? rec.totalInputTokens),
@@ -647,8 +651,8 @@ export function normalizeRequestLogStats(raw: unknown): RequestLogStatsPayload {
 }
 
 export function getHistoryPathCacheKey(): string {
-  const { claudeConfigDir, codexConfigDir, grokSessionRoot, kimiConfigDir } = getHistoryPathArgsSync();
-  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}|${grokSessionRoot ?? "__default__"}|${kimiConfigDir ?? "__default__"}`;
+  const { claudeConfigDir, codexConfigDir, grokSessionRoot, kimiConfigDir, antigravityConfigDir } = getHistoryPathArgsSync();
+  return `${claudeConfigDir ?? "__default__"}|${codexConfigDir ?? "__default__"}|${grokSessionRoot ?? "__default__"}|${kimiConfigDir ?? "__default__"}|${antigravityConfigDir ?? "__default__"}`;
 }
 
 export function makeSessionKey(

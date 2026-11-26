@@ -63,15 +63,14 @@ interface SshPathCheckResult {
   gitRepository: boolean;
 }
 
-const CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "grok", "dsh-tui"];
+const CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "agy", "grok", "dsh-tui"];
 const HIDDEN_CLI_TOOLS = new Set(["goose", "amp", "aider", "crush"]);
 // 未置顶工具维持统一描述表的原顺序，新增工具也会自动加入。
 const CLI_TOOL_OPTIONS = CLI_TOOL_DESCRIPTORS
-  .map((tool) => tool.command)
-  .filter((command) => !HIDDEN_CLI_TOOLS.has(command))
+  .filter((tool) => !HIDDEN_CLI_TOOLS.has(tool.command))
   .sort((left, right) => {
-    const leftIndex = CLI_TOOL_PRIORITY.indexOf(left);
-    const rightIndex = CLI_TOOL_PRIORITY.indexOf(right);
+    const leftIndex = CLI_TOOL_PRIORITY.indexOf(left.command);
+    const rightIndex = CLI_TOOL_PRIORITY.indexOf(right.command);
     return (leftIndex < 0 ? CLI_TOOL_PRIORITY.length : leftIndex)
       - (rightIndex < 0 ? CLI_TOOL_PRIORITY.length : rightIndex);
   });
@@ -1206,13 +1205,18 @@ function CliToolCombobox({
     (tool) => tool.command === normalizedValue || tool.id === normalizedValue
       || (tool.id === "deepseek-harness" && isDeepSeekTuiTool(normalizedValue))
   );
-  const resolveOptionIndex = useCallback((nextValue: string) => {
-    const normalized = nextValue.trim().toLowerCase();
-    const exactMatch = CLI_TOOL_OPTIONS.findIndex((tool) => tool === normalized);
-    if (exactMatch >= 0) return exactMatch;
-    const prefixMatch = CLI_TOOL_OPTIONS.findIndex((tool) => tool.startsWith(normalized));
-    return prefixMatch >= 0 ? prefixMatch : 0;
-  }, []);
+  // 展开已有配置时可浏览全部预设；只有编辑输入才筛选，不改变自定义命令原文。
+  const [filtering, setFiltering] = useState(false);
+  const visibleOptions = filtering && normalizedValue
+    ? CLI_TOOL_OPTIONS.filter(({ command, label }) =>
+      command.toLowerCase().includes(normalizedValue) || label.toLowerCase().includes(normalizedValue))
+    : CLI_TOOL_OPTIONS;
+  const activeTool = visibleOptions[activeIndex]?.command;
+  const openAll = () => {
+    setFiltering(false);
+    setActiveIndex(Math.max(0, CLI_TOOL_OPTIONS.findIndex(({ command }) => command === normalizedValue)));
+    onOpenChange(true);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -1230,13 +1234,14 @@ function CliToolCombobox({
   }, [onOpenChange, open]);
 
   useEffect(() => {
-    setActiveIndex(resolveOptionIndex(value));
-  }, [resolveOptionIndex, value]);
+    if (open && activeTool) {
+      document.getElementById(`${listboxId}-option-${activeTool}`)?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeTool, listboxId, open]);
 
   const selectTool = (tool: string) => {
     onChange(tool);
     onOpenChange(false);
-    setActiveIndex(CLI_TOOL_OPTIONS.indexOf(tool));
     inputRef.current?.focus();
   };
 
@@ -1247,7 +1252,7 @@ function CliToolCombobox({
     }
   };
 
-  const activeOptionId = open ? `${listboxId}-option-${CLI_TOOL_OPTIONS[activeIndex]}` : undefined;
+  const activeOptionId = open && activeTool ? `${listboxId}-option-${activeTool}` : undefined;
 
   return (
     <div ref={rootRef} className="relative" onBlur={handleBlur}>
@@ -1266,45 +1271,32 @@ function CliToolCombobox({
         onChange={(e) => {
           const nextValue = e.target.value;
           onChange(nextValue);
-          setActiveIndex(resolveOptionIndex(nextValue));
+          setFiltering(true);
+          setActiveIndex(0);
           onOpenChange(true);
         }}
-        onClick={() => {
-          setActiveIndex(resolveOptionIndex(value));
-          onOpenChange(true);
-        }}
+        onClick={() => { if (!open) openAll(); }}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
+          if (e.nativeEvent.isComposing) return;
+          const count = visibleOptions.length;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            if (!open) {
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
+            if (!open) openAll();
+            else if (count) {
+              const step = e.key === "ArrowDown" ? 1 : -1;
+              setActiveIndex((current) => (current + step + count) % count);
             }
-            setActiveIndex((current) => (current + 1) % CLI_TOOL_OPTIONS.length);
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            if (!open) {
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
-            }
-            setActiveIndex((current) => (current - 1 + CLI_TOOL_OPTIONS.length) % CLI_TOOL_OPTIONS.length);
           } else if (e.key === "Enter") {
-            if (!open) {
-              e.preventDefault();
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
-            }
             e.preventDefault();
-            selectTool(CLI_TOOL_OPTIONS[activeIndex]);
-          } else if (e.key === "Home" && open) {
+            if (!open) openAll();
+            else if (activeTool) selectTool(activeTool);
+            else onOpenChange(false);
+          } else if (e.key === "Home" && open && count) {
             e.preventDefault();
             setActiveIndex(0);
-          } else if (e.key === "End" && open) {
+          } else if (e.key === "End" && open && count) {
             e.preventDefault();
-            setActiveIndex(CLI_TOOL_OPTIONS.length - 1);
+            setActiveIndex(count - 1);
           } else if (e.key === "Escape") {
             if (open) {
               e.preventDefault();
@@ -1332,8 +1324,8 @@ function CliToolCombobox({
         aria-hidden="true"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
-          setActiveIndex(resolveOptionIndex(value));
-          onOpenChange(!open);
+          if (open) onOpenChange(false);
+          else openAll();
           inputRef.current?.focus();
         }}
         className="ui-focus-ring absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-text-muted outline-none transition-colors hover:bg-surface-container-highest hover:text-text-primary"
@@ -1351,8 +1343,13 @@ function CliToolCombobox({
           role="listbox"
           className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"
         >
-          {CLI_TOOL_OPTIONS.map((tool, index) => {
-            const descriptor = CLI_TOOL_DESCRIPTORS.find((item) => item.command === tool);
+          {!visibleOptions.length && (
+            <div role="option" aria-disabled="true" aria-selected="false" className="px-3 py-2 text-text-muted">
+              {t("configModal.cliToolNoMatches")}
+            </div>
+          )}
+          {visibleOptions.map((descriptor, index) => {
+            const tool = descriptor.command;
             const selected = normalizedValue === tool;
             return (
               <button
@@ -1369,13 +1366,11 @@ function CliToolCombobox({
                 className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-2 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
               >
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  {descriptor
-                    ? <CliToolIcon icon={descriptor.icon} size={14} />
-                    : <VendorIcon vendor={inferVendor(tool)} size={14} />}
+                  <CliToolIcon icon={descriptor.icon} size={14} />
                 </span>
                 <span className="flex-1 truncate text-left">
                   <span className="font-mono">{tool}</span>
-                  {descriptor?.label ? <span className="ml-2 text-text-muted">{descriptor.label}</span> : null}
+                  <span className="ml-2 text-text-muted">{descriptor.label}</span>
                 </span>
                 {selected && <Check size={12} className="shrink-0" />}
               </button>

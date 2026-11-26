@@ -54,6 +54,10 @@ impl DispatcherHandle {
 
     // 非阻塞尝试入队，队列满或已断开时记录警告并丢弃任务，不重试。
     pub fn try_enqueue(&self, job: HookNotificationJob) {
+        // agy 只观察本地 PTY；不让后台 daemon 绕过前端即时开关/绑定而发第三方通知。
+        if job.source == "antigravity" {
+            return;
+        }
         match self.sender.try_send(job) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
@@ -463,6 +467,24 @@ fn event_summary(event: &str, source: &str, project: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn antigravity_never_enters_third_party_queue_while_other_sources_still_do() {
+        let (sender, receiver) = sync_channel(1);
+        let dispatcher = DispatcherHandle { sender };
+        let mut job = HookNotificationJob {
+            source: "antigravity".into(), event: "Stop".into(), session_id: None,
+            goal_id: None, goal_status: None, cwd: None, project: None, timestamp: None,
+        };
+        for event in ["SessionStart", "PreInvocation", "Stop", "StopFailure"] {
+            job.event = event.into();
+            dispatcher.try_enqueue(job.clone());
+            assert!(matches!(receiver.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty)));
+        }
+        job.source = "claude".into();
+        dispatcher.try_enqueue(job);
+        assert_eq!(receiver.try_recv().unwrap().source, "claude");
+    }
 
     #[test]
     fn pi_stop_uses_run_ended_text_and_interrupt_stays_silent() {

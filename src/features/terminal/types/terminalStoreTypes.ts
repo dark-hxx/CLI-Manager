@@ -18,11 +18,12 @@ import type { getCurrentTerminalColors } from "../lib/terminalLaunch";
 
 export type SessionStatus = "running" | "exited" | "error";
 
-export type CliHookSource = "claude" | "codex" | "kimi" | "pi" | "grok" | "opencode";
+export type CliHookSource = "claude" | "codex" | "kimi" | "pi" | "grok" | "opencode" | "antigravity";
 
 export type CliHookEventName =
   | "SessionStart"
   | "UserPromptSubmit"
+  | "PreInvocation"
   | "Notification"
   | "Stop"
   | "StopFailure"
@@ -68,6 +69,15 @@ export interface DaemonSessionMeta extends DaemonSessionState {
 
 export type TabStatusSourceName = "hook" | "shell";
 
+export interface AntigravityBinding {
+  id: string;
+  retired: readonly string[];
+  phase: "bound" | "running" | "done" | "failed" | "canceled";
+  at: number;
+  /** chrono timestamps can separate two callbacks inside one JS millisecond. */
+  subMs: string;
+}
+
 export interface TabStatusSources {
   hook?: TabNotificationState;
   shell?: TabNotificationState;
@@ -75,6 +85,8 @@ export interface TabStatusSources {
   shellUpdatedAt?: string;
   hookGoalKey?: string;
   hookGoalStatus?: CodexGoalStatus;
+  /** Ephemeral fork/timestamp guard; removed with this tab’s status entry. */
+  antigravityBinding?: AntigravityBinding;
 }
 
 export interface TabStatusDetails {

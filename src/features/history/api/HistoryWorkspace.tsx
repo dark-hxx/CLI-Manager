@@ -1,5 +1,5 @@
 import { historyPathsMatch, resolveHistoryResumeEnvironment } from "../lib/historyResumeEnvironment";
-import { getOsPlatform } from "../../../shared/platform/shell";
+import { defaultShellForOs, getOsPlatform } from "../../../shared/platform/shell";
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { toast } from "sonner";
@@ -21,7 +21,8 @@ import {
   matchesHistoryProjectSource,
   selectLocalHistoryResumeProject,
 } from "../lib/historyResumeProject";
-import { buildHistoryResumeCommand } from "./historyResumeCommand";
+import { buildHistoryResumeCommand, hasResumeProvenance, verifyAgyHistoryTarget } from "./historyResumeCommand";
+import { normalizeSummary } from "../lib/historyNormalization";
 import { sameHistorySessionIdentity } from "../lib/historySessionIdentity";
 import {
   buildVisibleHistoryMessageEntries,
@@ -938,6 +939,10 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     worktree: WorktreeRecord | null,
     unscopedShell?: string
   ) => {
+    if (!hasResumeProvenance(session)) {
+      toast.error(t("history.resumeProject.invalidSession"));
+      return;
+    }
     const isRemote = session.session_ref?.transportKind === "ssh";
     if (isRemote) {
       const context = remoteContext;
@@ -1019,10 +1024,25 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     }
 
     try {
-      const requestedShell = launchProject ? launchProject.shell : unscopedShell;
-      const launch = resolveHistoryResumeEnvironment(session, launchProject, worktree, requestedShell, await getOsPlatform());
+      const os = await getOsPlatform();
+      const requestedShell = (launchProject ? launchProject.shell : unscopedShell)
+        || (session.source === "antigravity" ? defaultShellForOs(os) : undefined);
+      const launch = resolveHistoryResumeEnvironment(session, launchProject, worktree, requestedShell, os);
+      if (session.source === "antigravity") {
+        try {
+          await verifyAgyHistoryTarget(session, launchProject, worktree?.path, launch,
+            async () => normalizeSummary(await invoke("history_get_session", {
+              ...(await getHistoryPathArgs()), source: session.source, filePath: session.file_path,
+              projectKey: session.project_key, fresh: true,
+            })),
+            async (path) => (await invoke("file_get_path_kind", { path })) === "directory");
+        } catch {
+          toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.agyTargetUnavailable") });
+          return;
+        }
+      }
       const cwd = launch.cwd;
-      const shell = launch.shell && launch.shell !== "powershell" ? launch.shell : undefined;
+      const shell = session.source === "antigravity" ? launch.shell : launch.shell && launch.shell !== "powershell" ? launch.shell : undefined;
       const env = { ...(launchProject ? parseProjectEnvVars(launchProject) : {}), ...launch.env };
       if (launch.shell === "wsl") {
         const forwarding = new Set((env.WSLENV ?? "").split(":").filter(Boolean));
@@ -1051,7 +1071,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
   }, [closeHistory, createSession, remoteContext, setActiveTerminalSession, t, terminalSessions]);
 
   const requestResume = useCallback((session: HistorySessionView | HistorySessionDetail, title: string) => {
-    if (HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(session.source)?.capabilities.resume !== "supported") {
+    if (!hasResumeProvenance(session) || HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(session.source)?.capabilities.resume !== "supported") {
       toast.error(t("history.resumeProject.unsupportedSource"));
       return;
     }
@@ -1093,6 +1113,17 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
     const cwdProjects = findLocalHistoryCwdProjects(session, historyProjects);
     const candidates = selection.candidates;
 
+    if (session.source === "antigravity" && !selection.worktree) {
+      // A project-name or unrelated-project fallback is not evidence of this workspace.
+      const matching = candidates.filter((p) => historyPathsMatch(session, p));
+      const selected = matching.find((p) => p.id === selection.project?.id);
+      if (selected || matching.length <= 1) {
+        void resumeSession(session, title, selected ?? matching[0] ?? null, null);
+      } else {
+        setResumeIntent({ session, title, worktree: null, projects: matching, allowNewWindow: false, remote: false });
+      }
+      return;
+    }
     if (selection.project) {
       void resumeSession(session, title, selection.project, selection.worktree);
       return;
@@ -1114,7 +1145,7 @@ export function HistoryWorkspace({ active = true, onOpenSettings }: HistoryWorks
       toast.error(t("history.toast.resumeTerminalFailed"), { description: t("history.resumeProject.detailLoading") });
       return;
     }
-    requestResume(activeSession, activeView.displayTitle ?? activeSession.title);
+    requestResume(activeSession.source === "antigravity" ? activeView : activeSession, activeView.displayTitle ?? activeSession.title);
   }, [activeSession, activeView, requestResume, t]);
 
   const openByHit = async (hit: HistorySearchHit) => {

@@ -19,6 +19,9 @@ use uuid::Uuid;
 
 use crate::codex_goal::lookup_stop_goal;
 
+#[path = "antigravity_client.rs"]
+mod antigravity;
+
 const NOTIFY_ATTEMPTS: usize = 2;
 const NOTIFY_RETRY_DELAY: Duration = Duration::from_millis(80);
 const HOOK_STDIN_MAX_BYTES: u64 = 64 * 1024;
@@ -27,6 +30,9 @@ const HOOK_STDIN_MAX_BYTES: u64 = 64 * 1024;
 /// 不依赖任何 Tauri/WebView 状态，冷启动开销极小。
 // 尝试投递 Hook，失败仅记录脱敏诊断，并始终以成功退出隐藏进程。
 pub fn run_and_exit(source: &str, event: &str) -> ! {
+    if source == "antigravity" {
+        antigravity::run(event);
+    }
     if let Err(err) = try_notify(source, event) {
         write_failure_diagnostic(source, event, err.code());
     }

@@ -18,7 +18,12 @@ function transpile(sourceUrl, outputName, replacements = {}) {
     },
     fileName: outputName.replace(/\.mjs$/, ".ts"),
   }).outputText;
-  for (const [from, to] of Object.entries(replacements)) {
+  for (const [from, to] of Object.entries({
+    "./agyStartupCommand": "./agyStartupCommand.mjs", "../../projects/api/agyStartupCommand": "./agyStartupCommand.mjs",
+    "../../../shared/lib/cliTools": "./cliTools.mjs", "../../../shared/lib/wslPaths": "./wslPaths.mjs",
+    "../lib/historyResumeEnvironment": "./historyResumeEnvironment.mjs", "./agySessionLocation": "./agySessionLocation.mjs",
+    "../../projects/api/agySessionLocation": "./agySessionLocation.mjs", ...replacements,
+  })) {
     output = output.replaceAll(`from "${from}"`, `from "${to}"`);
   }
   const outputPath = join(tempDir, outputName);
@@ -31,19 +36,29 @@ writeFileSync(
   "export const normalizeShellKey = (value) => value;\n",
   "utf8",
 );
-writeFileSync(
-  join(tempDir, "terminalStore.mjs"),
-  "export const detectCliResumeKind = () => null;\n",
-  "utf8",
-);
-writeFileSync(
-  join(tempDir, "cliTools.mjs"),
-  `export const resolveCliToolHistorySourceId = (tool) => {
-    const value = tool?.trim().toLowerCase();
-    return ["claude", "codex", "grok", "kimi", "pi", "opencode"].includes(value) ? value : null;
-  };\n`,
-  "utf8",
-);
+const launchSource = ts.createSourceFile("terminalLaunch.ts", readFileSync(
+  new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8",
+), ts.ScriptTarget.Latest, true);
+function launchCodeFor(...names) {
+  const nodes = launchSource.statements.filter((node) => ts.isFunctionDeclaration(node) && names.includes(node.name?.text));
+  assert.equal(nodes.length, names.length);
+  return ts.transpileModule(nodes.map((node) => node.getText(launchSource).replace(/^export /, "")).join("\n"), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+}
+writeFileSync(join(tempDir, "terminalStore.mjs"), `
+import { isAgyCommand } from './cliTools.mjs';
+import { isDeepSeekTuiCommand, isDeepSeekTuiTool } from './deepseekTui.mjs';
+import { isExactCodexProject, getProviderSwitchAppType } from './providerSwitching.mjs';
+import { buildAgyResumeCommand } from './agyStartupCommand.mjs';
+${launchSource.statements.filter((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((item) => item.name.getText(launchSource).endsWith('_COMMAND_PATTERN'))).map((node) => node.getText(launchSource)).join('\n')}
+${launchCodeFor('detectCliResumeKind', 'buildCliResumeStartupCommand')}
+export { detectCliResumeKind, buildCliResumeStartupCommand };\n`, 'utf8');
+transpile(new URL("../src/shared/lib/cliTools.ts", import.meta.url), "cliTools.mjs", { "./deepseekTui": "./deepseekTui.mjs" });
+transpile(new URL("../src/features/projects/api/agyStartupCommand.ts", import.meta.url), "agyStartupCommand.mjs", { "../../../shared/lib/cliTools": "./cliTools.mjs" });
+transpile(new URL("../src/shared/lib/wslPaths.ts", import.meta.url), "wslPaths.mjs");
+transpile(new URL("../src/features/projects/api/agySessionLocation.ts", import.meta.url), "agySessionLocation.mjs");
+transpile(new URL("../src/features/history/lib/historyResumeEnvironment.ts", import.meta.url), "historyResumeEnvironment.mjs", { "../../../shared/lib/wslPaths": "./wslPaths.mjs" });
 
 transpile(new URL("../src/features/history/api/resumeCliArgs.ts", import.meta.url), "resumeCliArgs.mjs");
 transpile(new URL("../src/features/providers/api/providerSwitching.ts", import.meta.url), "providerSwitching.mjs");
@@ -99,7 +114,9 @@ const {
   isDirectCodexStartupCommand,
   withGrokModelOverride,
 } = await import(pathToFileURL(projectStartupPath).href);
-const { buildResumeCliArgs } = await import(pathToFileURL(saveSessionPath).href);
+const { buildResumeCliArgs, buildSavedSessionProjectInput, canSaveSessionToSidebar } = await import(pathToFileURL(saveSessionPath).href);
+const { detectCliResumeKind, buildCliResumeStartupCommand } = await import(pathToFileURL(join(tempDir, 'terminalStore.mjs')).href);
+const { resolveProjectStartupCommand } = await import(pathToFileURL(projectStartupPath).href);
 const { buildHistoryResumeCommand, stripPiResumeCliArgs, stripKimiResumeCliArgs } = await import(
   pathToFileURL(historyResumeCommandPath).href
 );
@@ -112,6 +129,36 @@ const { HISTORY_SOURCE_DESCRIPTOR_BY_ID } = await import(pathToFileURL(historySo
 const OLD_ID = "019f2c9e-ed25-73e1-a883-86d578fc9e08";
 const NEW_ID = "019f5e8b-2d11-76d1-89b4-a0c0ff20d111";
 const OPENCODE_ID = "ses_abc123";
+
+test('agy sidebar roundtrip retains recorded cwd and exact ID, never carries old selectors or one-shot startup', () => {
+  const project = { cli_tool: '"C:\\Tools A\\agy.exe" --continue', shell: 'powershell', cli_args: `--model m --conversation ${OLD_ID} -p once`, startup_cmd: '' };
+  const session = { cliSessionId: NEW_ID, cwd: 'C:\\Work Tree', shell: 'powershell', environmentType: 'local' };
+  assert.equal(canSaveSessionToSidebar(session, project), true);
+  const { ok, input } = buildSavedSessionProjectInput({ session, project, name: 'A' });
+  assert.equal(ok, true); assert.equal(input.path, session.cwd);
+  assert.equal(resolveProjectStartupCommand(input), `& "C:\\Tools A\\agy.exe" --conversation ${NEW_ID} --model m`);
+  for (const patch of [{ cliSessionId: '' }, { cliSessionId: '00000000-0000-0000-0000-000000000000' }, {cliSessionId: NEW_ID + '\n'}, { cwd: undefined }, { sshHostId: 'remote' }]) {
+    assert.equal(canSaveSessionToSidebar({ ...session, ...patch }, project), false);
+    assert.equal(buildSavedSessionProjectInput({ session: { ...session, ...patch }, project, name: 'invalid' }).ok, false);
+  }
+  const custom = { ...project, startup_cmd: `agy --continue -p once`, cli_tool: 'gemini' };
+  assert.equal(buildSavedSessionProjectInput({ session, project: custom, name: 'A' }).input.startup_cmd, `agy --conversation ${NEW_ID}`);
+  assert.equal(detectCliResumeKind('echo agy', project), null);
+  assert.equal(detectCliResumeKind(`agy -p claude`, { cli_tool: 'codex' }), 'antigravity');
+  assert.equal(buildCliResumeStartupCommand('antigravity', NEW_ID, custom), `agy --conversation ${NEW_ID}`);
+  assert.throws(() => buildCliResumeStartupCommand('antigravity', '', project));
+});
+
+test('agy Hook opt-in alone controls reserved env on native/WSL even with another bridge enabled', async () => {
+  for (const [enabled, other] of [[false, false], [false, true], [true, false]]) {
+    const mocks = { useSettingsStore: {getState: () => ({ antigravityHookBridgeEnabled: enabled, codexHookBridgeEnabled: other })},
+      SHELL_RUNTIME_MONITORING_ENV: 'MONITOR', isShellRuntimeMonitoringEnabled: () => false,
+      invoke: async () => ({ status: 'notInstalled' }) };
+    const { env, decide } = new Function(...Object.keys(mocks), `${launchCodeFor('buildPtyEnvVars', 'shouldEnableHookEnv')}; return {env:buildPtyEnvVars, decide:shouldEnableHookEnv};`)(...Object.values(mocks));
+    for (const shell of ['pwsh', 'zsh', 'wsl']) assert.deepEqual(env({ cli_manager_agy_hook_enabled: 'stale', CLI_MANAGER_AGY_HOOK_ENABLED: 'stale', KEEP: 'yes' }, shell), { KEEP: 'yes', CLI_MANAGER_AGY_HOOK_ENABLED: enabled ? '1' : '0' });
+    assert.equal(await decide(), enabled || other);
+  }
+});
 
 test("extracts an explicit Codex resume session id", () => {
   const cases = [
@@ -407,15 +454,7 @@ const {
   isDeepSeekTuiTool, isDeepSeekTuiCommand, isDeepSeekTuiLauncherCommand,
   getDeepSeekTuiCommandSourceRoot,
 } = await import(pathToFileURL(join(tempDir, "deepseekTui.mjs")).href);
-const launchSource = ts.createSourceFile("terminalLaunch.ts", readFileSync(
-  new URL("../src/features/terminal/lib/terminalLaunch.ts", import.meta.url), "utf8",
-), ts.ScriptTarget.Latest, true);
-const launchFunction = launchSource.statements.find((node) =>
-  ts.isFunctionDeclaration(node) && node.name?.text === "resolvePtyLaunch");
-assert.ok(launchFunction);
-const launchCode = ts.transpileModule(launchFunction.getText(launchSource).replace(/^export /, ""), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022 },
-}).outputText;
+const launchCode = launchCodeFor("resolvePtyLaunch");
 
 test("pending Codex trust keeps bridge env without trusting hooks or writing config", async () => {
   const fn = launchSource.statements.find((node) =>
@@ -468,6 +507,7 @@ async function resolveProviderTestLaunch({ profile = "cli-manager-provider", com
     prepareProjectExtensionLaunch: async () => extensions,
     releaseProjectExtensionSnapshot: () => {}, releaseProviderSnapshot: () => {},
     withCodexConfigOverrides, withCodexProfile, isDirectCodexStartupCommand,
+    isAgyCommand: (await import(pathToFileURL(join(tempDir, "cliTools.mjs")).href)).isAgyCommand,
     isDeepSeekTuiTool, isDeepSeekTuiCommand, isDeepSeekTuiLauncherCommand,
     getDeepSeekTuiCommandSourceRoot,
     prepareStartupCommandForPty: (value) => value, normalizeShellKey: (value) => value,

@@ -441,6 +441,8 @@ pub struct HistoryStatsHourlyActivityItem {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HistoryStatsResponse {
+    /// Number of distinct sessions with disk activity but no measured usage in this scope.
+    pub unmeasured_sessions: usize,
     pub range_days: usize,
     pub total_sessions: usize,
     pub total_messages: usize,

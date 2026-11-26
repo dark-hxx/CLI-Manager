@@ -1059,6 +1059,27 @@ fn session_id_validation() {
 }
 
 #[test]
+// agy 只广播给在线 UI；重连时既没有旧事件也不从通用无身份 task_status 推断完成。
+fn antigravity_disconnected_observations_do_not_replay_or_update_legacy_task_status() {
+    let host = DaemonHost::new();
+    let tab = "39c6b972-c888-42c0-a739-cbabc32969ac";
+    host.reserve_session_with_launch(tab, None, None, None).unwrap();
+    for event in ["SessionStart", "PreInvocation", "Stop", "StopFailure"] {
+        let payload = serde_json::json!({"source":"antigravity", "event":event, "tabId":tab});
+        host.update_task_status_from_hook(&payload);
+        host.broadcast_hook(payload);
+    }
+    let session = host.get_session(tab).unwrap();
+    assert!(session.lock().unwrap().meta.task_status.is_none());
+    assert!(host.hook_cache.lock().unwrap().is_empty());
+    let old_source = serde_json::json!({"source":"claude", "event":"Stop", "tabId":tab});
+    host.update_task_status_from_hook(&old_source);
+    host.broadcast_hook(old_source);
+    assert_eq!(session.lock().unwrap().meta.task_status.as_deref(), Some("done"));
+    assert_eq!(host.hook_cache.lock().unwrap().len(), 1);
+}
+
+#[test]
 // 验证提示、审批、停止及失败事件的任务状态映射，SessionStart 不产生状态。
 fn hook_events_map_to_task_status() {
     assert_eq!(

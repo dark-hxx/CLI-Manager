@@ -480,7 +480,7 @@ CLI-Manager 提供两条成熟的并行工作路径：在终端工作区内自�
 
 ### 方式一：下载可执行版本
 
-前往 [GitHub Releases](https://github.com/dark-hxx/CLI-Manager/releases/latest) 获取最新正式版。V1.5.2 的更新内容见 [变更日志](CHANGELOG.md#v152---2026-11-24)，包括终端恢复与 macOS 粘贴修复、实时统计自动刷新，以及项目侧栏和模型价格设置的改进。
+前往 [GitHub Releases](https://github.com/dark-hxx/CLI-Manager/releases/latest) 获取最新正式版。已发布版本和正在开发的 V1.5.3（Antigravity CLI 集成）请分别参阅[变更日志](CHANGELOG.md)。
 
 > 目前主要提供 Windows 构建产物；macOS / Linux 用户建议从源码构建（见下方）。
 

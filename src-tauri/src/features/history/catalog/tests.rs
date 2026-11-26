@@ -183,6 +183,7 @@ fn catalog_scope_rejects_native_codex_entry_for_wsl_roots() {
         )),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let wsl_file =
         r"\\wsl.localhost\Ubuntu-22.04\home\dministrator\.codex\sessions\2026\07\14\rollout.jsonl";
@@ -226,6 +227,7 @@ fn collect_catalog_files_includes_kimi_main_wire_and_skips_subagents() {
         codex_config_dir: Some(temp_dir.path().join("missing-codex")),
         grok_session_root: Some(temp_dir.path().join("missing-grok")),
         kimi_config_dir: Some(home),
+        antigravity_config_dir: Some(temp_dir.path().join("missing-agy")),
     };
     let kimi_files: Vec<_> = collect_catalog_files(&roots)
         .into_iter()
@@ -253,6 +255,7 @@ fn catalog_scope_accepts_canonical_native_entry() {
         codex_config_dir: Some(codex_dir),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
 
     assert!(catalog_path_within_roots(
@@ -972,6 +975,7 @@ async fn list_sessions_merges_v2_first_and_legacy_gaps() {
         codex_config_dir: None,
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let v2_file = claude_root
@@ -1060,6 +1064,7 @@ async fn search_sessions_merges_v2_first_and_legacy_gaps() {
         codex_config_dir: None,
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let v2_file = claude_root
@@ -1159,6 +1164,7 @@ async fn stats_session_facts_reads_all_active_v2_sources() {
         codex_config_dir: None,
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let file = claude_root
         .join("projects")
@@ -1339,6 +1345,7 @@ async fn get_session_detail_from_v2_rehydrates_messages_tools_and_changes() {
         codex_config_dir: None,
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let file = claude_root
         .join("projects")
@@ -1472,6 +1479,7 @@ async fn shadow_build_v2_populates_sessions_messages_and_sync_run() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let file = resolve_claude_history_root(&roots)
@@ -1644,6 +1652,7 @@ async fn shadow_build_v2_uses_codex_adapter_stats_and_raw_pointers() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let file = resolve_codex_history_root(&roots)
@@ -1748,6 +1757,7 @@ async fn shadow_build_v2_round_trips_codex_skill_loads_into_detail() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let file = resolve_codex_history_root(&roots)
@@ -1828,6 +1838,7 @@ async fn shadow_build_v2_includes_active_non_core_sources() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let roots_key = roots.cache_key();
     let file = temp_dir.path().join("gemini-session.json");
@@ -1980,3 +1991,4 @@ fn validate_source_instance_rejects_invalid_storage_and_locations() {
 }
 
 mod tool_observations;
+mod antigravity_coverage;

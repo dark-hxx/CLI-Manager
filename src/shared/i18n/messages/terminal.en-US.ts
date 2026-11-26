@@ -1,6 +1,9 @@
 import type { zh } from "./terminal.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+  "termStats.agyUnbound": "No hook session ID is bound to this tab.",
+  "termStats.agyWaiting": "Waiting for a matching on-disk transcript in this environment.",
+  "termStats.agyUnmeasured": "The transcript records activity, but does not report token usage or cost.",
   "terminal.layoutLock.lock": "Lock terminal layout",
   "terminal.layoutLock.unlockLayout": "Unlock terminal layout",
   "terminal.layoutLock.blocked": "Layout is locked",
@@ -61,6 +64,9 @@ export const en: Record<keyof typeof zh, string> = {
   "terminal.status.done": "Completed",
   "terminal.status.failed": "Failed",
   "terminal.toast.createFailed": "Failed to create terminal",
+  "terminal.toast.agyCwdUnavailable": "Cannot open this Antigravity CLI working directory in the selected environment: {path}",
+  "terminal.toast.restoreSkipped": "Some terminals could not be restored",
+  "terminal.toast.restoreSkippedDetail": "Check the original project, working directory and session ID for: {sessions}",
   "terminal.toast.splitCreateFailed": "Failed to create split terminal",
   "terminal.toast.providerNotFound": "The provider bound to this project no longer exists. It may have been deleted in cc-switch. Choose another project provider or reset the project to follow global settings, then start the terminal again.",
   "terminal.tab.rename": "Rename terminal",

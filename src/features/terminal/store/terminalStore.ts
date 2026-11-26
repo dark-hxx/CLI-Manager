@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import type { TerminalSession } from "../../../shared/types/index";
 import { sourceTool } from "../../history/api/externalSessionGrouping";
 import { logError, logInfo, logWarn, recordCrashActivity } from "../../../shared/platform/logger";
+import { sameAgyCwd, validAgyTabLocation } from "../../projects/api/agySessionLocation";
+import { parseWslPath } from "../../../shared/lib/wslPaths";
 import { normalizeDirectCodexStartupCommand } from "../../projects/api/projectStartupCommand";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useSessionStore } from "../api/sessionStore";
@@ -1264,6 +1266,26 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
                 },
               )
               : normalizeDirectCodexStartupCommand(ps.startupCmd);
+            if (cliKind === "antigravity") {
+              // Rebuild only in the recorded existing directory and original distro. PTY's
+              // ordinary missing-cwd fallback must not select another user's conversation.
+              const wsl = parseWslPath(ps.cwd);
+              const projectWsl = parseWslPath(restoreProject?.path);
+              let targetPath = restoreProject?.path;
+              if (ps.worktreeId) {
+                const { useWorktreeStore } = await import("../../projects/api/worktreeStore");
+                if (!useWorktreeStore.getState().loaded) await useWorktreeStore.getState().loadWorktrees();
+                targetPath = useWorktreeStore.getState().worktrees.find((w) => w.id === ps.worktreeId && w.project_id === ps.projectId)?.path;
+                if (!targetPath) throw new Error("agy_restore_worktree_unavailable");
+              }
+              if (!ps.cwd || !validAgyTabLocation(ps.cwd, normalizeShellKey(ps.shell), ps.environmentType, os) || ps.sshHostId
+                || (restoreProject?.environment_type === "wsl" && !wsl)
+                || (projectWsl && projectWsl.distro.toLowerCase() !== wsl?.distro.toLowerCase())
+                || (targetPath && !sameAgyCwd(ps.cwd, targetPath, wsl?.distro))
+                || await invoke("file_get_path_kind", { path: ps.cwd }) !== "directory") {
+                throw new Error("agy_restore_environment_unavailable");
+              }
+            }
             launch = await resolvePtyLaunch({
               projectId: ps.projectId,
               worktreeId: ps.worktreeId,
@@ -1431,8 +1453,8 @@ export const useTerminalStore = create<TerminalStore>((set, get, api) => {
 
         // 显示恢复结果提示
         if (skippedSessions.length > 0) {
-          toast.info("部分终端会话未恢复", {
-            description: `以下会话因项目不存在或创建失败而跳过: ${skippedSessions.join(", ")}`,
+          toast.info(translateCurrent("terminal.toast.restoreSkipped"), {
+            description: translateCurrent("terminal.toast.restoreSkippedDetail", { sessions: skippedSessions.join(", ") }),
           });
         }
         if (restoredSessions.some((session) => session.extensionLaunchStatus === "error")) {

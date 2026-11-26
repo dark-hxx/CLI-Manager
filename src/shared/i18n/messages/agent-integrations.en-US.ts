@@ -1,8 +1,10 @@
 import type { zh } from "./agent-integrations.zh-CN";
+import agyHookMessages from "./antigravity-hook.json";
 import piHookMessages from "./pi-hook.json";
 
 export const en: Record<keyof typeof zh, string> = {
   ...piHookMessages["en-US"],
+  ...agyHookMessages["en-US"],
   "settings.statusline.loading": "Loading statusline settings…",
   "settings.statusline.loadFailed": "Failed to load statusline settings",
   "settings.statusline.runtime": "Built-in statusline runtime",
@@ -130,9 +132,16 @@ export const en: Record<keyof typeof zh, string> = {
   "settings.hooks.card.clickToInstall": "Click to install {module} for {tool}",
   "settings.hooks.card.clickToUninstall": "Click to remove {module} for {tool}",
   "settings.hooks.bridge.enabled": "Enabled",
+  "settings.hooks.bridge.groupTitle": "CLI Hook Bridges",
+  "settings.hooks.bridge.enabledCount": "{enabled} of {total} enabled",
   "settings.hooks.bridge.claudeEnabled": "Enable Claude Code Hook bridge checks",
   "settings.hooks.bridge.codexEnabled": "Enable Codex CLI Hook bridge checks",
+  "settings.hooks.bridge.kimiEnabled": "Enable Kimi Code Hook bridge checks",
   "settings.hooks.bridge.piEnabled": "Enable Pi Agent Hook bridge checks",
+  "settings.hooks.bridge.grokEnabled": "Enable Grok Build Hook bridge checks",
+  "settings.hooks.bridge.antigravityEnabled": "Enable Antigravity CLI Hook bridge",
+  "settings.hooks.bridge.pausedNotice": "Callback reception is paused. You can still inspect or manage hook files below; turn on the switch above to resume.",
+  "settings.hooks.toastSection.description": "Controls top-right toast cards for Claude Code, Codex CLI, Kimi Code, Pi Agent, Grok Build, and Antigravity CLI Hook events. Terminal tab dots are not affected.",
   "settings.hooks.pi.extensionConflict": "A Pi extension with the same name already exists and is not managed by CLI-Manager. Installation was cancelled to avoid overwriting user code.",
   "settings.hooks.module.installed": "{tool} Hook module installed: {module}",
   "settings.hooks.module.removed": "{tool} Hook module removed: {module}",

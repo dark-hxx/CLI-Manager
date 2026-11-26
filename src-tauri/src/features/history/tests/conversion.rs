@@ -9,6 +9,7 @@ fn convert_codex_history_to_claude_jsonl_readable_by_history_parser() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     if cfg!(target_os = "windows") {
         std::fs::create_dir_all(
@@ -70,6 +71,7 @@ fn direct_file_detail_keeps_requested_path_identity() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     if cfg!(target_os = "windows") {
         std::fs::create_dir_all(
@@ -106,6 +108,7 @@ fn convert_claude_history_to_codex_jsonl_readable_by_history_parser() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     write_text(
         &resolve_codex_config_root(&roots).join("config.toml"),
@@ -253,6 +256,7 @@ fn v2_adapter_outputs_claude_session_ref_and_raw_pointers() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let file = resolve_claude_history_root(&roots)
         .join("proj")
@@ -296,6 +300,7 @@ fn v2_adapter_outputs_codex_mixed_artifact_raw_pointers() {
         codex_config_dir: Some(temp_dir.path().join(".codex")),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     write_text(
         &resolve_codex_config_root(&roots).join("config.toml"),

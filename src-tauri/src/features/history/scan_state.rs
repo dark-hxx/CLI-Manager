@@ -15,13 +15,14 @@ pub(crate) struct HistoryRoots {
     pub(super) codex_config_dir: Option<PathBuf>,
     pub(super) grok_session_root: Option<PathBuf>,
     pub(super) kimi_config_dir: Option<PathBuf>,
+    pub(super) antigravity_config_dir: Option<PathBuf>,
 }
 
 impl HistoryRoots {
     // 将各显式历史根目录及默认标记组合成缓存键。
     pub(super) fn cache_key(&self) -> String {
         format!(
-            "claude={}|codex={}|grok={}|kimi={}",
+            "claude={}|codex={}|grok={}|kimi={}|antigravity={}",
             self.claude_config_dir
                 .as_deref()
                 .map(path_to_key)
@@ -37,8 +38,14 @@ impl HistoryRoots {
             self.kimi_config_dir
                 .as_deref()
                 .map(path_to_key)
-                .unwrap_or_else(|| "__default__".to_string())
+                .unwrap_or_else(|| "__default__".to_string()),
+            self.antigravity_config_dir.as_deref().map(path_to_key).unwrap_or_default()
         )
+    }
+
+    pub(crate) fn with_antigravity_config_dir(mut self, dir: Option<String>) -> Self {
+        if let Some(root) = normalize_config_dir(dir) { self.antigravity_config_dir = Some(root); }
+        self
     }
 
     // 规范化 Kimi 配置目录并返回更新后的根目录配置。
@@ -226,6 +233,7 @@ pub(super) struct HistoryStatsAggregationCache {
 
 #[derive(Clone)]
 pub(super) struct HistoryStatsSessionFact {
+    pub(super) usage_measured: bool,
     pub(super) summary: HistorySessionSummary,
     pub(super) occurred_at: i64,
     pub(super) stats: UsageStatsScan,

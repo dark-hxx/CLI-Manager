@@ -2,7 +2,13 @@ import { useState, type ReactNode } from "react";
 import { ActionIcon, Badge, Box, Button, Card, Group, Stack, Switch, Text } from "@mantine/core";
 import { Folder, FileCode, Copy, Check, Bell, BellOff } from "lucide-react";
 import { useI18n } from "../../../shared/i18n/index";
-import { type HookInstallStatus, STATUS_LABELS, STATUS_COLORS, pickText, formatPath } from "../lib/hookSettingsModel";
+import {
+  type HookBridgeBadgeStatus,
+  getBadgeStatusColor,
+  getBadgeStatusLabel,
+  pickText,
+  formatPath,
+} from "../lib/hookSettingsModel";
 import { SettingsRow, SettingsSection } from "./SettingsPrimitives";
 import { debugConsoleError } from "../../../shared/platform/debugConsole";
 
@@ -19,19 +25,18 @@ export function PathRow({ label, value }: { label: string; value: string | null 
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      debugConsoleError('Failed to copy:', err);
+      debugConsoleError("Failed to copy:", err);
     }
   };
 
   const getIcon = () => {
     const normalized = label.toLowerCase();
-    if (label.includes('目录') || normalized.includes("directory")) return <Folder size={16} />;
-    if (label.includes('json') || label.includes('toml')) return <FileCode size={16} />;
+    if (label.includes("目录") || normalized.includes("directory")) return <Folder size={16} />;
     return <FileCode size={16} />;
   };
 
   return (
-    <Card className="border border-border/50 bg-surface-container-lowest" p="sm" radius="md">
+    <Box className="hook-path-row" p="sm">
       <Group gap="xs" wrap="nowrap" align="flex-start">
         <Box
           style={{
@@ -69,7 +74,7 @@ export function PathRow({ label, value }: { label: string; value: string | null 
           </Button>
         )}
       </Group>
-    </Card>
+    </Box>
   );
 }
 
@@ -109,40 +114,51 @@ export function HookCard({
       aria-label={actionLabel}
       title={actionLabel}
       onClick={interactive && !disabled ? onClick : undefined}
-      onKeyDown={interactive ? (event) => {
-        if (disabled) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick?.();
-        }
-      } : undefined}
+      onKeyDown={
+        interactive
+          ? (event) => {
+              if (disabled) return;
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       style={{
-        borderColor: checked ? "color-mix(in srgb, var(--success) 35%, var(--settings-line))" : "var(--settings-line)",
-        backgroundColor: checked ? "color-mix(in srgb, var(--success) 5%, var(--surface-container-lowest))" : "var(--surface-container-lowest)",
+        borderColor: checked
+          ? "color-mix(in srgb, var(--success) 38%, var(--settings-card-border, var(--settings-line)))"
+          : "var(--settings-card-border, var(--settings-line))",
+        backgroundColor: checked
+          ? "color-mix(in srgb, var(--success) 8%, var(--settings-subsurface, var(--surface-container-low)))"
+          : "var(--settings-subsurface, var(--surface-container-low))",
         cursor: interactive && !disabled ? "pointer" : "default",
         opacity: disabled ? 0.68 : 1,
       }}
     >
       <Stack gap={8} align="center">
         <Box
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg [&>svg]:h-5 [&>svg]:w-5"
           style={{
             color: checked ? "var(--success)" : "var(--text-muted)",
-            fontSize: 26,
-            lineHeight: 1,
+            backgroundColor: checked
+              ? "color-mix(in srgb, var(--success) 12%, transparent)"
+              : "color-mix(in srgb, var(--on-surface) 5%, transparent)",
           }}
         >
           {icon}
         </Box>
-        <Text size="xs" fw={500} c={checked ? "var(--on-success-container)" : "var(--on-surface-variant)"} ta="center" lh={1.3}>
+        <Text
+          size="xs"
+          fw={500}
+          c={checked ? "var(--on-surface)" : "var(--on-surface-variant)"}
+          ta="center"
+          lh={1.3}
+        >
           {label}
         </Text>
         <Group gap={4} align="center" wrap="nowrap">
-          <Badge
-            variant="filled"
-            color={checked ? "green" : "gray"}
-            radius="xl"
-            size="xs"
-          >
+          <Badge variant="filled" color={checked ? "green" : "gray"} radius="xl" size="xs">
             {checked ? pickText(language, "已安装", "Installed") : pickText(language, "未安装", "Not Installed")}
           </Badge>
           {onToggleNotify && (
@@ -151,7 +167,10 @@ export function HookCard({
               color={notifyEnabled ? "blue" : "gray"}
               size="sm"
               radius="xl"
-              onClick={(e) => { e.stopPropagation(); onToggleNotify(); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleNotify();
+              }}
               disabled={notifyDisabled}
               aria-label={pickText(language, `${label} 系统通知`, `${label} system notification`)}
             >
@@ -164,11 +183,11 @@ export function HookCard({
   );
 }
 
-export function StatusPill({ status }: { status: HookInstallStatus }) {
+export function StatusPill({ status }: { status: HookBridgeBadgeStatus }) {
   const { language } = useI18n();
   return (
-    <Badge variant="light" color={STATUS_COLORS[status]} radius="xl">
-      {pickText(language, STATUS_LABELS[status].zh, STATUS_LABELS[status].en)}
+    <Badge variant="light" color={getBadgeStatusColor(status)} radius="xl">
+      {getBadgeStatusLabel(status, language)}
     </Badge>
   );
 }
@@ -236,9 +255,17 @@ export function CollapsibleHookSection({
     <SettingsSection
       title={title}
       description={description}
-      open={!collapsible || open}
+      className="settings-section--card"
+      open={open}
       onToggle={collapsible ? onToggle : undefined}
-      actions={(action || right) && <Group gap="xs" wrap="wrap">{action}{right}</Group>}
+      actions={
+        (action || right) && (
+          <Group gap="xs" wrap="wrap">
+            {action}
+            {right}
+          </Group>
+        )
+      }
     >
       {children}
     </SettingsSection>

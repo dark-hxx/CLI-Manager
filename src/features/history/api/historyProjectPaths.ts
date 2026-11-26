@@ -14,7 +14,8 @@ export function normalizeHistoryProjectPaths(paths: string[]): string[] {
   return Array.from(
     new Set(
       paths
-        .map((path) => path.trim().replace(/\\/g, "/").replace(/\/+$/g, ""))
+        .map((path) => path.trim().replace(/\\/g, "/"))
+        .map((path) => path === "/" || /^[a-z]:\/$/i.test(path) ? path : path.replace(/\/+$/g, ""))
         .filter(Boolean)
     )
   ).sort();

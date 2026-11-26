@@ -2,7 +2,15 @@ export type TerminalSettingsSectionKey = "behavior" | "paneMarker" | "shells" | 
 export type TerminalSettingsSectionsExpanded = Record<TerminalSettingsSectionKey, boolean>;
 export type SidebarSettingsSectionKey = "behavior" | "panelSkin" | "statsCards" | "resourceCards" | "toolbar";
 export type SidebarSettingsSectionsExpanded = Record<SidebarSettingsSectionKey, boolean>;
-export type HookSettingsSectionKey = "toast" | "notifications" | "claude" | "codex" | "kimi" | "pi" | "grok";
+export type HookSettingsSectionKey =
+  | "toast"
+  | "notifications"
+  | "claude"
+  | "codex"
+  | "kimi"
+  | "pi"
+  | "grok"
+  | "antigravity";
 export type HookSettingsSectionsExpanded = Record<HookSettingsSectionKey, boolean>;
 
 export const TERMINAL_SETTINGS_SECTION_KEYS: readonly TerminalSettingsSectionKey[] = [
@@ -43,6 +51,7 @@ export const HOOK_SETTINGS_SECTION_KEYS: readonly HookSettingsSectionKey[] = [
   "kimi",
   "pi",
   "grok",
+  "antigravity",
 ];
 export const HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT: HookSettingsSectionsExpanded = {
   toast: false,
@@ -52,6 +61,7 @@ export const HOOK_SETTINGS_SECTIONS_EXPANDED_DEFAULT: HookSettingsSectionsExpand
   kimi: false,
   pi: false,
   grok: false,
+  antigravity: false,
 };
 
 export function migrateTerminalSettingsSectionsExpanded(value: unknown): TerminalSettingsSectionsExpanded {

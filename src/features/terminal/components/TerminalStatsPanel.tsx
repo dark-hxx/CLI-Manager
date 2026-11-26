@@ -1,3 +1,6 @@
+import { isAntigravityPty } from "../lib/antigravityPty";
+import { antigravityDistro, agyPanelNotice } from "../../history/api/antigravityDiskIdentity";
+import { useHistorySourceSettingsStore } from "../../history/api/historySourceSettingsStore";
 import { StatsScreenshotButton } from "./StatsScreenshotButton";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
@@ -395,11 +398,11 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
       </div>
 
       <div className="mt-2 grid grid-cols-2 gap-1.5">
-        <StatChip dotColor={TERM.cyan} label={t("termStats.messageCount")} value={String(messageCount)} />
+        <StatChip dotColor={TERM.cyan} label={t("termStats.messageCount")} value={!statsSession && session.source === "antigravity" ? "—" : String(messageCount)} />
         <StatChip dotColor={TERM.green} label={t("termStats.duration")} value={duration} />
       </div>
 
-      <div className="mt-2">
+      {(statsSession || session.source !== "antigravity") && <div className="mt-2">
         <SegmentedBar
           parts={[
             { value: roleCounts.user, color: ROLE_COLORS.user, label: t("termStats.user") },
@@ -421,7 +424,7 @@ function SessionInfoCard({ session, statsSession, projectName, projectPath, curr
             {t("termStats.tool")} {roleCounts.tool}
           </span>
         </div>
-      </div>
+      </div>}
     </StatCard>
   );
 }
@@ -437,7 +440,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   const projects = useProjectStore((state) => state.projects);
   const worktrees = useWorktreeStore((state) => state.worktrees);
 
-  const [latestSession, setLatestSession] = useState<HistorySessionDetail | null>(null);
+  const [loadedSession, setLatestSession] = useState<HistorySessionDetail | null>(null);
   const [todayStatsState, setTodayStatsState] = useState<{
     scopeKey: string;
     value: TodayProjectStats | null;
@@ -490,13 +493,19 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
   }, [lookupProjectPath, project?.id, project?.path, worktrees]);
 
   // 终端运行的 CLI 工具（claude/codex），来自项目设置；推断不出则不过滤
+  const isAgy = isAntigravityPty(terminalSession, project);
+  const agyRoot = useHistorySourceSettingsStore((state) => state.settings.antigravity?.activeInstance?.locations.configRoot);
+  const distro = terminalSession?.wslDistroName?.trim().toLowerCase() || antigravityDistro(lookupProjectPath) || antigravityDistro(project?.path);
+  const expectedDistro = terminalSession?.environmentType === "wsl" || terminalSession?.shell === "wsl" || project?.environment_type === "wsl" || distro ? distro : "";
   const sourceFilter = useMemo(
-    () =>
+    () => isAgy ? "antigravity" as const :
       inferHistorySource(
         `${terminalSession?.startupCmd ?? ""} ${terminalSession?.title ?? ""} ${project?.cli_tool ?? ""}`
       ),
-    [terminalSession?.startupCmd, terminalSession?.title, project?.cli_tool]
+    [isAgy, terminalSession?.startupCmd, terminalSession?.title, project?.cli_tool]
   );
+  const sessionScope = JSON.stringify([activeSessionId, lookupProjectPath, sourceFilter, terminalSession?.cliSessionId, terminalSession?.remoteTranscriptRef, isAgy ? [expectedDistro, agyRoot] : null]);
+  const latestSession = lastPathRef.current === sessionScope ? loadedSession : null;
   const todayUsageScope = useMemo(
     () => resolveTodayProjectStatsScope(
       todayUsageProjectPaths,
@@ -505,15 +514,16 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     [latestSession?.project_key, todayUsageProjectPaths]
   );
   const todayUsageScopeKey = useMemo(
-    () => todayUsageScope
+    () => todayUsageScope && (!isAgy || (expectedDistro != null && todayUsageScope.projectPaths.length > 0))
       ? JSON.stringify([
           project?.id ?? "",
           sourceFilter ?? "",
+          isAgy ? [expectedDistro, agyRoot] : null,
           todayUsageScope.projectKey,
           todayUsageScope.projectPaths,
         ])
       : null,
-    [project?.id, sourceFilter, todayUsageScope]
+    [project?.id, sourceFilter, todayUsageScope, isAgy, expectedDistro, agyRoot]
   );
   // 统计结果必须与当前项目作用域一致；切换项目后只读取对应作用域的缓存，避免串显。
   const todayStats = todayStatsState?.scopeKey === todayUsageScopeKey
@@ -530,10 +540,18 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
       (latestSession?.usage?.cache_read_tokens ?? 0) +
       (latestSession?.usage?.cache_creation_tokens ?? 0)
     : 0;
+  // 已识别为 Token 缺失的旧版 agy 记录（已有 assistant 回复但仍为 0 Token），停止快速轮询。
+  const agyHasUnmeasuredAssistantReply =
+    isAgy &&
+    tokensBound &&
+    boundUsageTotal === 0 &&
+    Boolean(latestSession?.messages.some((msg) => msg.role === "assistant"));
   // 已绑定 session 但用量仍为 0：可能 catalog 尚未索引到新文件，进入快速轮询 + 强制刷新。
-  const waitingForUsage = Boolean(boundCliSessionId) && (!tokensBound || boundUsageTotal === 0);
+  const waitingForUsage =
+    Boolean(boundCliSessionId) &&
+    (!tokensBound || (boundUsageTotal === 0 && !agyHasUnmeasuredAssistantReply));
   // 已识别 CLI 来源但 Hook 尚未绑定 sessionId 时，不查询项目最近会话。
-  const waitingForBoundSessionId = Boolean(sourceFilter) && !boundCliSessionId;
+  const waitingForBoundSessionId = Boolean(sourceFilter) && (!boundCliSessionId || (isAgy && expectedDistro === null));
   const waitingForRemoteSessionId = isSshProject && !terminalSession?.cliSessionId?.trim();
   const panelActive = open && visible;
   const boundSession = tokensBound ? latestSession : null;
@@ -580,10 +598,10 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     }
     // 切换 Tab（项目路径、CLI 来源、Tab ID 或 cliSessionId 变化）时按作用域换数据：
     // 命中内存缓存则先秒显缓存，无缓存才清空；随后后台刷新校正。
-    const scopeKey = `${activeSessionId}|${lookupProjectPath}|${sourceFilter ?? ""}|${terminalSession?.cliSessionId ?? ""}|${terminalSession?.remoteTranscriptRef ?? ""}`;
+    const scopeKey = sessionScope;
     if (lastPathRef.current !== scopeKey) {
       lastPathRef.current = scopeKey;
-      const cached = sessionDetailCache.get(scopeKey) ?? null;
+      const cached = isAgy ? null : sessionDetailCache.get(scopeKey) ?? null;
       latestRef.current = cached;
       setLatestSession(cached);
       setUpdatedAt(cached ? Date.now() : null);
@@ -619,26 +637,27 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
             sourceFilter,
             terminalSession?.cliSessionId,
             {
-              forceCatalogRefresh: waitingForUsage || freshDetail,
+              boundAntigravityDistro: expectedDistro,
+              forceCatalogRefresh: !isAgy && (waitingForUsage || freshDetail),
               freshDetail,
-              aggregateSubtasks: true,
+              aggregateSubtasks: !isAgy,
             }
           );
         }
       } catch {
-        result = prev ? "unchanged" : null;
+        result = !isAgy && prev ? "unchanged" : null;
       }
       sessionLoadInFlightRef.current.delete(scopeKey);
       if (lastPathRef.current !== scopeKey) return;
       if (result !== "unchanged") {
         // 查找 miss 时不要清掉已有可用数据，避免侧栏 Token 卡片「闪一下归零再回来」。
-        if (result === null && latestRef.current) {
+        if (!isAgy && result === null && latestRef.current) {
           return;
         }
         latestRef.current = result;
         setLatestSession(result);
         setUpdatedAt(Date.now());
-        if (result) sessionDetailCache.set(scopeKey, result);
+        if (result && !isAgy) sessionDetailCache.set(scopeKey, result);
       }
       if (initial) {
         if (updatedAt === null) setUpdatedAt(Date.now());
@@ -648,7 +667,7 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
     void loadSession(true);
     // activeSessionId 入依赖：切换 Tab 时立即重新核对当前绑定会话（unchanged 时开销仅一次列表查询）
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeSessionId, displayProjectPath, isSshProject, lookupProjectPath, panelActive, pollTrigger, project, project?.path, refreshSeq, sourceFilter, statsPanelRefreshSeq, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId, terminalSession?.remoteTranscriptRef, waitingForBoundSessionId, waitingForRemoteSessionId, waitingForUsage]);
+  }, [expectedDistro, isAgy, sessionScope, activeSessionId, displayProjectPath, isSshProject, lookupProjectPath, panelActive, pollTrigger, project, project?.path, refreshSeq, sourceFilter, statsPanelRefreshSeq, terminalSession?.cliSessionId, terminalSession?.cwd, terminalSession?.projectId, terminalSession?.remoteTranscriptRef, waitingForBoundSessionId, waitingForRemoteSessionId, waitingForUsage]);
 
   // 今日项目用量：会话数据变化时同步刷新（与终端 CLI 来源保持一致）
   // Issue #137：聚合主项目 + worktree 路径，主仓库 Tab 与 worktree Tab 看到同一套「今日项目」合计。
@@ -670,7 +689,8 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
         request = fetchTodayProjectStatsMerged(
           todayUsageScope.projectKey,
           sourceFilter,
-          todayUsageScope.projectPaths
+          todayUsageScope.projectPaths,
+          isAgy ? expectedDistro : undefined
         )
           .then((result) => {
             if (result) todayProjectStatsCache.set(todayUsageScopeKey, result);
@@ -890,6 +910,11 @@ export function TerminalStatsPanel({ activeSessionId, open, visible = true, embe
           <EmptyHint text={t("termStats.noVisibleCards")} />
         ) : (
           <>
+            {agyHasUnmeasuredAssistantReply && (
+              <div className="px-2 py-1 text-[11px] text-text-muted">
+                {t(agyPanelNotice(boundCliSessionId, true))}
+              </div>
+            )}
             {terminalStatsCardOrder.map(renderStatsCard)}
           </>
         )}

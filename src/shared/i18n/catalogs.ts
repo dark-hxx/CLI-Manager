@@ -1,5 +1,7 @@
 import { zh as agentIntegrationsZh } from "./messages/agent-integrations.zh-CN";
 import { en as agentIntegrationsEn } from "./messages/agent-integrations.en-US";
+import { zh as agyStatuslineZh } from "./messages/agy-statusline.zh-CN";
+import { en as agyStatuslineEn } from "./messages/agy-statusline.en-US";
 import { zh as analyticsZh } from "./messages/analytics.zh-CN";
 import { en as analyticsEn } from "./messages/analytics.en-US";
 import { zh as commandToolsZh } from "./messages/command-tools.zh-CN";
@@ -31,6 +33,7 @@ import { en as terminalEn } from "./messages/terminal.en-US";
 
 export const zh = {
   ...agentIntegrationsZh,
+  ...agyStatuslineZh,
   ...analyticsZh,
   ...commandToolsZh,
   ...commonZh,
@@ -49,6 +52,7 @@ export const zh = {
 
 export const en: Record<keyof typeof zh, string> = {
   ...agentIntegrationsEn,
+  ...agyStatuslineEn,
   ...analyticsEn,
   ...commandToolsEn,
   ...commonEn,

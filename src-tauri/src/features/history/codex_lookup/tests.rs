@@ -68,6 +68,7 @@ fn new_bound_rollout_has_messages_and_usage_without_any_catalog() {
         codex_config_dir: Some(temp.path().into()),
         grok_session_root: None,
         kimi_config_dir: None,
+        ..HistoryRoots::default()
     };
     let detail =
         super::super::session_detail::build_session_detail_with_roots(&file_ref, false, &roots)

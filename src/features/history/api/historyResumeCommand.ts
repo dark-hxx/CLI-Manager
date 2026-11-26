@@ -1,4 +1,8 @@
 import { resolveCliToolHistorySourceId } from "../../../shared/lib/cliTools";
+import { isAgySessionId, buildAgyResumeCommand } from "../../projects/api/agyStartupCommand";
+import { sameAgyCwd } from "../../projects/api/agySessionLocation";
+import { parseWslPath } from "../../../shared/lib/wslPaths";
+import { historyPathsMatch } from "../lib/historyResumeEnvironment";
 import { appendResumeCliArgs } from "../../projects/api/projectStartupCommand";
 import { isValidGrokSessionId, isValidKimiSessionId, stripKimiResumeCliArgs } from "./resumeCliArgs";
 import type { HistorySessionSummary, Project } from "../../../shared/types/index";
@@ -144,10 +148,69 @@ function appendSessionCliArgs(
   return cliArgs ? `${base} ${cliArgs}` : base;
 }
 
+type ResumeRecord = Pick<HistorySessionSummary, "session_id" | "source"> & Partial<HistorySessionSummary> & { favoriteSnapshot?: boolean };
+
+// Existing sources keep their descriptor-level contract. agy has a second read-only
+// legacy root with UUID-shaped names, so a source capability alone cannot authorize it.
+export function hasResumeProvenance(session: ResumeRecord): boolean {
+  if (session.source !== "antigravity") return true;
+  const id = session.session_id;
+  const path = (session.file_path ?? "").replace(/\\/g, "/");
+  const cwd = session.cwd?.trim();
+  const ref = session.session_ref;
+  if (!isAgySessionId(id) || !cwd || !/^(?:[a-z]:[\\/]|\/|\\\\)/i.test(cwd)
+    || session.favoriteSnapshot || session.read_only || session.remote_identity
+    || (session.freshness_state && session.freshness_state !== "fresh")
+    || (ref && (!["local", "wsl"].includes(ref.transportKind) || ref.sourceId !== session.source || ref.sourceSessionId !== id))
+    || /[\x00-\x1f]/.test(path + cwd) || /(?:^|\/)\.{1,2}(?:\/|$)/.test(path)
+    || /(?:^|[\\/])\.{1,2}(?:[\\/]|$)/.test(cwd)) return false;
+  const wsl = parseWslPath(path);
+  const native = path.replace(/^\/\/\?\/([A-Za-z]:\/)/, "$1");
+  if (!(wsl || /^(?:[a-z]:\/|\/(?!\/))/i.test(native)) || (ref && (ref.transportKind === "wsl") !== Boolean(wsl))) return false;
+  if (ref && (!ref.sourceInstanceId?.trim() || !Array.isArray(ref.rawPointers) || !ref.rawPointers.length || ref.rawPointers.some((item) => {
+    const rawKey = item?.rawKey;
+    if (typeof rawKey !== "string" || !rawKey.trim()) return true;
+    const pointer = parseWslPath(rawKey);
+    if (Boolean(wsl) !== Boolean(pointer)) return true;
+    return !sameAgyCwd(path, rawKey, wsl?.distro);
+  }))) return false;
+  const suffix = `/.gemini/antigravity-cli/brain/${id}/.system_generated/logs/transcript.jsonl`;
+  return !wsl && /^[a-z]:\//i.test(native)
+    ? native.toLowerCase().endsWith(suffix.toLowerCase()) : (wsl?.linuxPath ?? native).endsWith(suffix);
+}
+
+// Last gate before PTY creation: the picker/cache is not proof of an existing,
+// authorized file or of today's workspace mapping. Re-read using scoped fresh detail.
+export async function verifyAgyHistoryTarget(
+  session: ResumeRecord, project: Project | null, worktreePath: string | undefined,
+  launch: { cwd: string; shell?: string },
+  readFresh: () => Promise<ResumeRecord>,
+  isDirectory: (path: string) => Promise<boolean>,
+): Promise<void> {
+  const wsl = parseWslPath(session.file_path);
+  const dest = parseWslPath(launch.cwd);
+  if (!hasResumeProvenance(session) || Boolean(wsl) !== (launch.shell === "wsl")
+    || wsl?.distro.toLowerCase() !== dest?.distro.toLowerCase()
+    || !sameAgyCwd(session.cwd!, launch.cwd, wsl?.distro)
+    || (project && !historyPathsMatch(session, { ...project, path: worktreePath || project.path }))) {
+    throw new Error("history_resume_environment_mismatch");
+  }
+  const fresh = await readFresh();
+  if (!hasResumeProvenance(fresh) || fresh.source !== session.source || fresh.session_id !== session.session_id
+    || fresh.session_ref?.sourceInstanceId !== session.session_ref?.sourceInstanceId
+    || fresh.session_ref?.transportKind !== session.session_ref?.transportKind
+    || fresh.file_path !== session.file_path || fresh.cwd !== session.cwd || !(await isDirectory(launch.cwd))) {
+    throw new Error("history_resume_source_or_cwd_changed");
+  }
+}
+
 export function buildHistoryResumeCommand(
-  session: Pick<HistorySessionSummary, "session_id" | "source">,
+  session: ResumeRecord,
   project?: ResumeProject | null,
 ): string | null {
+  if (session.source === "antigravity") {
+    return hasResumeProvenance(session) ? buildAgyResumeCommand(session.session_id, project) : null;
+  }
   const sessionId = session.source === "opencode"
     ? normalizeOpenCodeSessionId(session.session_id)
     : normalizeSessionId(session.session_id);

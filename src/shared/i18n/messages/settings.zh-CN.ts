@@ -109,7 +109,7 @@ export const zh = {
   "settings.tabs.historySources.description": "管理各 CLI 的历史会话目录、索引来源与备份恢复。",
   "settings.tabs.hooks.label": "Hook",
   "settings.tabs.hooks.title": "Hook",
-  "settings.tabs.hooks.description": "安装或移除 Claude Code / Codex / Kimi Code / Pi / Grok Build 到 CLI-Manager 标签通知的桥接。",
+  "settings.tabs.hooks.description": "安装或移除 Claude Code / Codex / Kimi Code / Pi / Grok Build / Antigravity CLI 到 CLI-Manager 标签通知的桥接。",
   "settings.tabs.statusline.label": "状态栏",
   "settings.tabs.statusline.title": "Claude 状态栏",
   "settings.tabs.statusline.description": "在 CLI-Manager 中可视化配置并安装 Claude Code 状态栏。",

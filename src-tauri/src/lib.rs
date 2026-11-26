@@ -106,6 +106,8 @@ pub mod ssh_launch;
 pub mod ssh_proxy;
 #[path = "infrastructure/ssh/transport.rs"]
 pub mod ssh_transport;
+#[path = "features/statusline/agy/mod.rs"]
+pub mod agy_statusline;
 #[path = "features/statusline/mod.rs"]
 pub mod statusline;
 #[path = "features/statusline/profiles.rs"]
@@ -867,6 +869,9 @@ pub fn run() {
             commands::hook_settings::hook_settings_uninstall_pi,
             commands::hook_settings::hook_settings_install_grok,
             commands::hook_settings::hook_settings_uninstall_grok,
+            commands::hook_settings::antigravity::hook_settings_get_status_antigravity,
+            commands::hook_settings::antigravity::hook_settings_install_antigravity,
+            commands::hook_settings::antigravity::hook_settings_uninstall_antigravity,
             commands::hook_settings::hook_settings_select_dir,
             commands::provider::provider_catalog_list,
             commands::provider::provider_catalog_get,
@@ -1021,6 +1026,9 @@ pub fn run() {
             commands::system_notification::play_system_notification_sound,
             commands::system_notification::send_interactive_system_notification,
             commands::system_notification::set_taskbar_attention,
+            agy_statusline::agy_statusline_load,
+            agy_statusline::agy_statusline_change,
+            agy_statusline::agy_statusline_preview,
             statusline::statusline_get_status,
             statusline::statusline_load_settings,
             statusline::statusline_save_settings,

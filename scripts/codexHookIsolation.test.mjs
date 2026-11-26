@@ -33,7 +33,7 @@ function loadLaunch(light = false) {
     buildSshConnectionSpec: () => ({}), getSshClientInstanceId: () => "client",
     crypto: { randomUUID: () => "epoch" },
     resolveShellForPty: (shell) => shell, normalizeShellKey: (shell) => shell,
-    isDeepSeekTuiCommand: () => false, isDeepSeekTuiLauncherCommand: () => false,
+    isAgyCommand: () => false, isDeepSeekTuiCommand: () => false, isDeepSeekTuiLauncherCommand: () => false,
     getDeepSeekTuiCommandSourceRoot: () => null,
     prepareProviderLaunchSnapshot: async () => null, buildNativeProviderLaunchConfigs: () => ({}),
     releaseProjectExtensionSnapshot: () => {},

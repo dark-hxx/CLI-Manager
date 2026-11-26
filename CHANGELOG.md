@@ -1,5 +1,19 @@
 # Changelog
 
+## [V1.5.3] - 开发中
+
+### 版本信息
+
+- 桌面应用及本地辅助程序的 npm、Tauri、Rust 和 Windows 资源版本同步至 `1.5.3`；独立 SSH Agent 的版本不变。
+
+### Antigravity CLI（agy）
+
+- 项目 CLI 预设新增 `agy`，与 Gemini CLI 分开识别。按原生会话 ID 恢复时使用 `--conversation`，不回退到当前目录的“最近一次”；无法验证来源或运行环境的记录保留为只读。
+- 新建、编辑和复制终端配置时，CLI 工具下拉框按命令或显示名称实时筛选；未筛选时 `agy` 紧跟 `pi`，无匹配时保留自定义命令。
+- 可为本机或指定 WSL 发行版安装被动 Hook，接收开关默认关闭。只向对应终端报告调用、空闲或失败，不改工具审批；未启用时仍可使用历史。
+- 历史优先读取 CLI 转录；没有 CLI `brain` 时兼容旧 App 根，默认根目录从系统用户目录解析。工作区映射优先读取 `conversation_summaries.db` 的 `workspace_uris`（兼容回退 `history.jsonl`，多工作区冲突保持歧义拒猜）。保持 `transcript.jsonl` 作为会话身份与主路径，详情展示与全文搜索对截断的长消息按行从同目录 `transcript_full.jsonl` 补全（缺失、滞后或越界时自动回退 `transcript.jsonl`）并联动目录缓存指纹刷新。已核对 `agy 1.5.17` `PLANNER_RESPONSE` 的 `model`、`input_tokens`、`output_tokens` 与 `cache_read_tokens` 逐调用增量语义，打通 Antigravity 用量、模型分布、趋势解析与历史/实时统计看板展示（旧版无 Token 记录仍标记缺失，不用 0、状态栏或无交互模式的数据替代）。
+- 「设置 → 状态栏」新增独立的 agy 方案、样例预览和显示模式（原生、自定义、叠加）。替换已有外部命令需确认，恢复操作不会覆盖安装后的手工修改。
+
 ## [V1.5.2] - 2026-11-24
 
 ### 版本信息
@@ -30,6 +44,18 @@
 ### 历史会话布局
 
 - 查看历史会话时隐藏底部终端状态栏并释放其占位，让历史面板延伸至底部区域，避免浅色历史界面与深色终端状态栏突兀拼接；切回终端后恢复状态栏，全屏模式保持原有行为。
+
+### 设置页视觉与 Hook 改版
+
+- 重建设置页明暗双主题的 5 级表面层级（导航栏 / 画布 / 卡片组 / 内嵌子层 / 控件）与 3 级边框层级（外卡结构线、内部分隔线、控件边界），修正默认及多套浅色主题下 `--surface-container-low` 与卡片底色坍塌导致的区块边界不明显问题，同时恢复嵌套子卡片边框底色并修复配对主题下 `SegmentedControl` 选中滑块与轨道同色的问题。
+- 统一重构「设置 → Hook」全部 6 个 CLI Hook 桥接卡片（Claude Code、Codex CLI、Kimi Code、Pi Agent、Grok Build、Antigravity CLI）：新增 `CliHookBridgeCard` 与 `LegacyCliHookBody`，统一展示品牌图标、单行说明、实时状态徽章、垂直对齐的总开关与折叠箭头，修复关闭总开关时渲染空边框盒的问题；将 Antigravity CLI 纳入统一卡片折叠与顶部「刷新全部 Hook 状态」，并补全设置入口与弹框说明及双语文案。
+
+### Antigravity CLI Hook 协议与挂载修复
+
+- 修复 Antigravity `Stop` 事件的 `terminationReason` 解析：支持官方大写 `ExecutorTerminationReason`（`NO_TOOL_CALL`、`TERMINAL_STEP_TYPE`、`INJECTED_RESPONSE` 映射 `Stop`；`ERROR`、`MAX_INVOCATIONS`、`MAX_FORCED_INVOCATIONS`、`MAX_TOKEN_BUDGET_EXCEEDED`、`TERMINAL_CUSTOM_HOOK` 映射 `StopFailure`），并将 `USER_CANCELED` 映射为 `Interrupt`，静默清除对应终端 Tab 运行状态且不触发通知或任务栏闪烁。
+- 将空字符串 `transcriptPath` / `hookEventName` 视作缺省避免误丢弃事件；stdin 读取上限从 64 KiB 提至 2 MiB 以容纳长 `lastUserInput`；`PreToolUse` 被动兜底响应由 `allow` 修正为 `ask`。
+- 优化 `hooks.json` 挂载与状态校验：精确识别 CLI-Manager 自有的旧版本、迁移路径、旧正斜杠命令或停用条目为可修复的 `PartialInstalled`（外来源或非法配置仍保留 `Conflict` 保护）；修正展示路径中 `\` 与 `/` 混用，剥离 Windows `\\?\` 前缀并为简单盘符路径使用原生反斜杠、PowerShell 包装补齐错误与进度首选项、Hook 超时调至 10 秒、WSL 补充 `test -x` 校验、首次安装硬链接不支持时安全回退并兼容 UTF-8 BOM。
+- 修正无 WSL 环境的 Windows 主机在 Antigravity Hook 设置下误报“无法列出 WSL 发行版”警告及展示多余单选项环境选择器的问题：未探测到有效 WSL 发行版时静默隐藏 WSL 提示与环境选择框，并移除与头部状态徽章重复的「部分已安装」正文提示条。
 
 ## [V1.5.1] - 2026-11-15
 

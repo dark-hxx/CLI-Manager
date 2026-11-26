@@ -315,7 +315,8 @@ impl PtyManager {
     /// 合并已有 WSLENV（注入批次或进程环境），不覆盖用户原有项。
     // 合并宿主变量转发；guest 发行版单向回传 Windows Hook，不从宿主猜测或注入其值。
     fn apply_wsl_env_forwarding(env_vars: &mut HashMap<String, String>) {
-        const FORWARD: [&str; 7] = [
+        const FORWARD: [&str; 8] = [
+            "CLI_MANAGER_AGY_HOOK_ENABLED",
             "CLI_MANAGER_TAB_ID",
             "CLI_MANAGER_NOTIFY_PORT",
             "CLI_MANAGER_NOTIFY_TOKEN",
@@ -347,6 +348,10 @@ impl PtyManager {
             .unwrap_or_default();
 
         for key in present {
+            // 应用专用 opt-in 必须双向转发；旧的 /p、/u 等会误转换或丢掉回传值。
+            if key == "CLI_MANAGER_AGY_HOOK_ENABLED" {
+                entries.retain(|entry| entry.split('/').next() != Some(key));
+            }
             // WSLENV 项可能带 /u /w 等 flag，比对名字部分去重
             let already = entries
                 .iter()
@@ -1441,8 +1446,9 @@ mod tests {
         vars.insert("CLI_MANAGER_TAB_ID".to_string(), "t".to_string());
         vars.insert("CLI_MANAGER_NOTIFY_PORT".to_string(), "1".to_string());
         vars.insert("CLI_MANAGER_NOTIFY_TOKEN".to_string(), "x".to_string());
-        // 预置 WSLENV，函数应合并而非覆盖（也避免读到进程环境，保证确定性）
-        vars.insert("WSLENV".to_string(), "FOO/u".to_string());
+        vars.insert("CLI_MANAGER_AGY_HOOK_ENABLED".to_string(), "1".to_string());
+        // 预置外部条目与过时的单向 opt-in 标志，分别保留和规范化。
+        vars.insert("WSLENV".to_string(), "FOO/u:CLI_MANAGER_AGY_HOOK_ENABLED/p".to_string());
 
         PtyManager::apply_wsl_env_forwarding(&mut vars);
 
@@ -1451,6 +1457,8 @@ mod tests {
         assert!(wslenv.contains("CLI_MANAGER_TAB_ID"));
         assert!(wslenv.contains("CLI_MANAGER_NOTIFY_PORT"));
         assert!(wslenv.contains("CLI_MANAGER_NOTIFY_TOKEN"));
+        assert!(wslenv.split(':').any(|value| value == "CLI_MANAGER_AGY_HOOK_ENABLED"));
+        assert!(!wslenv.contains("CLI_MANAGER_AGY_HOOK_ENABLED/"));
     }
 
     #[test]

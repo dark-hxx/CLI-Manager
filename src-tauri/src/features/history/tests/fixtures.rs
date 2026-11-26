@@ -9,6 +9,7 @@ pub(super) fn request_log_dedup_fixture(
     usage: UsageStatsScan,
 ) -> HistoryStatsSessionFact {
     HistoryStatsSessionFact {
+        usage_measured: true,
         summary: HistorySessionSummary {
             file_size: None,
             session_id: session_id.to_string(),

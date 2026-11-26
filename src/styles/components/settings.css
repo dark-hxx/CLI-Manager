@@ -4,16 +4,23 @@
   --settings-font: var(--font-size-ui, 13px);
   --settings-meta: var(--font-size-meta, 12px);
   --settings-title: calc(var(--settings-font) + 7px);
-  --settings-line: color-mix(in srgb, var(--on-surface) 12%, transparent);
-  --settings-divider: color-mix(in srgb, var(--on-surface) 7%, transparent);
+  /* 3-tier borders: outer card boundary vs internal row hairline vs interactive control edge. */
+  --settings-card-border: color-mix(in srgb, var(--on-surface) 13%, transparent);
+  --settings-divider: color-mix(in srgb, var(--on-surface) 8%, transparent);
+  --settings-line: color-mix(in srgb, var(--on-surface) 16%, transparent);
   --settings-muted: var(--on-surface-variant);
   --settings-hover: color-mix(in srgb, var(--on-surface) 5%, transparent);
-  --settings-selected: color-mix(in srgb, var(--primary) 9%, var(--surface-container-lowest));
-  --settings-selected-line: color-mix(in srgb, var(--primary) 50%, var(--settings-line));
-  --settings-field-bg: var(--surface-container-lowest);
-  /* Grouped-inset layout: a quiet canvas with lifted group surfaces. */
-  --settings-canvas: var(--surface-container-low);
+  /* Grouped-inset layout: 5-tier surfaces derived from palette tokens so every light theme
+     preserves clear nav / canvas / card / recessed-subsurface separation. */
+  --settings-nav-bg: color-mix(in srgb, var(--bg-tertiary) 35%, var(--surface-container-lowest) 65%);
+  --settings-canvas: color-mix(in srgb, var(--bg-tertiary) 72%, var(--surface-container-lowest) 28%);
   --settings-group-bg: var(--surface-container-lowest);
+  --settings-subsurface: color-mix(in srgb, var(--bg-tertiary) 55%, var(--surface-container-lowest) 45%);
+  --settings-control-bg: var(--surface-container-lowest);
+  --settings-elevated-bg: var(--surface-container-lowest);
+  --settings-field-bg: var(--surface-container-lowest);
+  --settings-selected: color-mix(in srgb, var(--primary) 10%, var(--settings-group-bg));
+  --settings-selected-line: color-mix(in srgb, var(--primary) 52%, var(--settings-line));
   --settings-floating-shadow: 0 8px 28px color-mix(in srgb, black 12%, transparent), 0 2px 6px color-mix(in srgb, black 6%, transparent);
   font-family: var(--font-ui-sans);
   font-size: var(--settings-font);
@@ -21,8 +28,20 @@
   color: var(--on-surface);
 }
 [data-theme="dark"] .settings-scope {
+  --settings-card-border: color-mix(in srgb, var(--on-surface) 13%, transparent);
+  --settings-divider: color-mix(in srgb, var(--on-surface) 9%, transparent);
+  --settings-line: color-mix(in srgb, var(--on-surface) 17%, transparent);
+  --settings-hover: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  /* Deterministic dark elevation ladder above --surface across all dark palettes. */
   --settings-canvas: var(--surface);
-  --settings-group-bg: color-mix(in srgb, var(--on-surface) 5%, var(--surface));
+  --settings-nav-bg: color-mix(in srgb, var(--on-surface) 3.5%, var(--surface));
+  --settings-group-bg: color-mix(in srgb, var(--on-surface) 7%, var(--surface));
+  --settings-subsurface: color-mix(in srgb, var(--on-surface) 3%, var(--surface));
+  --settings-control-bg: color-mix(in srgb, var(--on-surface) 10%, var(--surface));
+  --settings-elevated-bg: color-mix(in srgb, var(--on-surface) 8.5%, var(--surface));
+  --settings-field-bg: color-mix(in srgb, var(--surface) 88%, black 12%);
+  --settings-selected: color-mix(in srgb, var(--primary) 14%, var(--settings-group-bg));
+  --settings-floating-shadow: 0 12px 32px color-mix(in srgb, black 42%, transparent), 0 2px 8px color-mix(in srgb, black 24%, transparent);
 }
 
 .settings-scope .ui-settings-content { container-type: inline-size; background-color: var(--settings-canvas); }
@@ -32,8 +51,8 @@
   flex-direction: column;
   min-height: 0;
   padding: 22px 10px 12px;
-  background: var(--surface-container-low);
-  border-right: 1px solid var(--settings-divider);
+  background: var(--settings-nav-bg);
+  border-right: 1px solid var(--settings-card-border);
 }
 .settings-nav-title {
   padding: 0 12px 14px;
@@ -134,13 +153,13 @@
 .settings-section-body {
   min-width: 0;
   padding: 4px 16px;
-  border: 1px solid var(--settings-divider);
+  border: 1px solid var(--settings-card-border);
   border-radius: 12px;
   background: var(--settings-group-bg);
 }
 /* Collapsible card: header and body share one surface so each fold has a clear boundary. */
 .settings-section--card {
-  border: 1px solid var(--settings-divider);
+  border: 1px solid var(--settings-card-border);
   border-radius: 12px;
   background: var(--settings-group-bg);
   overflow: hidden;
@@ -184,18 +203,20 @@
 .settings-scope .ui-surface-card {
   outline: 0;
   background-color: var(--settings-group-bg);
-  border: 1px solid var(--settings-divider);
+  border: 1px solid var(--settings-card-border);
   border-radius: 12px;
   box-shadow: none;
 }
 .settings-scope .settings-card { border-radius: 12px; box-shadow: none; min-width: 0; }
-.settings-scope .settings-card:where(.border-border, .border-border\/50, [data-with-border]) { border-color: var(--settings-divider); }
-.settings-scope .settings-card:where(.bg-surface-container-lowest) { background-color: var(--settings-group-bg); }
-.settings-scope :where(.settings-section-body, .ui-surface-card) .settings-card:where(.bg-surface-container-lowest) {
-  background: transparent;
-  border: 0;
-  border-radius: 0;
+.settings-scope .settings-card:is(.border-border, .border-border\/50, .border-border\/70, [data-with-border]) { border-color: var(--settings-card-border); }
+.settings-scope .settings-card:is(.bg-surface-container-lowest, .bg-surface-container-low) { background-color: var(--settings-group-bg); }
+.settings-scope :is(.settings-section-body, .ui-surface-card, .settings-card) .settings-card:is(.bg-surface-container-lowest, .bg-surface-container-low, .bg-surface-container-low\/50) {
+  background-color: var(--settings-subsurface);
+  border: 1px solid var(--settings-divider);
+  border-radius: 10px;
 }
+.settings-scope :is(.settings-section-body, .ui-surface-card, .settings-card) .settings-card.border-dashed { border-style: dashed; }
+.settings-scope :is(.settings-section-body, .ui-surface-card, .settings-card) .settings-card.border-primary { border-color: color-mix(in srgb, var(--primary) 45%, var(--settings-card-border)); }
 .settings-scope .settings-text { line-height: 1.5; }
 .settings-scope .settings-text[data-size="xs"] { font-size: var(--settings-meta); }
 .settings-scope .settings-text[data-size="sm"] { font-size: var(--settings-font); }
@@ -222,7 +243,7 @@
 .settings-scope .settings-input:hover:not(:disabled):not([data-error]) { border-color: color-mix(in srgb, var(--on-surface) 25%, transparent); }
 .settings-scope .settings-input:focus:not([data-error]), .settings-scope .settings-input:focus-within:not([data-error]) { border-color: var(--primary); }
 .settings-scope .settings-input[data-error] { border-color: var(--mantine-color-error); color: var(--mantine-color-error); }
-.settings-scope .settings-input:disabled { background: var(--surface-container-low); opacity: 0.65; cursor: not-allowed; }
+.settings-scope .settings-input:disabled { background: var(--settings-subsurface); opacity: 0.65; cursor: not-allowed; }
 .settings-scope .settings-button {
   min-height: max(34px, calc(var(--settings-font) + 20px));
   height: auto;
@@ -235,7 +256,7 @@
 }
 .settings-button-label { white-space: normal; line-height: 1.35; text-align: center; }
 .settings-scope .settings-button[data-variant="default"] {
-  background: var(--surface-container-lowest);
+  background: var(--settings-control-bg);
   border-color: var(--settings-line);
   color: var(--on-surface);
 }
@@ -248,14 +269,14 @@
 .settings-scope .settings-segmented {
   max-width: 100%;
   padding: 3px;
-  border: 1px solid var(--settings-divider);
+  border: 1px solid var(--settings-card-border);
   border-radius: 8px;
-  background: var(--surface-container-low);
+  background: var(--settings-subsurface);
   font-size: var(--settings-font);
 }
 .settings-scope .settings-segmented-indicator {
   border-radius: 6px;
-  background: var(--surface-container-lowest);
+  background: var(--settings-control-bg);
   box-shadow: 0 1px 3px color-mix(in srgb, black 9%, transparent);
 }
 .settings-scope .settings-segmented-label {
@@ -275,7 +296,7 @@
   padding: 5px;
   border: 1px solid var(--settings-line);
   border-radius: 10px;
-  background: var(--surface-container-lowest);
+  background: var(--settings-elevated-bg);
   box-shadow: var(--settings-floating-shadow);
 }
 .settings-menu-option { padding: 8px 10px; border-radius: 6px; font-size: var(--settings-font); overflow-wrap: anywhere; }
@@ -285,7 +306,7 @@
 }
 .settings-menu-group { font-size: var(--settings-meta); font-weight: 500; color: var(--settings-muted); }
 .settings-scope.settings-modal, .settings-scope.settings-drawer, .settings-scope.settings-radix-dialog {
-  background: var(--surface-container-lowest);
+  background: var(--settings-elevated-bg);
   border: 1px solid var(--settings-line);
   outline: 0;
   box-shadow: var(--settings-floating-shadow);
@@ -293,7 +314,7 @@
 }
 .settings-scope.settings-modal, .settings-scope.settings-radix-dialog { border-radius: 12px; }
 .settings-scope.settings-radix-dialog { container: settings-dialog / inline-size; }
-.settings-modal-header { padding: 18px 20px 14px; background: var(--surface-container-lowest); border-bottom: 1px solid var(--settings-divider); }
+.settings-modal-header { padding: 18px 20px 14px; background: var(--settings-elevated-bg); border-bottom: 1px solid var(--settings-divider); }
 .settings-modal-title { font-size: calc(var(--settings-font) + 3px); font-weight: 600; }
 .settings-modal-body { padding: 20px; }
 .settings-tooltip { font-family: var(--font-ui-sans); font-size: var(--font-size-meta, 12px); border-radius: 6px; }
@@ -307,7 +328,7 @@
   text-align: left;
   border: 1px solid var(--settings-line);
   border-radius: 8px;
-  background: var(--surface-container-lowest);
+  background: var(--settings-control-bg);
   cursor: pointer;
   transition: border-color 150ms, background-color 150ms;
 }
@@ -324,7 +345,7 @@
 .settings-scope .settings-list-item .settings-text { font-size: var(--settings-font); }
 .settings-scope .settings-list-item .settings-list-subtitle { font-size: var(--settings-meta); }
 .settings-template-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 20px; }
-.settings-provider-row { border-color: var(--settings-line); border-radius: 8px; background: var(--surface-container-lowest); }
+.settings-provider-row { border-color: var(--settings-line); border-radius: 8px; background: var(--settings-control-bg); }
 .settings-provider-row:hover { background: var(--settings-hover); }
 .settings-provider-row[data-selected="true"] { background: var(--settings-selected); border-color: var(--settings-selected-line); }
 .settings-scope .ui-interactive[data-selected="true"], .settings-scope .ui-interactive[aria-selected="true"] {
@@ -369,6 +390,216 @@
 }
 .settings-scope.settings-radix-dialog .ui-select-popover { border-color: var(--settings-line); box-shadow: var(--settings-floating-shadow); }
 
+/* Unified CLI Hook bridge cards (Hook settings page). Uses only Settings tokens. */
+.hook-bridge-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.hook-bridge-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px;
+}
+.hook-bridge-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.hook-bridge-card {
+  min-width: 0;
+  border: 1px solid var(--settings-card-border);
+  border-radius: 12px;
+  background: var(--settings-group-bg);
+  overflow: hidden;
+  box-shadow: none;
+  transition: border-color 150ms ease;
+}
+.hook-bridge-card:hover {
+  border-color: var(--settings-line);
+}
+.hook-bridge-card[data-disabled="true"] .hook-bridge-icon {
+  opacity: 0.55;
+}
+.hook-bridge-card[data-disabled="true"] .hook-bridge-title {
+  color: var(--settings-muted);
+}
+.hook-bridge-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  transition: background-color 150ms ease;
+}
+.hook-bridge-header:has(> .hook-bridge-trigger:hover) {
+  background: var(--settings-hover);
+}
+.hook-bridge-trigger {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.hook-bridge-trigger:hover .hook-bridge-title {
+  color: var(--primary);
+}
+.hook-bridge-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 9px;
+  background: var(--settings-subsurface);
+  color: var(--on-surface);
+  transition: opacity 150ms ease;
+}
+.hook-bridge-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.hook-bridge-title {
+  font-size: var(--settings-font);
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--on-surface);
+  transition: color 150ms ease;
+}
+.hook-bridge-desc {
+  font-size: var(--settings-meta);
+  line-height: 1.45;
+  color: var(--settings-muted);
+  overflow-wrap: anywhere;
+}
+.hook-bridge-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.hook-bridge-sep {
+  width: 1px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--settings-divider);
+}
+.hook-bridge-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--settings-muted);
+  cursor: pointer;
+  transition: transform 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.hook-bridge-chevron:hover {
+  background: var(--settings-hover);
+  color: var(--on-surface);
+}
+.hook-bridge-chevron[data-open="true"],
+.hook-bridge-card[data-open="true"] .hook-bridge-chevron {
+  transform: rotate(180deg);
+}
+.hook-bridge-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--settings-divider);
+}
+.hook-bridge-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 8px;
+  background: var(--settings-subsurface);
+  color: var(--settings-muted);
+  font-size: var(--settings-meta);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.hook-bridge-notice[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--warning) 36%, var(--settings-divider));
+  background: color-mix(in srgb, var(--warning) 9%, var(--settings-subsurface));
+  color: var(--on-surface);
+}
+.hook-bridge-notice[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--settings-divider));
+  background: color-mix(in srgb, var(--danger) 9%, var(--settings-subsurface));
+  color: var(--on-surface);
+}
+.hook-bridge-well {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 10px;
+  background: var(--settings-subsurface);
+}
+.hook-bridge-events-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.hook-bridge-event-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 999px;
+  background: var(--settings-subsurface);
+  color: var(--on-surface);
+  font-family: var(--font-ui-mono);
+  font-size: calc(var(--settings-meta) - 1px);
+  line-height: 1.4;
+}
+.hook-bridge-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.hook-bridge-actions-trailing {
+  margin-left: auto;
+}
+.settings-scope .hook-path-row,
+.settings-scope .settings-card.hook-path-row,
+.settings-scope :is(.settings-section-body, .ui-surface-card, .settings-card) .settings-card.hook-path-row {
+  border: 1px solid var(--settings-card-border);
+  border-radius: 8px;
+  background-color: var(--settings-control-bg);
+}
+
 @container settings-dialog (max-width: 560px) {
   .settings-ssh-field-row { grid-template-columns: minmax(0, 1fr); }
 }
@@ -401,6 +632,11 @@
   .settings-provider-row { flex-wrap: wrap; padding-block: 6px; }
   .settings-provider-select { flex-basis: calc(100% - 36px); }
   .settings-provider-row > .mantine-Group-root { max-width: 100%; flex-wrap: wrap; }
+  .hook-bridge-group-header { flex-wrap: wrap; gap: 8px; }
+  .hook-bridge-header { flex-wrap: wrap; gap: 10px; padding: 11px 12px; }
+  .hook-bridge-controls { width: 100%; justify-content: flex-end; padding-top: 8px; border-top: 1px solid var(--settings-divider); }
+  .hook-bridge-body { padding: 12px; }
+  .hook-bridge-actions-trailing { margin-left: 0; }
 }
 
 @media (max-width: 759px) {

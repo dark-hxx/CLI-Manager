@@ -110,7 +110,7 @@ export type ExitWithRunningTasksBehavior = "ask" | "background" | "minimize" | "
 export type TerminalSessionRestoreMode = "ask" | "auto";
 export const LINUX_GRAPHICS_MODES = ["auto", "system", "disable-dmabuf", "disable-compositing"] as const;
 export type LinuxGraphicsMode = (typeof LINUX_GRAPHICS_MODES)[number];
-export type StatuslineEditorSource = "claude" | "codex";
+export type StatuslineEditorSource = "claude" | "codex" | "agy";
 export type SystemResourceCardKey =
   | "system"
   | "cpu"
@@ -466,6 +466,7 @@ export interface Settings {
   kimiHookBridgeEnabled: boolean;
   piHookBridgeEnabled: boolean;
   grokHookBridgeEnabled: boolean;
+  antigravityHookBridgeEnabled: boolean;
   systemNotificationsEnabled: boolean;
   systemNotificationSoundPath: string | null;
   suppressSystemNotificationsWhenFocused: boolean;
@@ -690,6 +691,7 @@ const DEFAULTS: Settings = {
   kimiHookBridgeEnabled: true,
   piHookBridgeEnabled: true,
   grokHookBridgeEnabled: true,
+  antigravityHookBridgeEnabled: false,
   systemNotificationsEnabled: true,
   systemNotificationSoundPath: null,
   suppressSystemNotificationsWhenFocused: true,
@@ -1697,6 +1699,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.grokHookBridgeEnabled === "boolean"
         ? entries.grokHookBridgeEnabled
         : DEFAULTS.grokHookBridgeEnabled;
+    entries.antigravityHookBridgeEnabled = entries.antigravityHookBridgeEnabled === true;
     entries.systemNotificationsEnabled =
       typeof entries.systemNotificationsEnabled === "boolean"
         ? entries.systemNotificationsEnabled

@@ -86,22 +86,9 @@ pub(super) fn antigravity_path_parts(path: &Path) -> Option<(PathBuf, String)> {
     (!conversation_id.is_empty()).then_some((root, conversation_id))
 }
 
-// 读取 history.jsonl 的有效会话工作区记录，重复 ID 由后值覆盖。
+// 冲突的映射只允许浏览，不提供绑定或恢复依据。
 pub(super) fn load_antigravity_workspace_map(root: &Path) -> HashMap<String, String> {
-    let Ok(file) = File::open(root.join("history.jsonl")) else {
-        return HashMap::new();
-    };
-    BufReader::with_capacity(READ_BUF_CAPACITY, file)
-        .lines()
-        .map_while(Result::ok)
-        .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .filter_map(|value| {
-            let conversation_id = value.get("conversationId")?.as_str()?.trim().to_string();
-            let workspace = value.get("workspace")?.as_str()?.trim().to_string();
-            (!conversation_id.is_empty() && !workspace.is_empty())
-                .then_some((conversation_id, workspace))
-        })
-        .collect()
+    super::antigravity::load_workspace_map(root)
 }
 
 // 从 transcript 路径解析会话 ID 并查询其历史工作区映射。
