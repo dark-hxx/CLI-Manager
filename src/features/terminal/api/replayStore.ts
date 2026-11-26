@@ -67,6 +67,9 @@ export interface ReplayWorktreeSnapshot {
   patchBytes?: number;
   patchTruncated?: boolean;
   files: ReplaySnapshotFile[];
+  fileCount?: number;
+  filesDigest?: string;
+  filesTruncated?: boolean;
 }
 
 interface ReplaySessionRow {
@@ -127,6 +130,8 @@ const REPLAY_EVENTS_IN_MEMORY_LIMIT = 200;
 const SNAPSHOT_PATCH_DIR = "replay-snapshots";
 const SNAPSHOT_PATCH_STORAGE = "file";
 const SNAPSHOT_CAPTURE_DEBOUNCE_MS = 750;
+// 快照只保留少量变更文件名用于卡片展示；完整文件列表随工作区规模膨胀，曾占回放库的大头。
+const SNAPSHOT_CHANGED_FILES_LIMIT = 20;
 
 interface SnapshotCaptureRequest {
   sessionKey: string;
@@ -756,7 +761,28 @@ async function getLastSnapshotPayload(sessionKey: string): Promise<Record<string
     "SELECT payload_json FROM ai_replay_events WHERE session_key = $1 AND kind = 'snapshot' ORDER BY event_index DESC LIMIT 1",
     [sessionKey]
   );
-  return rows[0]?.payload_json ? hydrateSnapshotPayload(parseJsonObject(rows[0].payload_json)) : null;
+  return rows[0]?.payload_json ? parseJsonObject(rows[0].payload_json) : null;
+}
+
+// 以 head、补丁与文件状态计算快照指纹，截断补丁的快照也能据此去重；后端给出全量文件摘要时以其代替文件列表。
+async function snapshotStateDigest(snapshot: ReplayWorktreeSnapshot, patchBytes: number): Promise<string> {
+  const files = snapshot.filesDigest ??
+    snapshot.files.map((file) => [file.path, file.status, file.staged, file.added, file.deleted]);
+  const header = JSON.stringify([snapshot.head, Boolean(snapshot.patchTruncated), patchBytes, files]);
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${header}\n${snapshot.patch}`));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+// 判断与上一快照是否相同：新快照比指纹，无指纹的旧快照回退比对 head 与补丁原文。
+async function isDuplicateSnapshot(
+  lastSnapshot: Record<string, unknown> | null,
+  snapshot: ReplayWorktreeSnapshot,
+  stateDigest: string
+): Promise<boolean> {
+  if (!lastSnapshot) return false;
+  if (typeof lastSnapshot.stateDigest === "string") return lastSnapshot.stateDigest === stateDigest;
+  if (snapshot.patchTruncated || lastSnapshot.head !== snapshot.head) return false;
+  return (await hydrateSnapshotPayload(lastSnapshot)).patch === snapshot.patch;
 }
 
 export const useReplayStore = create<ReplayStore>((set, get) => ({
@@ -936,7 +962,7 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
           projectPath: normalizedProjectPath,
           reason: reason ?? "manual",
           dirty: snapshot.dirty,
-          files: snapshot.files.length,
+          files: snapshot.fileCount ?? snapshot.files.length,
           patchBytes,
           patchTruncated: Boolean(snapshot.patchTruncated),
           elapsedMs,
@@ -945,8 +971,9 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         if (!snapshot.dirty) return null;
         if (!snapshot.patch.trim() && !snapshot.patchTruncated) return null;
 
+        const stateDigest = await snapshotStateDigest(snapshot, patchBytes);
         const lastSnapshot = await getLastSnapshotPayload(sessionKey);
-        if (!snapshot.patchTruncated && lastSnapshot?.patch === snapshot.patch && lastSnapshot?.head === snapshot.head) {
+        if (await isDuplicateSnapshot(lastSnapshot, snapshot, stateDigest)) {
           logReplayOomDiagnostic("captureCodeSnapshot.skippedDuplicate", {
             sessionKey,
             projectPath: normalizedProjectPath,
@@ -959,16 +986,22 @@ export const useReplayStore = create<ReplayStore>((set, get) => ({
         const title = existing?.title ?? `${snapshot.branch ?? "git"} replay`;
         const timestamp = new Date().toISOString();
         const detail = translateCurrent("aiReplay.snapshot.detail", {
-          count: snapshot.files.length,
+          count: snapshot.fileCount ?? snapshot.files.length,
           branch: snapshot.branch ?? snapshot.head.slice(0, 7),
         });
         const checkpointId = `snapshot-${Date.now().toString(36)}`;
+        const { files, fileCount, filesDigest: _filesDigest, filesTruncated: _filesTruncated, ...snapshotFields } = snapshot;
+        const changedFiles = files.map((file) => file.path).slice(0, SNAPSHOT_CHANGED_FILES_LIMIT);
+        const totalFiles = fileCount ?? files.length;
         const payload: Record<string, unknown> = {
-          ...snapshot,
+          ...snapshotFields,
           patchBytes,
           checkpointId,
           reason: reason ?? "manual",
-          changedFiles: snapshot.files.map((file) => file.path),
+          stateDigest,
+          fileCount: totalFiles,
+          changedFiles,
+          ...(totalFiles > changedFiles.length ? { changedFilesTruncated: true } : {}),
         };
         let persistedPayload = payload;
         if (snapshot.patch.trim()) {
