@@ -26,7 +26,8 @@ use materialization::{active_v2_source_instances, record_v2_index_failure};
 use super::*;
 #[cfg(test)]
 use cli_manager_history_core::RemoteHistorySyncResult;
-use log::{debug, warn};
+use futures_util::TryStreamExt;
+use log::{debug, info, warn};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqliteSynchronous};
 use sqlx::{Connection, Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
@@ -47,6 +48,9 @@ const CATALOG_REFRESH_TTL_MS: i64 = 10_000;
 const CATALOG_SEARCH_MIN_CHARS: usize = 3;
 const CATALOG_PARSE_BATCH_SIZE: usize = 2;
 const CATALOG_PROGRESS_BATCH_SIZE: usize = 20;
+// 目录库是可重建缓存；空闲页同时超过字节与占比阈值才整理，避免每次刷新整库重写。
+const CATALOG_VACUUM_MIN_FREE_BYTES: i64 = 64 * 1024 * 1024;
+const CATALOG_VACUUM_MIN_FREE_PERCENT: i64 = 25;
 
 static CATALOG_REFRESH_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
 static CATALOG_SCHEMA_LOCK: OnceLock<AsyncMutex<()>> = OnceLock::new();
@@ -989,7 +993,7 @@ fn opencode_catalog_document(parsed: OpenCodeParsedSession) -> CatalogDocument {
     }
 }
 
-// 事务替换旧目录中单个文件的摘要及消息索引。
+// 事务替换单个文件的摘要，消息按序号差量写入：只改动变化行，避免活跃会话每次刷新重建全部 FTS。
 async fn replace_document(
     conn: &mut SqliteConnection,
     roots_key: &str,
@@ -998,12 +1002,71 @@ async fn replace_document(
     let file_path = document.file_ref.path.to_string_lossy().to_string();
     let cwd_normalized = document.cwd.as_deref().map(normalize_history_path);
     let mut tx = conn.begin().await.map_err(|err| err.to_string())?;
-    sqlx::query("DELETE FROM history_catalog_messages WHERE roots_key = ?1 AND file_path = ?2")
+    let message_count = document.messages.len();
+    let mut stored = vec![false; message_count];
+    let mut changed_rows = Vec::new();
+    {
+        let mut rows = sqlx::query(
+            "SELECT id, message_index, role, timestamp, content
+             FROM history_catalog_messages
+             WHERE roots_key = ?1 AND file_path = ?2 AND message_index < ?3",
+        )
         .bind(roots_key)
         .bind(&file_path)
+        .bind(message_count as i64)
+        .fetch(&mut *tx);
+        while let Some(row) = rows.try_next().await.map_err(|err| err.to_string())? {
+            let Ok(index) = usize::try_from(
+                row.try_get::<i64, _>("message_index")
+                    .map_err(|err| err.to_string())?,
+            ) else {
+                continue;
+            };
+            let Some(message) = document.messages.get(index) else {
+                continue;
+            };
+            stored[index] = true;
+            let unchanged = row
+                .try_get::<String, _>("role")
+                .is_ok_and(|role| role == message.role)
+                && row
+                    .try_get::<Option<String>, _>("timestamp")
+                    .is_ok_and(|timestamp| timestamp == message.timestamp)
+                && row
+                    .try_get::<String, _>("content")
+                    .is_ok_and(|content| content == message.content);
+            if !unchanged {
+                changed_rows.push((
+                    row.try_get::<i64, _>("id").map_err(|err| err.to_string())?,
+                    index,
+                ));
+            }
+        }
+    }
+    sqlx::query(
+        "DELETE FROM history_catalog_messages
+         WHERE roots_key = ?1 AND file_path = ?2 AND message_index >= ?3",
+    )
+    .bind(roots_key)
+    .bind(&file_path)
+    .bind(message_count as i64)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| err.to_string())?;
+    for (id, index) in changed_rows {
+        let message = &document.messages[index];
+        sqlx::query(
+            "UPDATE history_catalog_messages SET role = ?1, timestamp = ?2, content = ?3
+             WHERE id = ?4",
+        )
+        .bind(&message.role)
+        .bind(&message.timestamp)
+        .bind(&message.content)
+        .bind(id)
         .execute(&mut *tx)
         .await
         .map_err(|err| err.to_string())?;
+    }
     sqlx::query("DELETE FROM history_catalog_sessions WHERE roots_key = ?1 AND file_path = ?2")
         .bind(roots_key)
         .bind(&file_path)
@@ -1037,7 +1100,12 @@ async fn replace_document(
     .execute(&mut *tx)
     .await
     .map_err(|err| err.to_string())?;
-    for (message_index, message) in document.messages.into_iter().enumerate() {
+    for (message_index, message) in document
+        .messages
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| !stored[*index])
+    {
         sqlx::query(
             "INSERT INTO history_catalog_messages(
                 roots_key, file_path, message_index, role, timestamp, content
@@ -1080,7 +1148,7 @@ async fn delete_document(
     Ok(())
 }
 
-// 扫描并增量更新历史目录，清理缺失文件、构建第二代索引并发布进度。
+// 扫描并增量更新历史目录；已就绪后的小批量刷新静默执行，仅在内容变化时推进 generation。
 async fn refresh_catalog(
     app: &AppHandle,
     roots: &HistoryRoots,
@@ -1089,11 +1157,14 @@ async fn refresh_catalog(
     let mut conn = open_catalog().await?;
     seed_from_legacy_if_empty(&mut conn, roots).await?;
     let mut status = get_status_with_conn(&mut conn, roots).await?;
-    status.phase = "scanning".to_string();
-    status.partial = true;
+    let incremental = status.phase == "ready";
     status.error = None;
-    persist_status(&mut conn, &status).await?;
-    emit_status(app, &status);
+    if !incremental {
+        status.phase = "scanning".to_string();
+        status.partial = true;
+        persist_status(&mut conn, &status).await?;
+        emit_status(app, &status);
+    }
 
     let roots_for_scan = roots.clone();
     let catalog_scan =
@@ -1158,6 +1229,7 @@ async fn refresh_catalog(
                 .map(|document| document.file_ref.path.to_string_lossy().to_string()),
         )
         .collect();
+    let mut stale_count = 0usize;
     for stale in existing
         .iter()
         .filter(|(path, (source, _, _, _, _))| {
@@ -1167,6 +1239,7 @@ async fn refresh_catalog(
         .collect::<Vec<_>>()
     {
         delete_document(&mut conn, &roots_key, &stale).await?;
+        stale_count = stale_count.saturating_add(1);
     }
 
     let mut pending = Vec::new();
@@ -1203,13 +1276,17 @@ async fn refresh_catalog(
         }
     }
 
-    status.phase = "indexing".to_string();
+    let pending_total = pending.len() + pending_documents.len();
+    let quiet = incremental && pending_total <= CATALOG_PROGRESS_BATCH_SIZE;
+    let mut catalog_changed = !incremental || stale_count > 0 || pending_total > 0;
     status.total_files = total_files;
-    status.indexed_files = total_files
-        .saturating_sub(pending.len())
-        .saturating_sub(pending_documents.len());
-    persist_status(&mut conn, &status).await?;
-    emit_status(app, &status);
+    status.indexed_files = total_files.saturating_sub(pending_total);
+    if !quiet {
+        status.phase = "indexing".to_string();
+        status.partial = true;
+        persist_status(&mut conn, &status).await?;
+        emit_status(app, &status);
+    }
 
     let mut progress_since_emit = 0usize;
     for batch in pending.chunks(CATALOG_PARSE_BATCH_SIZE) {
@@ -1222,7 +1299,7 @@ async fn refresh_catalog(
             status.indexed_files = status.indexed_files.saturating_add(1);
             progress_since_emit = progress_since_emit.saturating_add(1);
         }
-        if progress_since_emit >= CATALOG_PROGRESS_BATCH_SIZE {
+        if !quiet && progress_since_emit >= CATALOG_PROGRESS_BATCH_SIZE {
             progress_since_emit = 0;
             status.generation = status.generation.saturating_add(1);
             persist_status(&mut conn, &status).await?;
@@ -1238,19 +1315,26 @@ async fn refresh_catalog(
     status.partial = false;
     status.indexed_files = total_files;
     status.total_files = total_files;
-    status.generation = status.generation.saturating_add(1);
     status.last_completed_at = Some(now_millis());
     status.error = None;
-    if let Err(err) = shadow_build_v2(
+    let next_generation = status.generation.saturating_add(1);
+    match shadow_build_v2(
         &mut conn,
         roots,
         &roots_key,
-        status.generation,
+        next_generation,
         codex_thread_name_changed,
     )
     .await
     {
-        warn!("history v2 shadow build failed: roots={roots_key}, err={err}");
+        Ok(v2_changed) => catalog_changed |= v2_changed > 0,
+        Err(err) => {
+            catalog_changed = true;
+            warn!("history v2 shadow build failed: roots={roots_key}, err={err}");
+        }
+    }
+    if catalog_changed {
+        status.generation = next_generation;
     }
     sqlx::query(
         "INSERT INTO history_meta(key, value, updated_at)
@@ -1266,10 +1350,64 @@ async fn refresh_catalog(
     .await
     .map_err(|err| err.to_string())?;
     persist_status(&mut conn, &status).await?;
-    emit_status(app, &status);
+    if catalog_changed || !quiet {
+        emit_status(app, &status);
+    }
     CATALOG_DIRTY.store(false, Ordering::Release);
-    debug!("history catalog refresh completed: roots={roots_key}, files={total_files}");
+    if let Err(err) = vacuum_catalog_if_fragmented(&mut conn).await {
+        warn!("history catalog vacuum failed: err={err}");
+    }
+    debug!(
+        "history catalog refresh completed: roots={roots_key}, files={total_files}, stale={stale_count}, reindexed={pending_total}, generation={}",
+        status.generation
+    );
     Ok(status)
+}
+
+// 空闲页同时达到字节与占比阈值时才值得整理目录库。
+fn catalog_needs_vacuum(page_size: i64, page_count: i64, freelist_count: i64) -> bool {
+    if page_size <= 0 || page_count <= 0 || freelist_count <= 0 {
+        return false;
+    }
+    freelist_count.saturating_mul(page_size) >= CATALOG_VACUUM_MIN_FREE_BYTES
+        && freelist_count.saturating_mul(100)
+            >= page_count.saturating_mul(CATALOG_VACUUM_MIN_FREE_PERCENT)
+}
+
+// 碎片过多时 VACUUM 归还磁盘空间，并截断 WAL 以免整理后日志文件残留膨胀。
+async fn vacuum_catalog_if_fragmented(conn: &mut SqliteConnection) -> Result<(), String> {
+    let page_size: i64 = sqlx::query_scalar("PRAGMA page_size")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    let page_count: i64 = sqlx::query_scalar("PRAGMA page_count")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    let freelist_count: i64 = sqlx::query_scalar("PRAGMA freelist_count")
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|err| err.to_string())?;
+    if !catalog_needs_vacuum(page_size, page_count, freelist_count) {
+        return Ok(());
+    }
+    let started_at = now_millis();
+    for statement in [
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+        "VACUUM",
+        "PRAGMA wal_checkpoint(TRUNCATE)",
+    ] {
+        sqlx::query(statement)
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| err.to_string())?;
+    }
+    info!(
+        "history catalog vacuumed: freed_bytes={}, elapsed_ms={}",
+        freelist_count.saturating_mul(page_size),
+        now_millis() - started_at
+    );
+    Ok(())
 }
 
 // 尽力保存刷新错误并向前端发布错误状态。
@@ -1338,6 +1476,14 @@ pub(super) async fn ensure_refresh(
 
     if wait {
         let _refresh_guard = catalog_refresh_lock().lock().await;
+        // 排队期间已有其他刷新完成时直接复用其结果，避免搜索等请求串行重复扫描。
+        if !force && !CATALOG_DIRTY.load(Ordering::Acquire) {
+            if let Ok(latest) = get_status(&roots).await {
+                if latest.phase == "ready" && latest.last_completed_at > status.last_completed_at {
+                    return Ok(latest);
+                }
+            }
+        }
         let result = refresh_catalog(&app, &roots).await;
         if let Err(error) = &result {
             mark_refresh_error(&app, &roots, error.clone()).await;

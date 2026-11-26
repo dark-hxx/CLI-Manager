@@ -45,6 +45,9 @@
 - Opening history must schedule the same TTL-governed refresh even when the frontend reuses its in-memory list.
 - Search requires at least three Unicode characters and uses FTS5 trigram literal matching; user text must be quoted/escaped before `MATCH`.
 - First indexing is recent-first and partial results remain usable. A ready generation change reloads the list and current search.
+- `generation` advances only when a refresh changed catalog content: the prior phase was not `ready`, stale rows were deleted, files were reindexed, or the V2 shadow build changed sessions (a V2 build error counts as changed). A no-op refresh keeps the generation and emits no event, so the frontend does not reload the list/search.
+- Incremental refresh is quiet when the prior phase is `ready` and pending files ≤ `CATALOG_PROGRESS_BATCH_SIZE` (20): it neither persists nor emits `scanning`/`indexing`/progress, and emits the final `ready` only when content changed. Larger batches and non-ready starts keep the full progress lifecycle.
+- A `wait` refresh that acquired the refresh lock after queueing returns the latest `ready` status instead of rescanning when another refresh completed while it waited (`last_completed_at` advanced), unless the call is forced or the catalog is dirty.
 - Project filtering uses indexed normalized `cwd` plus Claude encoded project keys; it must not reopen every JSONL in the request path.
 - Editing/deleting/converting history marks the catalog dirty. Refresh replaces only changed files and removes missing files.
 - Foreground file-backed detail reads must not await a dirty catalog's full refresh. Schedule refresh in the background and validate/read the requested source directly; V2 cached detail must reject a missing source file even while catalog rows remain. OpenCode database locators retain their separate provider/catalog path.
@@ -60,7 +63,7 @@ Codex `response_item` function/custom/MCP calls, their outputs, and public reaso
 | Query has fewer than 3 characters | Return no global hits; frontend shows the minimum-length hint. |
 | Catalog is empty but legacy JSON cache exists | Seed summary rows, return the cached list, then build message FTS in background. |
 | File fingerprint is unchanged | Reuse catalog rows without parsing the transcript. |
-| File changed or parser version changed | Atomically replace that file's summary/message/FTS rows. |
+| File changed or parser version changed | In one transaction, replace the summary row and diff messages by `message_index`: UPDATE rows whose role/timestamp/content changed, INSERT new indexes, DELETE indexes past the new length; unchanged rows and their FTS entries stay untouched (an append-only active session writes only the new tail). |
 | File disappeared | Delete its message and summary rows. |
 | Catalog refresh fails | Keep previous rows and emit `phase=error`; never delete source JSONL. |
 | Catalog DB is malformed | Recreate only the derived catalog and rebuild. |
@@ -75,11 +78,14 @@ Codex `response_item` function/custom/MCP calls, their outputs, and public reaso
 - Bad: calling `refresh_history_index()` or `iter_session_messages_filtered()` for every keystroke.
 - Bad: collecting catalog files for Claude/Codex/Grok/Pi but omitting Kimi, so the history workspace list stays empty while realtime exact lookup still works.
 - Bad: storing the FTS cache in the main user database or clearing usable rows after a transient scan error.
+- Bad: delete and reinsert every message of an active session on each refresh; a 6k-message transcript rewrites its whole FTS index (seconds) and leaves freelist pages for one appended line.
+- Bad: bump `generation` or emit `scanning` on every TTL refresh; the frontend reloads list/search and the progress line flickers although nothing changed.
 
 ### 6. Tests Required
 
 - Rust: FTS schema/triggers support Chinese and ASCII trigram matches; literal quoting handles embedded quotes.
 - Rust: unchanged fingerprints skip parsing; changed and deleted files update only their own rows.
+- Rust: `replace_document` diff write covers append-only tail, a changed message (FTS hit follows the new text and FTS `integrity-check` passes), and a truncated tail; the vacuum threshold requires both free bytes and free ratio.
 - Rust: exact Codex lookup reads a newly written paginated rollout without any catalog; verify message/model/usage detail, query gating, same-project neighbors, wrong metadata/project, duplicates, and deletion.
 - Rust: project/source filters and pagination preserve existing command behavior.
 - Rust: exact Kimi session lookup finds the matching workspace session, rejects a different project path and traversal input, applies latest-wins/tombstone index records without letting malformed lines mask valid state, and rejects escaped or mismatched `sessionDir`; catalog file collection includes the main `wire.jsonl` and excludes nested subagent wires. Delete tests assert an appended tombstone rather than disappearance of historical index lines. Frontend resume tests reject Kimi IDs containing shell metacharacters.
@@ -171,6 +177,7 @@ catalog::ensure_refresh(app, roots, false, false).await?;
 | Query contains quotes | Escape each trigram as a bound FTS literal; never interpolate user input |
 | FTS rebuild or metadata update fails | Return the error and do not report the new schema version |
 | Normal incremental insert/update/delete | Triggers keep FTS synchronized; do not run full `VACUUM` per refresh |
+| Refresh finished and freelist ≥ 64 MiB **and** ≥ 25 % of pages | Run `wal_checkpoint(TRUNCATE)` → `VACUUM` → `wal_checkpoint(TRUNCATE)` once inside the refresh lock; a vacuum failure only logs a warning and never fails the refresh |
 
 ### 5. Good/Base/Bad Cases
 
@@ -178,6 +185,7 @@ catalog::ensure_refresh(app, roots, false, false).await?;
 - Base: a three-character Chinese query is one trigram and continues to match normally.
 - Bad: use `snippet()` or bind the complete phrase directly with `detail='none'`; SQLite rejects phrase evaluation because positional detail is absent.
 - Bad: run `VACUUM` after every changed transcript; large history refreshes become blocking maintenance operations.
+- Good: fragmentation accumulated over many refreshes is reclaimed by one threshold-gated `VACUUM` after a refresh, not by every refresh.
 
 ### 6. Tests Required
 

@@ -505,7 +505,7 @@ pub(super) async fn shadow_build_v2_for_instance(
     generation: u64,
     instance: &V2SourceInstance,
     codex_thread_name_changed: bool,
-) -> Result<(), String> {
+) -> Result<usize, String> {
     let started_at = now_millis();
     let run_id = format!("shadow-{}-{}-{}", instance.id, generation, started_at);
     let sessions = legacy_sessions_for_v2(conn, roots_key, &instance.source_id).await?;
@@ -663,27 +663,30 @@ pub(super) async fn shadow_build_v2_for_instance(
     .execute(&mut *conn)
     .await
     .map_err(|err| err.to_string())?;
-    Ok(())
+    Ok(changed_sessions)
 }
 
-// 依次为活动本地来源实例执行第二代影子索引构建。
+// 依次为活动本地来源实例执行第二代影子索引构建，返回变更的会话总数。
 pub(super) async fn shadow_build_v2(
     conn: &mut SqliteConnection,
     roots: &HistoryRoots,
     roots_key: &str,
     generation: u64,
     codex_thread_name_changed: bool,
-) -> Result<(), String> {
+) -> Result<usize, String> {
+    let mut changed_sessions = 0usize;
     for instance in active_v2_source_instances(conn).await? {
-        shadow_build_v2_for_instance(
-            conn,
-            roots,
-            roots_key,
-            generation,
-            &instance,
-            codex_thread_name_changed,
-        )
-        .await?;
+        changed_sessions = changed_sessions.saturating_add(
+            shadow_build_v2_for_instance(
+                conn,
+                roots,
+                roots_key,
+                generation,
+                &instance,
+                codex_thread_name_changed,
+            )
+            .await?,
+        );
     }
-    Ok(())
+    Ok(changed_sessions)
 }
