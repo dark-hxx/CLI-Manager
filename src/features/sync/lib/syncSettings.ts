@@ -133,6 +133,7 @@ export const SETTING_BACKUP_POLICY = {
   workspanEnabled: "excluded",
   terminalLayoutLocked: "excluded",
   desktopPet: "excluded",
+  proxySettings: "excluded",
 } as const satisfies Record<keyof Settings, BackupSettingDomain>;
 
 function keysForDomain<D extends BackupSettingDomain>(domain: D) {

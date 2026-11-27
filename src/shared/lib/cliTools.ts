@@ -181,6 +181,52 @@ export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
 
 export const CLI_TOOL_COMMANDS = CLI_TOOL_DESCRIPTORS.map((tool) => tool.command);
 
+export const PROJECT_CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "agy", "grok", "dsh-tui"] as const;
+export const HIDDEN_PROJECT_CLI_TOOLS = new Set(["goose", "amp", "aider", "crush"]);
+
+export const PROJECT_CLI_TOOL_OPTIONS: readonly CliToolDescriptor[] = CLI_TOOL_DESCRIPTORS
+  .filter((tool) => !HIDDEN_PROJECT_CLI_TOOLS.has(tool.command))
+  .sort((left, right) => {
+    const leftIndex = PROJECT_CLI_TOOL_PRIORITY.indexOf(left.command as (typeof PROJECT_CLI_TOOL_PRIORITY)[number]);
+    const rightIndex = PROJECT_CLI_TOOL_PRIORITY.indexOf(right.command as (typeof PROJECT_CLI_TOOL_PRIORITY)[number]);
+    return (leftIndex < 0 ? PROJECT_CLI_TOOL_PRIORITY.length : leftIndex)
+      - (rightIndex < 0 ? PROJECT_CLI_TOOL_PRIORITY.length : rightIndex);
+  });
+
+export function resolveCliToolDescriptor(cliTool: string | null | undefined): CliToolDescriptor | null {
+  const normalized = cliTool?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (isAgyCommand(normalized)) {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "agy") ?? null;
+  }
+  if (normalized === "code") {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "codex") ?? null;
+  }
+  if (isDeepSeekTuiTool(normalized)) {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "deepseek-harness") ?? null;
+  }
+  const exact = CLI_TOOL_DESCRIPTORS.find(
+    (tool) => tool.id === normalized || tool.command.toLowerCase() === normalized,
+  );
+  if (exact) return exact;
+  return CLI_TOOL_DESCRIPTORS.find((tool) => commandMatches(normalized, tool.command)) ?? null;
+}
+
+export function resolveProxyAgentId(
+  cliTool: string | null | undefined,
+  startupCmd?: string | null,
+): string | null {
+  const trimmedCliTool = cliTool?.trim();
+  if (trimmedCliTool) {
+    return resolveCliToolDescriptor(trimmedCliTool)?.id ?? null;
+  }
+  const trimmedStartupCmd = startupCmd?.trim();
+  if (trimmedStartupCmd) {
+    return resolveCliToolDescriptor(trimmedStartupCmd)?.id ?? null;
+  }
+  return null;
+}
+
 export function resolveCliToolImagePasteMode(cliTool: string | null | undefined): ImagePasteMode {
   const normalized = cliTool?.trim().toLowerCase() ?? "";
   if (!normalized || isAgyCommand(normalized)) return "unsupported";

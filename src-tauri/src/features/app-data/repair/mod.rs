@@ -4,6 +4,8 @@ use crate::{
     MIGRATION_ADD_GROUP_BOUND_PATH_DESCRIPTION, MIGRATION_ADD_GROUP_BOUND_PATH_SQL,
     MIGRATION_ADD_GROUP_BOUND_PATH_VERSION, MIGRATION_ADD_PROJECT_PATH_MODE_DESCRIPTION,
     MIGRATION_ADD_PROJECT_PATH_MODE_SQL, MIGRATION_ADD_PROJECT_PATH_MODE_VERSION,
+    MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION, MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL,
+    MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION,
     MIGRATION_ADD_SSH_ATTACHMENT_ROOT_DESCRIPTION, MIGRATION_ADD_SSH_ATTACHMENT_ROOT_SQL,
     MIGRATION_ADD_SSH_ATTACHMENT_ROOT_VERSION, MIGRATION_ADD_USAGE_ERROR_DETAIL_DESCRIPTION,
     MIGRATION_ADD_USAGE_ERROR_DETAIL_SQL, MIGRATION_ADD_USAGE_ERROR_DETAIL_VERSION,
@@ -201,6 +203,10 @@ pub async fn db_repair_known_migration_drift(
     if ensure_ssh_attachment_root_column(&mut conn).await? {
         result.repaired = true;
         result.status = append_repair_status(&result.status, "repaired_ssh_attachment_root_column");
+    }
+    if ensure_project_proxy_config_column(&mut conn).await? {
+        result.repaired = true;
+        result.status = append_repair_status(&result.status, "repaired_project_proxy_config_column");
     }
     if defer_request_log_project_path_backfill(&mut conn).await? {
         result.repaired = true;
@@ -586,6 +592,75 @@ async fn ensure_ssh_attachment_root_column(conn: &mut SqliteConnection) -> Resul
                 .execute(&mut *conn)
                 .await
                 .map_err(|err| format!("ssh_attachment_root_repair_commit_failed: {err}"))?;
+            Ok(true)
+        }
+        Err(err) => {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            Err(err)
+        }
+    }
+}
+
+/// 项目代理配置列缺失自愈。
+///
+/// migration 43 只有一条 `ADD COLUMN`。在 SQLx `Database.load` 前同时修复
+/// “列缺失但版本已登记”、“列存在但版本未登记”和“两者都缺失”三种状态。
+async fn ensure_project_proxy_config_column(conn: &mut SqliteConnection) -> Result<bool, String> {
+    if !table_exists(conn, SQLX_MIGRATIONS_TABLE).await? || !table_exists(conn, "projects").await? {
+        return Ok(false);
+    }
+
+    let columns = table_columns(conn, "projects").await?;
+    let has_column = columns.contains("proxy_config");
+    let registered: i64 = sqlx::query_scalar(
+        "SELECT EXISTS(
+             SELECT 1 FROM _sqlx_migrations
+             WHERE version = ?1 AND success = 1
+         )",
+    )
+    .bind(MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|err| format!("project_proxy_config_migration_query_failed: {err}"))?;
+
+    if has_column && registered != 0 {
+        return Ok(false);
+    }
+
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *conn)
+        .await
+        .map_err(|err| format!("project_proxy_config_repair_begin_failed: {err}"))?;
+    let result = async {
+        if !has_column {
+            sqlx::query(MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL)
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("project_proxy_config_repair_alter_failed: {err}"))?;
+        }
+        if registered == 0 {
+            sqlx::query(
+                "INSERT INTO _sqlx_migrations
+                     (version, description, installed_on, success, checksum, execution_time)
+                 VALUES (?1, ?2, CURRENT_TIMESTAMP, 1, ?3, 0)",
+            )
+            .bind(MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION)
+            .bind(MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION)
+            .bind(migration_checksum(MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL))
+            .execute(&mut *conn)
+            .await
+            .map_err(|err| format!("project_proxy_config_repair_register_failed: {err}"))?;
+        }
+        Ok::<(), String>(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            sqlx::query("COMMIT")
+                .execute(&mut *conn)
+                .await
+                .map_err(|err| format!("project_proxy_config_repair_commit_failed: {err}"))?;
             Ok(true)
         }
         Err(err) => {

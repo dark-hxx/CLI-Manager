@@ -654,3 +654,545 @@
 @media (prefers-reduced-motion: reduce) {
   .settings-scope *, .settings-scope *::before, .settings-scope *::after { transition: none !important; animation: none !important; }
 }
+
+/* Proxy settings: compact collapsible Global Proxy card + Master-Detail per-Agent workspace. */
+.proxy-settings-page {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+.proxy-global-card,
+.proxy-agent-workspace {
+  border: 1px solid var(--settings-card-border);
+  border-radius: 12px;
+  background: var(--settings-group-bg);
+  overflow: hidden;
+  min-width: 0;
+}
+
+.proxy-global-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 15px 18px;
+}
+
+.proxy-global-lead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+
+.proxy-icon-tile {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--primary) 20%, transparent);
+  background: color-mix(in srgb, var(--primary) 11%, var(--settings-group-bg));
+  color: var(--primary);
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease;
+}
+
+.proxy-icon-tile[data-active="true"] {
+  border-color: color-mix(in srgb, var(--success) 26%, transparent);
+  background: color-mix(in srgb, var(--success) 13%, var(--settings-group-bg));
+  color: var(--success);
+}
+
+.proxy-global-copy {
+  min-width: 0;
+  flex: 1;
+}
+
+.proxy-global-title-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.proxy-global-title {
+  margin: 0;
+  font-size: var(--settings-font);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.proxy-global-desc {
+  margin: 3px 0 0;
+  font-size: var(--settings-meta);
+  color: var(--settings-muted);
+  line-height: 1.45;
+}
+
+.proxy-global-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.settings-scope .proxy-pill {
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+
+.settings-scope .proxy-pill[data-tone="neutral"] {
+  --badge-bg: color-mix(in srgb, var(--on-surface) 6%, transparent);
+  --badge-color: var(--settings-muted);
+  --badge-bd: color-mix(in srgb, var(--on-surface) 8%, transparent);
+}
+
+.settings-scope .proxy-pill[data-tone="primary"] {
+  --badge-bg: color-mix(in srgb, var(--primary) 11%, transparent);
+  --badge-color: var(--primary);
+  --badge-bd: color-mix(in srgb, var(--primary) 22%, transparent);
+}
+
+.settings-scope .proxy-pill[data-tone="success"] {
+  --badge-bg: color-mix(in srgb, var(--success) 12%, transparent);
+  --badge-color: var(--success);
+  --badge-bd: color-mix(in srgb, var(--success) 24%, transparent);
+}
+
+.settings-scope .proxy-pill[data-tone="warning"] {
+  --badge-bg: color-mix(in srgb, var(--warning) 13%, transparent);
+  --badge-color: var(--warning);
+  --badge-bd: color-mix(in srgb, var(--warning) 26%, transparent);
+}
+
+.proxy-status-badge {
+  max-width: min(100%, 460px);
+  font-family: var(--font-ui-mono);
+}
+
+.proxy-global-body {
+  padding: 16px 18px 18px;
+  border-top: 1px solid var(--settings-divider);
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.proxy-global-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.proxy-precedence-bar {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--settings-divider);
+  background: color-mix(in srgb, var(--settings-subsurface) 48%, var(--settings-group-bg));
+  font-size: var(--settings-meta);
+  color: var(--settings-muted);
+  line-height: 1.45;
+}
+
+.proxy-precedence-icon {
+  flex-shrink: 0;
+  margin-top: 2px;
+  opacity: 0.78;
+}
+
+.proxy-agents-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.proxy-agents-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 0 4px;
+}
+
+.proxy-agents-heading-copy {
+  min-width: 0;
+  flex: 1 1 280px;
+}
+
+.proxy-agents-title {
+  margin: 0;
+  font-size: var(--settings-font);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.proxy-agents-desc {
+  margin: 3px 0 0;
+  font-size: var(--settings-meta);
+  color: var(--settings-muted);
+  line-height: 1.5;
+}
+
+.proxy-agents-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.settings-scope .proxy-filter-segmented {
+  flex-shrink: 0;
+}
+
+.settings-scope .proxy-filter-segmented .mantine-SegmentedControl-control {
+  flex: 0 0 auto;
+}
+
+.settings-scope .proxy-filter-segmented .mantine-SegmentedControl-label {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  padding: 4px 12px;
+}
+
+.proxy-agent-workspace {
+  display: grid;
+  grid-template-columns: clamp(280px, 28%, 380px) minmax(0, 1fr);
+  min-height: 410px;
+}
+
+.proxy-agent-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px;
+  border-right: 1px solid var(--settings-divider);
+  background: color-mix(in srgb, var(--settings-subsurface) 50%, var(--settings-group-bg));
+  min-width: 0;
+}
+
+.proxy-agent-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.proxy-agent-item:hover {
+  background: var(--settings-hover);
+}
+
+.proxy-agent-item[data-selected="true"] {
+  background: var(--settings-selected);
+  border-color: color-mix(in srgb, var(--primary) 24%, transparent);
+}
+
+.proxy-agent-item[data-selected="true"] .proxy-agent-name {
+  font-weight: 600;
+}
+
+.proxy-agent-item[data-selected="true"] .proxy-agent-icon {
+  border-color: color-mix(in srgb, var(--primary) 24%, var(--settings-divider));
+}
+
+.proxy-agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--on-surface) 8%, transparent);
+  background: var(--settings-group-bg);
+  box-shadow: 0 1px 2px color-mix(in srgb, black 4%, transparent);
+}
+
+.proxy-agent-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  gap: 2px;
+}
+
+.proxy-agent-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.proxy-agent-name {
+  font-size: var(--settings-font);
+  font-weight: 500;
+  color: var(--on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proxy-agent-cmd {
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--on-surface) 5%, transparent);
+  color: var(--settings-muted);
+  font-family: var(--font-ui-mono);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.proxy-agent-sub {
+  font-size: 11px;
+  color: var(--settings-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proxy-agent-sub[data-tone="custom"] {
+  color: var(--primary);
+  font-family: var(--font-ui-mono);
+}
+
+.proxy-agent-sub[data-tone="direct"] {
+  color: var(--success);
+  font-weight: 500;
+}
+
+.proxy-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  opacity: 0;
+}
+
+.proxy-status-dot[data-state="custom"] {
+  opacity: 1;
+  background: var(--primary);
+}
+
+.proxy-status-dot[data-state="direct"] {
+  opacity: 1;
+  background: var(--success);
+}
+
+.proxy-status-dot[data-state="dirty"] {
+  opacity: 1;
+  background: var(--warning);
+}
+
+.proxy-agent-detail {
+  padding: 20px 24px 22px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.proxy-detail-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--settings-divider);
+}
+
+.proxy-detail-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.proxy-detail-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--settings-divider);
+  background: color-mix(in srgb, var(--settings-subsurface) 65%, var(--settings-group-bg));
+}
+
+.proxy-detail-title-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.proxy-detail-name-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proxy-detail-name {
+  font-size: calc(var(--settings-font) + 1px);
+  font-weight: 600;
+  color: var(--on-surface);
+}
+
+.proxy-detail-badge-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.proxy-mode-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--settings-divider);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--settings-subsurface) 62%, var(--settings-group-bg));
+}
+
+.proxy-mode-notice[data-tone="active"] {
+  background: color-mix(in srgb, var(--primary) 6%, var(--settings-subsurface));
+  border-color: color-mix(in srgb, var(--primary) 18%, var(--settings-divider));
+}
+
+.proxy-mode-notice[data-tone="direct"] {
+  background: color-mix(in srgb, var(--success) 6%, var(--settings-subsurface));
+  border-color: color-mix(in srgb, var(--success) 20%, var(--settings-divider));
+}
+
+.proxy-detail-actions,
+.proxy-fields-footer {
+  padding-top: 12px;
+  border-top: 1px solid var(--settings-divider);
+}
+
+.proxy-auth-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: max(34px, calc(var(--settings-font) + 20px));
+  padding: 0 8px;
+  border-radius: 8px;
+  font-size: var(--settings-meta);
+  font-weight: 500;
+  color: var(--settings-muted);
+  transition: color 140ms ease, background-color 140ms ease;
+}
+
+.proxy-auth-toggle:hover {
+  color: var(--on-surface);
+  background: var(--settings-hover);
+}
+
+.proxy-auth-toggle[data-has-auth="true"] {
+  color: var(--primary);
+}
+
+.proxy-auth-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.settings-scope .proxy-mono-input {
+  font-family: var(--font-ui-mono);
+}
+
+.proxy-copy-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.proxy-copy-item-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.proxy-copy-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--settings-muted);
+}
+
+.proxy-copy-item-label {
+  font-size: var(--settings-font);
+  font-weight: 500;
+  color: var(--on-surface);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.proxy-copy-auth-badge {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.proxy-copy-item-url {
+  font-family: var(--font-ui-mono);
+  font-size: 11px;
+  color: var(--settings-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@container settings-page (max-width: 760px) {
+  .proxy-global-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .proxy-agent-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0;
+  }
+
+  .proxy-agent-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--settings-divider);
+    max-height: 220px;
+    overflow-y: auto;
+  }
+
+  .proxy-agent-detail {
+    padding: 14px;
+  }
+}

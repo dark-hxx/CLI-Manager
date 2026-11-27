@@ -17,6 +17,7 @@ async function bundle(relative, name) {
 }
 const runtime = await bundle("../src/features/terminal/api/deepseekTuiRuntime.ts", "runtime");
 const helpers = await bundle("../src/shared/lib/deepseekTui.ts", "helpers");
+const { DEFAULT_PROXY_SETTINGS, resolveEffectiveProxy, applyProxyToEnvVars } = await bundle("../src/shared/lib/proxySettings.ts", "proxySettings");
 const { isAgyCommand } = await bundle("../src/shared/lib/cliTools.ts", "cliTools");
 const agy = await bundle("../src/features/projects/api/agyStartupCommand.ts", "agy");
 const location = await bundle("../src/features/projects/api/agySessionLocation.ts", "location");
@@ -58,7 +59,7 @@ function loadLaunch(dependencies) {
   const source = ts.createSourceFile(file, readFileSync(new URL(file, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   const body = source.statements.filter((node) => ts.isFunctionDeclaration(node) && ["detectCliResumeKind", "buildCliResumeStartupCommand", "resolvePtyLaunch", "getDeepSeekTuiLaunchSessionId", "clearDeepSeekTuiResumeBeforeStartup"].includes(node.name?.text)).map((node) => node.getText(source)).join("\n");
   const exports = {};
-  runInNewContext(ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, ...helpers, ...agy, ...location, isAgyCommand, translateCurrent: (key) => key, ...dependencies });
+  runInNewContext(ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, ...helpers, ...agy, ...location, isAgyCommand, resolveEffectiveProxy, applyProxyToEnvVars, useSettingsStore: { getState: () => ({ proxySettings: DEFAULT_PROXY_SETTINGS }) }, translateCurrent: (key) => key, ...dependencies });
   return exports;
 }
 const launch = loadLaunch({

@@ -9,7 +9,14 @@ import { buildSshConnectionSpec } from "../../remote/api/ssh";
 import { DEFAULT_SSH_TOOL_CONFIG_ROOT, resolveSshToolSource, validateSshToolConfigRoot } from "../../remote/api/sshToolIntegration";
 import { getOsPlatform, normalizeShellKey } from "../../../shared/platform/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
-import { CLI_TOOL_DESCRIPTORS } from "../../../shared/lib/cliTools";
+import { CLI_TOOL_DESCRIPTORS, PROJECT_CLI_TOOL_OPTIONS } from "../../../shared/lib/cliTools";
+import {
+  parseProjectProxyConfig,
+  serializeProjectProxyConfig,
+  validateProxyUrl,
+  type ProjectProxyConfig,
+  type ProxyUrlValidationCode,
+} from "../../../shared/lib/proxySettings";
 import { copyTextToClipboard } from "../../../shared/platform/systemClipboard";
 import type { OsPlatform } from "../../../shared/platform/shell";
 import { getEnabledTerminalShellOptions } from "../../../shared/lib/terminalShellProfiles";
@@ -18,6 +25,7 @@ import { Check, ChevronDown } from "../../../shared/ui/icons";
 import { Input } from "../../../shared/ui/input";
 import { Select } from "../../../shared/ui/select";
 import { ShellSelect } from "./ShellSelect";
+import { ProjectProxySection } from "./ProjectProxySection";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
 import { Textarea } from "../../../shared/ui/textarea";
@@ -63,17 +71,7 @@ interface SshPathCheckResult {
   gitRepository: boolean;
 }
 
-const CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "agy", "grok", "dsh-tui"];
-const HIDDEN_CLI_TOOLS = new Set(["goose", "amp", "aider", "crush"]);
-// 未置顶工具维持统一描述表的原顺序，新增工具也会自动加入。
-const CLI_TOOL_OPTIONS = CLI_TOOL_DESCRIPTORS
-  .filter((tool) => !HIDDEN_CLI_TOOLS.has(tool.command))
-  .sort((left, right) => {
-    const leftIndex = CLI_TOOL_PRIORITY.indexOf(left.command);
-    const rightIndex = CLI_TOOL_PRIORITY.indexOf(right.command);
-    return (leftIndex < 0 ? CLI_TOOL_PRIORITY.length : leftIndex)
-      - (rightIndex < 0 ? CLI_TOOL_PRIORITY.length : rightIndex);
-  });
+const CLI_TOOL_OPTIONS = PROJECT_CLI_TOOL_OPTIONS;
 const WORKTREE_STRATEGIES: WorktreeIsolationStrategy[] = ["disabled", "prompt", "autoParallel", "always"];
 const WORKTREE_STRATEGY_LABEL_KEYS: Record<WorktreeIsolationStrategy, TranslationKey> = {
   prompt: "worktree.strategy.prompt",
@@ -178,6 +176,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [shell, setShell] = useState(cloneFrom?.shell ?? project?.shell ?? "");
   const [envVarsText, setEnvVarsText] = useState(cloneFrom?.env_vars ?? project?.env_vars ?? "{}");
   const [envVarsHelpOpen, setEnvVarsHelpOpen] = useState(false);
+  const [proxyConfig, setProxyConfig] = useState<ProjectProxyConfig>(() =>
+    parseProjectProxyConfig(cloneFrom?.proxy_config ?? project?.proxy_config),
+  );
+  const [proxyDraftErrorCode, setProxyDraftErrorCode] = useState<ProxyUrlValidationCode | null>(null);
+  const [proxyValidationError, setProxyValidationError] = useState("");
+  const [proxyForceExpanded, setProxyForceExpanded] = useState(false);
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeIsolationStrategy>(
     cloneFrom?.worktree_strategy ?? project?.worktree_strategy ?? "disabled"
   );
@@ -465,6 +469,28 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       }
     }
 
+    if (proxyConfig.mode === "custom") {
+      const proxyResult = proxyDraftErrorCode
+        ? ({ ok: false, code: proxyDraftErrorCode } as const)
+        : validateProxyUrl(proxyConfig.url);
+      if (!proxyResult.ok) {
+        const proxyKeyMap = {
+          proxy_url_empty: "configModal.proxy.error.urlEmpty",
+          proxy_url_invalid: "configModal.proxy.error.urlInvalid",
+          proxy_scheme_unsupported: "configModal.proxy.error.schemeUnsupported",
+          proxy_host_missing: "configModal.proxy.error.hostMissing",
+          proxy_port_invalid: "configModal.proxy.error.portInvalid",
+        } as const;
+        const description = t(proxyKeyMap[proxyResult.code]);
+        setProxyValidationError(description);
+        setProxyForceExpanded(true);
+        setError(description);
+        toast.error(t("configModal.saveFailed"), { description });
+        return;
+      }
+    }
+    setProxyValidationError("");
+
     setError("");
     if (isEdit) {
       setShowConfirmEdit(true);
@@ -522,6 +548,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
           cli_config_root: trimmedCliConfigRoot,
+          proxy_config: serializeProjectProxyConfig(
+            proxyConfig.mode === "custom"
+              ? {
+                  ...proxyConfig,
+                  url: (() => {
+                    const validated = validateProxyUrl(proxyConfig.url);
+                    return validated.ok ? validated.normalized : proxyConfig.url.trim();
+                  })(),
+                }
+              : proxyConfig,
+          ),
         });
         toast.success(t("configModal.toast.updated"));
       } else {
@@ -542,6 +579,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
           cli_config_root: trimmedCliConfigRoot,
+          proxy_config: serializeProjectProxyConfig(
+            proxyConfig.mode === "custom"
+              ? {
+                  ...proxyConfig,
+                  url: (() => {
+                    const validated = validateProxyUrl(proxyConfig.url);
+                    return validated.ok ? validated.normalized : proxyConfig.url.trim();
+                  })(),
+                }
+              : proxyConfig,
+          ),
         });
         toast.success(t("configModal.toast.created"));
       }
@@ -926,6 +974,23 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                   className="min-h-20 resize-y font-mono text-xs leading-5"
                 />
               </div>
+
+              <ProjectProxySection
+                value={proxyConfig}
+                onChange={(next) => {
+                  setProxyConfig(next);
+                  setProxyValidationError("");
+                }}
+                onDraftValidityChange={(code) => {
+                  setProxyDraftErrorCode(code);
+                  if (!code) setProxyValidationError("");
+                }}
+                projectType={projectType}
+                cliTool={cliTool}
+                startupCmd={startupCmd}
+                forceExpanded={proxyForceExpanded}
+                validationError={proxyValidationError}
+              />
 
               <div
                 hidden={!projectWorktreeConfigEnabled || projectType === "ssh"}

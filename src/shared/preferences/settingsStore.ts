@@ -82,6 +82,11 @@ import {
   type HistoryDetailSortDirections,
 } from "../lib/historySort";
 import {
+  DEFAULT_PROXY_SETTINGS,
+  normalizeProxySettings,
+  type ProxySettings,
+} from "../lib/proxySettings";
+import {
   migrateWorkspaceLayout,
   WORKSPACE_LAYOUT_DEFAULTS,
   type WorkspaceLayoutSettings,
@@ -510,6 +515,7 @@ export interface Settings {
   workspanEnabled: boolean;
   terminalLayoutLocked: boolean;
   desktopPet: DesktopPetSettings;
+  proxySettings: ProxySettings;
 }
 
 interface SettingsStore extends Settings {
@@ -747,6 +753,7 @@ const DEFAULTS: Settings = {
     lockPosition: false,
     position: null,
   },
+  proxySettings: { ...DEFAULT_PROXY_SETTINGS, agents: {} },
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -1822,6 +1829,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.workspanEnabled === "boolean"
         ? entries.workspanEnabled
         : DEFAULTS.workspanEnabled;
+    entries.proxySettings = normalizeProxySettings(entries.proxySettings);
 
     if (pendingStoreWrites.length > 0) {
       await Promise.all(pendingStoreWrites);

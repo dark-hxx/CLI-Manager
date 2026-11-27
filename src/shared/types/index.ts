@@ -329,6 +329,7 @@ export interface Project {
   ssh_host_id: string | null;
   remote_path: string;
   cli_config_root: string;
+  proxy_config: string;
   /** 外观标记：单个 emoji 字符或内置图标 key；空串表示按节点类型回退默认图标。 */
   icon: string;
   /** 外观标记：调色板 token（如 `p3`）；空串表示按名称 hash 自动配色。 */
@@ -356,6 +357,7 @@ export interface CreateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  proxy_config?: string;
   icon?: string;
   color?: string;
 }
@@ -380,6 +382,7 @@ export interface UpdateProjectInput {
   ssh_host_id?: string | null;
   remote_path?: string;
   cli_config_root?: string;
+  proxy_config?: string;
   icon?: string;
   color?: string;
 }

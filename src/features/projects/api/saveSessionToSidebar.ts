@@ -220,6 +220,7 @@ export function buildSavedSessionProjectInput(args: {
     env_vars: project?.env_vars ?? (kind === "deepseek-tui" ? JSON.stringify(session.envVars ?? {}) : "{}"),
     shell: kind === "antigravity" ? session.shell || project?.shell || "" : project?.shell ?? session.shell ?? "",
     provider_overrides: project?.provider_overrides ?? "{}",
+    proxy_config: project?.proxy_config ?? "",
   };
 
   if (project?.worktree_strategy !== undefined) {

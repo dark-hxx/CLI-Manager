@@ -3,7 +3,17 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import ts from "typescript";
+import { build } from "esbuild";
+import { fileURLToPath } from "node:url";
 import { joinStartupCommandLines } from "../src/features/terminal/lib/startupCommandText.ts";
+
+const proxyBundle = await build({
+  entryPoints: [fileURLToPath(new URL("../src/shared/lib/proxySettings.ts", import.meta.url))],
+  bundle: true, platform: "node", format: "esm", write: false,
+});
+const { DEFAULT_PROXY_SETTINGS, resolveEffectiveProxy, applyProxyToEnvVars } = await import(
+  `data:text/javascript;base64,${Buffer.from(proxyBundle.outputFiles[0].text).toString("base64")}`,
+);
 
 // 执行真实启动编排/参数构造，仅替换设置、平台与 IPC 等外部依赖。
 function declarations(path, names) {
@@ -26,6 +36,8 @@ function loadLaunch(light = false) {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText, {
     exports,
+    resolveEffectiveProxy, applyProxyToEnvVars,
+    useSettingsStore: { getState: () => ({ proxySettings: DEFAULT_PROXY_SETTINGS }) },
     joinStartupCommandLines,
     isCurrentTerminalBackgroundLight: () => light,
     useProjectStore: { getState: () => ({ projects: [] }) },

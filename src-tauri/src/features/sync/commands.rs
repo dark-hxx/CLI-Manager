@@ -29,7 +29,7 @@ const BACKUP_RESTORE_DELETE_STATEMENTS: [&str; 7] = [
 ];
 // 当前列清单必须与 src/stores/syncStore.ts 的 buildBatchInsertStatements 调用逐字一致（含顺序）。
 // 旧列清单继续放行，以便恢复新增绑定字段前生成的备份；缺失列由数据库默认值补齐。
-const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 10] = [
+const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 11] = [
     ("groups", "id,name,parent_id,sort_order,icon,color,bound_path,created_at"),
     ("groups", "id,name,parent_id,sort_order,icon,color,created_at"),
     (
@@ -43,6 +43,10 @@ const BACKUP_RESTORE_INSERT_COLUMNS: [(&str, &str); 10] = [
     (
         "ssh_hosts",
         "id,name,group_name,group_id,host,port,username,config_alias,config_file,auth_mode,identity_file,credential_ref,jump_mode,jump_host_id,proxy_type,proxy_host,proxy_port,proxy_command,connect_timeout_sec,server_alive_interval_sec,server_alive_count_max,terminal_encoding,startup_script,notes,sort_order,created_at,updated_at",
+    ),
+    (
+        "projects",
+        "id,name,path,path_mode,group_id,sort_order,cli_tool,cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,remote_path,cli_config_root,proxy_config,icon,color,created_at,updated_at",
     ),
     (
         "projects",
@@ -964,5 +968,97 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error, "backup_restore_database_statement_invalid");
+    }
+
+    #[tokio::test]
+    // 验证包含 proxy_config 的新版项目插入语句可通过白名单校验并持久化恢复。
+    async fn database_restore_accepts_projects_with_proxy_config_column() {
+        let mut conn = restore_test_connection().await;
+        sqlx::raw_sql(
+            "CREATE TABLE projects (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                path TEXT NOT NULL,
+                path_mode TEXT NOT NULL DEFAULT 'custom',
+                group_id TEXT,
+                sort_order INTEGER NOT NULL,
+                cli_tool TEXT NOT NULL,
+                cli_args TEXT NOT NULL,
+                startup_cmd TEXT NOT NULL,
+                env_vars TEXT NOT NULL,
+                shell TEXT NOT NULL,
+                provider_overrides TEXT NOT NULL,
+                worktree_strategy TEXT NOT NULL,
+                worktree_root TEXT NOT NULL,
+                worktree_deps_prompt_enabled INTEGER NOT NULL,
+                environment_type TEXT NOT NULL,
+                ssh_host_id TEXT,
+                remote_path TEXT NOT NULL,
+                cli_config_root TEXT NOT NULL,
+                proxy_config TEXT NOT NULL DEFAULT '',
+                icon TEXT NOT NULL DEFAULT '',
+                color TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+
+        let proxy_json = r#"{"mode":"custom","url":"http://127.0.0.1:7897","noProxy":""}"#;
+        let statements = [
+            BackupDatabaseStatement {
+                sql: "DELETE FROM projects".to_string(),
+                values: Vec::new(),
+            },
+            BackupDatabaseStatement {
+                sql: concat!(
+                    "INSERT INTO projects (id,name,path,path_mode,group_id,sort_order,cli_tool,",
+                    "cli_args,startup_cmd,env_vars,shell,provider_overrides,worktree_strategy,",
+                    "worktree_root,worktree_deps_prompt_enabled,environment_type,ssh_host_id,",
+                    "remote_path,cli_config_root,proxy_config,icon,color,created_at,updated_at) ",
+                    "VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)"
+                )
+                .to_string(),
+                values: vec![
+                    Value::String("p-proxy".to_string()),
+                    Value::String("Proxy Project".to_string()),
+                    Value::String("C:/repo".to_string()),
+                    Value::String("custom".to_string()),
+                    Value::Null,
+                    Value::Number(0.into()),
+                    Value::String("claude".to_string()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                    Value::String("{}".to_string()),
+                    Value::String("powershell.exe".to_string()),
+                    Value::String("{}".to_string()),
+                    Value::String("disabled".to_string()),
+                    Value::String(String::new()),
+                    Value::Number(0.into()),
+                    Value::String("local".to_string()),
+                    Value::Null,
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                    Value::String(proxy_json.to_string()),
+                    Value::String(String::new()),
+                    Value::String(String::new()),
+                    Value::String("1".to_string()),
+                    Value::String("1".to_string()),
+                ],
+            },
+        ];
+
+        execute_backup_database_restore(&mut conn, &statements)
+            .await
+            .unwrap();
+
+        let restored: String =
+            sqlx::query_scalar("SELECT proxy_config FROM projects WHERE id = 'p-proxy'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(restored, proxy_json);
     }
 }

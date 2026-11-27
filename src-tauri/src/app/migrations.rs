@@ -842,6 +842,12 @@ pub(crate) const MIGRATION_CREATE_MESSAGE_STARS_SQL: &str = "
                 CREATE INDEX IF NOT EXISTS idx_message_stars_session ON message_stars(session_key);
                 CREATE INDEX IF NOT EXISTS idx_message_stars_created ON message_stars(created_at DESC);
               ";
+
+pub(crate) const MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION: i64 = 43;
+pub(crate) const MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION: &str =
+    "add_project_proxy_config";
+pub(crate) const MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL: &str =
+    "ALTER TABLE projects ADD COLUMN proxy_config TEXT NOT NULL DEFAULT '';";
 // 按既定版本顺序返回向上迁移注册表，由 SQL 插件在初始化时应用；此函数本身不执行 SQL。
 pub(crate) fn migrations() -> Vec<Migration> {
     vec![
@@ -1201,6 +1207,12 @@ pub(crate) fn migrations() -> Vec<Migration> {
             sql: "DROP TABLE IF EXISTS ccusage_cache;",
             kind: MigrationKind::Up,
         },
+        Migration {
+            version: MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION,
+            description: MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION,
+            sql: MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL,
+            kind: MigrationKind::Up,
+        },
     ]
 }
 
@@ -1289,5 +1301,58 @@ mod retired_analytics_migration_tests {
             .unwrap();
             assert_eq!(preserved_rows, 3, "cache state: {state}");
         }
+    }
+}
+
+#[cfg(test)]
+mod project_proxy_migration_tests {
+    use super::{
+        migrations, MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION,
+        MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL, MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION,
+    };
+    use sqlx::{Connection, SqliteConnection};
+    use tauri_plugin_sql::MigrationKind;
+
+    #[test]
+    // 验证项目代理配置迁移唯一登记在 v42 之后。
+    fn proxy_config_migration_is_registered_after_v42() {
+        let registry = migrations();
+        let found: Vec<_> = registry
+            .iter()
+            .filter(|entry| entry.version == MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION)
+            .collect();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].description, MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION);
+        assert_eq!(found[0].sql, MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL);
+        assert!(matches!(&found[0].kind, MigrationKind::Up));
+        let v42_pos = registry.iter().position(|entry| entry.version == 42).unwrap();
+        let v43_pos = registry
+            .iter()
+            .position(|entry| entry.version == MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION)
+            .unwrap();
+        assert!(v42_pos < v43_pos);
+    }
+
+    #[tokio::test]
+    // 验证 v43 迁移可在已有 projects 表上安全执行并保留原有行。
+    async fn proxy_config_migration_adds_column_with_empty_default() {
+        let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL);
+             INSERT INTO projects (id, name) VALUES ('p1', 'Proj');",
+        )
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        sqlx::raw_sql(MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let value: String =
+            sqlx::query_scalar("SELECT proxy_config FROM projects WHERE id = 'p1'")
+                .fetch_one(&mut conn)
+                .await
+                .unwrap();
+        assert_eq!(value, "");
     }
 }

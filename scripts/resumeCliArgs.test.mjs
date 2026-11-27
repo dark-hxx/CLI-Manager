@@ -455,6 +455,10 @@ const {
   getDeepSeekTuiCommandSourceRoot,
 } = await import(pathToFileURL(join(tempDir, "deepseekTui.mjs")).href);
 const launchCode = launchCodeFor("resolvePtyLaunch");
+const proxySettingsPath = transpile(new URL("../src/shared/lib/proxySettings.ts", import.meta.url), "proxySettings.mjs", {
+  "./cliTools": "./cliTools.mjs",
+});
+const { DEFAULT_PROXY_SETTINGS, resolveEffectiveProxy, applyProxyToEnvVars } = await import(pathToFileURL(proxySettingsPath).href);
 
 test("pending Codex trust keeps bridge env without trusting hooks or writing config", async () => {
   const fn = launchSource.statements.find((node) =>
@@ -498,6 +502,8 @@ async function resolveProviderTestLaunch({ profile = "cli-manager-provider", com
     snapshotId: "extension-snapshot", mcpStatus: "applied", skillStatus: "applied", warnings: [] };
   const mocks = {
     useProjectStore: { getState: () => ({ projects: [project] }) },
+    useSettingsStore: { getState: () => ({ proxySettings: DEFAULT_PROXY_SETTINGS }) },
+    resolveEffectiveProxy, applyProxyToEnvVars,
     resolveShellForPty: () => shell,
     resolveProjectStartupCommand: () => startup,
     prepareProviderLaunchSnapshot: async () => provider,

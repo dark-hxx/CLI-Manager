@@ -342,6 +342,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       ssh_host_id: isSshProject ? input.ssh_host_id ?? null : null,
       remote_path: isSshProject ? input.remote_path?.trim() ?? "" : "",
       cli_config_root: cliConfigRoot,
+      proxy_config: input.proxy_config?.trim() ?? "",
       icon: normalizeNodeIcon(input.icon),
       color: normalizeNodeAccentToken(input.color),
       created_at: ts,
@@ -352,9 +353,9 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
          id, name, path, path_mode, group_name, group_id, sort_order,
          cli_tool, cli_args, startup_cmd, env_vars, shell, provider_overrides,
          worktree_strategy, worktree_root, worktree_deps_prompt_enabled,
-         environment_type, ssh_host_id, remote_path, cli_config_root, icon, color, created_at, updated_at
+         environment_type, ssh_host_id, remote_path, cli_config_root, proxy_config, icon, color, created_at, updated_at
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)`,
       [
         project.id,
         project.name,
@@ -376,6 +377,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
         project.ssh_host_id,
         project.remote_path,
         project.cli_config_root,
+        project.proxy_config,
         project.icon,
         project.color,
         project.created_at,

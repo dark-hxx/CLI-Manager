@@ -78,6 +78,8 @@ pub mod sync;
 pub mod system_notification;
 #[path = "../features/system/app_memory.rs"]
 pub mod app_memory;
+#[path = "../features/system/proxy.rs"]
+pub mod proxy;
 #[path = "../features/system/resources.rs"]
 pub mod system_resources;
 #[path = "../features/terminal/commands.rs"]

@@ -4,6 +4,7 @@ import {
   ClipboardList,
   Coins,
   Code2,
+  Globe,
   History,
   Handshake,
   Info,
@@ -48,6 +49,7 @@ import { SPONSORS_ENABLED } from "./sponsors";
 import { DesktopPetSettingsPage } from "../components/pages/DesktopPetSettingsPage";
 import { RemoteConnectionsSettingsPage } from "../components/pages/RemoteConnectionsSettingsPage";
 import { SshHostsSettingsPage } from "../components/pages/SshHostsSettingsPage";
+import { ProxySettingsPage } from "../components/pages/ProxySettingsPage";
 import { GlobalExtensionsPage } from "../../extensions";
 import { useMcpSaveWorkflow } from "../../extensions/api/mcpSaving";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
@@ -68,6 +70,7 @@ export type SettingsTab =
   | "model-pricing"
   | "cc-connect"
   | "ssh-hosts"
+  | "proxy"
   | "sync"
   | "history-sources"
   | "hooks"
@@ -94,6 +97,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
   "model-pricing",
   "cc-connect",
   "ssh-hosts",
+  "proxy",
   "sync",
   "history-sources",
   "hooks",
@@ -107,7 +111,7 @@ const SETTINGS_TAB_ORDER: SettingsTab[] = [
 ];
 
 const WIDE_SETTINGS_TABS: ReadonlySet<SettingsTab> = new Set([
-  "terminal-theme", "shortcuts", "templates", "native-providers", "extensions", "model-pricing", "ssh-hosts", "statusline",
+  "terminal-theme", "shortcuts", "templates", "native-providers", "extensions", "model-pricing", "ssh-hosts", "proxy", "statusline",
 ]);
 
 const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
@@ -194,6 +198,12 @@ const SETTINGS_TAB_CONFIG: Record<SettingsTab, SettingsTabConfig> = {
     description: "settings.tabs.sshHosts.description",
     icon: Server,
     searchPlaceholder: "settings.tabs.sshHosts.search",
+  },
+  proxy: {
+    label: "settings.tabs.proxy.label",
+    title: "settings.tabs.proxy.title",
+    description: "settings.tabs.proxy.description",
+    icon: Globe,
   },
   sync: {
     label: "settings.tabs.sync.label",
@@ -364,6 +374,7 @@ export function SettingsModal({ open, onClose, onAfterClose, initialTab, onActiv
     if (activeTab === "model-pricing") return <ModelPricingSettingsPage />;
     if (activeTab === "cc-connect") return <RemoteConnectionsSettingsPage />;
     if (activeTab === "ssh-hosts") return <SshHostsSettingsPage searchValue={searchValue} onTerminalOpened={onClose} />;
+    if (activeTab === "proxy") return <ProxySettingsPage />;
     if (activeTab === "sync") return <SyncSettingsPage />;
     if (activeTab === "history-sources") {
       return <HistorySourceSettingsPage onOpenNativeProviderSettings={() => handleTabChange("native-providers")} />;

@@ -325,12 +325,27 @@ impl PtyManager {
             "DSH_HOME",
             "NODE_ENV",
         ];
+        const PROXY_FORWARD: [&str; 8] = [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+            "NO_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "all_proxy",
+            "no_proxy",
+        ];
         let present: Vec<&str> = FORWARD
             .iter()
             .copied()
             .filter(|key| env_vars.contains_key(*key))
             .collect();
-        if present.is_empty() {
+        let proxy_present: Vec<&str> = PROXY_FORWARD
+            .iter()
+            .copied()
+            .filter(|key| env_vars.get(*key).is_some_and(|value| !value.is_empty()))
+            .collect();
+        if present.is_empty() && proxy_present.is_empty() {
             return;
         }
 
@@ -347,7 +362,7 @@ impl PtyManager {
             })
             .unwrap_or_default();
 
-        for key in present {
+        for key in present.into_iter().chain(proxy_present) {
             // 应用专用 opt-in 必须双向转发；旧的 /p、/u 等会误转换或丢掉回传值。
             if key == "CLI_MANAGER_AGY_HOOK_ENABLED" {
                 entries.retain(|entry| entry.split('/').next() != Some(key));
@@ -1645,6 +1660,40 @@ mod tests {
             vars.get("WSLENV").map(String::as_str),
             Some("FOO/u:DSH_HOME/u:NODE_ENV/u:DSH_TUI_RESUME_SESSION:WSL_DISTRO_NAME/w")
         );
+    }
+
+    #[test]
+    // 转发非空代理变量至 WSLENV，同时跳过 direct 模式传入的空值代理变量。
+    fn wsl_env_forwarding_forwards_non_empty_proxy_vars_and_skips_direct_sentinels() {
+        let mut vars = HashMap::from([
+            (
+                "HTTP_PROXY".to_string(),
+                "http://127.0.0.1:7897".to_string(),
+            ),
+            (
+                "https_proxy".to_string(),
+                "http://127.0.0.1:7897".to_string(),
+            ),
+            ("NO_PROXY".to_string(), "localhost,127.0.0.1".to_string()),
+            ("ALL_PROXY".to_string(), "".to_string()),
+            ("WSLENV".to_string(), "KEEP/u:HTTP_PROXY/u".to_string()),
+        ]);
+        PtyManager::apply_wsl_env_forwarding(&mut vars);
+        let wslenv = vars.get("WSLENV").unwrap();
+        assert!(wslenv.contains("KEEP/u"));
+        assert!(wslenv.contains("HTTP_PROXY/u"));
+        assert!(wslenv.split(':').any(|item| item == "https_proxy"));
+        assert!(wslenv.split(':').any(|item| item == "NO_PROXY"));
+        assert!(!wslenv.split(':').any(|item| item == "ALL_PROXY"));
+        assert!(wslenv.split(':').any(|item| item == "WSL_DISTRO_NAME/w"));
+
+        let mut direct_only = HashMap::from([
+            ("HTTP_PROXY".to_string(), "".to_string()),
+            ("HTTPS_PROXY".to_string(), "".to_string()),
+            ("WSLENV".to_string(), "KEEP/u".to_string()),
+        ]);
+        PtyManager::apply_wsl_env_forwarding(&mut direct_only);
+        assert_eq!(direct_only.get("WSLENV").map(String::as_str), Some("KEEP/u"));
     }
 
     #[test]

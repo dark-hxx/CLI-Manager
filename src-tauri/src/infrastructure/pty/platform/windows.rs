@@ -470,6 +470,13 @@ fn split_environment_entry(entry: &str) -> Option<(&str, &str)> {
     (!key.is_empty()).then_some((key, &entry[separator + 1..]))
 }
 
+fn is_proxy_env_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("HTTP_PROXY")
+        || key.eq_ignore_ascii_case("HTTPS_PROXY")
+        || key.eq_ignore_ascii_case("ALL_PROXY")
+        || key.eq_ignore_ascii_case("NO_PROXY")
+}
+
 // 按忽略 ASCII 大小写的键合并宿主→刷新→显式覆盖；PATH 保持宿主顺序并补刷新独有项，显式值仍整项替换。
 fn merge_environment(
     base: impl IntoIterator<Item = (String, String)>,
@@ -498,8 +505,13 @@ fn merge_environment(
     }
 
     // Project/provider/hook values are explicit launch overrides and remain authoritative.
+    // Empty proxy keys represent explicit direct mode and remove inherited host/user proxy vars.
     for (key, value) in overrides {
-        environment.insert(key.to_ascii_uppercase(), (key, value));
+        if is_proxy_env_key(&key) && value.is_empty() {
+            environment.remove(&key.to_ascii_uppercase());
+        } else {
+            environment.insert(key.to_ascii_uppercase(), (key, value));
+        }
     }
     environment
 }
@@ -646,6 +658,43 @@ mod tests {
         assert_eq!(
             environment.get("PATH"),
             Some(&("path".to_string(), r"C:\project-only".to_string()))
+        );
+    }
+
+    #[test]
+    // 验证代理覆盖按大小写不敏感替换继承值，direct 模式的空代理值移除宿主/用户代理变量，非代理空值保持原样。
+    fn proxy_overrides_replace_and_direct_sentinels_unset_without_dropping_other_empty_vars() {
+        let environment = merge_environment(
+            [
+                ("http_proxy".to_string(), "http://host-proxy:8080".to_string()),
+                ("DSH_TUI_RESUME_SESSION".to_string(), "old".to_string()),
+            ],
+            [("HTTPS_PROXY".to_string(), "http://user-proxy:8080".to_string())],
+            [
+                ("HTTP_PROXY".to_string(), "".to_string()),
+                ("HTTPS_PROXY".to_string(), "".to_string()),
+                ("ALL_PROXY".to_string(), "".to_string()),
+                ("NO_PROXY".to_string(), "".to_string()),
+                ("DSH_TUI_RESUME_SESSION".to_string(), "".to_string()),
+            ],
+        );
+        assert!(!environment.contains_key("HTTP_PROXY"));
+        assert!(!environment.contains_key("HTTPS_PROXY"));
+        assert!(!environment.contains_key("ALL_PROXY"));
+        assert!(!environment.contains_key("NO_PROXY"));
+        assert_eq!(
+            environment.get("DSH_TUI_RESUME_SESSION"),
+            Some(&("DSH_TUI_RESUME_SESSION".to_string(), "".to_string()))
+        );
+
+        let custom = merge_environment(
+            [("http_proxy".to_string(), "http://host-proxy:8080".to_string())],
+            [],
+            [("HTTP_PROXY".to_string(), "http://127.0.0.1:7897".to_string())],
+        );
+        assert_eq!(
+            custom.get("HTTP_PROXY"),
+            Some(&("HTTP_PROXY".to_string(), "http://127.0.0.1:7897".to_string()))
         );
     }
 

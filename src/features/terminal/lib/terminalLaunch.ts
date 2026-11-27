@@ -10,6 +10,7 @@ import {
   withCodexLightTuiTheme, withGrokModelOverride,
 } from "../../projects/api/projectStartupCommand";
 import { isAgyCommand } from "../../../shared/lib/cliTools";
+import { applyProxyToEnvVars, resolveEffectiveProxy } from "../../../shared/lib/proxySettings";
 import { buildAgyResumeCommand } from "../../projects/api/agyStartupCommand";
 import { validAgyTabLocation } from "../../projects/api/agySessionLocation";
 import { translateCurrent } from "../../../shared/i18n/index";
@@ -468,9 +469,18 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     }
     // SSH 启动由远端 bootstrap 执行，也必须隔离 Codex 的 Hook 环境。
     resolvedStartupCmd = prepareStartupCommandForPty(resolvedStartupCmd, "bash");
-    const resolvedEnvironmentOverrides = { ...(options.envVars === undefined && project?.environment_type === "ssh"
+    const baseSshEnv = { ...(options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
       : options.envVars ?? {}) };
+    const sshProxyPlan = resolveEffectiveProxy({
+      project,
+      startupCmd: resolvedStartupCmd,
+      environmentType: "ssh",
+      settings: useSettingsStore.getState().proxySettings,
+    });
+    const resolvedEnvironmentOverrides = sshProxyPlan.kind === "proxy"
+      ? applyProxyToEnvVars(baseSshEnv, sshProxyPlan, { caseSensitivePlatform: true })
+      : baseSshEnv;
     // The app opt-in belongs to this machine, not a remote project or SSH bootstrap.
     for (const key of Object.keys(resolvedEnvironmentOverrides)) {
       if (key.toUpperCase() === "CLI_MANAGER_AGY_HOOK_ENABLED") delete resolvedEnvironmentOverrides[key];
@@ -833,9 +843,21 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   if (preparedTui && !nativeTuiLauncher && !preparedTui.resumeSessionId && startupCmd) {
     startupCmd = clearDeepSeekTuiResumeBeforeStartup(startupCmd, resolvedShell ?? defaultShellForOs(os));
   }
+  const resolvedShellKey = normalizeShellKey(resolvedShell);
+  const environmentType = os === "windows" && resolvedShellKey === "wsl" ? "wsl" : "local";
+  const caseSensitivePlatform = os !== "windows" || resolvedShellKey === "wsl" || resolvedShellKey === "gitbash";
+  const proxyPlan = resolveEffectiveProxy({
+    project,
+    startupCmd: startupCmd ?? options.startupCmd,
+    environmentType,
+    settings: useSettingsStore.getState().proxySettings,
+  });
+  const envVarsWithProxy = applyProxyToEnvVars(options.envVars ?? null, proxyPlan, {
+    caseSensitivePlatform,
+  });
   return {
     shell: resolvedShell,
-    environmentType: os === "windows" && normalizeShellKey(resolvedShell) === "wsl" ? "wsl" : "local",
+    environmentType,
     startupCmd,
     persistedStartupCmd,
     startupHandledByLaunch: false,
@@ -852,7 +874,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     invokeArgs: {
       cwd: cwd ?? null,
       envVars: {
-        ...buildPtyEnvVars(options.envVars ?? null, resolvedShell),
+        ...buildPtyEnvVars(envVarsWithProxy, resolvedShell),
         ...(preparedTui ? {
           ...(!nativeTuiLauncher || preparedTui.resumeSessionId ? {
             DSH_TUI_RESUME_SESSION: preparedTui.resumeSessionId ?? "",

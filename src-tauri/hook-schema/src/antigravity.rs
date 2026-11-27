@@ -65,13 +65,20 @@ fn has_error<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
 }
 
 // 如果 CLI 提供转录线索，拒绝来自共用 Hook 的 App/IDE 或矛盾的会话；绝不打开该路径。
+// agy 1.5.17 的 BuildHookArgsCommon 传入 transcript_full.jsonl，旧版/文档样例为 transcript.jsonl。
 fn transcript_matches(path: &str, id: &str) -> bool {
     let normalized = path.replace('\\', "/").to_ascii_lowercase();
-    !normalized.split('/').any(|s| s == "..")
-        && normalized.ends_with(&format!(
-            "/antigravity-cli/brain/{}/.system_generated/logs/transcript.jsonl",
-            id.to_ascii_lowercase()
-        ))
+    if normalized.split('/').any(|s| s == "..") {
+        return false;
+    }
+    let prefix = format!(
+        "/antigravity-cli/brain/{}/.system_generated/logs/",
+        id.to_ascii_lowercase()
+    );
+    normalized
+        .strip_suffix("transcript.jsonl")
+        .or_else(|| normalized.strip_suffix("transcript_full.jsonl"))
+        .is_some_and(|head| head.ends_with(&prefix))
 }
 
 // 受限流反序列化，只有完整 JSON 才可能变成事件；绝不把超限输入当作合法前缀。

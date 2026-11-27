@@ -44,25 +44,67 @@ fn antigravity_missing_common_fields_does_not_require_prompt_transcript_or_event
 
 #[test]
 fn antigravity_shared_config_rejects_app_ide_and_contradictory_hints() {
-    let tail = format!("brain/{ID}/.system_generated/logs/transcript.jsonl");
-    for app in ["antigravity", "antigravity-ide", "antigravityCLI"] {
+    for file in ["transcript.jsonl", "transcript_full.jsonl"] {
+        let tail = format!("brain/{ID}/.system_generated/logs/{file}");
+        for app in ["antigravity", "antigravity-ide", "antigravityCLI"] {
+            assert!(observe(
+                "PreInvocation",
+                json!({"conversationId":ID,"transcriptPath":format!("/home/a/.gemini/{app}/{tail}")})
+            )
+            .is_none());
+        }
+        let posix = format!("/home/a/.gemini/antigravity-cli/{tail}");
+        assert_eq!(
+            observe(
+                "PreInvocation",
+                json!({"conversationId":ID, "transcriptPath":posix})
+            ),
+            Some(("PreInvocation", ID.into()))
+        );
+        let cli = format!("C:/Users/My Name/.gemini/antigravity-cli/{tail}").replace('/', "\\");
+        assert_eq!(
+            observe(
+                "SessionStart",
+                json!({"conversationId":ID.to_uppercase(), "transcriptPath":cli})
+            ),
+            Some(("SessionStart", ID.into()))
+        );
+        assert_eq!(
+            observe(
+                "Stop",
+                json!({
+                    "conversationId":ID,
+                    "transcriptPath":cli,
+                    "fullyIdle":true,
+                    "terminationReason":"NO_TOOL_CALL"
+                })
+            ),
+            Some(("Stop", ID.into()))
+        );
         assert!(observe(
-            "PreInvocation",
-            json!({"conversationId":ID,"transcriptPath":format!("/home/a/.gemini/{app}/{tail}")})
+            "SessionStart",
+            json!({"conversationId":ID, "transcriptPath":cli.replace(ID,"bad-id")})
+        )
+        .is_none());
+        assert!(observe(
+            "SessionStart",
+            json!({
+                "conversationId":ID,
+                "transcriptPath":format!("C:\\Users\\a\\..\\.gemini\\antigravity-cli\\{tail}").replace('/', "\\")
+            })
         )
         .is_none());
     }
-    let cli = format!("C:/Users/My Name/.gemini/antigravity-cli/{tail}").replace('/', "\\");
-    assert!(observe(
-        "SessionStart",
-        json!({"conversationId":ID, "transcriptPath":cli})
-    )
-    .is_some());
-    assert!(observe(
-        "SessionStart",
-        json!({"conversationId":ID, "transcriptPath":cli.replace(ID,"bad-id")})
-    )
-    .is_none());
+    for bad_file in ["other.jsonl", "not_transcript.jsonl", "transcript_full.jsonl.bak"] {
+        assert!(observe(
+            "SessionStart",
+            json!({
+                "conversationId":ID,
+                "transcriptPath":format!("C:\\Users\\a\\.gemini\\antigravity-cli\\brain\\{ID}\\.system_generated\\logs\\{bad_file}")
+            })
+        )
+        .is_none());
+    }
     assert!(observe(
         "SessionStart",
         json!({"conversationId":ID, "hookEventName":"PreInvocation"})
