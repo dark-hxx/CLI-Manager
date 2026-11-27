@@ -1,10 +1,12 @@
+use super::GitFileChange;
 use super::{
     collect_git_changes_from_repo, format_diff_to_bounded_text, normalize_path, repo_branch_name,
     repo_head_oid, run_wsl_git, BoundedPatch, GitWorktreeSnapshot, GIT_DIFF_LINE_STATS_LINE_LIMIT,
     GIT_DIFF_LINE_STATS_STATUS_LIMIT, MAX_WORKTREE_PATCH_BYTES,
-    OOM_SNAPSHOT_PATCH_RETURN_MAX_BYTES,
+    OOM_SNAPSHOT_PATCH_RETURN_MAX_BYTES, SNAPSHOT_RETURN_FILES_LIMIT,
 };
 use git2::{DiffOptions, Repository};
+use sha2::{Digest, Sha256};
 
 // 相对 HEAD 生成含未跟踪文件的受限工作区 Patch，遇超限或二进制标记截断。
 pub(super) fn build_worktree_patch(repo: &Repository) -> Result<BoundedPatch, String> {
@@ -28,23 +30,50 @@ pub(super) fn build_worktree_patch(repo: &Repository) -> Result<BoundedPatch, St
     format_diff_to_bounded_text(&diff, MAX_WORKTREE_PATCH_BYTES)
 }
 
-// 组合 HEAD、分支、文件状态及受限 Patch，任一变化或截断均标为脏工作区。
+// 组合 HEAD、分支、文件状态及受限 Patch，任一变化或截断均标为脏工作区；文件列表按全量算摘要后截断返回。
 pub(super) fn build_worktree_snapshot(
     project_path: &str,
     repo: &Repository,
 ) -> Result<GitWorktreeSnapshot, String> {
-    let files = collect_git_changes_from_repo(repo)?;
+    let mut files = collect_git_changes_from_repo(repo)?;
     let patch = build_worktree_patch(repo)?;
+    let file_count = files.len();
+    let files_digest = snapshot_files_digest(&files);
+    let files_truncated = file_count > SNAPSHOT_RETURN_FILES_LIMIT;
+    files.truncate(SNAPSHOT_RETURN_FILES_LIMIT);
     Ok(GitWorktreeSnapshot {
         project_path: project_path.to_string(),
         head: repo_head_oid(repo)?,
         branch: repo_branch_name(repo),
-        dirty: patch.truncated || !patch.text.trim().is_empty() || !files.is_empty(),
+        dirty: patch.truncated || !patch.text.trim().is_empty() || file_count > 0,
         patch: patch.text,
         patch_bytes: patch.bytes,
         patch_truncated: patch.truncated,
         files,
+        file_count,
+        files_digest,
+        files_truncated,
     })
+}
+
+// 以路径、状态、暂存与增删行计算全量文件列表的 SHA-256，供快照去重而无需回传全部文件。
+pub(super) fn snapshot_files_digest(files: &[GitFileChange]) -> String {
+    let mut hasher = Sha256::new();
+    for file in files {
+        hasher.update(file.path.as_bytes());
+        hasher.update(
+            format!(
+                "\0{}\0{}\0{}\0{}\n",
+                file.status, file.staged, file.added, file.deleted
+            )
+            .as_bytes(),
+        );
+    }
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 // 超过 WebView 返回阈值时释放 Patch 文本并标为截断，保留已有字节统计。

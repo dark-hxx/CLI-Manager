@@ -271,8 +271,12 @@ const OOM_HISTORY_DETAIL_WARN_BYTES: usize = 10 * 1024 * 1024;
 const OOM_HISTORY_STATS_WARN_BYTES: usize = 5 * 1024 * 1024;
 const OOM_HISTORY_MESSAGES_WARN_COUNT: usize = 2_000;
 const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
+// 9：Codex 编排嵌套工具改认 item_completed 真实执行记录与 web_search_call，读取 SKILL.md 计入 Skill，
+// 会话级 Skill 计数随会话行保存；旧物化工具行与会话行需重算。
+// 10：标题跳过 Claude 本地命令注入块（local-command-caveat/stdout 等），带参斜杠命令显示为 "/命令 参数"，旧会话行标题需重算。
 // 11：Antigravity 详情与全文搜索按行从 transcript_full.jsonl 补全截断正文，V2 缓存记录需重算。
-const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 11;
+// 12：合并标题清洗与 Antigravity 补全，强制重算两条分支的旧物化记录。
+const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 12;
 const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
 const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;

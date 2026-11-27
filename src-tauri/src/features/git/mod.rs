@@ -45,6 +45,8 @@ const MAX_WORKTREE_PATCH_BYTES: usize = 4 * 1024 * 1024;
 const OOM_PATCH_WARN_BYTES: usize = MAX_WORKTREE_PATCH_BYTES;
 const OOM_SNAPSHOT_PATCH_RETURN_MAX_BYTES: usize = MAX_WORKTREE_PATCH_BYTES;
 const OOM_SNAPSHOT_FILES_WARN_COUNT: usize = 500;
+// 快照只向 WebView 返回前 20 个变更文件用于展示；全量列表只参与摘要与计数，避免大工作区撑大 IPC。
+const SNAPSHOT_RETURN_FILES_LIMIT: usize = 20;
 const WSL_GIT_COMMAND_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// 「目录不是 Git 仓库」的稳定错误码，native/libgit2 与 WSL 链路共用。
 /// 前端据此渲染友好空态并缓存非 Git 结果；权限、所有权等失败不得归入该码。
@@ -72,13 +74,13 @@ fn log_worktree_snapshot_oom_diagnostic(
 ) {
     let patch_bytes = snapshot.patch_bytes;
     let threshold_exceeded = patch_bytes >= OOM_PATCH_WARN_BYTES
-        || snapshot.files.len() >= OOM_SNAPSHOT_FILES_WARN_COUNT;
+        || snapshot.file_count >= OOM_SNAPSHOT_FILES_WARN_COUNT;
     if threshold_exceeded {
         log::warn!(
             "[oom-diagnostics:backend] area=git phase={phase} project_path={} dirty={} files={} patch_bytes={} elapsed_ms={} threshold_exceeded=true",
             project_path,
             snapshot.dirty,
-            snapshot.files.len(),
+            snapshot.file_count,
             patch_bytes,
             elapsed_ms
         );
@@ -87,7 +89,7 @@ fn log_worktree_snapshot_oom_diagnostic(
             "[oom-diagnostics:backend] area=git phase={phase} project_path={} dirty={} files={} patch_bytes={} elapsed_ms={} threshold_exceeded=false",
             project_path,
             snapshot.dirty,
-            snapshot.files.len(),
+            snapshot.file_count,
             patch_bytes,
             elapsed_ms
         );
@@ -251,6 +253,9 @@ pub struct GitWorktreeSnapshot {
     pub patch_bytes: usize,
     pub patch_truncated: bool,
     pub files: Vec<GitFileChange>,
+    pub file_count: usize,
+    pub files_digest: String,
+    pub files_truncated: bool,
 }
 
 /// 获取指定路径的 Git 文件变更列表

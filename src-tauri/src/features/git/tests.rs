@@ -225,6 +225,33 @@ fn worktree_snapshot_bounds_large_untracked_patch() {
 }
 
 #[test]
+// 验证快照只回传前 20 个文件，计数与摘要覆盖全量列表且随任一文件变化而变化。
+fn worktree_snapshot_limits_returned_files_and_digests_full_list() {
+    let (_temp, repo_path) = init_temp_repo();
+    for index in 0..25 {
+        fs::write(
+            Path::new(&repo_path).join(format!("file-{index:02}.txt")),
+            "x\n",
+        )
+        .unwrap();
+    }
+
+    let repo = Repository::open(&repo_path).unwrap();
+    let first = build_worktree_snapshot(&repo_path, &repo).unwrap();
+    assert_eq!(first.files.len(), 20);
+    assert_eq!(first.file_count, 25);
+    assert!(first.files_truncated);
+    assert_eq!(first.files_digest.len(), 64);
+    let again = build_worktree_snapshot(&repo_path, &repo).unwrap();
+    assert_eq!(again.files_digest, first.files_digest);
+
+    fs::write(Path::new(&repo_path).join("tracked.txt"), "changed\n").unwrap();
+    let changed = build_worktree_snapshot(&repo_path, &repo).unwrap();
+    assert_eq!(changed.file_count, 26);
+    assert_ne!(changed.files_digest, first.files_digest);
+}
+
+#[test]
 // 验证嵌套仓库判断只命中带尾斜杠且含 .git 的目录。
 fn is_nested_repo_entry_detects_nested_repo_dir_only() {
     let temp = tempfile::tempdir().unwrap();

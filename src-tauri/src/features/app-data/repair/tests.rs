@@ -335,6 +335,267 @@ async fn writes_replay_snapshot_cleanup_marker_after_version_check() {
     );
 }
 
+// 创建只含快照载荷列的回放事件表，供快照瘦身测试复用。
+async fn create_replay_events_table(conn: &mut SqliteConnection) {
+    conn.execute(
+        "CREATE TABLE ai_replay_events (
+            id INTEGER PRIMARY KEY,
+            session_key TEXT NOT NULL,
+            event_index INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            payload_json TEXT NOT NULL
+        )",
+    )
+    .await
+    .unwrap();
+}
+
+// 插入一条指定类型的回放事件。
+async fn insert_replay_event(conn: &mut SqliteConnection, kind: &str, payload: &Value) {
+    sqlx::query(
+        "INSERT INTO ai_replay_events (session_key, event_index, kind, payload_json)
+         VALUES ('session-one', 1, ?1, ?2)",
+    )
+    .bind(kind)
+    .bind(payload.to_string())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
+// 读取指定行的回放事件载荷。
+async fn replay_event_payload(conn: &mut SqliteConnection, id: i64) -> Value {
+    let (payload_json,): (String,) =
+        sqlx::query_as("SELECT payload_json FROM ai_replay_events WHERE id = ?1")
+            .bind(id)
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap();
+    serde_json::from_str(&payload_json).unwrap()
+}
+
+#[tokio::test]
+// 验证快照瘦身移除完整文件列表、截断变更文件名并保留回滚所需字段。
+async fn slims_replay_snapshot_file_lists_and_keeps_rollback_fields() {
+    let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+    create_replay_events_table(&mut conn).await;
+    let paths: Vec<String> = (0..25)
+        .map(|index| format!("src/file-{index}.ts"))
+        .collect();
+    let files: Vec<Value> = paths
+        .iter()
+        .map(|path| serde_json::json!({ "path": path, "status": "M", "staged": false, "added": 1, "deleted": 0 }))
+        .collect();
+    insert_replay_event(
+        &mut conn,
+        "snapshot",
+        &serde_json::json!({
+            "head": "abc123",
+            "projectPath": "F:/repo",
+            "patchPath": "replay-snapshots/session-one/snapshot-1.patch",
+            "patchTruncated": false,
+            "files": files,
+            "changedFiles": paths,
+        }),
+    )
+    .await;
+    insert_replay_event(
+        &mut conn,
+        "snapshot",
+        &serde_json::json!({
+            "head": "abc123",
+            "files": [{ "path": "README.md", "status": "M", "staged": false, "added": 1, "deleted": 1 }],
+        }),
+    )
+    .await;
+    let small = serde_json::json!({ "head": "abc123", "changedFiles": ["a.ts"] });
+    insert_replay_event(&mut conn, "snapshot", &small).await;
+    let tool = serde_json::json!({ "files": ["kept"] });
+    insert_replay_event(&mut conn, "tool", &tool).await;
+
+    let slimmed = slim_replay_snapshot_payloads(&mut conn).await.unwrap();
+
+    assert_eq!(slimmed, 2);
+    let large = replay_event_payload(&mut conn, 1).await;
+    assert!(large.get("files").is_none());
+    assert_eq!(large["changedFiles"].as_array().unwrap().len(), 20);
+    assert_eq!(large["changedFiles"][0], "src/file-0.ts");
+    assert_eq!(large["fileCount"], 25);
+    assert_eq!(large["changedFilesTruncated"], true);
+    assert_eq!(large["head"], "abc123");
+    assert_eq!(large["projectPath"], "F:/repo");
+    assert_eq!(
+        large["patchPath"],
+        "replay-snapshots/session-one/snapshot-1.patch"
+    );
+    let derived = replay_event_payload(&mut conn, 2).await;
+    assert!(derived.get("files").is_none());
+    assert_eq!(derived["changedFiles"], serde_json::json!(["README.md"]));
+    assert_eq!(derived["fileCount"], 1);
+    assert!(derived.get("changedFilesTruncated").is_none());
+    assert_eq!(replay_event_payload(&mut conn, 3).await, small);
+    assert_eq!(replay_event_payload(&mut conn, 4).await, tool);
+}
+
+#[tokio::test]
+// 验证快照瘦身仅执行一次：完成后写标记，标记存在时不再改动载荷。
+async fn slims_replay_snapshots_once_per_marker() {
+    let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+    create_replay_events_table(&mut conn).await;
+    let data_dir = tempfile::tempdir().unwrap();
+
+    assert_eq!(
+        slim_replay_snapshot_payloads_once(&mut conn, data_dir.path())
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(data_dir
+        .path()
+        .join(REPLAY_SNAPSHOT_SLIM_MARKER_FILE)
+        .is_file());
+
+    let payload = serde_json::json!({ "files": [{ "path": "a.ts" }] });
+    insert_replay_event(&mut conn, "snapshot", &payload).await;
+    assert_eq!(
+        slim_replay_snapshot_payloads_once(&mut conn, data_dir.path())
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(replay_event_payload(&mut conn, 1).await, payload);
+}
+
+// 创建只含保留清理所需列的回放会话表。
+async fn create_replay_sessions_table(conn: &mut SqliteConnection) {
+    conn.execute(
+        "CREATE TABLE ai_replay_sessions (
+            session_key TEXT PRIMARY KEY,
+            updated_at TEXT NOT NULL
+        )",
+    )
+    .await
+    .unwrap();
+}
+
+// 插入指定会话与最后活动时间的回放会话及一条快照事件。
+async fn insert_replay_session_with_snapshot(
+    conn: &mut SqliteConnection,
+    session_key: &str,
+    updated_at: &str,
+    payload: &Value,
+) {
+    sqlx::query("INSERT INTO ai_replay_sessions (session_key, updated_at) VALUES (?1, ?2)")
+        .bind(session_key)
+        .bind(updated_at)
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO ai_replay_events (session_key, event_index, kind, payload_json)
+         VALUES (?1, 1, 'snapshot', ?2)",
+    )
+    .bind(session_key)
+    .bind(payload.to_string())
+    .execute(&mut *conn)
+    .await
+    .unwrap();
+}
+
+#[test]
+// 验证保留截止时间与前端 toISOString 同格式且回退 7 天。
+fn replay_retention_cutoff_matches_iso_format() {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-11-26T08:30:00.123Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(replay_retention_cutoff(now), "2026-11-19T08:30:00.123Z");
+}
+
+#[tokio::test]
+// 验证过期会话连同事件与补丁文件被删除，活跃会话与越界路径保持不动。
+async fn prunes_expired_replay_sessions_with_patch_files() {
+    let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+    create_replay_sessions_table(&mut conn).await;
+    create_replay_events_table(&mut conn).await;
+    let data_dir = tempfile::tempdir().unwrap();
+    let patch_dir = data_dir.path().join(REPLAY_SNAPSHOT_PATCH_DIR);
+    fs::create_dir_all(patch_dir.join("old")).unwrap();
+    fs::create_dir_all(patch_dir.join("live")).unwrap();
+    fs::write(patch_dir.join("old/a.patch"), "old").unwrap();
+    fs::write(patch_dir.join("live/b.patch"), "live").unwrap();
+    fs::write(data_dir.path().join("outside.patch"), "keep").unwrap();
+
+    let old_payload = serde_json::json!({ "patchPath": "replay-snapshots/old/a.patch" });
+    let live_payload = serde_json::json!({ "patchPath": "replay-snapshots/live/b.patch" });
+    let escape_payload = serde_json::json!({ "patchPath": "replay-snapshots/../outside.patch" });
+    insert_replay_session_with_snapshot(&mut conn, "old", "2026-11-01T00:00:00.000Z", &old_payload)
+        .await;
+    insert_replay_session_with_snapshot(
+        &mut conn,
+        "escape",
+        "2026-11-02T00:00:00.000Z",
+        &escape_payload,
+    )
+    .await;
+    insert_replay_session_with_snapshot(
+        &mut conn,
+        "live",
+        "2026-11-25T00:00:00.000Z",
+        &live_payload,
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO ai_replay_events (session_key, event_index, kind, payload_json)
+         VALUES ('old', 2, 'prompt', 'not-json')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+
+    let pruned =
+        prune_expired_replay_sessions(&mut conn, data_dir.path(), "2026-11-19T00:00:00.000Z")
+            .await
+            .unwrap();
+
+    assert_eq!(pruned, 2);
+    let sessions: Vec<String> = sqlx::query_scalar("SELECT session_key FROM ai_replay_sessions")
+        .fetch_all(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(sessions, vec!["live".to_string()]);
+    let events: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT session_key FROM ai_replay_events")
+            .fetch_all(&mut conn)
+            .await
+            .unwrap();
+    assert_eq!(events, vec!["live".to_string()]);
+    assert!(!patch_dir.join("old").exists());
+    assert!(patch_dir.join("live/b.patch").is_file());
+    assert!(data_dir.path().join("outside.patch").is_file());
+}
+
+#[tokio::test]
+// 验证缺少回放表的旧库直接跳过保留清理。
+async fn replay_retention_skips_missing_tables() {
+    let mut conn = SqliteConnection::connect(":memory:").await.unwrap();
+    let data_dir = tempfile::tempdir().unwrap();
+    assert_eq!(
+        prune_expired_replay_sessions(&mut conn, data_dir.path(), "2026-11-19T00:00:00.000Z")
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+// 验证主库整理同时要求空闲字节与空闲占比达到阈值。
+fn cli_manager_db_vacuum_requires_free_bytes_and_ratio() {
+    assert!(cli_manager_db_needs_vacuum(4096, 40_000, 10_000));
+    assert!(!cli_manager_db_needs_vacuum(4096, 400_000, 10_000));
+    assert!(!cli_manager_db_needs_vacuum(4096, 4_000, 2_000));
+    assert!(!cli_manager_db_needs_vacuum(0, 40_000, 10_000));
+}
+
 #[tokio::test]
 // 验证旧库有用户数据且当前库为空时恢复数据并备份当前库。
 async fn recovers_legacy_db_when_current_db_has_no_user_rows() {

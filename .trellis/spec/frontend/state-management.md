@@ -302,11 +302,12 @@ interface SettingsStore extends Settings {
 
 #### 2. Signatures
 
-- SQLite table: `ai_replay_events(kind, session_key, event_index, payload_json)`.
-- Snapshot DB payload fields: `checkpointId`, `patchPath`, `patchStorage`, `patchBytes`, optional legacy `patch`.
+- SQLite tables: `ai_replay_sessions(session_key, updated_at, ...)`, `ai_replay_events(kind, session_key, event_index, payload_json)`.
+- Worktree snapshot IPC: `git_get_worktree_snapshot` / restore / fork return `GitWorktreeSnapshot { files (≤ 20), fileCount, filesDigest, filesTruncated, ... }`.
+- Snapshot DB payload fields: `checkpointId`, `patchPath`, `patchStorage`, `patchBytes`, `stateDigest`, `fileCount`, `changedFiles` (≤ 20 paths), optional `changedFilesTruncated`, optional legacy `patch`. The full worktree `files` list is never persisted.
 - Snapshot file path: `.cli-manager/replay-snapshots/<session>/<checkpoint>.patch`.
 - Frontend store helpers: `writeSnapshotPatchFile(...)`, `hydrateSnapshotPayload(...)`, `persistReplayEvent(...)`.
-- Startup backend command: `db_repair_known_migration_drift()`.
+- Startup backend command: `db_repair_known_migration_drift()`; one-time file-list slim marker `replay-snapshot-file-list-slim-v1.version` under the CLI-Manager data dir.
 
 #### 3. Contracts
 
@@ -317,6 +318,11 @@ interface SettingsStore extends Settings {
 - Startup DB repair must run the inline snapshot cleanup at most once per app version before `Database.load(...)`; when the current-version marker exists, it must skip the cleanup query entirely.
 - If a patch file is missing, keep the snapshot metadata visible but leave diff, rollback, and fork unavailable for that event.
 - For rollback/fork, compare the latest hydrated snapshot patch against the current worktree patch before mutating files.
+- Snapshot payloads keep only display metadata for files: `fileCount` (full count), the first 20 `changedFiles` paths, and `changedFilesTruncated=true` when cut. Replay step files come from history `file_changes`, never from snapshot payloads; rollback/fork use only `patch`/`patchPath`/`head`/`projectPath`/`patchTruncated`.
+- The backend computes `fileCount` and the SHA-256 `filesDigest` over the full change list (path/status/staged/added/deleted), then returns only the first 20 `files` to the WebView. Frontend must read totals from `fileCount`, never `files.length`.
+- Dedup compares a SHA-256 `stateDigest` over `head`, `patchTruncated`, `patchBytes`, `filesDigest` (falling back to per-file status/staged/added/deleted when absent), and the patch text. Reading the last snapshot for dedup must not hydrate its patch file; only a legacy row without `stateDigest` falls back to hydrated-patch + `head` comparison.
+- Retention: every startup repair deletes Replay sessions whose `updated_at` is older than 7 days (ISO string compare with a millisecond `Z` cutoff), their events in the same `BEGIN IMMEDIATE` transaction, then the referenced `patchPath` files after commit. Only `replay-snapshots/**.patch` paths made of normal components are removed; empty session directories are removed best-effort. Retention runs before inline cleanup/slim, and VACUUMs only when the freelist is ≥ 32 MiB and ≥ 25 % of pages. Active sessions are kept whole even if older events exist.
+- The startup file-list slim runs once per marker (not per version), in batches of 100 rows with one `BEGIN IMMEDIATE` transaction per batch, is idempotent per row, and checkpoints/VACUUMs `cli-manager.db` only when rows changed.
 
 #### 4. Validation & Error Matrix
 
@@ -328,6 +334,12 @@ interface SettingsStore extends Settings {
 | Current-version cleanup marker exists | Skip the cleanup query entirely. |
 | Snapshot file missing or unreadable | Log warning, keep metadata visible, leave patch-dependent actions unavailable. |
 | Malformed snapshot payload JSON during cleanup | Skip that row and continue; do not block app startup. |
+| Legacy snapshot payload has `files` | Slim once: drop `files`, derive `changedFiles` from its paths when absent, cap to 20, set `fileCount` if missing, mark `changedFilesTruncated`. |
+| Snapshot has no `files` and ≤ 20 `changedFiles` | Leave the row untouched. |
+| Slim batch write fails | Roll back that batch, warn, do not write the marker; next startup retries. |
+| Replay session last active > 7 days ago | Delete session + events, then its patch files; failure rolls back and only warns. |
+| `patchPath` escapes `replay-snapshots/` or is not `.patch` | Skip the file with a warning; still delete the DB rows. |
+| Replay tables do not exist yet | Skip retention. |
 
 #### 5. Good/Base/Bad Cases
 
@@ -349,6 +361,9 @@ interface SettingsStore extends Settings {
 - Run `cd src-tauri && cargo test db_repair --lib`.
 - Assert new snapshot `payload_json` has `patchPath` but no inline `patch`.
 - Assert startup cleanup migrates inline snapshots to files, removes `patch`, and skips entirely when the current-version marker exists.
+- Assert retention deletes expired sessions/events/patch files, keeps live sessions and out-of-scope paths, skips missing tables, and the cutoff matches `toISOString`.
+- Assert worktree snapshots return ≤ 20 files with full `fileCount` and a `filesDigest` that changes with the change list.
+- Assert the file-list slim caps `changedFiles` to 20 with full `fileCount`, derives it from legacy `files`, leaves small and non-snapshot rows untouched, and runs once per marker.
 
 #### 7. Wrong vs Correct
 

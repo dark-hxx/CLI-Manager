@@ -82,8 +82,10 @@ export function resolveCliHookTarget(input: {
   const source = input.source ?? null;
   if (!source || !input.cwd?.trim()) return { tabId: null, reason: "not-found" };
 
+  // 来源未知的普通 Shell Tab（用户手敲 CLI 命令）也可能是 Hook 的归属：CLI 经常驻守护进程
+  // （如 Codex app-server）执行 Hook 时拿不到 CLI_MANAGER_TAB_ID，只能靠兜底匹配找回。
   const sourceCandidates = input.candidates.filter((candidate) => (
-    candidate.source === source
+    (candidate.source === source || candidate.source === null)
     && environmentMatches(candidate)
   ));
   const boundOwner = input.sessionId?.trim()
@@ -94,16 +96,23 @@ export function resolveCliHookTarget(input: {
   const pathCandidates = sourceCandidates.filter((candidate) => (
     pathMatches(input.cwd!, candidate.paths, input.wslDistroName)
   ));
-  if (pathCandidates.length === 1) {
-    return { tabId: pathCandidates[0].id, reason: "unique-path" };
-  }
   if (pathCandidates.length === 0) return { tabId: null, reason: "not-found" };
 
+  // 刚有输出的 Tab 才是正在启动 CLI 的那个；先于「唯一同来源」判断，
+  // 避免同路径下早已跑完 CLI 的旧 Tab 抢走新会话。
   const recent = pathCandidates.filter((candidate) => (
     typeof candidate.outputActivityAt === "number"
     && input.receivedAt - candidate.outputActivityAt >= 0
     && input.receivedAt - candidate.outputActivityAt <= RECENT_OUTPUT_WINDOW_MS
   ));
   if (recent.length === 1) return { tabId: recent[0].id, reason: "recent-output" };
+
+  // 没有活动证据时只信任来源明确匹配的 Tab，来源未知的 Shell 不靠路径单独认领，
+  // 防止 IDE 等外部 CLI 会话被吸附到同目录下的普通终端。
+  const sourcePathCandidates = pathCandidates.filter((candidate) => candidate.source === source);
+  if (sourcePathCandidates.length === 1) {
+    return { tabId: sourcePathCandidates[0].id, reason: "unique-path" };
+  }
+  if (sourcePathCandidates.length === 0 && recent.length === 0) return { tabId: null, reason: "not-found" };
   return { tabId: null, reason: "ambiguous" };
 }

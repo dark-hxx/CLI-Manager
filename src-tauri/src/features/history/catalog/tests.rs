@@ -1992,3 +1992,4 @@ fn validate_source_instance_rejects_invalid_storage_and_locations() {
 
 mod tool_observations;
 mod antigravity_coverage;
+mod incremental_refresh;
