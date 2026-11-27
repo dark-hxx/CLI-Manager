@@ -318,3 +318,27 @@ Topics: [.trellis/spec/backend/agent-capability-diagnostics-contracts.md](../../
 ### Status
 
 [OK] **Completed**
+
+
+## Session 143: V1.5.3 发布前合并与验证
+<!-- trellis-session: v=2 fp=984d9ef16ea0fdc8 -->
+
+**Date**: 2026-11-27
+**Task**: V1.5.3 发布前合并与验证
+**Branch**: `master`
+
+### Summary
+
+按用户授权提交 agy/代理变更并正常合并远程 master 的四个提交。用户明确接受项目代理凭据在恢复安全快照/回滚中可能丢失的既有限制，不修改该业务逻辑。解决历史缓存版本冲突并进行最小编译修正与机械拆分，前端生产构建、严格架构、146 项 Node 测试和 Rust 历史/修复/快照/代理定向测试通过。此记录时尚未推送分支和 V1.5.3 标签。
+Topics: [docs/功能清单.md](../../../docs/%E5%8A%9F%E8%83%BD%E6%B8%85%E5%8D%95.md)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `25d44587` | feat(proxy): 支持三级代理配置并修复 agy 转录 Hook |
+| `da9dddc2` | merge: 合并远程历史与回放优化并准备 V1.5.3 |
+
+### Status
+
+[OK] **Completed**

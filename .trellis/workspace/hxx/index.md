@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-3.md`
-- **Total Sessions**: 142
-- **Last Active**: 2026-11-15
+- **Total Sessions**: 143
+- **Last Active**: 2026-11-27
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-3.md` | ~320 | Active |
+| `journal-3.md` | ~344 | Active |
 | `journal-2.md` | ~1975 | Archived |
 | `journal-1.md` | ~2014 | Archived |
 <!-- @@@/auto:active-documents -->
@@ -31,6 +31,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 143 | 2026-11-27 | V1.5.3 发布前合并与验证 | `25d44587`, `da9dddc2` | `master` |
 | 142 | 2026-11-15 | V1.5.1 补修 Codex Skill 配置根与链接发现 | - | `master` |
 | 141 | 2026-11-15 | 修复Windowshelper运行库链接并验证本地打包 | - | `master` |
 | 140 | 2026-11-15 | V1.5.1 修复 Web 设备连接状态同步 | - | `master` |
