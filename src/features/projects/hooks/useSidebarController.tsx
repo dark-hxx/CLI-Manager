@@ -1143,35 +1143,20 @@ export function useSidebarController({
   }, []);
 
   const handleOpenProjectHistory = useCallback(
-    (project: Project) => {
+    (project: Project, worktree?: WorktreeRecord) => {
       if (rejectUnsupportedCapability(project, "history")) return;
       void openHistory({
         sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-        projectPath: resolveHistoryProjectPath(project),
+        projectPath: worktree ? resolveProjectPath(project, groups) : resolveHistoryProjectPath(project),
         projectId: project.id,
-      }).then(() => {
-        triggerGlobalSearchFocus();
-      }).catch((err) => {
-        toast.error("打开会话历史失败", { description: String(err) });
-      });
-    },
-    [openHistory, rejectUnsupportedCapability, triggerGlobalSearchFocus]
-  );
-  const handleOpenWorktreeHistory = useCallback(
-    (project: Project, worktree: WorktreeRecord) => {
-      void openHistory({
-        sourceFilter: resolveHistorySourceFilter(project.cli_tool),
-        projectPath: resolveProjectPath(project, groups),
-        projectId: project.id,
-        scopedProjectPath: worktree.path,
-      }).then(() => {
-        triggerGlobalSearchFocus();
-      }).catch((err) => {
+        scopedProjectPath: worktree?.path,
+      }).then(() => triggerGlobalSearchFocus()).catch((err) => {
         toast.error(t("sidebar.toast.openHistoryFailed"), { description: String(err) });
       });
     },
-    [groups, openHistory, t, triggerGlobalSearchFocus]
+    [groups, openHistory, rejectUnsupportedCapability, t, triggerGlobalSearchFocus]
   );
+  const handleOpenWorktreeHistory = handleOpenProjectHistory;
   const handleRequestDeleteProject = useCallback((project: Project) => {
     setConfirmAction({ kind: "delete-project", project });
   }, []);

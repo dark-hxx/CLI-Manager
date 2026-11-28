@@ -20,6 +20,7 @@ export const en: Record<keyof typeof zh, string> = {
   "history.resumeProject.useOriginalRemoteLocation": "Use Original Remote Location",
   "history.resumeProject.useOriginalRemoteLocationDescription": "Resume in the verified remote cwd without a local project binding",
   "history.resumeProject.invalidSession": "The history session has no valid session ID, or its source is unsupported.",
+  "history.resumeProject.agyTargetUnavailable": "Cannot verify the selected Antigravity CLI transcript and its original working directory. Check that both are accessible in the original environment.",
   "history.resumeProject.missingCwd": "The project directory for this history session could not be resolved.",
   "history.resumeProject.detailLoading": "The session details have not finished loading.",
   "history.resumeProject.remoteUnavailable": "The remote Agent or history bridge is unavailable.",

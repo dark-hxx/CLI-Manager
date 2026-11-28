@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 import type { Group, HistoryIndexStatus, HistorySearchHit, HistorySessionView, HistorySourceFilter, Project } from "../../../shared/types/index";
 import { useI18n } from "../../../shared/i18n/index";
 import { HISTORY_SOURCE_DESCRIPTORS, HISTORY_SOURCE_DESCRIPTOR_BY_ID } from "../../../shared/lib/historySources";
+import { hasResumeProvenance } from "../api/historyResumeCommand";
 import { resolveHistorySourceIconKey } from "../../../shared/lib/cliTools";
 import { resolveNodeAppearance } from "../../projects/api/nodeAppearance";
 import { NodeAppearanceIcon } from "../../projects/api/NodeAppearanceIcon";
@@ -1321,7 +1322,7 @@ export function HistoryListPane({
         <Portal>
           <div className="context-menu" style={{ left: menuX, top: menuY }} ref={contextMenuRef} role="menu">
             <button className="context-menu-item" role="menuitem" onClick={handleContextMenuResume}
-              disabled={HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(contextMenu.session.source)?.capabilities.resume !== "supported"}>
+              disabled={!hasResumeProvenance(contextMenu.session) || HISTORY_SOURCE_DESCRIPTOR_BY_ID.get(contextMenu.session.source)?.capabilities.resume !== "supported"}>
               <RefreshCw size={13} aria-hidden="true" />
               <span>{t("history.menu.resumeInTerminal")}</span>
             </button>

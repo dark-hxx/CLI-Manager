@@ -522,8 +522,11 @@ export function TodayUsageCard({
         <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>
           {t("common.loading")}
         </div>
+      ) : stats && stats.sessions > 0 && stats.unmeasuredSessions === stats.sessions && !stats.totalTokens ? (
+        <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>{t("stats.usageUnknown")}</div>
       ) : stats && stats.sessions > 0 ? (
         <div className="space-y-1.5">
+          {Boolean(stats.unmeasuredSessions) && <div className="text-[11px]" style={{ color: TERM_PANEL.dim }}>{t("stats.usagePartial", { count: stats.unmeasuredSessions ?? 0 })}</div>}
           <div className="grid grid-cols-2 gap-1.5">
             <StatChip
               dotColor={TERM_PANEL.yellow}

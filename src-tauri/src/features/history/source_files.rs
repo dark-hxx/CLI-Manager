@@ -7,7 +7,7 @@ use super::{
     collect_files_recursive, collect_wsl_claude_session_files, collect_wsl_codex_session_files,
     copilot_project_key_from_path, cursor_project_key_from_path, gemini_project_key_from_path,
     grok_project_key_from_path, is_json, is_jsonl, kiro_project_key_from_path,
-    load_antigravity_workspace_map, looks_like_antigravity_transcript_file,
+    load_antigravity_workspace_map,
     looks_like_cline_session_file, looks_like_copilot_events_file,
     looks_like_cursor_agent_transcript_file, looks_like_gemini_session_file,
     looks_like_grok_updates_file, looks_like_kiro_session_file, looks_like_pi_session_file,
@@ -149,16 +149,34 @@ pub(super) fn collect_copilot_session_files(root: &Path) -> Vec<SessionFileRef> 
 // 扫描 brain 下的 Antigravity transcript，并由工作区映射补项目键。
 pub(super) fn collect_antigravity_session_files(root: &Path) -> Vec<SessionFileRef> {
     let brain = root.join("brain");
-    if !brain.exists() {
-        return Vec::new();
+    let mut files = Vec::new();
+    let brain_text = brain.to_string_lossy();
+    if crate::wsl::is_wsl_config_dir(&brain_text) {
+        let Some((distro, linux_dir)) = crate::wsl::parse_wsl_unc_path(&brain_text) else {
+            return Vec::new();
+        };
+        for hit in wsl_find_session_files(&linux_dir, &distro, "transcript.jsonl", &|_| String::new()) {
+            let unc = crate::wsl::linux_to_unc_wsl_path(&hit.linux_path, &distro);
+            remember_wsl_session_fingerprint(&unc, hit.fingerprint);
+            files.push(PathBuf::from(unc));
+        }
+    } else {
+        // The only eligible file is a fixed number of components below brain.
+        let Ok(base) = root.canonicalize() else { return Vec::new(); };
+        for entry in read_dir_entries(&brain) {
+            let path = entry.path().join(".system_generated/logs/transcript.jsonl");
+            if path.is_file() && path.canonicalize().ok()
+                .is_some_and(|real| path.strip_prefix(root).is_ok_and(|relative| base.join(relative) == real)) {
+                files.push(path);
+            }
+        }
     }
     let workspace_by_id = load_antigravity_workspace_map(root);
-    let mut files = Vec::new();
-    collect_files_recursive(&brain, &mut files, &looks_like_antigravity_transcript_file);
     files
         .into_iter()
         .filter_map(|path| {
-            let (_, conversation_id) = antigravity_path_parts(&path)?;
+            let (origin, conversation_id) = antigravity_path_parts(&path)?;
+            if !super::antigravity::same_root(&origin, root) { return None; }
             let project_key = workspace_by_id
                 .get(&conversation_id)
                 .and_then(|workspace| project_key_from_cwd(workspace))

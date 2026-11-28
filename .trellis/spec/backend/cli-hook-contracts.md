@@ -1,6 +1,16 @@
 # CLI Hook Contracts
 
-Concrete contracts for Claude/Codex/Kimi/Pi/Grok/OpenCode hook integration.
+Concrete contracts for Claude/Codex/Kimi/Pi/Grok/OpenCode and Antigravity CLI hook integration.
+
+## Antigravity CLI passive bridge (V1.5.3)
+
+1. **Scope:** local or a named WSL distribution. The upstream global Hook file (`~/.gemini/config/hooks.json`) can also be used by the Antigravity App. A global installation is not permission to collect App/IDE or external terminal activity. Displayed config paths use native separators; optional UTF-8 BOM is tolerated on read and stripped on write.
+2. **Signatures:** source `antigravity`; native events `SessionStart`, `PreInvocation`, `Stop`; the existing authenticated bridge receives normalized notifications (`SessionStart`, `PreInvocation`, `Stop`, `StopFailure`, `Interrupt`), not native stdin. Do not register `PreToolUse` or alter permission defaults.
+3. **Contract:** opt-in `CLI_MANAGER_AGY_HOOK_ENABLED=1`, application PTY Tab id and bridge port/token are required. Keep only conversation UUID, Tab, distro, timestamp, source and normalized event. Never persist prompts, tool args, raw errors, transcript content or credentials. Only an observed model call maps to running, not to user submission.
+4. **Validation:** `fullyIdle` missing/false is not completion. A reported background stop cannot generate a done notification. Empty/whitespace `hookEventName` and `transcriptPath` are treated as absent; when `transcriptPath` is present, it must match `/antigravity-cli/brain/<conversationId>/.system_generated/logs/(transcript.jsonl|transcript_full.jsonl)` without `..` segments (supporting `agy 1.5.17`'s `GetFullTranscriptPath` alongside legacy `transcript.jsonl`), while rejecting App/IDE roots, mismatched IDs, traversal, and other filenames. Stdin streams up to 2 MiB so large `lastUserInput` prompts do not drop events. Official `ExecutorTerminationReason` values (`NO_TOOL_CALL`, `TERMINAL_STEP_TYPE`, `INJECTED_RESPONSE` plus legacy `model_stop` -> `Stop`; `USER_CANCELED` -> silent `Interrupt` clearing running state without toast/system/taskbar notifications; `ERROR`, `MAX_INVOCATIONS`, `MAX_FORCED_INVOCATIONS`, `MAX_TOKEN_BUDGET_EXCEEDED`, `TERMINAL_CUSTOM_HOOK` plus legacy `error`/`max_steps_exceeded` or non-empty `error` -> `StopFailure`) are normalized. On disabled, bad/over-limit input or missing listener, preserve the native passive response: `{}` for session start/model calls, `{"decision":"stop"}` for native Stop (never `continue`, never a reason to inject), and `{"decision":"ask"}` if `PreToolUse` is ever invoked unexpectedly.
+5. **Cases:** two Tabs sharing a cwd must not bind to each other; explicit CLI identity in the correct runtime may bind, contradictory App transcript provenance must not. Viewing an installer status does not install. Removing our entries preserves third-party entries. Outdated CLI-Manager-owned entries under `"cli-manager-antigravity"` (moved exe, legacy forward slashes, older `timeout` or PowerShell template) report `partialInstalled` so they remain repairable and uninstallable; foreign commands still report `conflict`. Simple Windows drive paths use native backslashes (`\`) with `\\?\` stripped; complex/UNC paths use System32 PowerShell `-EncodedCommand` with `timeout: 10`; first-install falls back from `hard_link`/`ln` to exclusive atomic create when hard links are unsupported.
+6. **Tests:** assert passive stdout and no delivery for bad/offline inputs; isolate files for install/remove, exercise idempotence and conflicts, repeat/late notifications and WSL distro mismatch. SSH is not an agy target.
+7. **Wrong vs correct:** never resolve an unbound agy event to the most recent terminal with the same cwd. Reject the event unless the raw Tab and runtime match. Deliver to currently connected local windows only: a generic daemon status snapshot or replay after reconnect cannot prove that the tab still owns the same conversation. Do not enqueue agy events for third-party notifications.
 
 ## Scenario: Local Hook Source Admission
 
@@ -12,7 +22,8 @@ Concrete contracts for Claude/Codex/Kimi/Pi/Grok/OpenCode hook integration.
 ### 2. Signatures
 
 ```text
-<cli-manager-exe> __hook --source <claude|codex|kimi|pi|grok|opencode> --event <event> [--owner <owner-id>]
+<cli-manager-exe> __hook --source <claude|codex|kimi|pi|grok|opencode|antigravity> --event <event> [--owner <owner-id>]
+<cli-manager-exe> __hook --source antigravity --event <SessionStart|PreInvocation|Stop> [--agy-wsl-distro <distro>]
 normalize_source(source: Option<&str>) -> &str
 is_valid_payload(payload: &ClaudeHookRequest) -> bool
 ```

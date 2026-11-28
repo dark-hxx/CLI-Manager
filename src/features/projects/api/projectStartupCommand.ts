@@ -10,6 +10,7 @@ import { replaceGrokModelArg, stripKimiResumeCliArgs, stripResumeCliArgs } from 
 import { normalizeShellKey } from "../../../shared/platform/shell";
 
 import { buildDeepSeekTuiCommand, isDeepSeekTuiTool } from "../../../shared/lib/deepseekTui";
+import { buildAgyStartupCommand } from "./agyStartupCommand";
 import { getDeepSeekSourceRoot } from "../../../shared/lib/deepseekHarness";
 
 const CODEX_PROFILE_ARG = "--profile";
@@ -205,6 +206,8 @@ export function resolveProjectStartupCommand(
   // 先拼用户维护的 CLI 附加参数，再做供应商覆盖追加：
   // hasProfileArg / hasClaudeSettingsArg 对整条 command 检测，用户手写过的参数天然去重。
   const cliArgs = project.cli_args.trim();
+  const agy = buildAgyStartupCommand(cliTool, cliArgs, project.shell);
+  if (agy) return agy;
   const command = isDeepSeekTuiTool(cliTool)
     ? buildDeepSeekTuiCommand(cliTool, cliArgs, getDeepSeekSourceRoot(project.env_vars), project.shell, project.environment_type)
     : cliArgs ? `${cliTool} ${cliArgs}` : cliTool;

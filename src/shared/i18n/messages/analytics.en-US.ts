@@ -1,6 +1,9 @@
 import type { zh } from "./analytics.zh-CN";
 
 export const en: Record<keyof typeof zh, string> = {
+  "stats.usagePartial": "{count} sessions have activity only. Token and cost figures cover measured usage only.",
+  "stats.usageUnknown": "No measured token or cost data for these sessions.",
+  "stats.activityMessages": "{count} messages",
   "systemResources.title": "System Resources",
   "systemResources.localMachine": "Local Machine",
   "systemResources.refresh": "Refresh system resources",

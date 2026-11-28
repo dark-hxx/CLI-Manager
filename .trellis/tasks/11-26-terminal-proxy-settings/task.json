@@ -1,0 +1,12 @@
+{
+  "id": "terminal-proxy-settings",
+  "name": "terminal-proxy-settings",
+  "title": "V1.5.3 · 全局/Agent/项目三级代理配置与终端环境注入",
+  "description": "在设置页新增全局与按 Agent 代理配置（含连通性测试），在新建/修改项目弹框新增默认收起的代理配置，按项目 > Agent > 全局优先级在启动内置终端（含 WSL 与显式 SSH 项目配置）时注入代理环境变量。",
+  "status": "completed",
+  "dev_type": "fullstack",
+  "scope": "settings, projects, terminal, pty, sync",
+  "createdAt": "2026-11-26",
+  "branch": "master",
+  "base_branch": "master"
+}

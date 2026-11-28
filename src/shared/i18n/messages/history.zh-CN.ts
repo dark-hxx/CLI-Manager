@@ -18,6 +18,7 @@ export const zh = {
   "history.resumeProject.useOriginalRemoteLocation": "使用原远端目录",
   "history.resumeProject.useOriginalRemoteLocationDescription": "在已验证的原远端 cwd 中恢复，不绑定本地项目",
   "history.resumeProject.invalidSession": "历史会话缺少有效的会话 ID，或会话来源不受支持。",
+  "history.resumeProject.agyTargetUnavailable": "无法核实所选 Antigravity CLI 会话记录及其原工作目录。请检查两者在原运行环境中是否仍可访问。",
   "history.resumeProject.missingCwd": "未能识别该历史会话的项目目录。",
   "history.resumeProject.detailLoading": "会话详情尚未加载完成。",
   "history.resumeProject.remoteUnavailable": "远端 Agent 或历史 bridge 当前不可用。",

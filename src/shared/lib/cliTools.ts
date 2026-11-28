@@ -97,6 +97,15 @@ export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
     imagePasteMode: "at",
   },
   {
+    id: "agy",
+    command: "agy",
+    label: "Antigravity CLI",
+    icon: "antigravity",
+    vendor: null,
+    historySourceId: "antigravity",
+    imagePasteMode: "unsupported",
+  },
+  {
     id: "gemini",
     command: "gemini",
     label: "Gemini CLI",
@@ -172,9 +181,55 @@ export const CLI_TOOL_DESCRIPTORS: readonly CliToolDescriptor[] = [
 
 export const CLI_TOOL_COMMANDS = CLI_TOOL_DESCRIPTORS.map((tool) => tool.command);
 
+export const PROJECT_CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "agy", "grok", "dsh-tui"] as const;
+export const HIDDEN_PROJECT_CLI_TOOLS = new Set(["goose", "amp", "aider", "crush"]);
+
+export const PROJECT_CLI_TOOL_OPTIONS: readonly CliToolDescriptor[] = CLI_TOOL_DESCRIPTORS
+  .filter((tool) => !HIDDEN_PROJECT_CLI_TOOLS.has(tool.command))
+  .sort((left, right) => {
+    const leftIndex = PROJECT_CLI_TOOL_PRIORITY.indexOf(left.command as (typeof PROJECT_CLI_TOOL_PRIORITY)[number]);
+    const rightIndex = PROJECT_CLI_TOOL_PRIORITY.indexOf(right.command as (typeof PROJECT_CLI_TOOL_PRIORITY)[number]);
+    return (leftIndex < 0 ? PROJECT_CLI_TOOL_PRIORITY.length : leftIndex)
+      - (rightIndex < 0 ? PROJECT_CLI_TOOL_PRIORITY.length : rightIndex);
+  });
+
+export function resolveCliToolDescriptor(cliTool: string | null | undefined): CliToolDescriptor | null {
+  const normalized = cliTool?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (isAgyCommand(normalized)) {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "agy") ?? null;
+  }
+  if (normalized === "code") {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "codex") ?? null;
+  }
+  if (isDeepSeekTuiTool(normalized)) {
+    return CLI_TOOL_DESCRIPTORS.find((tool) => tool.id === "deepseek-harness") ?? null;
+  }
+  const exact = CLI_TOOL_DESCRIPTORS.find(
+    (tool) => tool.id === normalized || tool.command.toLowerCase() === normalized,
+  );
+  if (exact) return exact;
+  return CLI_TOOL_DESCRIPTORS.find((tool) => commandMatches(normalized, tool.command)) ?? null;
+}
+
+export function resolveProxyAgentId(
+  cliTool: string | null | undefined,
+  startupCmd?: string | null,
+): string | null {
+  const trimmedCliTool = cliTool?.trim();
+  if (trimmedCliTool) {
+    return resolveCliToolDescriptor(trimmedCliTool)?.id ?? null;
+  }
+  const trimmedStartupCmd = startupCmd?.trim();
+  if (trimmedStartupCmd) {
+    return resolveCliToolDescriptor(trimmedStartupCmd)?.id ?? null;
+  }
+  return null;
+}
+
 export function resolveCliToolImagePasteMode(cliTool: string | null | undefined): ImagePasteMode {
   const normalized = cliTool?.trim().toLowerCase() ?? "";
-  if (!normalized) return "unsupported";
+  if (!normalized || isAgyCommand(normalized)) return "unsupported";
   const descriptor = CLI_TOOL_DESCRIPTORS.find(
     (tool) => tool.id === normalized || tool.command === normalized || commandMatches(normalized, tool.command),
   );
@@ -202,7 +257,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Read only the first executable, including PowerShell's invocation operator. A prompt,
+// alias, pipeline wrapper or expandable shell expression is not an agy launcher.
+export function matchAgyLauncher(command?: string | null): { path: string; raw: string } | null {
+  const first = command?.trim().match(/^(?:&[ \t]+)?(?:"([^"\r\n]+)"|'([^'\r\n]+)'|([^\s"']+))(?=\s|$)/);
+  const path = first?.[1] ?? first?.[2] ?? first?.[3];
+  if (!path || /["';&|<>`$%!^*?()[\]{}\x00-\x1f]/.test(path)) return null;
+  return first && /(?:^|[\\/])agy(?:\.(?:exe|cmd|bat|ps1))?$/i.test(path) ? { path, raw: first[0] } : null;
+}
+
+export function isAgyCommand(command?: string | null): boolean {
+  return matchAgyLauncher(command) !== null;
+}
+
 function commandMatches(cliTool: string, command: string): boolean {
+  if (command === "agy") return isAgyCommand(cliTool);
   const root = command.trim().split(/\s+/)[0];
   if (!root) return false;
   if (command.includes(" ") && cliTool.includes(command)) return true;
@@ -217,6 +286,7 @@ export function resolveHistorySourceIconKey(source: string | null | undefined): 
 export function resolveCliToolIconKey(cliTool: string | null | undefined): CliToolIconKey | null {
   const normalized = cliTool?.trim().toLowerCase();
   if (!normalized) return null;
+  if (isAgyCommand(normalized)) return "antigravity";
   if (normalized === "code") return "codex";
   if (isDeepSeekTuiTool(normalized)) return "deepseek-harness";
 
@@ -231,7 +301,6 @@ export function resolveCliToolIconKey(cliTool: string | null | undefined): CliTo
     (normalized.includes("codex") ? "codex" : null) ??
     (normalized.includes("cursor") ? "cursor" : null) ??
     (normalized.includes("kiro") ? "kiro" : null) ??
-    (normalized.includes("antigravity") ? "antigravity" : null) ??
     (normalized.includes("grok") ? "grok" : null) ??
     (normalized.includes("kimi") ? "kimi" : null) ??
     (normalized.includes("qwen") ? "qwen" : null)
@@ -241,6 +310,7 @@ export function resolveCliToolIconKey(cliTool: string | null | undefined): CliTo
 export function resolveCliToolHistorySourceId(cliTool: string | null | undefined): HistorySourceId | null {
   const normalized = cliTool?.trim().toLowerCase();
   if (!normalized) return null;
+  if (isAgyCommand(normalized)) return "antigravity";
   if (normalized === "code") return "codex";
 
   const descriptor = CLI_TOOL_DESCRIPTORS.find(

@@ -515,6 +515,11 @@ function Sparkline({ values, color }: { values: number[]; color: string }) {
   );
 }
 
+function hasOnlyUnmeasuredSessions(stats: HistoryStatsPayload): boolean {
+  return stats.total_sessions > 0 && stats.unmeasured_sessions === stats.total_sessions
+    && !stats.total_input_tokens && !stats.total_output_tokens && !stats.total_cache_read_tokens && !stats.total_cache_creation_tokens;
+}
+
 function KpiStrip({ stats, trend }: { stats: HistoryStatsPayload; trend: HistoryStatsDailySeriesItem[] }) {
   const { language, t } = useI18n();
   const totalTokens = totalTokensOf({
@@ -526,7 +531,9 @@ function KpiStrip({ stats, trend }: { stats: HistoryStatsPayload; trend: History
   // 缓存命中率口径与请求级用量一致：缓存读取 / 输入上下文（输入 + 缓存读取 + 缓存写入）。
   const contextTokens = stats.total_input_tokens + stats.total_cache_read_tokens + stats.total_cache_creation_tokens;
   const cacheHitRate = contextTokens > 0 ? (stats.total_cache_read_tokens / contextTokens) * 100 : 0;
-  const tokensPerSession = stats.total_sessions > 0 ? totalTokens / stats.total_sessions : 0;
+  const measuredSessions = Math.max(0, stats.total_sessions - (stats.unmeasured_sessions ?? 0));
+  const unavailable = hasOnlyUnmeasuredSessions(stats);
+  const tokensPerSession = measuredSessions > 0 ? totalTokens / measuredSessions : 0;
   const tokenTrend = useMemo(() => trend.map(totalTokensOf), [trend]);
   const costTrend = useMemo(() => trend.map((item) => item.total_cost_usd), [trend]);
   const sessionTrend = useMemo(() => trend.map((item) => item.sessions), [trend]);
@@ -560,7 +567,7 @@ function KpiStrip({ stats, trend }: { stats: HistoryStatsPayload; trend: History
     {
       label: t("stats.kpi.sessions"),
       value: formatCount(stats.total_sessions, language),
-      hint: t("stats.kpi.sessionsHint", {
+      hint: unavailable ? t("stats.activityMessages", { count: stats.total_messages }) : t("stats.kpi.sessionsHint", {
         messages: formatCount(stats.total_messages, language),
         tokens: formatCompactCount(tokensPerSession, language),
       }),
@@ -586,15 +593,16 @@ function KpiStrip({ stats, trend }: { stats: HistoryStatsPayload; trend: History
     <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
       {items.map((item) => {
         const Icon = item.icon;
+        const noValue = unavailable && Icon !== MessagesSquare;
         return (
           <div key={item.label} className="ui-stats-card flex min-w-0 flex-col px-5 pb-4 pt-4">
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: item.tint }}>
               <Icon size={13} strokeWidth={2.2} />
               <span className="truncate">{item.label}</span>
             </div>
-            <div className="ui-stats-value mt-3 truncate text-[28px] leading-none">{item.value}</div>
-            <div className="mt-2 truncate text-[12px] text-text-muted" title={item.hint}>{item.hint}</div>
-            {item.footer && <div className="mt-auto pt-2">{item.footer}</div>}
+            <div className="ui-stats-value mt-3 truncate text-[28px] leading-none">{noValue ? "—" : item.value}</div>
+            <div className="mt-2 truncate text-[12px] text-text-muted" title={noValue ? t("stats.usageUnknown") : item.hint}>{noValue ? t("stats.usageUnknown") : item.hint}</div>
+            {!noValue && item.footer && <div className="mt-auto pt-2">{item.footer}</div>}
           </div>
         );
       })}
@@ -872,7 +880,7 @@ function ContextNote({
     t("stats.context.source", { value: sourceLabel }),
     t("stats.context.project", { value: projectLabel }),
     t("stats.context.range", { value: dateRangeLabel }),
-    t("stats.context.unpriced", { value: formatCompactCount(stats.total_unpriced_tokens, language) }),
+    ...(!hasOnlyUnmeasuredSessions(stats) ? [t("stats.context.unpriced", { value: formatCompactCount(stats.total_unpriced_tokens, language) })] : []),
   ];
   return (
     <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 text-[11px] text-text-muted">
@@ -1030,15 +1038,16 @@ function ModelRankingCard({ items }: { items: HistoryStatsModelItem[] }) {
   );
 }
 
-function ProjectRankingCard({ items, selectedProjectKey, onSelectProject, onClearProject }: {
+function ProjectRankingCard({ items, showActivity, selectedProjectKey, onSelectProject, onClearProject }: {
   items: HistoryStatsProjectItem[];
+  showActivity: boolean;
   selectedProjectKey: string;
   onSelectProject: (projectKey: string) => void;
   onClearProject: () => void;
 }) {
   const { language, t } = useI18n();
   const topItems = useMemo(() => items.slice(0, 8), [items]);
-  const maxTokens = topItems.reduce((max, item) => Math.max(max, totalTokensOf(item)), 0);
+  const maxValue = topItems.reduce((max, item) => Math.max(max, showActivity ? item.sessions : totalTokensOf(item)), 0);
 
   return (
     <StatsCard
@@ -1072,8 +1081,8 @@ function ProjectRankingCard({ items, selectedProjectKey, onSelectProject, onClea
                 <RankMeterRow
                   rank={index + 1}
                   label={item.project_key}
-                  value={formatCompactCount(tokens, language)}
-                  ratio={maxTokens > 0 ? tokens / maxTokens : 0}
+                  value={showActivity ? t("stats.unit.sessions", { count: formatCount(item.sessions, language) }) : formatCompactCount(tokens, language)}
+                  ratio={maxValue > 0 ? (showActivity ? item.sessions : tokens) / maxValue : 0}
                   color={selected || (!selectedProjectKey && index === 0) ? STATS_COLORS.accent : "color-mix(in srgb, var(--stats-blue) 55%, transparent)"}
                 />
               </button>
@@ -1860,9 +1869,10 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                       {t("stats.updating")}
                     </div>
                   )}
+                  {(stats.unmeasured_sessions ?? 0) > 0 && <p className="px-1 text-[12px] text-text-muted">{hasOnlyUnmeasuredSessions(stats) ? t("stats.usageUnknown") : t("stats.usagePartial", { count: stats.unmeasured_sessions ?? 0 })}</p>}
                   <KpiStrip stats={stats} trend={trendItems} />
                   <ContextNote sourceLabel={sourceLabel} projectLabel={projectLabel} dateRangeLabel={dateRangeLabel} stats={stats} />
-                  <DailyUsageTrendChart items={trendItems} granularity={statsGranularity} />
+                  {!hasOnlyUnmeasuredSessions(stats) && <DailyUsageTrendChart items={trendItems} granularity={statsGranularity} />}
 
                   {requestStatsQuery.isFetching && !requestStats && requestStatsSupported && <div className="px-1 text-[12px] text-text-muted">{t("stats.requestUsage.loading")}</div>}
                   {requestStatsQuery.error && requestStatsSupported && (
@@ -1875,12 +1885,13 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                   <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(260px,0.8fr)]">
                     <ProjectRankingCard
                       items={stats.project_ranking}
+                      showActivity={Boolean(stats.unmeasured_sessions)}
                       selectedProjectKey={projectKey}
                       onSelectProject={(nextProjectKey) => { setProjectId(""); setProjectKey((prev) => (prev === nextProjectKey ? "" : nextProjectKey)); }}
                       onClearProject={() => { setProjectId(""); setProjectKey(""); }}
                     />
-                    <ModelRankingCard items={stats.model_distribution} />
-                    <div className="lg:col-span-2 2xl:col-span-1"><TokenCompositionCard stats={stats} /></div>
+                    {!hasOnlyUnmeasuredSessions(stats) && <ModelRankingCard items={stats.model_distribution} />}
+                    {!hasOnlyUnmeasuredSessions(stats) && <div className="lg:col-span-2 2xl:col-span-1"><TokenCompositionCard stats={stats} /></div>}
                   </div>
 
                   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
@@ -1890,7 +1901,7 @@ export function StatsPanel({ open, onClose, onOpenSession }: StatsPanelProps) {
                     </StatsCard>
                   </div>
 
-                  <SourceBreakdown items={stats.source_distribution} />
+                  {!hasOnlyUnmeasuredSessions(stats) && <SourceBreakdown items={stats.source_distribution} />}
 
                   <StatsCard
                     title={selectedBucketTitle}

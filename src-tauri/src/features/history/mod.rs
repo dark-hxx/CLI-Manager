@@ -105,7 +105,11 @@ use conversion::{
 mod deletion;
 use deletion::{delete_session_file, is_single_file_delete_source};
 mod codex_deletion;
+mod antigravity;
 mod roots;
+pub(super) fn default_antigravity_history_root() -> PathBuf {
+    resolve_antigravity_history_root(&history_roots(None, None, None))
+}
 use roots::{
     apply_codex_thread_name, codex_thread_name_index, list_subagent_transcript_files,
     normalize_config_dir, resolve_antigravity_history_root,
@@ -270,7 +274,9 @@ const CODEX_HISTORY_INDEX_TEXT_MAX_CHARS: usize = 4_000;
 // 9：Codex 编排嵌套工具改认 item_completed 真实执行记录与 web_search_call，读取 SKILL.md 计入 Skill，
 // 会话级 Skill 计数随会话行保存；旧物化工具行与会话行需重算。
 // 10：标题跳过 Claude 本地命令注入块（local-command-caveat/stdout 等），带参斜杠命令显示为 "/命令 参数"，旧会话行标题需重算。
-const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 10;
+// 11：Antigravity 详情与全文搜索按行从 transcript_full.jsonl 补全截断正文，V2 缓存记录需重算。
+// 12：合并标题清洗与 Antigravity 补全，强制重算两条分支的旧物化记录。
+const HISTORY_INDEX_V2_ADAPTER_PARSER_VERSION: i64 = 12;
 const HISTORY_INDEX_V2_ADAPTER_MODEL_VERSION: i64 = 1;
 const OPENCODE_SESSION_LOCATOR_MARKER: &str = "#session=";
 const DAEMON_READY_WAIT_ATTEMPTS: usize = 60;
@@ -285,17 +291,29 @@ pub async fn history_list_sessions(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     project_path: Option<String>,
     query: Option<String>,
     limit: Option<usize>,
     offset: Option<usize>,
+    bound_antigravity_distro: Option<String>,
 ) -> Result<Vec<HistorySessionSummary>, String> {
     let roots = history_roots(
         claude_config_dir.clone(),
         codex_config_dir.clone(),
         grok_session_root.clone(),
     )
-    .with_kimi_config_dir(kimi_config_dir.clone());
+    .with_kimi_config_dir(kimi_config_dir.clone())
+        .with_antigravity_config_dir(antigravity_config_dir.clone());
+    if let Some(expected_distro) = bound_antigravity_distro {
+        if source.as_deref() != Some("antigravity") || limit != Some(1) || offset.unwrap_or(0) != 0 { return Ok(Vec::new()); }
+        // A live lookup never probes the legacy brain, even if CLI records are not on disk yet.
+        let Some(root) = roots.antigravity_config_dir else { return Ok(Vec::new()); };
+        return tokio::task::spawn_blocking(move || {
+            antigravity::bound_summary(&root, query.as_deref().unwrap_or(""), project_path.as_deref().unwrap_or(""), &expected_distro)
+                .into_iter().collect()
+        }).await.map_err(|err| err.to_string());
+    }
     // 新绑定的 Codex 会话无需等待全量 catalog 刷新；仅读取同一来源根中的精确 rollout。
     if let Some(session_id) = codex_lookup::bound_codex_query(
         source.as_deref(),
@@ -435,6 +453,7 @@ pub async fn history_list_sessions(
                 codex_config_dir,
                 grok_session_root,
                 kimi_config_dir,
+                antigravity_config_dir,
                 project_path,
                 query,
                 limit,
@@ -454,6 +473,7 @@ pub async fn history_get_session(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     source: String,
     project_key: String,
     aggregate_subtasks: Option<bool>,
@@ -469,7 +489,8 @@ pub async fn history_get_session(
             codex_config_dir.clone(),
             grok_session_root.clone(),
         )
-        .with_kimi_config_dir(kimi_config_dir.clone());
+        .with_kimi_config_dir(kimi_config_dir.clone())
+        .with_antigravity_config_dir(antigravity_config_dir.clone());
         let catalog_dirty = catalog::is_dirty();
         if catalog_dirty {
             let refresh_app = app.clone();
@@ -510,7 +531,8 @@ pub async fn history_get_session(
             codex_config_dir,
             grok_session_root.clone(),
         )
-        .with_kimi_config_dir(kimi_config_dir.clone());
+        .with_kimi_config_dir(kimi_config_dir.clone())
+        .with_antigravity_config_dir(antigravity_config_dir.clone());
         let summary =
             catalog::get_session_by_file_path(&roots, &file_path, "opencode", &project_key)
                 .await?
@@ -525,7 +547,8 @@ pub async fn history_get_session(
     }
     tokio::task::spawn_blocking(move || {
         let started_at = Instant::now();
-        let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root).with_kimi_config_dir(kimi_config_dir);
+        let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root).with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         debug!(
             "history_get_session request: source={}, project_key={}, file_path={}, fresh={}, claude_root={}, codex_root={}",
             source,
@@ -565,6 +588,7 @@ pub(super) fn read_session_detail_from_file(
         aggregate_subtasks
     );
     let mut detail = build_session_detail_with_roots(&file_ref, aggregate_subtasks, roots)?;
+    if source == "antigravity" { detail.cwd = antigravity_workspace_from_path(&file_ref.path); }
     detail.file_path = file_path;
     Ok(detail)
 }
@@ -577,13 +601,15 @@ pub async fn history_convert_session(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     source: String,
     project_key: String,
     target_source: String,
 ) -> Result<HistoryConversionResult, String> {
     let (result, codex_registration) = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-            .with_kimi_config_dir(kimi_config_dir);
+            .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         let file_ref =
             validate_session_file_ref_for_conversion(&file_path, &source, &project_key, &roots)?;
         ensure_source_mutation_unlocked(&target_source)?;
@@ -618,6 +644,7 @@ pub async fn history_delete_session(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     source: String,
     project_key: String,
 ) -> Result<Option<Vec<String>>, String> {
@@ -629,7 +656,8 @@ pub async fn history_delete_session(
     }
     tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-            .with_kimi_config_dir(kimi_config_dir);
+            .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         if !matches!(source.as_str(), "claude" | "codex" | "kimi" | "grok")
             && !is_single_file_delete_source(&source)
         {
@@ -673,6 +701,7 @@ pub async fn history_search(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     project_path: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<HistorySearchResult>, String> {
@@ -680,7 +709,8 @@ pub async fn history_search(
         return Ok(Vec::new());
     }
     let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-        .with_kimi_config_dir(kimi_config_dir);
+        .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
     // Search results include the current Codex thread_name, so complete any
     // pending registry refresh before querying the catalog.
     let _ = catalog::ensure_refresh(app.clone(), roots.clone(), false, true).await;
@@ -696,9 +726,11 @@ pub async fn history_get_index_status(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
 ) -> Result<HistoryIndexStatus, String> {
     let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-        .with_kimi_config_dir(kimi_config_dir);
+        .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
     catalog::ensure_refresh(app, roots, false, false).await
 }
 
@@ -715,13 +747,15 @@ pub async fn history_index_v2_preview_adapter_sessions(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     source: Option<String>,
     project_key: Option<String>,
     limit: Option<usize>,
 ) -> Result<Vec<HistoryIndexV2AdapterSession>, String> {
     tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-            .with_kimi_config_dir(kimi_config_dir);
+            .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         let source_filter = source
             .map(|value| value.trim().to_lowercase())
             .filter(|value| !value.is_empty());
@@ -1198,10 +1232,12 @@ pub async fn history_refresh_index(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     wait: Option<bool>,
 ) -> Result<HistoryIndexStatus, String> {
     let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-        .with_kimi_config_dir(kimi_config_dir);
+        .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
     catalog::ensure_refresh(app, roots, true, wait.unwrap_or(true)).await
 }
 
@@ -1214,6 +1250,7 @@ pub async fn history_list_prompts(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     project_key: Option<String>,
     file_path: Option<String>,
     query: Option<String>,
@@ -1227,7 +1264,8 @@ pub async fn history_list_prompts(
     let max_items = limit.unwrap_or(200).clamp(1, 2000);
     let mut prompts: Vec<HistoryPromptItem> = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-            .with_kimi_config_dir(kimi_config_dir);
+            .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         let scope = scope
             .as_deref()
             .map(|v| v.trim().to_lowercase())
@@ -1363,11 +1401,13 @@ pub async fn history_list_stats_projects(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
 ) -> Result<Vec<String>, String> {
     let source_for_opencode = source.clone();
     let mut projects: Vec<String> = tokio::task::spawn_blocking(move || {
         let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-            .with_kimi_config_dir(kimi_config_dir);
+            .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
         let source_filter = source.map(|v| v.to_lowercase());
         let mut projects = BTreeSet::new();
 
@@ -1408,6 +1448,7 @@ pub async fn history_get_stats(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     project_key: Option<String>,
     project_path: Option<String>,
     project_paths: Option<Vec<String>>,
@@ -1416,15 +1457,26 @@ pub async fn history_get_stats(
     start_at: Option<i64>,
     end_at: Option<i64>,
     force: Option<bool>,
+    bound_antigravity_distro: Option<String>,
 ) -> Result<HistoryStatsResponse, String> {
     let started_at = Instant::now();
     let roots = history_roots(claude_config_dir, codex_config_dir, grok_session_root)
-        .with_kimi_config_dir(kimi_config_dir);
+        .with_kimi_config_dir(kimi_config_dir)
+        .with_antigravity_config_dir(antigravity_config_dir);
     let source_filter = source.map(|v| v.to_lowercase());
+    if let Some(distro) = bound_antigravity_distro {
+        if source_filter.as_deref() != Some("antigravity") || !roots.antigravity_config_dir.as_ref().is_some_and(|root| {
+            antigravity::distro(root).as_deref().unwrap_or("").eq_ignore_ascii_case(&distro)
+        }) { return Err("history_environment_mismatch".into()); }
+    }
     let target_project = project_key
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
-    let target_project_paths = normalize_history_stats_project_paths(project_path, project_paths);
+    let target_project_paths = if source_filter.as_deref() == Some("antigravity") {
+        let mut paths: Vec<_> = project_path.into_iter().chain(project_paths.unwrap_or_default())
+            .map(|p| p.trim().replace('\\', "/")).filter(|p| !p.is_empty()).collect();
+        paths.sort(); paths.dedup(); paths
+    } else { normalize_history_stats_project_paths(project_path, project_paths) };
     let target_source_instance = source_instance_id
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());

@@ -59,6 +59,7 @@ pub(crate) fn invalidate_history_caches() {
     if let Ok(mut cache) = get_project_cache().lock() {
         cache.entries.clear();
     }
+    super::antigravity::invalidate_workspace_cache();
     invalidate_history_stats_caches();
     if let Ok(mut cache) = get_wsl_session_fingerprint_cache().lock() {
         cache.clear();
@@ -87,8 +88,10 @@ pub(crate) fn invalidate_history_stats_caches() {
 // 旧快照里同一个文件的 input/output 被记两次且 cached_input_tokens 未归一化，
 // 而快照复用只比对文件指纹——不改这个版本号，未再写入的旧会话会永远留着翻倍的用量。
 // 16：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计、读取 SKILL.md 计入 Skill，旧快照计数缺失。
-// 17：标题跳过 Claude 本地命令注入块、带参斜杠命令显示为 "/命令 参数"，旧快照标题停留在 <local-command-caveat>。
-pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 17;
+// 17：Antigravity CLI 解析 PLANNER_RESPONSE Token/模型/趋势，并用 conversation_summaries.db 映射工作区；
+// 另一分支同版本修复 Claude 本地命令注入块标题，带参斜杠命令显示为 "/命令 参数"。
+// 18：合并两条分支的解析修复，使任一旧快照都重新计算。
+pub(super) const HISTORY_INDEX_CACHE_VERSION: u32 = 18;
 pub(super) const HISTORY_INDEX_CACHE_FILE: &str = "history-index-cache.json";
 
 pub(super) static HISTORY_INDEX_CACHE_DIR: OnceLock<PathBuf> = OnceLock::new();

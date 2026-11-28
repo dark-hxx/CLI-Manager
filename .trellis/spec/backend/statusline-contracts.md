@@ -154,3 +154,14 @@ let mut status = install(refresh_interval)?;
 status.cc_switch = Some(sync_ccswitch_claude_statusline(...).await);
 Ok(status)
 ```
+
+## Antigravity CLI: statusline is a display protocol, not usage history (V1.5.3)
+
+1. **Scope.** `agy` reads `~/.gemini/antigravity-cli/settings.json` in the chosen runtime. Keep the native, custom and stacked modes separate from Claude/Codex and from Hook installation.
+2. **Signatures.** `agy_statusline_load(distro?)`, `agy_statusline_preview(layout, width)` and `agy_statusline_change(distro?, revision, op)` are separate read, preview and mutation operations. The managed command invokes `__agy_statusline <encoded-layout>` before starting Tauri. Input: one JSON object on stdin. Output: formatted text, optionally ANSI.
+3. **Contract.** Opening settings or changing drafts must not install or run any command. Preview uses a fixed synthetic payload and the live renderer; it does not run the active `statusLine.command`. Only preserve the small allowlisted layout, never payloads (which may contain account details).
+4. **Validation.** External command or drift → require confirmation before replacement. Stale revision → reload. Restore → require the whole managed block to be unchanged; if the original block was absent, remove only that block. Malformed JSON → no rewrite. Unrelated root keys must survive all writes.
+5. **Cases.** Good: replace an external command on explicit confirmation and restore it verbatim as JSON. Base: `model: null` or absent counts omit those components. Bad: a user-edited block is not a managed block even if the command string still mentions the helper.
+6. **Tests.** Use temp homes for read/apply/drift/restore and CLI argument quoting. `python scripts/agyWindowsSmoke.py` checks real Windows `agy` in custom/stacked/disabled mode without login: enabled cases must execute the probe, disabled must not. It does not verify model turns or visual placement in every agy version.
+   For a built product, `python scripts/testAgyStatuslineRuntime.py <exe> --tui` verifies the production generator and the helper together. A directly quoted executable that works in `cmd /c` is not sufficient proof that agy runs it: keep a complex installation path, non-ASCII input, exact stdout/stderr and a disabled negative control in the regression.
+7. **Wrong vs correct.** Never sum `context_window` snapshots into the history index. `render(layout, stdin)` may show a reported count (including zero); a transcript without verified usage remains unknown even if its live status line showed a count.

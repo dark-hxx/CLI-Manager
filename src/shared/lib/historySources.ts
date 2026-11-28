@@ -222,8 +222,9 @@ export const HISTORY_SOURCE_DESCRIPTORS: readonly HistorySourceDescriptor[] = [
     id: "antigravity",
     labelKey: "historySources.source.antigravity",
     defaultLabel: "Antigravity",
+    aliases: ["agy"],
     locations: [configRootSlot],
-    capabilities: { ...jsonReaderCapabilities, delete: "supported" },
+    capabilities: { ...jsonReaderCapabilities, usage: "supported", resume: "supported", realtimeStats: "supported", delete: "supported" },
     parserPlan: {
       stage: "native",
       batch: "batch-2",

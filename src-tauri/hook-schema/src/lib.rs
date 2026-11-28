@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod antigravity;
 pub mod kimi;
 
 #[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]

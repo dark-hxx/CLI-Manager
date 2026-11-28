@@ -18,6 +18,10 @@ impl DaemonHost {
             .get("source")
             .and_then(|value| value.as_str())
             .unwrap_or_default();
+        // agy 的绑定、fork 退役与实时开关只能在在线 PTY 消费端确认；无身份的旧 task_status 不能重放。
+        if source == "antigravity" {
+            return;
+        }
         let goal_status = payload.get("goalStatus").and_then(|value| value.as_str());
         let Some(task_status) =
             map_hook_event_to_task_status_for_payload(source, event, goal_status)

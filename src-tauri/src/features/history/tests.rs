@@ -28,6 +28,7 @@ mod grok;
 mod kimi_source;
 mod opencode;
 mod other_sources;
+mod antigravity_contract;
 mod remote;
 mod scope_paths;
 mod session_file_cache;

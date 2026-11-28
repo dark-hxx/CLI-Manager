@@ -1,7 +1,9 @@
+import agyHookMessages from "./antigravity-hook.json";
 import piHookMessages from "./pi-hook.json";
 
 export const zh = {
   ...piHookMessages["zh-CN"],
+  ...agyHookMessages["zh-CN"],
   "settings.statusline.loading": "正在加载状态栏配置…",
   "settings.statusline.loadFailed": "加载状态栏配置失败",
   "settings.statusline.runtime": "内置状态栏运行时",
@@ -129,9 +131,16 @@ export const zh = {
   "settings.hooks.card.clickToInstall": "点击安装 {tool} 的 {module} 模块",
   "settings.hooks.card.clickToUninstall": "点击删除 {tool} 的 {module} 模块",
   "settings.hooks.bridge.enabled": "启用",
+  "settings.hooks.bridge.groupTitle": "CLI Hook 桥接",
+  "settings.hooks.bridge.enabledCount": "已启用 {enabled} / {total}",
   "settings.hooks.bridge.claudeEnabled": "启用 Claude Code Hook 桥接检查",
   "settings.hooks.bridge.codexEnabled": "启用 Codex CLI Hook 桥接检查",
+  "settings.hooks.bridge.kimiEnabled": "启用 Kimi Code Hook 桥接检查",
   "settings.hooks.bridge.piEnabled": "启用 Pi Agent Hook 桥接检查",
+  "settings.hooks.bridge.grokEnabled": "启用 Grok Build Hook 桥接检查",
+  "settings.hooks.bridge.antigravityEnabled": "启用 Antigravity CLI Hook 桥接",
+  "settings.hooks.bridge.pausedNotice": "回调接收已关闭。下方仍可查看或管理配置文件，开启右上角开关后立即生效。",
+  "settings.hooks.toastSection.description": "控制 Claude Code、Codex CLI、Kimi Code、Pi Agent、Grok Build 和 Antigravity CLI Hook 事件的右上角弹框；终端标签小圆点不受这里的弹框开关影响。",
   "settings.hooks.pi.extensionConflict": "检测到同名 Pi 扩展文件，但该文件不属于 CLI-Manager。为避免覆盖用户代码，安装已取消。",
   "settings.hooks.module.installed": "{tool} Hook 模块已安装：{module}",
   "settings.hooks.module.removed": "{tool} Hook 模块已删除：{module}",

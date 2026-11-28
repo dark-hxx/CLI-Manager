@@ -187,6 +187,7 @@ async fn history_publish(
         request.codex_config_dir.clone(),
         None,
         None,
+        None,
         context.source.clone(),
         request.project_key.clone(),
         Some(false),

@@ -258,6 +258,10 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
             "type": "PLANNER_RESPONSE",
             "status": "DONE",
             "created_at": "2026-05-20T06:03:20Z",
+            "model": "claude-sonnet-5-5-medium",
+            "input_tokens": 1200,
+            "cache_read_tokens": 300,
+            "output_tokens": 45,
             "tool_calls": [{ "name": "list_dir" }]
         }),
         json!({
@@ -274,7 +278,23 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
             "type": "PLANNER_RESPONSE",
             "status": "DONE",
             "created_at": "2026-05-20T06:03:30Z",
+            "model": "gemini-4-neon-xhigh",
+            "input_tokens": 2000,
+            "cache_read_tokens": 500,
+            "output_tokens": 80,
             "content": "This project is a local agent configuration hub."
+        }),
+        json!({
+            "step_index": 15,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:30Z",
+            "model": "gemini-4-neon-xhigh",
+            "input_tokens": 2000,
+            "cache_read_tokens": 500,
+            "output_tokens": 80,
+            "content": "duplicate step should not double count tokens"
         }),
         json!({
             "source": "USER_EXPLICIT",
@@ -296,7 +316,7 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
 
     let (summary, stats, messages) = scan_session_detail(&path);
     assert_eq!(summary.session_id.as_deref(), Some(conversation_id));
-    assert_eq!(summary.message_count, 2);
+    assert_eq!(summary.message_count, 3);
     assert_eq!(
         summary.first_user_message.as_deref(),
         Some("Analyze this project")
@@ -308,7 +328,26 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
         messages[1].content,
         "This project is a local agent configuration hub."
     );
+    assert_eq!(messages[1].model.as_deref(), Some("gemini-4-neon-xhigh"));
+    assert_eq!(messages[1].input_tokens, Some(2000));
+    assert_eq!(messages[1].cache_read_tokens, Some(500));
+    assert_eq!(messages[1].output_tokens, Some(80));
     assert_eq!(messages[1].line_index, Some(3));
+    assert_eq!(messages[2].input_tokens, None);
+    assert_eq!(stats.input_tokens, 3200);
+    assert_eq!(stats.cache_read_tokens, 800);
+    assert_eq!(stats.output_tokens, 125);
+    assert_eq!(stats.last_context_tokens, Some(2500));
+    assert_eq!(stats.current_model.as_deref(), Some("gemini-4-neon-xhigh"));
+    assert_eq!(stats.dominant_model.as_deref(), Some("gemini-4-neon-xhigh"));
+    assert_eq!(stats.token_trend.len(), 2);
+    assert_eq!(stats.usage_events.len(), 2);
+    assert_eq!(stats.usage_events[0].model.as_deref(), Some("claude-sonnet-5-5-medium"));
+    assert_eq!(stats.usage_events[1].model.as_deref(), Some("gemini-4-neon-xhigh"));
+    assert!(stats.model_usage.contains_key("claude-sonnet-5-5-medium"));
+    assert!(stats.model_usage.contains_key("gemini-4-neon-xhigh"));
+    assert_eq!(stats.unpriced_tokens, 4125);
+    assert_eq!(stats.total_cost_usd, 0.0);
     assert_eq!(stats.tool_call_count, 1);
     assert_eq!(stats.builtin_calls.get("list_dir"), Some(&1));
 
@@ -326,7 +365,226 @@ fn antigravity_transcript_parser_covers_history_pipeline() {
         true
     })
     .unwrap();
-    assert_eq!(iterated.len(), 2);
+    assert_eq!(iterated.len(), 3);
+}
+
+#[test]
+// 验证 Antigravity 长消息被 transcript.jsonl 截断时，从同目录 transcript_full.jsonl 按行补全正文及 parts。
+fn antigravity_transcript_hydrates_truncated_messages_from_full_log() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().join(".gemini").join("antigravity-cli");
+    let conversation_id = "63e93003-87a6-4e49-9e13-8558ffdc9940";
+    let logs_dir = root
+        .join("brain")
+        .join(conversation_id)
+        .join(".system_generated")
+        .join("logs");
+    let compact_path = logs_dir.join("transcript.jsonl");
+    let full_path = logs_dir.join("transcript_full.jsonl");
+
+    let compact_lines = [
+        json!({
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:19Z",
+            "truncated_fields": ["content"],
+            "content": "<USER_REQUEST>\nShort user <truncated 100 bytes> tail\n</USER_REQUEST>\n<ADDITIONAL_METADATA>ignored</ADDITIONAL_METADATA>"
+        })
+        .to_string(),
+        json!({
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "GENERIC",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:20Z",
+            "truncated_fields": ["content"],
+            "content": "<truncated 500 bytes>"
+        })
+        .to_string(),
+        json!({
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:25Z",
+            "model": "claude-sonnet-5-5-medium",
+            "input_tokens": 1200,
+            "cache_read_tokens": 300,
+            "output_tokens": 45,
+            "truncated_fields": ["content"],
+            "content": "Assistant prefix\n<truncated 2048 bytes>\nAssistant suffix"
+        })
+        .to_string(),
+    ];
+    let full_lines = [
+        json!({
+            "step_index": 0,
+            "source": "USER_EXPLICIT",
+            "type": "USER_INPUT",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:19Z",
+            "content": "<USER_REQUEST>\nFull user prompt with FULL_USER_NEEDLE inside\n</USER_REQUEST>\n<ADDITIONAL_METADATA>ignored</ADDITIONAL_METADATA>"
+        })
+        .to_string(),
+        "{not-json-generic-skipped-by-line-index}".to_string(),
+        json!({
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:25Z",
+            "model": "claude-sonnet-5-5-medium",
+            "input_tokens": 1200,
+            "cache_read_tokens": 300,
+            "output_tokens": 45,
+            "content": "Assistant prefix with FULL_ASSISTANT_NEEDLE inside and Assistant suffix"
+        })
+        .to_string(),
+    ];
+
+    write_text(&compact_path, &compact_lines.join("\n"));
+    write_text(&full_path, &full_lines.join("\n"));
+
+    let (combined_summary, combined_stats) = scan_session_combined(&compact_path);
+    let (summary, stats, messages) = scan_session_detail(&compact_path);
+    assert_eq!(combined_summary.message_count, 2);
+    assert_eq!(summary.message_count, 2);
+    assert_eq!(combined_stats.input_tokens, 1200);
+    assert_eq!(stats.input_tokens, 1200);
+    assert_eq!(stats.cache_read_tokens, 300);
+    assert_eq!(stats.output_tokens, 45);
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        messages[0].content,
+        "Full user prompt with FULL_USER_NEEDLE inside"
+    );
+    assert_eq!(
+        messages[0].parts[0].content,
+        "Full user prompt with FULL_USER_NEEDLE inside"
+    );
+    assert_eq!(messages[0].line_index, Some(0));
+    assert_eq!(
+        messages[1].content,
+        "Assistant prefix with FULL_ASSISTANT_NEEDLE inside and Assistant suffix"
+    );
+    assert_eq!(
+        messages[1].parts[0].content,
+        "Assistant prefix with FULL_ASSISTANT_NEEDLE inside and Assistant suffix"
+    );
+    assert_eq!(messages[1].line_index, Some(2));
+
+    let mut iterated = Vec::new();
+    iter_session_messages(&compact_path, |_, message| {
+        iterated.push(message.content);
+        true
+    })
+    .unwrap();
+    assert_eq!(
+        iterated,
+        vec![
+            "Full user prompt with FULL_USER_NEEDLE inside".to_string(),
+            "Assistant prefix with FULL_ASSISTANT_NEEDLE inside and Assistant suffix".to_string()
+        ]
+    );
+}
+
+#[test]
+// 验证无 transcript_full.jsonl、行数滞后或 step_index 不匹配时安全回退 transcript.jsonl。
+fn antigravity_transcript_falls_back_when_full_log_missing_lagging_or_mismatched() {
+    let temp_dir = TempDir::new().unwrap();
+    let root = temp_dir.path().join(".gemini").join("antigravity-cli");
+    let conversation_id = "74f04114-98b7-4f5a-af24-966900ed0051";
+    let logs_dir = root
+        .join("brain")
+        .join(conversation_id)
+        .join(".system_generated")
+        .join("logs");
+    let compact_path = logs_dir.join("transcript.jsonl");
+    let full_path = logs_dir.join("transcript_full.jsonl");
+
+    let compact_lines = [
+        json!({
+            "step_index": 0,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:20Z",
+            "model": "gemini-4-neon-xhigh",
+            "input_tokens": 100,
+            "output_tokens": 10,
+            "truncated_fields": ["content"],
+            "content": "Line0 compact <truncated 50 bytes>"
+        })
+        .to_string(),
+        json!({
+            "step_index": 1,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:22Z",
+            "model": "gemini-4-neon-xhigh",
+            "input_tokens": 200,
+            "output_tokens": 20,
+            "content": "Line1 compact <truncated 40 bytes>"
+        })
+        .to_string(),
+        json!({
+            "step_index": 2,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "created_at": "2026-05-20T06:03:25Z",
+            "model": "gemini-4-neon-xhigh",
+            "input_tokens": 500,
+            "output_tokens": 25,
+            "truncated_fields": ["content"],
+            "content": "Line2 compact latest <truncated 80 bytes>"
+        })
+        .to_string(),
+    ];
+    write_text(&compact_path, &compact_lines.join("\n"));
+
+    let (summary_missing, stats_missing, messages_missing) = scan_session_detail(&compact_path);
+    assert_eq!(summary_missing.message_count, 3);
+    assert_eq!(stats_missing.input_tokens, 800);
+    assert_eq!(
+        messages_missing[0].content,
+        "Line0 compact <truncated 50 bytes>"
+    );
+
+    let lagging_full_lines = [
+        json!({
+            "step_index": 0,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "content": "Line0 full hydrated"
+        })
+        .to_string(),
+        json!({
+            "step_index": 99,
+            "source": "MODEL",
+            "type": "PLANNER_RESPONSE",
+            "status": "DONE",
+            "content": "Line1 mismatched step should be ignored"
+        })
+        .to_string(),
+    ];
+    write_text(&full_path, &lagging_full_lines.join("\n"));
+
+    let (summary, stats, messages) = scan_session_detail(&compact_path);
+    assert_eq!(summary.message_count, 3);
+    assert_eq!(stats.input_tokens, 800);
+    assert_eq!(stats.output_tokens, 55);
+    assert_eq!(messages[0].content, "Line0 full hydrated");
+    assert_eq!(messages[0].parts[0].content, "Line0 full hydrated");
+    assert_eq!(messages[1].content, "Line1 compact <truncated 40 bytes>");
+    assert_eq!(
+        messages[2].content,
+        "Line2 compact latest <truncated 80 bytes>"
+    );
 }
 
 #[test]

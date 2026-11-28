@@ -166,6 +166,7 @@ pub(super) async fn opencode_stats_facts(
                 continue;
             }
             facts.push(HistoryStatsSessionFact {
+                usage_measured: true,
                 summary: summary.clone(),
                 occurred_at,
                 stats: reprice_usage_stats(event.model.as_deref(), event.usage),
@@ -257,14 +258,29 @@ pub(super) fn build_history_stats_daily_index(
 
         let computed = entry.computed;
         let summary = summary_from_computation(&entry.file_ref, &computed);
-        let usage_events = stats_usage_events_or_fallback(&summary, &computed.stats);
-        for event in usage_events {
+        let events = stats_usage_events_or_fallback(&summary, &computed.stats);
+        if events.is_empty() {
+            if summary.source == "antigravity" {
+                days.entry(stats_day_start_with_offset(summary.updated_at, day_offset))
+                    .or_default()
+                    .push(HistoryStatsSessionFact {
+                        usage_measured: false,
+                        occurred_at: summary.updated_at,
+                        summary,
+                        stats: UsageStatsScan::default(),
+                        model: None,
+                    });
+            }
+            continue;
+        }
+        for event in events {
             let occurred_at = event.timestamp_ms.unwrap_or(summary.updated_at);
             let repriced_stats = reprice_usage_stats(event.model.as_deref(), event.usage);
             let day_start = stats_day_start_with_offset(occurred_at, day_offset);
             days.entry(day_start)
                 .or_default()
                 .push(HistoryStatsSessionFact {
+                    usage_measured: true,
                     summary: summary.clone(),
                     occurred_at,
                     stats: repriced_stats,
@@ -297,6 +313,7 @@ pub(super) fn build_history_stats_response(
     let mut source_map: HashMap<String, HistoryStatsSourceItem> = HashMap::new();
     let mut day_map: BTreeMap<i64, DayStatsAggregate> = BTreeMap::new();
     let mut hourly_map: Vec<HourStatsAggregate> = vec![HourStatsAggregate::default(); 24];
+    let mut measured_sessions = HashSet::new();
     let mut seen_total_sessions: HashSet<String> = HashSet::new();
     let mut seen_project_sessions: HashSet<String> = HashSet::new();
     let mut seen_source_sessions: HashSet<String> = HashSet::new();
@@ -319,6 +336,7 @@ pub(super) fn build_history_stats_response(
             let stats = &fact.stats;
             let session_key = history_stats_session_key(summary);
 
+            if fact.usage_measured { measured_sessions.insert(session_key.clone()); }
             if seen_total_sessions.insert(session_key.clone()) {
                 total_sessions += 1;
                 total_messages += summary.message_count;
@@ -427,39 +445,30 @@ pub(super) fn build_history_stats_response(
                 .unpriced_tokens
                 .saturating_add(stats.unpriced_tokens);
 
-            let model_name = fact.model.clone().unwrap_or_else(|| "unknown".to_string());
-            let model_entry =
-                model_map
-                    .entry(model_name.clone())
-                    .or_insert(HistoryStatsModelItem {
-                        model: model_name,
-                        sessions: 0,
-                        ratio: 0.0,
-                        input_tokens: 0,
-                        output_tokens: 0,
-                        cache_read_tokens: 0,
-                        cache_creation_tokens: 0,
-                        total_cost_usd: 0.0,
-                        unpriced_tokens: 0,
-                    });
-            let model_session_key = format!("{}|{}", model_entry.model, session_key);
-            if seen_model_sessions.insert(model_session_key) {
-                model_entry.sessions += 1;
+            if fact.usage_measured {
+                let model_name = fact.model.clone().unwrap_or_else(|| "unknown".to_string());
+                let model_entry = model_map.entry(model_name.clone()).or_insert(HistoryStatsModelItem {
+                    model: model_name,
+                    sessions: 0,
+                    ratio: 0.0,
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_creation_tokens: 0,
+                    total_cost_usd: 0.0,
+                    unpriced_tokens: 0,
+                });
+                let model_session_key = format!("{}|{}", model_entry.model, session_key);
+                if seen_model_sessions.insert(model_session_key) {
+                    model_entry.sessions += 1;
+                }
+                model_entry.input_tokens = model_entry.input_tokens.saturating_add(stats.input_tokens);
+                model_entry.output_tokens = model_entry.output_tokens.saturating_add(stats.output_tokens);
+                model_entry.cache_read_tokens = model_entry.cache_read_tokens.saturating_add(stats.cache_read_tokens);
+                model_entry.cache_creation_tokens = model_entry.cache_creation_tokens.saturating_add(stats.cache_creation_tokens);
+                model_entry.total_cost_usd += stats.total_cost_usd;
+                model_entry.unpriced_tokens = model_entry.unpriced_tokens.saturating_add(stats.unpriced_tokens);
             }
-            model_entry.input_tokens = model_entry.input_tokens.saturating_add(stats.input_tokens);
-            model_entry.output_tokens = model_entry
-                .output_tokens
-                .saturating_add(stats.output_tokens);
-            model_entry.cache_read_tokens = model_entry
-                .cache_read_tokens
-                .saturating_add(stats.cache_read_tokens);
-            model_entry.cache_creation_tokens = model_entry
-                .cache_creation_tokens
-                .saturating_add(stats.cache_creation_tokens);
-            model_entry.total_cost_usd += stats.total_cost_usd;
-            model_entry.unpriced_tokens = model_entry
-                .unpriced_tokens
-                .saturating_add(stats.unpriced_tokens);
 
             let day_entry = day_map.entry(day_start).or_insert(DayStatsAggregate {
                 sessions: 0,
@@ -504,10 +513,10 @@ pub(super) fn build_history_stats_response(
     let mut model_distribution: Vec<HistoryStatsModelItem> = model_map
         .into_values()
         .map(|mut item| {
-            item.ratio = if total_sessions == 0 {
+            item.ratio = if measured_sessions.is_empty() {
                 0.0
             } else {
-                item.sessions as f64 / total_sessions as f64
+                item.sessions as f64 / measured_sessions.len() as f64
             };
             item
         })
@@ -645,6 +654,7 @@ pub(super) fn build_history_stats_response(
 
     HistoryStatsResponse {
         range_days: bounds.range_days,
+        unmeasured_sessions: total_sessions.saturating_sub(measured_sessions.len()),
         total_sessions,
         total_messages,
         total_input_tokens,

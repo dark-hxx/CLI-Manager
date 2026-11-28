@@ -17,6 +17,11 @@ async function bundle(relative, name) {
 }
 const runtime = await bundle("../src/features/terminal/api/deepseekTuiRuntime.ts", "runtime");
 const helpers = await bundle("../src/shared/lib/deepseekTui.ts", "helpers");
+const { DEFAULT_PROXY_SETTINGS, resolveEffectiveProxy, applyProxyToEnvVars } = await bundle("../src/shared/lib/proxySettings.ts", "proxySettings");
+const { isAgyCommand } = await bundle("../src/shared/lib/cliTools.ts", "cliTools");
+const agy = await bundle("../src/features/projects/api/agyStartupCommand.ts", "agy");
+const location = await bundle("../src/features/projects/api/agySessionLocation.ts", "location");
+const { parseWslPath } = await bundle("../src/shared/lib/wslPaths.ts", "wslPaths");
 const PTY = "10000000-0000-4000-8000-000000000001";
 const CLI = "20000000-0000-4000-8000-000000000002";
 const NEXT = "30000000-0000-4000-8000-000000000003";
@@ -54,7 +59,7 @@ function loadLaunch(dependencies) {
   const source = ts.createSourceFile(file, readFileSync(new URL(file, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   const body = source.statements.filter((node) => ts.isFunctionDeclaration(node) && ["detectCliResumeKind", "buildCliResumeStartupCommand", "resolvePtyLaunch", "getDeepSeekTuiLaunchSessionId", "clearDeepSeekTuiResumeBeforeStartup"].includes(node.name?.text)).map((node) => node.getText(source)).join("\n");
   const exports = {};
-  runInNewContext(ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, ...helpers, ...dependencies });
+  runInNewContext(ts.transpileModule(body, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, ...helpers, ...agy, ...location, isAgyCommand, resolveEffectiveProxy, applyProxyToEnvVars, useSettingsStore: { getState: () => ({ proxySettings: DEFAULT_PROXY_SETTINGS }) }, translateCurrent: (key) => key, ...dependencies });
   return exports;
 }
 const launch = loadLaunch({
@@ -128,7 +133,7 @@ function launchFixture(project, failPreflight = false, patchPath = "C:/manager c
     isDeepSeekHarnessTool: helpers.isDeepSeekTuiTool,
     resolveProjectStartupCommand: (entry) => entry.startup_cmd || helpers.buildDeepSeekTuiCommand(entry.cli_tool, entry.cli_args || "", entry.source || "", entry.shell),
     getDeepSeekSourceRoot: () => project?.source || "", deepSeekLaunchError: (error) => error,
-    invoke: async (command, args) => { calls.push([command, args]); if (failPreflight) throw new Error("deepseek_tui_profile_missing"); return { managerPatchPath: patchPath, patchPath, preloadUrl: "file:///C:/manager%20cache/react-preload.mjs", cmdPreloadPath: "C:/manager cache/node-options.cmd" }; },
+    invoke: async (command, args) => { calls.push([command, args]); if (command === 'file_get_path_kind') return args.path.endsWith('gone') ? 'missing' : 'directory'; if (failPreflight) throw new Error("deepseek_tui_profile_missing"); return { managerPatchPath: patchPath, patchPath, preloadUrl: "file:///C:/manager%20cache/react-preload.mjs", cmdPreloadPath: "C:/manager cache/node-options.cmd" }; },
     prepareProviderLaunchSnapshot: async () => { calls.push(["provider"]); return null; },
     buildNativeProviderLaunchConfigs: () => ({ claudeProvider: null, codexProvider: null, grokProvider: null }),
     resolveExtensionEnvironment: () => null, extensionCliForProject: () => null,
@@ -222,6 +227,29 @@ test("ordinary CLI startup does not prepare or append the DSH preload", async ()
   assert.equal(result.startupCmd, "codex");
   assert.equal(result.invokeArgs.envVars.NODE_OPTIONS, "--no-warnings");
   assert.ok(!calls.some(([command]) => command === "deepseek_tui_prepare_launch"));
+});
+
+test('agy persists the actual executable on native and WSL without taking another CLI project’s provider', async () => {
+  const command = `agy --conversation ${CLI} --model claude`;
+  for (const shell of ['powershell', 'wsl']) {
+    const cwd = shell === 'wsl' ? '\\\\wsl.localhost\\Ubuntu\\work trees\\a' : 'C:\\work trees\\a';
+    const project = { id: 'project', cli_tool: 'codex', startup_cmd: 'codex', path: cwd, shell };
+    const { fn, calls } = launchFixture(project);
+    const result = await fn.resolvePtyLaunch({ projectId: project.id, startupCmd: command, shell }, 'windows');
+    assert.equal(result.startupCmd, command); assert.equal(result.persistedStartupCmd, command);
+    assert.equal(result.invokeArgs.cwd, cwd);
+    assert.ok(calls.some(([cmd,args]) => cmd === 'file_get_path_kind' && args.path === cwd));
+    await assert.rejects(fn.resolvePtyLaunch({ projectId: project.id, startupCmd: command, shell, cwd: cwd + 'gone' }, 'windows'), /agyCwdUnavailable/);
+    assert.equal(result.environmentType, shell === 'wsl' ? 'wsl' : 'local');
+  }
+});
+
+test('SSH launch never forwards a local agy Hook opt-in, including project overrides', async () => {
+  const project = { id: 'project', cli_tool: 'agy', startup_cmd: 'agy', environment_type: 'ssh', ssh_host_id: 'host', remote_path: '/work', name: 'agy' };
+  const result = await launchFixture(project).fn.resolvePtyLaunch({ projectId: project.id, envVars: { cli_manager_agy_hook_enabled: '1', KEEP: 'x' } }, 'windows');
+  assert.equal(result.invokeArgs.sshLaunch.environmentOverrides.cli_manager_agy_hook_enabled, undefined);
+  assert.equal(result.invokeArgs.sshLaunch.environmentOverrides.KEEP, 'x');
+  assert.equal(result.invokeArgs.hookEnvEnabled, false);
 });
 
 test("WSL launch preserves an explicit per-tab ID without native bridge or global resume", async () => {
@@ -366,7 +394,7 @@ test("bridge upgrades regenerate one cache patch while stable restore and sideba
   }
 });
 
-test("a legacy invalid DSH startup skips only its tab while the following Codex tab restores", async () => {
+function restoreRunner() {
   const file = "../src/features/terminal/store/terminalStore.ts";
   const ast = ts.createSourceFile(file, readFileSync(new URL(file, import.meta.url), "utf8"), ts.ScriptTarget.Latest, true);
   let tryStatement;
@@ -394,10 +422,30 @@ test("a legacy invalid DSH startup skips only its tab while the following Codex 
     exports, detectCliResumeKind: launch.detectCliResumeKind, buildCliResumeStartupCommand: launch.buildCliResumeStartupCommand,
     normalizeDirectCodexStartupCommand: (command) => command,
     resolvePtyLaunch: async (options) => { resolved.push(options); return options; },
+    ...location, parseWslPath, normalizeShellKey: s => s, invoke: async (cmd, {path}) => cmd === 'file_get_path_kind' && !path.endsWith('gone') ? 'directory' : 'missing',
     logError: (...args) => skippedErrors.push(args), os: "windows",
   });
+  return { run: exports.run, resolved, skippedErrors };
+}
+
+test('agy restore uses only this tab in its original existing cwd/distro; invalid tabs do not block the next', async () => {
+  const { run, resolved } = restoreRunner();
+  const ps = { title: 'A', startupCmd: `agy --conversation ${NEXT}`, cliSessionId: CLI, cwd: 'C:\\repo', shell: 'pwsh', environmentType: 'local' };
+  const project = { cli_tool: 'agy', path: ps.cwd, startup_cmd: '', cli_args: '--model m' };
+  const ubuntu = '\\\\wsl.localhost\\Ubuntu\\repo';
+  const rows = [
+    {ps, restoreProject:project}, {ps:{...ps, cliSessionId: undefined}}, {ps:{...ps, cwd:'C:\\gone'}}, {ps:{...ps, environmentType:'ssh'}},
+    {ps:{...ps, cwd: ubuntu, shell:'wsl', environmentType:'wsl'},restoreProject:{...project,path:ubuntu.replace('Ubuntu','Debian')}},
+    {ps:{...ps, cliSessionId:NEXT, cwd:ubuntu, shell:'wsl', environmentType:'wsl'},restoreProject:{...project,path:ubuntu}},
+  ];
+  assert.equal((await run(rows)).length, 4);
+  assert.deepEqual(resolved.map(o=>[o.cwd,o.startupCmd]), [[ps.cwd, `agy --conversation ${CLI} --model m`], [ubuntu, `agy --conversation ${NEXT} --model m`]]);
+});
+
+test("a legacy invalid DSH startup skips only its tab while the following Codex tab restores", async () => {
+  const {run, resolved, skippedErrors} = restoreRunner();
   const badCommand = "try { dsh --profile web --port 0 } finally { echo stopped }";
-  const skipped = await exports.run([
+  const skipped = await run([
     { ps: { title: "Old DSH", startupCmd: badCommand, cliSessionId: CLI }, restoreProject: { cli_tool: "dsh", command: badCommand } },
     { ps: { title: "Codex", startupCmd: "codex", cliSessionId: NEXT }, restoreProject: { cli_tool: "codex" } },
   ]);

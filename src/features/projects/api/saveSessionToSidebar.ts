@@ -1,5 +1,7 @@
 import type { CreateProjectInput, Project, TerminalSession } from "../../../shared/types/index";
 import { buildDeepSeekTuiResumeCommand, isValidDeepSeekTuiSessionId } from "../../../shared/lib/deepseekTui";
+import { buildAgyResumeArgs, buildAgyResumeCommand, isAgySessionId } from "./agyStartupCommand";
+import { validAgyTabLocation } from "./agySessionLocation";
 import { detectCliResumeKind } from "../../terminal/state";
 import { isValidGrokSessionId, isValidKimiSessionId, stripKimiResumeCliArgs, stripResumeCliArgs } from "../../history/api/resumeCliArgs";
 
@@ -67,10 +69,11 @@ function buildResumeStartupCmd(
  * (empty, whitespace-containing, CR/LF-containing) return null.
  */
 export function buildResumeCliArgs(
-  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui",
+  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui" | "antigravity",
   sourceCliArgs: string,
   sessionId: string,
 ): string | null {
+  if (kind === "antigravity") return buildAgyResumeArgs(sessionId, sourceCliArgs);
   const id = normalizeSessionId(sessionId);
   if (!id) return null;
   if (kind === "deepseek-tui") {
@@ -103,9 +106,11 @@ export function canSaveSessionToSidebar(
 ): boolean {
   if (!normalizeSessionId(session.cliSessionId ?? "")) return false;
   const kind = detectCliResumeKind(
-    project?.startup_cmd ?? session.startupCmd,
+    session.startupCmd || (!project ? session.cliTool : undefined),
     project ?? undefined,
   );
+  if (kind === "antigravity") return isAgySessionId(session.cliSessionId) && !session.sshHostId && project?.environment_type !== "ssh"
+    && validAgyTabLocation(session.cwd, session.shell, session.environmentType);
   return kind !== null
     && (kind !== "kimi" || isValidKimiSessionId(session.cliSessionId?.trim() ?? ""))
     && (kind !== "grok" || isValidGrokSessionId(session.cliSessionId?.trim() ?? ""))
@@ -172,10 +177,11 @@ export function buildSavedSessionProjectInput(args: {
   const { name, session, project } = args;
 
   const kind = detectCliResumeKind(
-    project?.startup_cmd ?? session.startupCmd,
+    session.startupCmd || (!project ? session.cliTool : undefined),
     project ?? undefined,
   );
-  if (!kind) return { ok: false, reason: "no_kind" };
+  if (!kind || (kind === "antigravity" && (session.sshHostId || session.environmentType === "ssh" || project?.environment_type === "ssh"))) return { ok: false, reason: "no_kind" };
+  if (kind === "antigravity" && !validAgyTabLocation(session.cwd, session.shell, session.environmentType)) return { ok: false, reason: "no_path" };
 
   const normalizedId = normalizeSessionId(session.cliSessionId ?? "");
   if (!normalizedId) return { ok: false, reason: "no_session_id" };
@@ -193,24 +199,28 @@ export function buildSavedSessionProjectInput(args: {
   const path = session.cwd?.trim() || project?.path || "";
   if (!path) return { ok: false, reason: "no_path" };
 
-  const sourceStartupCmd = kind === "deepseek-tui" && (!project || project.startup_cmd?.trim())
+  const sourceStartupCmd = kind === "antigravity" ? session.startupCmd || project?.startup_cmd || (!project ? session.cliTool : "") || ""
+    : kind === "deepseek-tui" && (!project || project.startup_cmd?.trim())
     ? session.startupCmd ?? project?.startup_cmd ?? ""
     : project?.startup_cmd ?? "";
-  const savedStartupCmd = sourceStartupCmd.trim()
-    ? buildResumeStartupCmd(kind, normalizedId, sourceStartupCmd)
-    : "";
+  const savedStartupCmd = kind === "antigravity"
+    ? buildAgyResumeCommand(session.cliSessionId, project, sourceStartupCmd, session.shell) : sourceStartupCmd.trim()
+      ? buildResumeStartupCmd(kind, normalizedId, sourceStartupCmd) : "";
+  if (savedStartupCmd === null) return { ok: false, reason: "no_kind" };
 
   const input: CreateProjectInput = {
     name,
     path,
     group_id: project?.group_id ?? null,
     group_name: project?.group_name ?? "",
-    cli_tool: (project?.cli_tool && project.cli_tool.length > 0) ? project.cli_tool : kind === "deepseek-tui" ? "dsh" : kind,
+    cli_tool: kind === "antigravity" ? "agy"
+      : (project?.cli_tool && project.cli_tool.length > 0) ? project.cli_tool : kind === "deepseek-tui" ? "dsh" : kind,
     cli_args: resumeCliArgs,
     startup_cmd: savedStartupCmd,
     env_vars: project?.env_vars ?? (kind === "deepseek-tui" ? JSON.stringify(session.envVars ?? {}) : "{}"),
-    shell: project?.shell ?? session.shell ?? "",
+    shell: kind === "antigravity" ? session.shell || project?.shell || "" : project?.shell ?? session.shell ?? "",
     provider_overrides: project?.provider_overrides ?? "{}",
+    proxy_config: project?.proxy_config ?? "",
   };
 
   if (project?.worktree_strategy !== undefined) {
@@ -222,9 +232,8 @@ export function buildSavedSessionProjectInput(args: {
   if (project?.worktree_deps_prompt_enabled !== undefined) {
     input.worktree_deps_prompt_enabled = project.worktree_deps_prompt_enabled;
   }
-  if (project?.environment_type !== undefined) {
-    input.environment_type = project.environment_type;
-  }
+  if (kind === "antigravity" && session.environmentType) input.environment_type = session.environmentType;
+  else if (project?.environment_type !== undefined) input.environment_type = project.environment_type;
   if (project?.ssh_host_id !== undefined) {
     input.ssh_host_id = project.ssh_host_id;
   }

@@ -1,0 +1,13 @@
+{
+  "id": "agy-cli-integration",
+  "name": "agy-cli-integration",
+  "title": "V1.5.3 · 接入 Google Antigravity CLI（agy）",
+  "description": "按已批准规划实施项目启动、Hook、会话统计、历史及状态栏设置，复用 antigravity 来源。",
+  "status": "in_progress",
+  "dshTaskId": "ce192b3a-274b-4f2b-9606-bfef8bc69952",
+  "dev_type": "fullstack",
+  "scope": "terminal, hooks, history, stats, statusline",
+  "createdAt": "2026-11-24",
+  "branch": "master",
+  "base_branch": "master"
+}

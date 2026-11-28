@@ -76,6 +76,13 @@ impl PlatformPtyChild for UnixPtyChild {
     }
 }
 
+fn is_proxy_env_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("HTTP_PROXY")
+        || key.eq_ignore_ascii_case("HTTPS_PROXY")
+        || key.eq_ignore_ascii_case("ALL_PROXY")
+        || key.eq_ignore_ascii_case("NO_PROXY")
+}
+
 // 创建 PTY 对并为读/写/控制复制独立主端句柄；子进程执行前恢复信号、建立会话与控制终端、连接标准流。
 // 父进程关闭原始两端并返回独立句柄，环境覆盖继承自宿主环境；不在此启动 IO 线程或等待退出。
 pub fn spawn(options: PtyLaunchOptions) -> Result<SpawnedPty, String> {
@@ -101,7 +108,15 @@ pub fn spawn(options: PtyLaunchOptions) -> Result<SpawnedPty, String> {
     if let Some(cwd) = &options.cwd {
         command.current_dir(cwd);
     }
-    command.envs(&options.env);
+    for (key, value) in &options.env {
+        if is_proxy_env_key(key) && value.is_empty() {
+            command.env_remove(key);
+            command.env_remove(key.to_ascii_uppercase());
+            command.env_remove(key.to_ascii_lowercase());
+        } else {
+            command.env(key, value);
+        }
+    }
     unsafe {
         command.pre_exec(move || {
             for signal in [

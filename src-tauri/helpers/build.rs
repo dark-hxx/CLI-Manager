@@ -16,8 +16,8 @@ fn main() {
             .join(format!("{binary}.rc"));
         let resource = format!(
             r#"1 VERSIONINFO
-FILEVERSION 1,5,2,0
-PRODUCTVERSION 1,5,2,0
+FILEVERSION 1,5,3,0
+PRODUCTVERSION 1,5,3,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -27,11 +27,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "CLI-Manager"
       VALUE "FileDescription", "{display_name}"
-      VALUE "FileVersion", "1.5.2"
+      VALUE "FileVersion", "1.5.3"
       VALUE "InternalName", "{binary}.exe"
       VALUE "OriginalFilename", "{binary}.exe"
       VALUE "ProductName", "{display_name}"
-      VALUE "ProductVersion", "1.5.2"
+      VALUE "ProductVersion", "1.5.3"
     END
   END
   BLOCK "VarFileInfo"

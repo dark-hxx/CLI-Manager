@@ -41,7 +41,9 @@ use tokio::sync::Mutex as AsyncMutex;
 const CATALOG_DB_FILE: &str = "history-catalog.db";
 // 5：Codex 编排嵌套工具的 item_completed 执行记录计入工具统计，读取 SKILL.md 计入 Skill。
 // 6：标题跳过 Claude 本地命令注入块（local-command-caveat 等），带参斜杠命令显示为 "/命令 参数"。
-const CATALOG_PARSER_VERSION: i64 = 6;
+// 7：Antigravity 详情与全文搜索按行从 transcript_full.jsonl 补全截断正文。
+// 8：合并标题清洗与 Antigravity 补全，令两条分支生成的旧缓存都重新解析。
+const CATALOG_PARSER_VERSION: i64 = 8;
 const HISTORY_INDEX_SCHEMA_VERSION: i64 = 6;
 const HISTORY_INDEX_MODEL_VERSION: i64 = 1;
 const CATALOG_REFRESH_TTL_MS: i64 = 10_000;
@@ -77,6 +79,7 @@ struct CatalogDocument {
 }
 
 struct V2SourceInstance {
+    locations_json: String,
     id: String,
     source_id: String,
     settings_hash: String,
@@ -661,6 +664,7 @@ fn stats_summary_matches_project_path(
         project_key: summary.project_key.clone(),
         path: PathBuf::from(&summary.file_path),
     };
+    if summary.source == "antigravity" { return session_matches_project_path(&file_ref, target_project_path); }
     session_matches_project_path(&file_ref, target_project_path)
         || summary
             .cwd
@@ -691,7 +695,7 @@ pub(super) async fn stats_session_facts(
 // 筛选活动来源的用量事件，缺失事件时回退会话总量并重新计价。
 async fn stats_session_facts_from_v2(
     conn: &mut SqliteConnection,
-    _roots: &HistoryRoots,
+    roots: &HistoryRoots,
     source_filter: Option<&str>,
     target_project: Option<&str>,
     target_project_paths: &[String],
@@ -707,7 +711,7 @@ async fn stats_session_facts_from_v2(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     let mut sql = String::from(
-        "SELECT hs.id, i.id AS source_instance_id, i.source_id AS source, hs.source_session_id AS session_id,
+        "SELECT hs.id, i.locations_json, i.transport_kind, i.id AS source_instance_id, i.source_id AS source, hs.source_session_id AS session_id,
                 hs.project_key, hs.title,
                 COALESCE(hs.primary_path, hs.database_path, hs.raw_key, hs.source_session_id) AS file_path,
                 hs.cwd, hs.created_at, hs.updated_at, hs.message_count, hs.branch,
@@ -757,6 +761,7 @@ async fn stats_session_facts_from_v2(
         .map_err(|err| err.to_string())?;
 
     let mut facts = Vec::new();
+    let mut selected_root = None;
     for row in rows {
         let summary = HistorySessionSummary {
             file_size: None,
@@ -777,6 +782,13 @@ async fn stats_session_facts_from_v2(
                 .try_get("parent_session_id")
                 .map_err(|err| err.to_string())?,
         };
+        if summary.source == "antigravity" {
+            let root = selected_root.get_or_insert_with(|| resolve_antigravity_history_root(roots));
+            let configured = row.try_get::<String, _>("locations_json").map_err(|err| err.to_string())?;
+            let local = row.try_get::<String, _>("transport_kind").map_err(|err| err.to_string())? != "ssh";
+            if !local || !antigravity::instance_matches(&configured, roots)
+                || !antigravity_path_parts(Path::new(&summary.file_path)).is_some_and(|(origin, _)| antigravity::same_root(&origin, root)) { continue; }
+        }
         if !target_project_paths.is_empty()
             && !target_project_paths
                 .iter()
@@ -850,10 +862,21 @@ async fn stats_session_facts_from_v2(
             };
             (summary.updated_at, model, usage)
         };
-        if usage_stats_total_tokens(usage) == 0 {
+        let usage_measured = event_index.is_some() || usage_stats_total_tokens(usage) > 0;
+        if !usage_measured {
+            if summary.source == "antigravity" {
+                facts.push(HistoryStatsSessionFact {
+                    usage_measured: false,
+                    occurred_at: summary.updated_at,
+                    summary,
+                    stats: UsageStatsScan::default(),
+                    model: None,
+                });
+            }
             continue;
         }
         facts.push(HistoryStatsSessionFact {
+            usage_measured,
             summary,
             occurred_at,
             stats: reprice_usage_stats(model.as_deref(), usage),
@@ -904,7 +927,7 @@ fn collect_catalog_files_with_context(roots: &HistoryRoots) -> CatalogScan {
         &resolve_copilot_history_root(),
     ));
     files.extend(collect_antigravity_session_files(
-        &resolve_antigravity_history_root(),
+        &resolve_antigravity_history_root(roots),
     ));
     files.extend(collect_grok_session_files(&resolve_grok_history_root(
         roots,
@@ -921,7 +944,7 @@ fn collect_catalog_files_with_context(roots: &HistoryRoots) -> CatalogScan {
     let files = files
         .into_iter()
         .map(|file_ref| CatalogFile {
-            fingerprint: session_file_fingerprint(&file_ref.path),
+            fingerprint: antigravity::catalog_file_fingerprint(&file_ref.path),
             codex_thread_name_index: (file_ref.source == "codex")
                 .then(|| codex_thread_name_index.clone()),
             file_ref,

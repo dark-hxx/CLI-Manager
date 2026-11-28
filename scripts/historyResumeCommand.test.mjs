@@ -1,54 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
-import ts from "typescript";
+import { build } from "esbuild";
 
 const tempDir = mkdtempSync(join(tmpdir(), "cli-manager-history-resume-command-"));
 process.on("exit", () => rmSync(tempDir, { recursive: true, force: true }));
 
-const source = readFileSync(new URL("../src/features/history/api/historyResumeCommand.ts", import.meta.url), "utf8");
-writeFileSync(
-  join(tempDir, "cliTools.mjs"),
-  `export const resolveCliToolHistorySourceId = (tool) => {
-    const value = tool?.trim().toLowerCase();
-    return value === "opencode" ? "opencode" : value === "pi" ? "pi" : null;
-  };\n`,
-  "utf8",
-);
-writeFileSync(
-  join(tempDir, "projectStartupCommand.mjs"),
-  `export const appendResumeCliArgs = (base) => base;\n`,
-  "utf8",
-);
-writeFileSync(
-  join(tempDir, "resumeCliArgs.mjs"),
-  `export const isValidKimiSessionId = (value) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
-export const isValidGrokSessionId = (value) => /^[A-Za-z0-9_-]{1,128}$/.test(value);
-export const stripKimiResumeCliArgs = (value) => value ?? "";\n`,
-  "utf8",
-);
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022,
-  },
-  reportDiagnostics: true,
-});
-assert.deepEqual(
-  (transpiled.diagnostics ?? [])
-    .filter((diagnostic) => diagnostic.category === ts.DiagnosticCategory.Error)
-    .map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n")),
-  [],
-);
-const output = transpiled.outputText
-  .replace('from "../../../shared/lib/cliTools"', 'from "./cliTools.mjs"')
-  .replace('from "../../projects/api/projectStartupCommand"', 'from "./projectStartupCommand.mjs"')
-  .replace('from "./resumeCliArgs"', 'from "./resumeCliArgs.mjs"');
 const outputPath = join(tempDir, "historyResumeCommand.mjs");
-writeFileSync(outputPath, output, "utf8");
+await build({ entryPoints: [fileURLToPath(new URL("../src/features/history/api/historyResumeCommand.ts", import.meta.url))],
+  bundle: true, platform: "node", format: "esm", outfile: outputPath });
 
 const {
   buildHistoryResumeCommand,

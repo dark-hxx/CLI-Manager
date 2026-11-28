@@ -179,7 +179,7 @@ async fn read_session_detail_window(
     }
     if source_path.exists()
         && indexed_fingerprint.as_deref().map_or(true, |fingerprint| {
-            v2_fingerprint_value(session_file_fingerprint(source_path)) != fingerprint
+            v2_fingerprint_value(antigravity::catalog_file_fingerprint(source_path)) != fingerprint
         })
     {
         // The source file may have been edited outside the catalog writer (or the

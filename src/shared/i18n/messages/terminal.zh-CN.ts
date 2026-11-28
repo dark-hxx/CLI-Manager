@@ -1,4 +1,7 @@
 export const zh = {
+  "termStats.agyUnbound": "此标签尚未绑定 Hook 会话 ID。",
+  "termStats.agyWaiting": "等待当前环境中与此会话匹配的磁盘记录。",
+  "termStats.agyUnmeasured": "磁盘记录包含会话活动，但未提供 Token 或费用。",
   "terminal.layoutLock.lock": "锁定终端布局",
   "terminal.layoutLock.unlockLayout": "解锁终端布局",
   "terminal.layoutLock.blocked": "布局已锁定",
@@ -60,6 +63,9 @@ export const zh = {
   "terminal.status.done": "已完成",
   "terminal.status.failed": "异常退出",
   "terminal.toast.createFailed": "创建终端失败",
+  "terminal.toast.agyCwdUnavailable": "所选环境无法打开此 Antigravity CLI 工作目录：{path}",
+  "terminal.toast.restoreSkipped": "部分终端未能恢复",
+  "terminal.toast.restoreSkippedDetail": "请检查以下终端的原项目、工作目录和会话 ID：{sessions}",
   "terminal.toast.splitCreateFailed": "创建分屏终端失败",
   "terminal.toast.providerNotFound": "该项目绑定的供应商已不存在，可能已在 cc-switch 中删除。请重新选择项目供应商，或恢复跟随全局后再启动终端。",
   "terminal.tab.rename": "重命名终端",

@@ -9,7 +9,14 @@ import { buildSshConnectionSpec } from "../../remote/api/ssh";
 import { DEFAULT_SSH_TOOL_CONFIG_ROOT, resolveSshToolSource, validateSshToolConfigRoot } from "../../remote/api/sshToolIntegration";
 import { getOsPlatform, normalizeShellKey } from "../../../shared/platform/shell";
 import { getConfigModalShellPrefill } from "../lib/configModalShellPrefill";
-import { CLI_TOOL_DESCRIPTORS } from "../../../shared/lib/cliTools";
+import { CLI_TOOL_DESCRIPTORS, PROJECT_CLI_TOOL_OPTIONS } from "../../../shared/lib/cliTools";
+import {
+  parseProjectProxyConfig,
+  serializeProjectProxyConfig,
+  validateProxyUrl,
+  type ProjectProxyConfig,
+  type ProxyUrlValidationCode,
+} from "../../../shared/lib/proxySettings";
 import { copyTextToClipboard } from "../../../shared/platform/systemClipboard";
 import type { OsPlatform } from "../../../shared/platform/shell";
 import { getEnabledTerminalShellOptions } from "../../../shared/lib/terminalShellProfiles";
@@ -18,6 +25,7 @@ import { Check, ChevronDown } from "../../../shared/ui/icons";
 import { Input } from "../../../shared/ui/input";
 import { Select } from "../../../shared/ui/select";
 import { ShellSelect } from "./ShellSelect";
+import { ProjectProxySection } from "./ProjectProxySection";
 import { VendorIcon, inferVendor } from "../../../shared/ui/VendorIcon";
 import { CliToolIcon } from "../../../shared/ui/CliToolIcon";
 import { Textarea } from "../../../shared/ui/textarea";
@@ -63,18 +71,7 @@ interface SshPathCheckResult {
   gitRepository: boolean;
 }
 
-const CLI_TOOL_PRIORITY = ["claude", "codex", "pi", "grok", "dsh-tui"];
-const HIDDEN_CLI_TOOLS = new Set(["goose", "amp", "aider", "crush"]);
-// 未置顶工具维持统一描述表的原顺序，新增工具也会自动加入。
-const CLI_TOOL_OPTIONS = CLI_TOOL_DESCRIPTORS
-  .map((tool) => tool.command)
-  .filter((command) => !HIDDEN_CLI_TOOLS.has(command))
-  .sort((left, right) => {
-    const leftIndex = CLI_TOOL_PRIORITY.indexOf(left);
-    const rightIndex = CLI_TOOL_PRIORITY.indexOf(right);
-    return (leftIndex < 0 ? CLI_TOOL_PRIORITY.length : leftIndex)
-      - (rightIndex < 0 ? CLI_TOOL_PRIORITY.length : rightIndex);
-  });
+const CLI_TOOL_OPTIONS = PROJECT_CLI_TOOL_OPTIONS;
 const WORKTREE_STRATEGIES: WorktreeIsolationStrategy[] = ["disabled", "prompt", "autoParallel", "always"];
 const WORKTREE_STRATEGY_LABEL_KEYS: Record<WorktreeIsolationStrategy, TranslationKey> = {
   prompt: "worktree.strategy.prompt",
@@ -179,6 +176,12 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
   const [shell, setShell] = useState(cloneFrom?.shell ?? project?.shell ?? "");
   const [envVarsText, setEnvVarsText] = useState(cloneFrom?.env_vars ?? project?.env_vars ?? "{}");
   const [envVarsHelpOpen, setEnvVarsHelpOpen] = useState(false);
+  const [proxyConfig, setProxyConfig] = useState<ProjectProxyConfig>(() =>
+    parseProjectProxyConfig(cloneFrom?.proxy_config ?? project?.proxy_config),
+  );
+  const [proxyDraftErrorCode, setProxyDraftErrorCode] = useState<ProxyUrlValidationCode | null>(null);
+  const [proxyValidationError, setProxyValidationError] = useState("");
+  const [proxyForceExpanded, setProxyForceExpanded] = useState(false);
   const [worktreeStrategy, setWorktreeStrategy] = useState<WorktreeIsolationStrategy>(
     cloneFrom?.worktree_strategy ?? project?.worktree_strategy ?? "disabled"
   );
@@ -466,6 +469,28 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
       }
     }
 
+    if (proxyConfig.mode === "custom") {
+      const proxyResult = proxyDraftErrorCode
+        ? ({ ok: false, code: proxyDraftErrorCode } as const)
+        : validateProxyUrl(proxyConfig.url);
+      if (!proxyResult.ok) {
+        const proxyKeyMap = {
+          proxy_url_empty: "configModal.proxy.error.urlEmpty",
+          proxy_url_invalid: "configModal.proxy.error.urlInvalid",
+          proxy_scheme_unsupported: "configModal.proxy.error.schemeUnsupported",
+          proxy_host_missing: "configModal.proxy.error.hostMissing",
+          proxy_port_invalid: "configModal.proxy.error.portInvalid",
+        } as const;
+        const description = t(proxyKeyMap[proxyResult.code]);
+        setProxyValidationError(description);
+        setProxyForceExpanded(true);
+        setError(description);
+        toast.error(t("configModal.saveFailed"), { description });
+        return;
+      }
+    }
+    setProxyValidationError("");
+
     setError("");
     if (isEdit) {
       setShowConfirmEdit(true);
@@ -523,6 +548,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
           cli_config_root: trimmedCliConfigRoot,
+          proxy_config: serializeProjectProxyConfig(
+            proxyConfig.mode === "custom"
+              ? {
+                  ...proxyConfig,
+                  url: (() => {
+                    const validated = validateProxyUrl(proxyConfig.url);
+                    return validated.ok ? validated.normalized : proxyConfig.url.trim();
+                  })(),
+                }
+              : proxyConfig,
+          ),
         });
         toast.success(t("configModal.toast.updated"));
       } else {
@@ -543,6 +579,17 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
           ssh_host_id: projectType === "ssh" ? sshHostId : null,
           remote_path: projectType === "ssh" ? remotePath.trim() : "",
           cli_config_root: trimmedCliConfigRoot,
+          proxy_config: serializeProjectProxyConfig(
+            proxyConfig.mode === "custom"
+              ? {
+                  ...proxyConfig,
+                  url: (() => {
+                    const validated = validateProxyUrl(proxyConfig.url);
+                    return validated.ok ? validated.normalized : proxyConfig.url.trim();
+                  })(),
+                }
+              : proxyConfig,
+          ),
         });
         toast.success(t("configModal.toast.created"));
       }
@@ -928,6 +975,23 @@ export function ConfigModal({ project, cloneFrom, defaultGroupId, onManageSshHos
                 />
               </div>
 
+              <ProjectProxySection
+                value={proxyConfig}
+                onChange={(next) => {
+                  setProxyConfig(next);
+                  setProxyValidationError("");
+                }}
+                onDraftValidityChange={(code) => {
+                  setProxyDraftErrorCode(code);
+                  if (!code) setProxyValidationError("");
+                }}
+                projectType={projectType}
+                cliTool={cliTool}
+                startupCmd={startupCmd}
+                forceExpanded={proxyForceExpanded}
+                validationError={proxyValidationError}
+              />
+
               <div
                 hidden={!projectWorktreeConfigEnabled || projectType === "ssh"}
                 className="rounded-xl border border-border/70 bg-bg-secondary/60 p-3"
@@ -1206,13 +1270,18 @@ function CliToolCombobox({
     (tool) => tool.command === normalizedValue || tool.id === normalizedValue
       || (tool.id === "deepseek-harness" && isDeepSeekTuiTool(normalizedValue))
   );
-  const resolveOptionIndex = useCallback((nextValue: string) => {
-    const normalized = nextValue.trim().toLowerCase();
-    const exactMatch = CLI_TOOL_OPTIONS.findIndex((tool) => tool === normalized);
-    if (exactMatch >= 0) return exactMatch;
-    const prefixMatch = CLI_TOOL_OPTIONS.findIndex((tool) => tool.startsWith(normalized));
-    return prefixMatch >= 0 ? prefixMatch : 0;
-  }, []);
+  // 展开已有配置时可浏览全部预设；只有编辑输入才筛选，不改变自定义命令原文。
+  const [filtering, setFiltering] = useState(false);
+  const visibleOptions = filtering && normalizedValue
+    ? CLI_TOOL_OPTIONS.filter(({ command, label }) =>
+      command.toLowerCase().includes(normalizedValue) || label.toLowerCase().includes(normalizedValue))
+    : CLI_TOOL_OPTIONS;
+  const activeTool = visibleOptions[activeIndex]?.command;
+  const openAll = () => {
+    setFiltering(false);
+    setActiveIndex(Math.max(0, CLI_TOOL_OPTIONS.findIndex(({ command }) => command === normalizedValue)));
+    onOpenChange(true);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -1230,13 +1299,14 @@ function CliToolCombobox({
   }, [onOpenChange, open]);
 
   useEffect(() => {
-    setActiveIndex(resolveOptionIndex(value));
-  }, [resolveOptionIndex, value]);
+    if (open && activeTool) {
+      document.getElementById(`${listboxId}-option-${activeTool}`)?.scrollIntoView({ block: "nearest" });
+    }
+  }, [activeTool, listboxId, open]);
 
   const selectTool = (tool: string) => {
     onChange(tool);
     onOpenChange(false);
-    setActiveIndex(CLI_TOOL_OPTIONS.indexOf(tool));
     inputRef.current?.focus();
   };
 
@@ -1247,7 +1317,7 @@ function CliToolCombobox({
     }
   };
 
-  const activeOptionId = open ? `${listboxId}-option-${CLI_TOOL_OPTIONS[activeIndex]}` : undefined;
+  const activeOptionId = open && activeTool ? `${listboxId}-option-${activeTool}` : undefined;
 
   return (
     <div ref={rootRef} className="relative" onBlur={handleBlur}>
@@ -1266,45 +1336,32 @@ function CliToolCombobox({
         onChange={(e) => {
           const nextValue = e.target.value;
           onChange(nextValue);
-          setActiveIndex(resolveOptionIndex(nextValue));
+          setFiltering(true);
+          setActiveIndex(0);
           onOpenChange(true);
         }}
-        onClick={() => {
-          setActiveIndex(resolveOptionIndex(value));
-          onOpenChange(true);
-        }}
+        onClick={() => { if (!open) openAll(); }}
         onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
+          if (e.nativeEvent.isComposing) return;
+          const count = visibleOptions.length;
+          if (e.key === "ArrowDown" || e.key === "ArrowUp") {
             e.preventDefault();
-            if (!open) {
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
+            if (!open) openAll();
+            else if (count) {
+              const step = e.key === "ArrowDown" ? 1 : -1;
+              setActiveIndex((current) => (current + step + count) % count);
             }
-            setActiveIndex((current) => (current + 1) % CLI_TOOL_OPTIONS.length);
-          } else if (e.key === "ArrowUp") {
-            e.preventDefault();
-            if (!open) {
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
-            }
-            setActiveIndex((current) => (current - 1 + CLI_TOOL_OPTIONS.length) % CLI_TOOL_OPTIONS.length);
           } else if (e.key === "Enter") {
-            if (!open) {
-              e.preventDefault();
-              setActiveIndex(resolveOptionIndex(value));
-              onOpenChange(true);
-              return;
-            }
             e.preventDefault();
-            selectTool(CLI_TOOL_OPTIONS[activeIndex]);
-          } else if (e.key === "Home" && open) {
+            if (!open) openAll();
+            else if (activeTool) selectTool(activeTool);
+            else onOpenChange(false);
+          } else if (e.key === "Home" && open && count) {
             e.preventDefault();
             setActiveIndex(0);
-          } else if (e.key === "End" && open) {
+          } else if (e.key === "End" && open && count) {
             e.preventDefault();
-            setActiveIndex(CLI_TOOL_OPTIONS.length - 1);
+            setActiveIndex(count - 1);
           } else if (e.key === "Escape") {
             if (open) {
               e.preventDefault();
@@ -1332,8 +1389,8 @@ function CliToolCombobox({
         aria-hidden="true"
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => {
-          setActiveIndex(resolveOptionIndex(value));
-          onOpenChange(!open);
+          if (open) onOpenChange(false);
+          else openAll();
           inputRef.current?.focus();
         }}
         className="ui-focus-ring absolute right-1 top-1/2 flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-text-muted outline-none transition-colors hover:bg-surface-container-highest hover:text-text-primary"
@@ -1351,8 +1408,13 @@ function CliToolCombobox({
           role="listbox"
           className="ui-select-popover absolute left-0 top-full z-[60] mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-border bg-surface-container-high py-1 text-xs shadow-lg"
         >
-          {CLI_TOOL_OPTIONS.map((tool, index) => {
-            const descriptor = CLI_TOOL_DESCRIPTORS.find((item) => item.command === tool);
+          {!visibleOptions.length && (
+            <div role="option" aria-disabled="true" aria-selected="false" className="px-3 py-2 text-text-muted">
+              {t("configModal.cliToolNoMatches")}
+            </div>
+          )}
+          {visibleOptions.map((descriptor, index) => {
+            const tool = descriptor.command;
             const selected = normalizedValue === tool;
             return (
               <button
@@ -1369,13 +1431,11 @@ function CliToolCombobox({
                 className="flex w-[calc(100%-8px)] cursor-pointer items-center gap-2 outline-none hover:bg-surface-container-highest hover:text-text-primary data-[active=true]:bg-surface-container-highest data-[active=true]:text-text-primary"
               >
                 <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-                  {descriptor
-                    ? <CliToolIcon icon={descriptor.icon} size={14} />
-                    : <VendorIcon vendor={inferVendor(tool)} size={14} />}
+                  <CliToolIcon icon={descriptor.icon} size={14} />
                 </span>
                 <span className="flex-1 truncate text-left">
                   <span className="font-mono">{tool}</span>
-                  {descriptor?.label ? <span className="ml-2 text-text-muted">{descriptor.label}</span> : null}
+                  <span className="ml-2 text-text-muted">{descriptor.label}</span>
                 </span>
                 {selected && <Check size={12} className="shrink-0" />}
               </button>

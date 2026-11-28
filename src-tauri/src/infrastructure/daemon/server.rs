@@ -440,6 +440,10 @@ impl DaemonHost {
             return;
         };
         if clients.is_empty() {
+            // agy 只对当前活动的精确 PTY 观察；重连时不投递缺少当时接收开关/绑定证据的旧事件。
+            if payload.get("source").and_then(|v| v.as_str()) == Some("antigravity") {
+                return;
+            }
             drop(clients);
             if let Ok(mut cache) = self.hook_cache.lock() {
                 cache.push_back(payload);

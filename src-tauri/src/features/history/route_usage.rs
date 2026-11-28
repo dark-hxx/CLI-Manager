@@ -99,6 +99,7 @@ pub(super) async fn merge_route_usage_into_history_stats(
                     })
                 {
                     matched_route_records.insert(index);
+                    fact.usage_measured = true;
                     fact.stats = reprice_usage_stats(
                         record.model.as_deref(),
                         UsageStatsScan {

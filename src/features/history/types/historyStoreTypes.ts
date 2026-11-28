@@ -153,6 +153,7 @@ export interface StatsProjectOptionsCacheEntry {
 }
 
 export interface TodayProjectStats {
+  unmeasuredSessions?: number;
   sessions: number;
   totalTokens: number;
   totalCostUsd: number;

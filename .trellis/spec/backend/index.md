@@ -23,7 +23,7 @@
 | [History Stats Contracts](./history-stats-contracts.md) | History usage stats payloads, token/cost fields, cache behavior, and frontend normalization | Active |
 | [History Index Contracts](./history-index-contracts.md) | Cached history list, FTS5 search, incremental refresh, failure fallback, and history conversion mutation boundaries | Active |
 | [Model Pricing Contracts](./model-pricing-contracts.md) | User-configurable model prices, remote sync, backend cache bridge, and cost calculation authority | Active |
-| [CLI Hook Contracts](./cli-hook-contracts.md) | 本地及 SSH Claude/Codex Hook 安装、事件、bridge payload、通知与子 Agent transcript 路由 | Active |
+| [CLI Hook Contracts](./cli-hook-contracts.md) | 本地及 SSH Claude/Codex Hook 安装、事件、bridge payload、通知与子 Agent transcript 路由；agy 本机及指定 WSL 发行版的被动 Hook | Active |
 | [Codex Goal Hook Contracts](./codex-goal-hook-contracts.md) | Goal 状态映射、旧 Hook 载荷接纳及新旧运行进程兼容验证 | Active |
 | [WSL Path Contracts](./wsl-path-contracts.md) | WSL UNC 路径的 Plan 9 限制、wsl.exe 规避方案、路径转换工具签名和安全性 | Active |
 | [Project File Command Contracts](./project-file-command-contracts.md) | 项目根目录内文件浏览、读写、复制移动和路径边界校验命令合约 | Active |
@@ -37,7 +37,7 @@
 | [Command Suggestion Contracts](./command-suggestion-contracts.md) | LLM 命令提示 Tauri command、OpenAI 兼容请求、快速检测、超时与安全回退合约 | Active |
 | [App Data Persistence Contracts](./app-data-persistence-contracts.md) | Stable `.cli-manager` data paths, non-destructive legacy store migration, and safe legacy DB recovery | Active |
 | [CCS-Compatible Provider Domain Contracts](./ccs-provider-domain-contracts.md) | Planned full provider-domain ownership: CCS-compatible schema, configuration, manual multi-key, Home apply, scope resolver, and import boundaries | Planned |
-| [Statusline Contracts](./statusline-contracts.md) | 内置 Claude 状态栏子命令、配置存储、预览、旧配置导入与安装边界 | Active |
+| [Statusline Contracts](./statusline-contracts.md) | Claude/Codex 状态栏、agy 的隔离预览、可逆配置和真实 TUI 协议 | Active |
 | [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约；应用内存按提交统计与系统提交压力预警 | Active |
 | [Local Path Opening Contracts](./local-path-opening-contracts.md) | WebView 本地路径打开、Rust command 参数与 opener scope 边界 | Active |
 | [Desktop Pet File Safety Contracts](./desktop-pet-file-safety-contracts.md) | 桌宠 ID、包清单与受管理目录文件操作的路径安全边界 | Active |

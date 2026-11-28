@@ -231,7 +231,7 @@ export function resolveCliHookStatus(payload: Pick<CliHookPayload, "tabId" | "so
   const isCodexGoalStop = payload.source === "codex" && payload.event === "Stop";
   if (!isCodexGoalStop) {
     return {
-      status: mapCliHookEvent(payload.event),
+      status: payload.source === "antigravity" && payload.event === "PreInvocation" ? "running" : mapCliHookEvent(payload.event),
       isCodexGoalStop: false,
       goalStatus: null,
       goalId: null,

@@ -1222,6 +1222,60 @@ async fn ssh_attachment_root_repair_adds_column_and_registers_migration() {
 }
 
 #[tokio::test]
+// 验证项目代理配置列缺失修复在三类漂移状态下均幂等生效。
+async fn project_proxy_config_repair_handles_missing_registered_and_preexisting_states() {
+    // 1. 列与登记均缺失
+    let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    create_migration_table(&mut conn).await;
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+        .await
+        .unwrap();
+    assert!(ensure_project_proxy_config_column(&mut conn).await.unwrap());
+    assert!(table_columns(&mut conn, "projects")
+        .await
+        .unwrap()
+        .contains("proxy_config"));
+    assert!(
+        binding_migration_registered(&mut conn, MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION).await
+    );
+    assert!(!ensure_project_proxy_config_column(&mut conn).await.unwrap());
+
+    // 2. 版本已登记但列缺失
+    let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    create_migration_table(&mut conn).await;
+    conn.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+        .await
+        .unwrap();
+    insert_migration_row(
+        &mut conn,
+        MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION,
+        MIGRATION_ADD_PROJECT_PROXY_CONFIG_DESCRIPTION,
+        MIGRATION_ADD_PROJECT_PROXY_CONFIG_SQL,
+    )
+    .await;
+    assert!(ensure_project_proxy_config_column(&mut conn).await.unwrap());
+    assert!(table_columns(&mut conn, "projects")
+        .await
+        .unwrap()
+        .contains("proxy_config"));
+    assert!(!ensure_project_proxy_config_column(&mut conn).await.unwrap());
+
+    // 3. 列已存在但版本未登记
+    let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();
+    create_migration_table(&mut conn).await;
+    conn.execute(
+        "CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL, proxy_config TEXT NOT NULL DEFAULT '')",
+    )
+    .await
+    .unwrap();
+    assert!(ensure_project_proxy_config_column(&mut conn).await.unwrap());
+    assert!(
+        binding_migration_registered(&mut conn, MIGRATION_ADD_PROJECT_PROXY_CONFIG_VERSION).await
+    );
+    assert!(!ensure_project_proxy_config_column(&mut conn).await.unwrap());
+}
+
+#[tokio::test]
 // 验证 SSH 附件根修复兼容仅缺列或仅缺登记且不重复插入。
 async fn ssh_attachment_root_repair_handles_registered_and_preexisting_states() {
     let mut conn = SqliteConnection::connect("sqlite::memory:").await.unwrap();

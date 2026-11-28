@@ -1,3 +1,4 @@
+pub mod antigravity;
 mod codex;
 #[cfg(test)]
 use codex::codex_hooks_feature_installed;

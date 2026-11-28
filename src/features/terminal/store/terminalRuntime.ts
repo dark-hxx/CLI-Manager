@@ -10,6 +10,8 @@ import { useSettingsStore } from "../../../shared/preferences/settingsStore";
 import { useSessionStore } from "../api/sessionStore";
 import { normalizeShellKey } from "../../../shared/platform/shell";
 import { useProjectStore } from "../../projects/api/projectStore";
+import { isAntigravityPty } from "../lib/antigravityPty";
+import { advanceAntigravityBinding } from "./antigravityHookBinding";
 import { resolveCliSessionRebind } from "./terminalCliSession";
 import { inferHookBindingSource, resolveCliHookTarget } from "./terminalHookBinding";
 import { findProjectByPath, findWorktreeByPath } from "../api/terminalProject";
@@ -530,6 +532,47 @@ export function createTerminalRuntime(
     hookRunningTimeouts.set(tabId, timer);
   }
 
+  function handleAntigravityHook(payload: CliHookPayload): string | null {
+    if (!useSettingsStore.getState().antigravityHookBridgeEnabled) return null;
+    const state = get();
+    const tab = state.sessions.find((item) => item.id === payload.tabId);
+    if (!tab || state.sessionStatuses[tab.id] === "exited" || state.sessionStatuses[tab.id] === "error") return null;
+    const project = tab.projectId ? useProjectStore.getState().projects.find((item) => item.id === tab.projectId) : null;
+    if (!isAntigravityPty(tab, project)) return null;
+    const distro = tab.environmentType === "wsl"
+      ? inferWslDistroFromCwd(tab.cwd) || tab.wslDistroName || null : null;
+    const previous = state.tabStatuses[tab.id] ?? {};
+    const step = advanceAntigravityBinding(tab, distro, payload, previous.antigravityBinding);
+    if (!step) return null;
+    const { binding, deliver } = step;
+    // Fresh model calls extend the running lease even when the visible phase did not change.
+    const updatedAt = payload.timestamp!;
+    if (binding.phase === "running") scheduleHookRunningTimeout(tab.id, updatedAt);
+    else clearHookRunningTimeout(tab.id);
+    const sources: TabStatusSources = { ...previous, antigravityBinding: binding };
+    if (!deliver && binding.phase !== "running") {
+      set({ tabStatuses: { ...state.tabStatuses, [tab.id]: sources } });
+      return null;
+    }
+    const sessionChanged = binding.id !== tab.cliSessionId || (!!distro && tab.wslDistroName !== distro);
+    const terminal = binding.phase === "done" || binding.phase === "failed" || binding.phase === "canceled";
+    // Once a verified conversation is bound the shell process cannot describe its turn state.
+    delete sources.shell;
+    delete sources.shellUpdatedAt;
+    const status = buildTabStatusUpdate({ ...state, tabStatuses: { ...state.tabStatuses, [tab.id]: sources } }, tab.id,
+      "hook", binding.phase === "bound" || binding.phase === "canceled" ? "none" : binding.phase, updatedAt);
+    const activity = terminal ? { ...state.ptyOutputActivityAt } : null;
+    if (activity) delete activity[tab.id];
+    set({ ...status, ...(activity && { ptyOutputActivityAt: activity }),
+      ...(sessionChanged && { sessions: state.sessions.map((item) => item !== tab ? item : {
+        ...tab, cliSessionId: binding.id, ...(distro && { wslDistroName: distro }),
+      }) }),
+      statsPanelRefreshSeq: state.statsPanelRefreshSeq + (sessionChanged || terminal ? 1 : 0),
+    });
+    if (sessionChanged) void queueSshSessionPersistence(get().sessions).catch((error) => logWarn("Failed to persist agy binding", { tabId: tab.id, error }));
+    return deliver ? tab.id : null;
+  }
+
   const actions: Pick<TerminalStore, "markAttentionInputHandled" | "handleCliHookEvent" | "handleShellRuntimeEvent" | "openSubagentTranscript" | "finishSubagentTranscript" | "appendSubagentTranscript"> = {
     markAttentionInputHandled: (sessionId) => {
       const tabId = resolvePrimaryTabId(sessionId, get().splits);
@@ -540,6 +583,7 @@ export function createTerminalRuntime(
     },
 
     handleCliHookEvent: (payload) => {
+      if (payload.source === "antigravity") return handleAntigravityHook(payload);
       const state = get();
       const rawTabId = payload.tabId;
       const primaryTabId = resolvePrimaryTabId(payload.tabId, state.splits);
@@ -709,15 +753,26 @@ export function createTerminalRuntime(
     },
 
     handleShellRuntimeEvent: (payload) => {
-      const tabId = resolvePrimaryTabId(payload.sessionId, get().splits);
-      const session = get().sessions.find((item) => item.id === tabId);
-      if (!session || !isShellRuntimeMonitoringEnabled()) return null;
-      const project = session.projectId
-        ? useProjectStore.getState().projects.find((item) => item.id === session.projectId)
-        : undefined;
-      // Agent processes such as Codex and SSH stay alive across many turns. Their
-      // shell lifecycle cannot represent turn state; Hook events are authoritative.
-      if (resolveAgentTerminalMetadata(session, project).isAgentSession) return null;
+      if (!isShellRuntimeMonitoringEnabled()) return null;
+      const state = get();
+      const raw = state.sessions.find((item) => item.id === payload.sessionId);
+      const projects = useProjectStore.getState().projects;
+      const rawProject = raw?.projectId ? projects.find((item) => item.id === raw.projectId) : undefined;
+      const agy = isAntigravityPty(raw, rawProject);
+      const tabId = agy ? payload.sessionId : resolvePrimaryTabId(payload.sessionId, state.splits);
+      const session = raw?.id === tabId ? raw : state.sessions.find((item) => item.id === tabId);
+      if (!session) return null;
+      const project = session === raw ? rawProject : projects.find((item) => item.id === session.projectId);
+      // Without a verified agy callback keep only the real shell lifecycle, never inferred TUI turns.
+      if (agy) {
+        if (payload.origin !== "osc") return null;
+        const bound = state.tabStatuses[tabId]?.antigravityBinding;
+        if (bound && useSettingsStore.getState().antigravityHookBridgeEnabled) return null;
+        if (bound && state.tabStatuses[tabId].hook !== "none") {
+          clearHookRunningTimeout(tabId);
+          set((current) => buildTabStatusUpdate(current, tabId, "hook", "none", new Date().toISOString()));
+        }
+      } else if (resolveAgentTerminalMetadata(session, project).isAgentSession) return null;
       // 回车猜测只对 cmd 生效：cmd 无法注入 C 序列，输入侧猜测是它唯一的
       // command_started 信号；其余 shell 由 OSC 133/633/777 驱动，猜测只会误判
       // （多行输入、TUI 内回车、历史命令均不可靠）。

@@ -26,5 +26,5 @@ test("catalog reads refresh dirty data and rejects stale V2 snapshots", () => {
   assert.match(catalogSource, /pub\(super\) fn is_dirty\(\)/);
   assert.match(catalogDetailSource, /hs\.fingerprint_value/);
   assert.match(catalogDetailSource, /source_path\.exists\(\)/);
-  assert.match(catalogDetailSource, /v2_fingerprint_value\(session_file_fingerprint\(source_path\)\)/);
+  assert.match(catalogDetailSource, /v2_fingerprint_value\(antigravity::catalog_file_fingerprint\(source_path\)\)/);
 });

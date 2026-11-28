@@ -9,6 +9,11 @@ import {
   withCodexConfigOverrides, withCodexProfile, withCodexNoDaemon,
   withCodexLightTuiTheme, withGrokModelOverride,
 } from "../../projects/api/projectStartupCommand";
+import { isAgyCommand } from "../../../shared/lib/cliTools";
+import { applyProxyToEnvVars, resolveEffectiveProxy } from "../../../shared/lib/proxySettings";
+import { buildAgyResumeCommand } from "../../projects/api/agyStartupCommand";
+import { validAgyTabLocation } from "../../projects/api/agySessionLocation";
+import { translateCurrent } from "../../../shared/i18n/index";
 import { getTerminalTheme } from "../../../shared/lib/terminalThemes";
 import { normalizeHexColor } from "../../../shared/lib/terminalColor";
 import { useSettingsStore } from "../../../shared/preferences/settingsStore";
@@ -124,8 +129,10 @@ export const KIMI_COMMAND_PATTERN = /(?:^|\s)kimi(?:\.(?:cmd|exe|ps1))?(?:\s|$)/
 export function detectCliResumeKind(
   startupCmd: string | undefined,
   project: Project | undefined
-): "claude" | "codex" | "grok" | "kimi" | "deepseek-tui" | null {
+): "claude" | "codex" | "grok" | "kimi" | "deepseek-tui" | "antigravity" | null {
   const cmd = startupCmd?.trim() ?? "";
+  // For agy, an explicit command wins over the configured preset in either direction.
+  if (isAgyCommand(cmd || project?.startup_cmd?.trim() || project?.cli_tool)) return "antigravity";
   // TUI owns its profile/session protocol; never route it through a provider CLI fallback.
   if (isDeepSeekTuiCommand(cmd) || (project && isDeepSeekTuiTool(project.cli_tool))) return "deepseek-tui";
   const projectKind = project ? getProviderSwitchAppType(project) : null;
@@ -147,11 +154,16 @@ export function detectCliResumeKind(
 }
 
 export function buildCliResumeStartupCommand(
-  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui",
+  kind: "claude" | "codex" | "grok" | "kimi" | "deepseek-tui" | "antigravity",
   cliSessionId: string | undefined,
   project: Project | undefined,
   options: { includeProviderOverrides?: boolean; startupCmd?: string; shell?: string | null } = {},
 ): string {
+  if (kind === "antigravity") {
+    const exact = buildAgyResumeCommand(cliSessionId, project, options.startupCmd, options.shell);
+    if (!exact || project?.environment_type === "ssh") throw new Error("agy_exact_resume_unavailable");
+    return exact;
+  }
   if (kind === "deepseek-tui") {
     const command = isDeepSeekTuiCommand(options.startupCmd) ? options.startupCmd!
       : (project ? resolveProjectStartupCommand(project) : undefined) ?? "dsh-tui";
@@ -224,7 +236,7 @@ export async function shouldEnableHookEnv(): Promise<boolean> {
   const settings = useSettingsStore.getState();
   if (
     settings.claudeHookBridgeEnabled || settings.codexHookBridgeEnabled || settings.kimiHookBridgeEnabled
-    || settings.piHookBridgeEnabled || settings.grokHookBridgeEnabled
+    || settings.piHookBridgeEnabled || settings.grokHookBridgeEnabled || settings.antigravityHookBridgeEnabled
   ) return true;
 
   // OpenCode 没有上述逐工具开关，保留已安装插件的独立启用判定。
@@ -241,7 +253,11 @@ export function buildPtyEnvVars(
   envVars?: Record<string, string> | null,
   shell?: string | null
 ): Record<string, string> | null {
-  const next = { ...(envVars ?? {}) };
+  // Windows environment keys are case-insensitive. Do not let a project spell the
+  // reserved key differently and override the explicit application opt-in.
+  const agyKey = "CLI_MANAGER_AGY_HOOK_ENABLED";
+  const next = Object.fromEntries(Object.entries(envVars ?? {}).filter(([k]) => k.toUpperCase() !== agyKey));
+  next[agyKey] = useSettingsStore.getState().antigravityHookBridgeEnabled ? "1" : "0";
   if (isShellRuntimeMonitoringEnabled() && supportsShellRuntimeInjection(shell)) {
     next[SHELL_RUNTIME_MONITORING_ENV] = "1";
   } else {
@@ -453,10 +469,23 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     }
     // SSH 启动由远端 bootstrap 执行，也必须隔离 Codex 的 Hook 环境。
     resolvedStartupCmd = prepareStartupCommandForPty(resolvedStartupCmd, "bash");
-    const resolvedEnvironmentOverrides = { ...(options.envVars === undefined && project?.environment_type === "ssh"
+    const baseSshEnv = { ...(options.envVars === undefined && project?.environment_type === "ssh"
       ? parseProjectEnvVars(project) ?? {}
       : options.envVars ?? {}) };
-    let persistedStartupCmd: string | undefined;
+    const sshProxyPlan = resolveEffectiveProxy({
+      project,
+      startupCmd: resolvedStartupCmd,
+      environmentType: "ssh",
+      settings: useSettingsStore.getState().proxySettings,
+    });
+    const resolvedEnvironmentOverrides = sshProxyPlan.kind === "proxy"
+      ? applyProxyToEnvVars(baseSshEnv, sshProxyPlan, { caseSensitivePlatform: true })
+      : baseSshEnv;
+    // The app opt-in belongs to this machine, not a remote project or SSH bootstrap.
+    for (const key of Object.keys(resolvedEnvironmentOverrides)) {
+      if (key.toUpperCase() === "CLI_MANAGER_AGY_HOOK_ENABLED") delete resolvedEnvironmentOverrides[key];
+    }
+    let persistedStartupCmd = isAgyCommand(resolvedStartupCmd) ? resolvedStartupCmd : undefined;
     if (isDeepSeekTuiCommand(resolvedStartupCmd)) {
       const nativeTuiLauncher = isDeepSeekTuiLauncherCommand(resolvedStartupCmd);
       const preparedTui = prepareDeepSeekTuiCommand(resolvedStartupCmd!);
@@ -550,7 +579,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   }
 
   const resolvedShell = resolveShellForPty(options.shell, !!options.projectId, os);
-  const projectStartupCmd = project ? resolveProjectStartupCommand(project) : undefined;
+  const projectStartupCmd = project && !isAgyCommand(options.startupCmd) ? resolveProjectStartupCommand(project) : undefined;
   // Internal project launchers historically passed the fully decorated command
   // back here. Re-resolve that exact default without the legacy provider
   // argument; the scoped provider snapshot owns the current provider config.
@@ -558,10 +587,20 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     || (projectStartupCmd !== undefined
       && options.startupCmd?.trim() === projectStartupCmd.trim());
   let resolvedStartupCmd = usesProjectDefaultStartup && project
-    ? resolveProjectStartupCommand({ ...project, shell: isDeepSeekTuiTool(project.cli_tool)
+    ? resolveProjectStartupCommand({ ...project, shell: isDeepSeekTuiTool(project.cli_tool) || isAgyCommand(project.cli_tool)
       ? resolvedShell ?? defaultShellForOs(os) : project.shell }, { includeProviderOverrides: false })
     : options.startupCmd?.trim() || undefined;
-  if (project && isDeepSeekTuiTool(project.cli_tool) && resolvedStartupCmd && !isDeepSeekTuiCommand(resolvedStartupCmd)) {
+  const agyLaunch = isAgyCommand(resolvedStartupCmd);
+  const cwd = options.cwd ?? (agyLaunch ? project?.path : undefined);
+  if (agyLaunch && cwd) {
+    // The sidebar path can disappear between saving a conversation and launching it.
+    // Do not let the generic PTY substitute its default cwd for an agy project or worktree.
+    if (!validAgyTabLocation(cwd, normalizeShellKey(resolvedShell), undefined, os)
+      || await invoke("file_get_path_kind", { path: cwd }).catch(() => null) !== "directory") {
+      throw new Error(translateCurrent("terminal.toast.agyCwdUnavailable", { path: cwd }));
+    }
+  }
+  if (!agyLaunch && project && isDeepSeekTuiTool(project.cli_tool) && resolvedStartupCmd && !isDeepSeekTuiCommand(resolvedStartupCmd)) {
     throw deepSeekLaunchError(new Error("deepseek_tui_profile_required"));
   }
   const deepseekSource = getDeepSeekTuiCommandSourceRoot(resolvedStartupCmd);
@@ -571,7 +610,8 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   let preparedTui: ReturnType<typeof prepareDeepSeekTuiCommand> | null = null;
   const nativeTuiLauncher = isDeepSeekTuiLauncherCommand(resolvedStartupCmd);
   let deepseekPreload: { preloadUrl: string; cmdPreloadPath: string } | null = null;
-  let persistedStartupCmd: string | undefined;
+  // Remember the actual executable even if a project's preset changes before restore.
+  let persistedStartupCmd = agyLaunch ? resolvedStartupCmd : undefined;
   if (isDeepSeekTuiCommand(resolvedStartupCmd)) {
     try {
       preparedTui = prepareDeepSeekTuiCommand(resolvedStartupCmd!);
@@ -601,7 +641,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     } catch (error) { throw deepSeekLaunchError(error); }
   }
   const providerSnapshot = await prepareProviderLaunchSnapshot(
-    project ?? null,
+    agyLaunch ? null : project ?? null,
     resolvedStartupCmd,
     options.worktreeId,
     options.providerSnapshot,
@@ -611,7 +651,7 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
     providerSnapshot,
   );
   const extensionEnvironment = resolveExtensionEnvironment(project, options.cwd, resolvedShell, os);
-  const extensionCli = extensionCliForProject(project);
+  const extensionCli = agyLaunch ? null : extensionCliForProject(project);
   let extensionPlan: ProjectExtensionLaunchPlan | null = null;
   let extensionPrepareWarning: string | undefined;
   if (project && extensionCli && extensionEnvironment) {
@@ -803,9 +843,21 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
   if (preparedTui && !nativeTuiLauncher && !preparedTui.resumeSessionId && startupCmd) {
     startupCmd = clearDeepSeekTuiResumeBeforeStartup(startupCmd, resolvedShell ?? defaultShellForOs(os));
   }
+  const resolvedShellKey = normalizeShellKey(resolvedShell);
+  const environmentType = os === "windows" && resolvedShellKey === "wsl" ? "wsl" : "local";
+  const caseSensitivePlatform = os !== "windows" || resolvedShellKey === "wsl" || resolvedShellKey === "gitbash";
+  const proxyPlan = resolveEffectiveProxy({
+    project,
+    startupCmd: startupCmd ?? options.startupCmd,
+    environmentType,
+    settings: useSettingsStore.getState().proxySettings,
+  });
+  const envVarsWithProxy = applyProxyToEnvVars(options.envVars ?? null, proxyPlan, {
+    caseSensitivePlatform,
+  });
   return {
     shell: resolvedShell,
-    environmentType: os === "windows" && normalizeShellKey(resolvedShell) === "wsl" ? "wsl" : "local",
+    environmentType,
     startupCmd,
     persistedStartupCmd,
     startupHandledByLaunch: false,
@@ -820,9 +872,9 @@ export async function resolvePtyLaunch(options: DetachedPtyLaunchOptions, os: Os
       : undefined,
     extensionWarnings,
     invokeArgs: {
-      cwd: options.cwd ?? null,
+      cwd: cwd ?? null,
       envVars: {
-        ...buildPtyEnvVars(options.envVars ?? null, resolvedShell),
+        ...buildPtyEnvVars(envVarsWithProxy, resolvedShell),
         ...(preparedTui ? {
           ...(!nativeTuiLauncher || preparedTui.resumeSessionId ? {
             DSH_TUI_RESUME_SESSION: preparedTui.resumeSessionId ?? "",

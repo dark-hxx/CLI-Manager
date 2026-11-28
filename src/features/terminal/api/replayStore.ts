@@ -346,6 +346,7 @@ function buildSourceSessionTitle(source: string | null | undefined): string {
   if (source === "kimi") return translateCurrent("aiReplay.source.kimi");
   if (source === "grok") return translateCurrent("aiReplay.source.grok");
   if (source === "pi") return translateCurrent("aiReplay.source.pi");
+  if (source === "antigravity") return "Antigravity CLI";
   return translateCurrent("aiReplay.source.default");
 }
 
@@ -386,6 +387,10 @@ function classifyPayload(payload: CliHookPayload): Pick<ReplayEvent, "kind" | "t
       detail: message ?? "CLI session bound to terminal tab",
       status: "recorded",
       durationMs: null,
+    },
+    PreInvocation: {
+      kind: "session", title: translateCurrent("settings.hooks.agy.preInvocation"), detail: "",
+      status: "running", durationMs: null,
     },
     UserPromptSubmit: {
       kind: "prompt",

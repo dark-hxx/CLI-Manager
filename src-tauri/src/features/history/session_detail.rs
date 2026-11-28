@@ -197,7 +197,7 @@ pub(super) fn build_v2_adapter_session(
     file_ref: &SessionFileRef,
     roots: &HistoryRoots,
 ) -> HistoryIndexV2AdapterSession {
-    let fingerprint = session_file_fingerprint(&file_ref.path);
+    let fingerprint = super::antigravity::catalog_file_fingerprint(&file_ref.path);
     let codex_thread_names = codex_thread_name_index(roots);
     let parts = scan_session_detail_parts_with_thread_names(file_ref, &codex_thread_names);
     build_v2_adapter_session_from_parts(file_ref, roots, fingerprint, &parts)

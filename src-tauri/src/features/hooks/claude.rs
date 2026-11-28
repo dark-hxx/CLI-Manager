@@ -657,14 +657,18 @@ fn handle_stream(
 
     let mut payload = match serde_json::from_slice::<ClaudeHookRequest>(&request.body) {
         Ok(payload) => payload,
-        Err(err) => {
-            debug!("cli hook bridge payload parse failed: {}", err);
+        Err(_) => {
+            // serde 类型错误可能包含来路不明的原始内容，不能记录。
+            debug!("cli hook bridge payload parse failed");
             write_response(&mut stream, "400 Bad Request", "invalid json");
             return;
         }
     };
 
-    if !is_valid_payload(&payload) {
+    if (payload.source.as_deref() == Some("antigravity")
+        && !antigravity_admission::valid_fields(&request.body))
+        || !is_valid_payload(&payload)
+    {
         write_response(&mut stream, "400 Bad Request", "invalid payload");
         return;
     }
@@ -936,6 +940,9 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
+#[path = "antigravity_admission.rs"]
+mod antigravity_admission;
+
 // 验证标签与可选事件 ID 长度，并按来源白名单检查事件名称。
 fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
     if let Some(identity) = &payload.pi {
@@ -970,6 +977,7 @@ fn is_valid_payload(payload: &ClaudeHookRequest) -> bool {
     }
 
     match normalize_source(payload.source.as_deref()) {
+        "antigravity" => antigravity_admission::valid_request(payload),
         "claude" => matches!(
             payload.event.as_str(),
             "SessionStart"
@@ -1080,6 +1088,7 @@ fn normalize_source(source: Option<&str>) -> &str {
     match source {
         Some("codex") => "codex",
         Some("pi") => "pi",
+        Some("antigravity") => "antigravity",
         Some("grok") => "grok",
         Some("kimi") => "kimi",
         Some("opencode") => "opencode",

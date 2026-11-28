@@ -904,7 +904,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager"
-version = "1.5.2"
+version = "1.5.3"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",
@@ -992,7 +992,7 @@ dependencies = [
 
 [[package]]
 name = "cli-manager-helpers"
-version = "1.5.2"
+version = "1.5.3"
 dependencies = [
  "cli-manager",
  "embed-resource",

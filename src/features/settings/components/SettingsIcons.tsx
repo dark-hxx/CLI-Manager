@@ -23,6 +23,7 @@ export type SettingsNavIconKey =
   | "model-pricing"
   | "cc-connect"
   | "ssh-hosts"
+  | "proxy"
   | "sync"
   | "history-sources"
   | "hooks"
@@ -161,6 +162,15 @@ function SshHostsIcon(props: SettingsGlyphProps) {
   );
 }
 
+function ProxyIcon(props: SettingsGlyphProps) {
+  return (
+    <NavTile color="#2B8A9C" {...props}>
+      <circle cx="12" cy="12" r="6.5" fill="#fff" fillOpacity=".12" />
+      <path d="M5.5 12h13M12 5.5c1.8 1.8 2.8 4.1 2.8 6.5s-1 4.7-2.8 6.5c-1.8-1.8-2.8-4.1-2.8-6.5s1-4.7 2.8-6.5Z" />
+    </NavTile>
+  );
+}
+
 function SyncIcon(props: SettingsGlyphProps) {
   return (
     <NavTile color="#2997A1" {...props}>
@@ -277,6 +287,7 @@ export const SETTINGS_NAV_ICONS: Record<SettingsNavIconKey, SettingsIconComponen
   "model-pricing": ModelPricingIcon,
   "cc-connect": RemoteConnectionsIcon,
   "ssh-hosts": SshHostsIcon,
+  proxy: ProxyIcon,
   sync: SyncIcon,
   "history-sources": HistorySourcesIcon,
   hooks: HooksIcon,

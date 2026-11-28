@@ -66,6 +66,8 @@ pub(crate) fn history_roots(
         codex_config_dir: normalize_config_dir(codex_config_dir),
         grok_session_root: normalize_config_dir(grok_session_root),
         kimi_config_dir: None,
+        antigravity_config_dir: detect_home_dir()
+            .map(|home| home.join(".gemini").join("antigravity-cli")),
     }
 }
 
@@ -288,13 +290,17 @@ pub(super) fn resolve_copilot_history_root() -> PathBuf {
 }
 
 // 依据 brain 子目录存在性选择 Antigravity 新版或旧版根目录。
-pub(super) fn resolve_antigravity_history_root() -> PathBuf {
-    let home = detect_home_dir().unwrap_or_default();
-    let primary = home.join(".gemini").join("antigravity-cli");
-    let legacy = home.join(".gemini").join("antigravity");
-    if primary.join("brain").exists() {
-        primary
-    } else if legacy.join("brain").exists() {
+pub(super) fn resolve_antigravity_history_root(roots: &HistoryRoots) -> PathBuf {
+    let primary = roots.antigravity_config_dir.clone().unwrap_or_else(|| {
+        detect_home_dir()
+            .unwrap_or_default()
+            .join(".gemini")
+            .join("antigravity-cli")
+    });
+    let legacy = primary.with_file_name("antigravity");
+    if super::antigravity::is_cli_root(&primary)
+        && std::fs::metadata(primary.join("brain")).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound)
+        && legacy.join("brain").is_dir() {
         legacy
     } else {
         primary

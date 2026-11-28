@@ -9,6 +9,7 @@ pub async fn history_get_session_page(
     codex_config_dir: Option<String>,
     grok_session_root: Option<String>,
     kimi_config_dir: Option<String>,
+    antigravity_config_dir: Option<String>,
     source: String,
     project_key: String,
     offset: Option<usize>,
@@ -23,7 +24,8 @@ pub async fn history_get_session_page(
         codex_config_dir.clone(),
         grok_session_root.clone(),
     )
-    .with_kimi_config_dir(kimi_config_dir.clone());
+    .with_kimi_config_dir(kimi_config_dir.clone())
+        .with_antigravity_config_dir(antigravity_config_dir.clone());
     if !catalog::is_dirty() || source.eq_ignore_ascii_case("opencode") {
         if let Some(page) = catalog::get_session_page_from_v2(
             &roots,
@@ -53,6 +55,7 @@ pub async fn history_get_session_page(
         codex_config_dir,
         grok_session_root,
         kimi_config_dir,
+        antigravity_config_dir,
         source,
         project_key,
         None,

@@ -35,6 +35,7 @@ import {
   resolveProjectCapabilities, type ProjectCapability,
 } from "../../projects/api/projectCapabilities";
 import { resolveHistoryProjectPath } from "../../history/api/historyProjectPaths";
+import { isAntigravityPty } from "../lib/antigravityPty";
 import { resolveAgentRuntimeKind } from "../../agents/api/agentCapabilities";
 import { resolveProviderSwitchAppType } from "../../providers/api/providerSwitching";
 import { inferVendor } from "../../../shared/ui/VendorIcon";
@@ -1027,17 +1028,11 @@ export function useTerminalTabsController({
 
   const ensureStatsPanelAllowed = useCallback(async () => {
     try {
+      const currentProject = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
+      if (isAntigravityPty(panelSession, currentProject)) return true;
       const settings = useSettingsStore.getState();
       const [hookStatus, openCodeStatus] = await Promise.all([
-        invoke<{
-        claude: { status: string };
-        codex: { status: string };
-        kimi: { status: string };
-        pi: { status: string };
-        grok: { status: string };
-        }>(
-        "hook_settings_get_status",
-        {
+        invoke<Record<"claude" | "codex" | "kimi" | "pi" | "grok", { status: string }>>("hook_settings_get_status", {
           selectedDir: settings.claudeHookConfigDir?.trim() || null,
           codexSelectedDir: settings.codexHookConfigDir?.trim() || null,
           kimiSelectedDir: settings.kimiHookConfigDir?.trim() || null,
@@ -1045,8 +1040,7 @@ export function useTerminalTabsController({
           grokSelectedDir: settings.grokHookConfigDir?.trim() || null,
           ccSwitchDbPath: settings.ccSwitchDbPath ?? undefined,
           autoRepair: settings.claudeHookBridgeEnabled && settings.claudeHookAutoRepairKnownInstalled,
-        }
-        ),
+        }),
         invoke<{ status: string }>("opencode_hook_status"),
       ]);
       const hasEnabledInstalledHook =
@@ -1057,7 +1051,6 @@ export function useTerminalTabsController({
         (settings.piHookBridgeEnabled && hookStatus.pi.status === "installed") ||
         (settings.grokHookBridgeEnabled && hookStatus.grok.status === "installed");
       if (!hasEnabledInstalledHook) {
-        const currentProject = panelSession?.projectId ? projectById.get(panelSession.projectId) : null;
         const currentAgent = resolveAgentRuntimeKind(
           `${panelSession?.cliTool ?? ""} ${panelSession?.startupCmd ?? ""} ${panelSession?.title ?? ""} ${currentProject?.cli_tool ?? ""}`
         );

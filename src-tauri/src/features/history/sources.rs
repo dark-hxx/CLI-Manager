@@ -227,9 +227,12 @@ const SOURCES: &[SourceSpec] = &[
     SourceSpec {
         id: "antigravity",
         default_label: "Antigravity",
-        aliases: &[],
+        aliases: &["agy"],
         location: CONFIG_ROOT,
         capabilities: CapabilitySpec {
+            usage: "supported",
+            resume: "supported",
+            realtime_stats: "supported",
             delete: "supported",
             ..NATIVE_READONLY_FILE
         },
@@ -369,6 +372,9 @@ pub fn history_sources_detect(
 
 // 优先使用 Provider Home 和 Windows 特定存储位置，否则从用户目录构造候选。
 fn default_candidate_path(spec: &SourceSpec, home: &Path) -> PathBuf {
+    if spec.id == "antigravity" {
+        return super::history::default_antigravity_history_root();
+    }
     if let Some(path) = match spec.id {
         "claude" => crate::provider::home::default_config_root("claude"),
         "codex" => crate::provider::home::default_config_root("codex"),
@@ -673,6 +679,16 @@ mod tests {
         let grok = SOURCES.iter().find(|spec| spec.id == "grok").unwrap();
         let candidate = default_candidate_path_from_home(grok, Path::new(r"C:\Users\tester"));
         assert_eq!(candidate, PathBuf::from(r"C:\Users\tester\.grok\sessions"));
+    }
+
+    #[test]
+    // 验证 Antigravity 来源能力已启用 usage、resume、delete 与实时统计。
+    fn antigravity_history_capabilities_support_usage() {
+        let agy = SOURCES.iter().find(|spec| spec.id == "antigravity").unwrap();
+        assert_eq!(agy.capabilities.usage, "supported");
+        assert_eq!(agy.capabilities.resume, "supported");
+        assert_eq!(agy.capabilities.realtime_stats, "supported");
+        assert_eq!(agy.capabilities.delete, "supported");
     }
 
     #[test]

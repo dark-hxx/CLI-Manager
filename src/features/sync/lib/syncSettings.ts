@@ -99,6 +99,7 @@ export const SETTING_BACKUP_POLICY = {
   kimiHookBridgeEnabled: "excluded",
   piHookBridgeEnabled: "excluded",
   grokHookBridgeEnabled: "excluded",
+  antigravityHookBridgeEnabled: "excluded",
   systemNotificationsEnabled: "preferences",
   systemNotificationSoundPath: "excluded",
   suppressSystemNotificationsWhenFocused: "preferences",
@@ -132,6 +133,7 @@ export const SETTING_BACKUP_POLICY = {
   workspanEnabled: "excluded",
   terminalLayoutLocked: "excluded",
   desktopPet: "excluded",
+  proxySettings: "excluded",
 } as const satisfies Record<keyof Settings, BackupSettingDomain>;
 
 function keysForDomain<D extends BackupSettingDomain>(domain: D) {

@@ -47,6 +47,7 @@ export type LastSettingsTab =
   | "model-pricing"
   | "cc-connect" // Legacy persisted ID for the Web remote-connections page.
   | "ssh-hosts"
+  | "proxy"
   | "sync"
   | "history-sources"
   | "hooks"
@@ -80,6 +81,7 @@ export const LAST_SETTINGS_TABS: readonly LastSettingsTab[] = [
   "model-pricing",
   "cc-connect",
   "ssh-hosts",
+  "proxy",
   "sync",
   "history-sources",
   "hooks",

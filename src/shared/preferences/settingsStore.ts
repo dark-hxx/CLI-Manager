@@ -82,6 +82,11 @@ import {
   type HistoryDetailSortDirections,
 } from "../lib/historySort";
 import {
+  DEFAULT_PROXY_SETTINGS,
+  normalizeProxySettings,
+  type ProxySettings,
+} from "../lib/proxySettings";
+import {
   migrateWorkspaceLayout,
   WORKSPACE_LAYOUT_DEFAULTS,
   type WorkspaceLayoutSettings,
@@ -110,7 +115,7 @@ export type ExitWithRunningTasksBehavior = "ask" | "background" | "minimize" | "
 export type TerminalSessionRestoreMode = "ask" | "auto";
 export const LINUX_GRAPHICS_MODES = ["auto", "system", "disable-dmabuf", "disable-compositing"] as const;
 export type LinuxGraphicsMode = (typeof LINUX_GRAPHICS_MODES)[number];
-export type StatuslineEditorSource = "claude" | "codex";
+export type StatuslineEditorSource = "claude" | "codex" | "agy";
 export type SystemResourceCardKey =
   | "system"
   | "cpu"
@@ -466,6 +471,7 @@ export interface Settings {
   kimiHookBridgeEnabled: boolean;
   piHookBridgeEnabled: boolean;
   grokHookBridgeEnabled: boolean;
+  antigravityHookBridgeEnabled: boolean;
   systemNotificationsEnabled: boolean;
   systemNotificationSoundPath: string | null;
   suppressSystemNotificationsWhenFocused: boolean;
@@ -509,6 +515,7 @@ export interface Settings {
   workspanEnabled: boolean;
   terminalLayoutLocked: boolean;
   desktopPet: DesktopPetSettings;
+  proxySettings: ProxySettings;
 }
 
 interface SettingsStore extends Settings {
@@ -690,6 +697,7 @@ const DEFAULTS: Settings = {
   kimiHookBridgeEnabled: true,
   piHookBridgeEnabled: true,
   grokHookBridgeEnabled: true,
+  antigravityHookBridgeEnabled: false,
   systemNotificationsEnabled: true,
   systemNotificationSoundPath: null,
   suppressSystemNotificationsWhenFocused: true,
@@ -745,6 +753,7 @@ const DEFAULTS: Settings = {
     lockPosition: false,
     position: null,
   },
+  proxySettings: { ...DEFAULT_PROXY_SETTINGS, agents: {} },
 };
 
 const LEGACY_LIGHT_PALETTE_MAP: Partial<Record<string, LightThemePalette>> = {
@@ -1697,6 +1706,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.grokHookBridgeEnabled === "boolean"
         ? entries.grokHookBridgeEnabled
         : DEFAULTS.grokHookBridgeEnabled;
+    entries.antigravityHookBridgeEnabled = entries.antigravityHookBridgeEnabled === true;
     entries.systemNotificationsEnabled =
       typeof entries.systemNotificationsEnabled === "boolean"
         ? entries.systemNotificationsEnabled
@@ -1819,6 +1829,7 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
       typeof entries.workspanEnabled === "boolean"
         ? entries.workspanEnabled
         : DEFAULTS.workspanEnabled;
+    entries.proxySettings = normalizeProxySettings(entries.proxySettings);
 
     if (pendingStoreWrites.length > 0) {
       await Promise.all(pendingStoreWrites);

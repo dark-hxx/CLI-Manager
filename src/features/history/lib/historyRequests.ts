@@ -3,6 +3,7 @@ import { logInfo, logWarn } from "../../../shared/platform/logger";
 import { queryClient } from "../../../shared/platform/queryClient";
 import { normalizeHistoryProjectPaths } from "../api/historyProjectPaths";
 import { buildSshAgentHistoryContext, type SshAgentHistoryContext } from "../../remote/api/sshAgentHistory";
+import { antigravityDiskIdentityMatches, isAgyDiskSessionId } from "../api/antigravityDiskIdentity";
 import { getHistoryPathArgs } from "../api/historyPathArgs";
 import { useSshAgentIntegrationStore } from "../../remote/api/sshAgentIntegrationStore";
 import { useBackgroundOperationStore } from "../../terminal/api/backgroundOperationStore";
@@ -145,6 +146,7 @@ export async function fetchLatestProjectSessionDetail(
   source?: HistorySource | null,
   cliSessionId?: string | null,
   options?: {
+    boundAntigravityDistro?: string | null; // empty = native; null/undefined = unidentified
     forceCatalogRefresh?: boolean;
     freshDetail?: boolean;
     waitForCatalogRefresh?: boolean;
@@ -166,7 +168,11 @@ export async function fetchLatestProjectSessionDetail(
       previousFilePath: prev?.filePath ?? null,
       previousUpdatedAt: prev?.updatedAt ?? null,
     });
+    const agy = source === "antigravity";
+    const expectedDistro = options?.boundAntigravityDistro;
+    if (agy && (!isAgyDiskSessionId(cliSessionId ?? "") || expectedDistro == null || !projectPath)) return null;
     const pathArgs = await getHistoryPathArgs();
+    const isBound = (item: HistorySessionSummary) => !agy || antigravityDiskIdentityMatches(item, cliSessionId!, projectPath, expectedDistro!, pathArgs.antigravityConfigDir);
     const loadSummary = async (
       query: string | null,
       scopedProjectPath: string | null
@@ -174,6 +180,7 @@ export async function fetchLatestProjectSessionDetail(
       const summariesRaw = await invoke<unknown[]>("history_list_sessions", {
         source: source ?? null,
         ...pathArgs,
+        ...(agy ? { boundAntigravityDistro: expectedDistro } : {}),
         projectPath: scopedProjectPath,
         query,
         limit: 1,
@@ -201,6 +208,7 @@ export async function fetchLatestProjectSessionDetail(
         return loadSummary(null, projectPath);
       }
       let summary = await loadSummary(sessionQuery, projectPath);
+      if (agy) return summary && isBound(summary) ? summary : null;
       if (summary?.session_id === sessionQuery) return summary;
       summary = await loadSummary(sessionQuery, null);
       if (summary?.session_id === sessionQuery) return summary;
@@ -262,9 +270,10 @@ export async function fetchLatestProjectSessionDetail(
       fresh: freshDetail || summaryChanged,
     });
     const detail = normalizeDetail(detailRaw);
+    if (!isBound(detail) || (agy && detail.file_path !== summary.file_path)) return null;
     // 聚合详情的 updated_at 取父子转录最大值，而新鲜度键比较的是父会话 summary；
     // 子代理更新时会令两者永远不等、每轮轮询都整树重扫，故回填父会话时间作为比较基准。
-    if (aggregateSubtasks) detail.updated_at = summary.updated_at;
+    if (aggregateSubtasks || agy) detail.updated_at = summary.updated_at;
     detail.file_size = summary.file_size;
     logInfo("history.realtime.lookup.detail", {
       source: detail.source,
@@ -285,7 +294,7 @@ export async function fetchLatestProjectSessionDetail(
       cliSessionId: cliSessionId ?? null,
       error: String(error),
     });
-    return prev ? "unchanged" : null;
+    return source !== "antigravity" && prev ? "unchanged" : null;
   }
 }
 
@@ -310,7 +319,8 @@ export async function fetchTodayProjectStats(
   projectKey: string,
   source?: HistorySource | null,
   projectPath?: string | null,
-  projectPaths?: string[]
+  projectPaths?: string[],
+  boundAntigravityDistro?: string | null
 ): Promise<TodayProjectStats | null> {
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
@@ -321,6 +331,7 @@ export async function fetchTodayProjectStats(
     const raw = await invoke<unknown>("history_get_stats", {
       source: source ?? null,
       ...(await getHistoryPathArgs()),
+      ...(source === "antigravity" && boundAntigravityDistro != null ? { boundAntigravityDistro } : {}),
       projectKey: normalizedProjectPath || hasProjectPaths ? null : projectKey,
       projectPath: hasProjectPaths ? null : normalizedProjectPath,
       projectPaths: hasProjectPaths ? normalizedProjectPaths : null,
@@ -333,6 +344,7 @@ export async function fetchTodayProjectStats(
     const stats = normalizeStats(raw);
     return {
       sessions: stats.total_sessions,
+      unmeasuredSessions: stats.unmeasured_sessions,
       totalTokens:
         stats.total_input_tokens +
         stats.total_output_tokens +
@@ -357,13 +369,15 @@ export async function fetchTodayProjectStats(
 export async function fetchTodayProjectStatsMerged(
   projectKey: string,
   source: HistorySource | null | undefined,
-  projectPaths: string[]
+  projectPaths: string[],
+  boundAntigravityDistro?: string | null
 ): Promise<TodayProjectStats | null> {
   const uniquePaths = normalizeHistoryProjectPaths(projectPaths);
+  if (source === "antigravity" && (boundAntigravityDistro == null || uniquePaths.length === 0)) return null;
   if (uniquePaths.length === 0) {
     return fetchTodayProjectStats(projectKey, source, null);
   }
-  return fetchTodayProjectStats(projectKey, source, null, uniquePaths);
+  return fetchTodayProjectStats(projectKey, source, null, uniquePaths, boundAntigravityDistro);
 }
 
 export async function fetchRemoteTodayProjectStats(
@@ -389,6 +403,7 @@ export async function fetchRemoteTodayProjectStats(
     context: synced,
     result: {
       sessions: stats.total_sessions,
+      unmeasuredSessions: stats.unmeasured_sessions,
       totalTokens:
         stats.total_input_tokens +
         stats.total_output_tokens +
