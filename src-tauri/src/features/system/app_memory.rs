@@ -1,14 +1,19 @@
 //! 本应用自身（主进程 + WebView2 + PTY daemon）的内存占用统计与一键优化。
 //!
-//! 口径：优先使用私有工作集（与任务管理器“内存”列一致），取不到时退回工作集。
-//! 终端里运行的 shell/CLI 属于用户负载，单独汇总但不计入应用合计，也不会被优化修剪。
+//! 口径：以提交（私有已提交内存，任务管理器“提交大小”列）为准——系统提交耗尽时新的分配直接失败，
+//! WebView2 等进程会因此崩溃，物理内存占用率并不能反映这一风险；工作集（物理内存）另行汇总，
+//! 修剪只影响工作集，不会降低提交。
+//! 终端里运行的 shell/CLI 属于用户负载，单独汇总但不计入应用合计，也不会被优化修剪；
+//! 归属按父链最近的受管祖先，父链断开时再看是否在 daemon 命名 Job 中。
 //!
 //! 孤儿进程：只认“可证明属于本应用、且已没有任何入口能再触达”的进程——
 //! 父进程已退出的本应用 WebView2（按 `--user-data-dir` 精确匹配）、helper 子命令与 conpty 宿主，
 //! 以及不再登记在发现文件里的旧 daemon（客户端只经发现文件连接，未登记即不可达）。
 //! 当前应用进程树与已登记的 daemon 永不纳入；身份信息缺失时对应类别直接跳过，宁可漏判不误杀。
 
-use crate::runtime_diagnostics::{classify_process, current_daemon_pid, ManagedProcessRole};
+use crate::runtime_diagnostics::{
+    classify_process, current_daemon_pid, daemon_job_members, ManagedProcessRole,
+};
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -39,13 +44,19 @@ static WEBVIEW_DATA_DIR: OnceLock<Option<String>> = OnceLock::new();
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppMemoryGroup {
+    /// 提交（私有已提交内存）。
     pub bytes: u64,
+    /// 工作集（当前占用的物理内存）。
+    pub working_set_bytes: u64,
     pub process_count: usize,
 }
 
 impl AppMemoryGroup {
-    fn add(&mut self, bytes: u64) {
-        self.bytes = self.bytes.saturating_add(bytes);
+    fn add(&mut self, process: &TrackedProcess) {
+        self.bytes = self.bytes.saturating_add(process.commit_bytes);
+        self.working_set_bytes = self
+            .working_set_bytes
+            .saturating_add(process.working_set_bytes);
         self.process_count += 1;
     }
 }
@@ -53,8 +64,10 @@ impl AppMemoryGroup {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AppMemoryUsage {
-    /// 主进程 + WebView2 + daemon 合计，不含终端子进程与孤儿进程。
+    /// 主进程 + WebView2 + daemon 的提交合计，不含终端子进程与孤儿进程。
     pub total_bytes: u64,
+    /// 同一范围的工作集合计。
+    pub total_working_set_bytes: u64,
     pub main: AppMemoryGroup,
     pub webview: AppMemoryGroup,
     pub daemon: AppMemoryGroup,
@@ -62,8 +75,6 @@ pub struct AppMemoryUsage {
     pub terminal: AppMemoryGroup,
     /// 可清理的孤儿进程（含其后代），仅展示不计入合计，优化时一并结束。
     pub orphan: AppMemoryGroup,
-    /// 全部进程都取到了私有工作集时为 true；否则部分进程退回了工作集口径。
-    pub private_working_set: bool,
     pub sampled_at: u64,
 }
 
@@ -72,8 +83,10 @@ pub struct AppMemoryUsage {
 pub struct AppMemoryOptimizeResult {
     pub before: AppMemoryUsage,
     pub after: AppMemoryUsage,
-    /// 应用合计的下降量加上已结束孤儿进程的占用。
+    /// 应用提交合计的下降量加上已结束孤儿进程的提交。
     pub freed_bytes: u64,
+    /// 应用工作集合计的下降量，即修剪归还给系统的物理内存；不代表提交下降。
+    pub trimmed_working_set_bytes: u64,
     /// 成功下发 WebView2 内存目标级别的窗口数；运行时过旧时为 0，但工作集修剪仍会执行。
     pub webview_hint_count: usize,
     pub trimmed_process_count: usize,
@@ -104,7 +117,26 @@ impl From<ManagedProcessRole> for MemoryGroup {
 struct TrackedProcess {
     pid: u32,
     group: MemoryGroup,
-    fallback_bytes: u64,
+    commit_bytes: u64,
+    working_set_bytes: u64,
+}
+
+impl TrackedProcess {
+    // sysinfo 在 Windows 上 virtual_memory 为 PrivateUsage（提交）、memory 为工作集；其他平台 virtual_memory
+    // 是虚拟地址空间，没有可比的提交口径，退回驻留内存。
+    fn new(pid: u32, group: MemoryGroup, process: &sysinfo::Process) -> Self {
+        let commit_bytes = if cfg!(windows) {
+            process.virtual_memory()
+        } else {
+            process.memory()
+        };
+        Self {
+            pid,
+            group,
+            commit_bytes,
+            working_set_bytes: process.memory(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -296,7 +328,7 @@ struct ProcessScan {
     tracked: Vec<TrackedProcess>,
 }
 
-// 刷新全部进程的父子关系与工作集，筛出本应用、daemon 进程树与孤儿进程；
+// 刷新全部进程的父子关系与内存计数，筛出本应用、daemon 进程树与孤儿进程；
 // 只为名称可疑的候选进程读取路径与命令行，常规轮询开销与之前持平。
 fn scan_processes(ctx: &OrphanContext) -> ProcessScan {
     with_process_system(|system| scan_with_system(system, ctx)).unwrap_or(ProcessScan {
@@ -318,6 +350,7 @@ fn scan_with_system(system: &mut System, ctx: &OrphanContext) -> ProcessScan {
     );
     let app_pid = ctx.app_pid;
     let daemon_pid = current_daemon_pid(system);
+    let daemon_members = daemon_job_members(daemon_pid);
     let parents = system
         .processes()
         .iter()
@@ -334,18 +367,21 @@ fn scan_with_system(system: &mut System, ctx: &OrphanContext) -> ProcessScan {
     let mut protected = HashSet::new();
     for (pid, process) in system.processes() {
         let name = process.name().to_string_lossy();
-        match classify_process(pid.as_u32(), &name, app_pid, daemon_pid, &parents) {
+        match classify_process(
+            pid.as_u32(),
+            &name,
+            app_pid,
+            daemon_pid,
+            &daemon_members,
+            &parents,
+        ) {
             Some(role) => {
                 if role != ManagedProcessRole::AppChild {
                     protected.insert(pid.as_u32());
                 } else if is_orphan_candidate_name(&name.to_ascii_lowercase()) {
                     candidates.push(*pid);
                 }
-                tracked.push(TrackedProcess {
-                    pid: pid.as_u32(),
-                    group: role.into(),
-                    fallback_bytes: process.memory(),
-                });
+                tracked.push(TrackedProcess::new(pid.as_u32(), role.into(), process));
             }
             None if is_orphan_candidate_name(&name.to_ascii_lowercase()) => candidates.push(*pid),
             None => {}
@@ -396,15 +432,9 @@ fn scan_with_system(system: &mut System, ctx: &OrphanContext) -> ProcessScan {
     // 已归入终端分组的孤儿后代改记到孤儿分组，避免重复计数。
     tracked.retain(|process| !orphans.contains(&process.pid));
     for pid in orphans {
-        let fallback_bytes = system
-            .process(Pid::from_u32(pid))
-            .map(|process| process.memory())
-            .unwrap_or(0);
-        tracked.push(TrackedProcess {
-            pid,
-            group: MemoryGroup::Orphan,
-            fallback_bytes,
-        });
+        if let Some(process) = system.process(Pid::from_u32(pid)) {
+            tracked.push(TrackedProcess::new(pid, MemoryGroup::Orphan, process));
+        }
     }
     ProcessScan { tracked }
 }
@@ -415,34 +445,28 @@ fn measure(processes: &[TrackedProcess]) -> AppMemoryUsage {
     let mut daemon = AppMemoryGroup::default();
     let mut terminal = AppMemoryGroup::default();
     let mut orphan = AppMemoryGroup::default();
-    let mut private_working_set = true;
     for process in processes {
-        let bytes = match private_working_set_bytes(process.pid) {
-            Some(bytes) => bytes,
-            None => {
-                private_working_set = false;
-                process.fallback_bytes
-            }
-        };
         match process.group {
-            MemoryGroup::Main => main.add(bytes),
-            MemoryGroup::Webview => webview.add(bytes),
-            MemoryGroup::Daemon => daemon.add(bytes),
-            MemoryGroup::Terminal => terminal.add(bytes),
-            MemoryGroup::Orphan => orphan.add(bytes),
+            MemoryGroup::Main => main.add(process),
+            MemoryGroup::Webview => webview.add(process),
+            MemoryGroup::Daemon => daemon.add(process),
+            MemoryGroup::Terminal => terminal.add(process),
+            MemoryGroup::Orphan => orphan.add(process),
         }
     }
+    let app_groups = [main, webview, daemon];
     AppMemoryUsage {
-        total_bytes: main
-            .bytes
-            .saturating_add(webview.bytes)
-            .saturating_add(daemon.bytes),
+        total_bytes: app_groups
+            .iter()
+            .fold(0u64, |sum, group| sum.saturating_add(group.bytes)),
+        total_working_set_bytes: app_groups.iter().fold(0u64, |sum, group| {
+            sum.saturating_add(group.working_set_bytes)
+        }),
         main,
         webview,
         daemon,
         terminal,
         orphan,
-        private_working_set,
         sampled_at: epoch_millis(),
     }
 }
@@ -469,7 +493,7 @@ fn is_trim_target(group: MemoryGroup) -> bool {
     )
 }
 
-// 在同一次快照内重新判定并结束孤儿进程，避免拿旧 pid 误杀已被复用的进程。
+// 在同一次快照内重新判定并结束孤儿进程，避免拿旧 pid 误杀已被复用的进程；释放量按被结束进程的提交累计。
 fn kill_orphans(ctx: &OrphanContext) -> (usize, u64) {
     with_process_system(|system| {
         let scan = scan_with_system(system, ctx);
@@ -480,13 +504,12 @@ fn kill_orphans(ctx: &OrphanContext) -> (usize, u64) {
             .iter()
             .filter(|process| process.group == MemoryGroup::Orphan)
         {
-            let bytes = private_working_set_bytes(process.pid).unwrap_or(process.fallback_bytes);
             let Some(target) = system.process(Pid::from_u32(process.pid)) else {
                 continue;
             };
             if target.kill() {
                 killed += 1;
-                freed = freed.saturating_add(bytes);
+                freed = freed.saturating_add(process.commit_bytes);
             }
         }
         (killed, freed)
@@ -557,10 +580,14 @@ async fn optimize<R: Runtime>(app: &AppHandle<R>) -> Result<AppMemoryOptimizeRes
     let after = tokio::task::spawn_blocking(move || measure(&scan_processes(&after_ctx).tracked))
         .await
         .map_err(blocking_err)?;
+    let trimmed_working_set_bytes = before
+        .total_working_set_bytes
+        .saturating_sub(after.total_working_set_bytes);
     log::info!(
-        "app memory optimized: before={} after={} webviews={} trimmed={} orphans_killed={} orphan_bytes={}",
+        "app memory optimized: commit_before={} commit_after={} working_set_trimmed={} webviews={} trimmed={} orphans_killed={} orphan_commit={}",
         before.total_bytes,
         after.total_bytes,
+        trimmed_working_set_bytes,
         webview_hint_count,
         trimmed_process_count,
         orphan_killed_count,
@@ -571,6 +598,7 @@ async fn optimize<R: Runtime>(app: &AppHandle<R>) -> Result<AppMemoryOptimizeRes
             .total_bytes
             .saturating_sub(after.total_bytes)
             .saturating_add(orphan_freed_bytes),
+        trimmed_working_set_bytes,
         before,
         after,
         webview_hint_count,
@@ -637,41 +665,6 @@ fn set_webview_memory_target<R: Runtime>(app: &AppHandle<R>, low: bool) -> usize
 #[cfg(not(windows))]
 fn set_webview_memory_target<R: Runtime>(_app: &AppHandle<R>, _low: bool) -> usize {
     0
-}
-
-#[cfg(windows)]
-fn private_working_set_bytes(pid: u32) -> Option<u64> {
-    use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::ProcessStatus::{
-        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX2,
-    };
-    use windows_sys::Win32::System::Threading::{
-        OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_VM_READ,
-    };
-
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, 0, pid);
-        if handle.is_null() {
-            return None;
-        }
-        let size = std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX2>() as u32;
-        let mut counters: PROCESS_MEMORY_COUNTERS_EX2 = std::mem::zeroed();
-        counters.cb = size;
-        let ok = K32GetProcessMemoryInfo(
-            handle,
-            &mut counters as *mut PROCESS_MEMORY_COUNTERS_EX2 as *mut PROCESS_MEMORY_COUNTERS,
-            size,
-        );
-        CloseHandle(handle);
-        // 旧版 Windows 不填充 PrivateWorkingSetSize（保持 0），交给调用方退回工作集口径。
-        (ok != 0 && counters.PrivateWorkingSetSize > 0)
-            .then_some(counters.PrivateWorkingSetSize as u64)
-    }
-}
-
-#[cfg(not(windows))]
-fn private_working_set_bytes(_pid: u32) -> Option<u64> {
-    None
 }
 
 #[cfg(windows)]
@@ -901,34 +894,47 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn reads_private_working_set_and_trims_current_process() {
+    fn reads_commit_and_working_set_then_trims_current_process() {
         let pid = std::process::id();
-        let before = private_working_set_bytes(pid).expect("private working set available");
-        assert!(before > 0);
+        let mut system = System::new();
+        let mut sample = || {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[Pid::from_u32(pid)]),
+                false,
+                ProcessRefreshKind::nothing().with_memory().without_tasks(),
+            );
+            let process = system.process(Pid::from_u32(pid)).expect("current process");
+            TrackedProcess::new(pid, MemoryGroup::Main, process)
+        };
+        let before = sample();
+        assert!(before.commit_bytes > 0);
+        assert!(before.working_set_bytes > 0);
         assert!(trim_working_set(pid));
-        let after = private_working_set_bytes(pid).expect("private working set available");
-        assert!(after <= before);
+        let after = sample();
+        assert!(after.working_set_bytes <= before.working_set_bytes);
     }
 
     #[test]
     fn measure_excludes_terminal_and_orphan_processes_from_total() {
-        let tracked = |pid, group, fallback_bytes| TrackedProcess {
+        let tracked = |pid, group, commit_bytes, working_set_bytes| TrackedProcess {
             pid,
             group,
-            fallback_bytes,
+            commit_bytes,
+            working_set_bytes,
         };
         let processes = vec![
-            tracked(u32::MAX, MemoryGroup::Main, 100),
-            tracked(u32::MAX - 1, MemoryGroup::Webview, 50),
-            tracked(u32::MAX - 2, MemoryGroup::Daemon, 20),
-            tracked(u32::MAX - 3, MemoryGroup::Terminal, 999),
-            tracked(u32::MAX - 4, MemoryGroup::Orphan, 77),
+            tracked(u32::MAX, MemoryGroup::Main, 100, 40),
+            tracked(u32::MAX - 1, MemoryGroup::Webview, 50, 30),
+            tracked(u32::MAX - 2, MemoryGroup::Daemon, 20, 10),
+            tracked(u32::MAX - 3, MemoryGroup::Terminal, 999, 500),
+            tracked(u32::MAX - 4, MemoryGroup::Orphan, 77, 7),
         ];
         let usage = measure(&processes);
         assert_eq!(usage.total_bytes, 170);
+        assert_eq!(usage.total_working_set_bytes, 80);
         assert_eq!(usage.terminal.bytes, 999);
+        assert_eq!(usage.terminal.working_set_bytes, 500);
         assert_eq!(usage.orphan.bytes, 77);
         assert_eq!(usage.webview.process_count, 1);
-        assert!(!usage.private_working_set);
     }
 }

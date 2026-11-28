@@ -580,7 +580,8 @@ startRuntimeDiagnostics(): () => void
 
 - `set_debug_logging` controls both the Rust log level and the process sampler. Debug Mode off means no periodic process snapshots.
 - The Tauri WebView starts its runtime sampler only when Debug Mode is enabled and `isTauri()` is true. It samples immediately, then every 30 seconds, and clears the interval when disabled or unmounted.
-- Rust process roles are `app-main`, `webview-child`, `app-child`, `pty-daemon`, and `pty-child`. If trees overlap, the daemon and its descendants take priority over the app tree.
+- Rust process roles are `app-main`, `webview-child`, `app-child`, `pty-daemon`, and `pty-child`. A process belongs to its nearest owned ancestor (app or daemon), so a GUI launched by the daemon (hook activation) keeps its own WebView tree instead of being counted as `pty-child`.
+- A process with no owned ancestor (its parent died or the PID was reused) is a `pty-child` only when it is listed in the daemon Job `Local\CLI-Manager-PtyDaemon-{daemonPid}`. The query is read-only (`JOB_OBJECT_QUERY`); a missing Job (an older daemon) falls back to parent-chain attribution only.
 - Rust is the only file writer. Release builds use `resource-diagnostics.log`; development builds use `resource-diagnostics-dev.log` in the normal log directory.
 - Each line is JSON with `timestamp`, `level`, `source`, `event`, and `payload`. The file reuses the existing 10 MiB/7-day rolling writer.
 - Frontend entries use a dedicated internal IPC and never pass through `logInfo`, so periodic snapshots cannot evict useful crash breadcrumbs.
@@ -614,7 +615,7 @@ startRuntimeDiagnostics(): () => void
 
 ### 6. Tests Required
 
-- Rust unit tests cover daemon-tree priority, unrelated-process exclusion, and cyclic parent maps.
+- Rust unit tests cover daemon-tree priority, a daemon-launched app keeping its own tree, Job members with a broken parent chain, unrelated-process exclusion, and cyclic parent maps.
 - `TerminalProcessManager` tests cover queued byte accounting, commit drain, reset, close, warning de-duplication, recovery, and warning rearm.
 - `PtyHostSocket` tests cover pending byte accounting, listener delivery, close cleanup, warning de-duplication, clear, and warning rearm.
 - Run `npx tsc --noEmit`, `cargo fmt -- --check`, `cargo check`, and `cargo test`.

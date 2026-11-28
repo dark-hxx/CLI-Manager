@@ -27,6 +27,9 @@ export interface SystemResourceSnapshot {
     availableBytes: number;
     cachedBytes: number;
     freeBytes: number;
+    /** 系统提交已用量与上限（物理内存 + 页面文件）；平台不支持或读取失败时为 null。 */
+    commitBytes: number | null;
+    commitLimitBytes: number | null;
   };
   network: {
     uploadBytesPerSec: number;

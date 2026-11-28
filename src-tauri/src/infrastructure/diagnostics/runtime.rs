@@ -252,6 +252,7 @@ fn run_sampler() {
 fn log_snapshot(system: &System, cpu_sample_ready: bool) {
     let app_pid = std::process::id();
     let daemon_pid = current_daemon_pid(system);
+    let daemon_members = daemon_job_members(daemon_pid);
     let parents = system
         .processes()
         .iter()
@@ -267,7 +268,14 @@ fn log_snapshot(system: &System, cpu_sample_ready: bool) {
         .iter()
         .filter_map(|(pid, process)| {
             let name = process.name().to_string_lossy().into_owned();
-            let role = classify_process(pid.as_u32(), &name, app_pid, daemon_pid, &parents)?;
+            let role = classify_process(
+                pid.as_u32(),
+                &name,
+                app_pid,
+                daemon_pid,
+                &daemon_members,
+                &parents,
+            )?;
             Some(ManagedProcessSnapshot {
                 role: role.label(),
                 pid: pid.as_u32(),
@@ -353,47 +361,111 @@ pub(crate) fn current_daemon_pid(system: &System) -> Option<u32> {
         .then_some(pid)
 }
 
-// 优先归类 daemon 及其后代，再判断主应用和其 WebView/普通后代；其他进程不纳入统计。
+// daemon 与主应用本身先认；其余进程沿父链归属最近的受管祖先：daemon 可能由应用拉起，
+// 应用也可能由 daemon 经 Hook 拉起，两种嵌套都按最近者归类。父链断开（中间进程已退出，
+// 如 Git Bash 的启动器）但仍在 daemon 命名 Job 里的进程归为 PTY 子进程；其他进程不纳入统计。
 pub(crate) fn classify_process(
     pid: u32,
     name: &str,
     app_pid: u32,
     daemon_pid: Option<u32>,
+    daemon_members: &HashSet<u32>,
     parents: &HashMap<u32, u32>,
 ) -> Option<ManagedProcessRole> {
     if daemon_pid == Some(pid) {
         return Some(ManagedProcessRole::PtyDaemon);
     }
-    if daemon_pid.is_some_and(|daemon| is_descendant_of(pid, daemon, parents)) {
-        return Some(ManagedProcessRole::PtyChild);
-    }
     if pid == app_pid {
         return Some(ManagedProcessRole::AppMain);
     }
-    if !is_descendant_of(pid, app_pid, parents) {
-        return None;
-    }
-    if is_webview_process_name(name) {
-        Some(ManagedProcessRole::WebviewChild)
-    } else {
-        Some(ManagedProcessRole::AppChild)
+    match nearest_managed_ancestor(pid, app_pid, daemon_pid, parents) {
+        Some(ancestor) if Some(ancestor) == daemon_pid => Some(ManagedProcessRole::PtyChild),
+        Some(_) if is_webview_process_name(name) => Some(ManagedProcessRole::WebviewChild),
+        Some(_) => Some(ManagedProcessRole::AppChild),
+        None if daemon_members.contains(&pid) => Some(ManagedProcessRole::PtyChild),
+        None => None,
     }
 }
 
-// 沿父进程映射寻找祖先，缺失父节点或重复访问时停止，避免损坏映射导致无限循环。
-fn is_descendant_of(pid: u32, ancestor: u32, parents: &HashMap<u32, u32>) -> bool {
+// 沿父进程映射向上找第一个等于应用或 daemon 的祖先；缺失父节点或重复访问时停止，避免损坏映射导致无限循环。
+fn nearest_managed_ancestor(
+    pid: u32,
+    app_pid: u32,
+    daemon_pid: Option<u32>,
+    parents: &HashMap<u32, u32>,
+) -> Option<u32> {
     let mut current = pid;
     let mut visited = HashSet::new();
     while visited.insert(current) {
-        let Some(parent) = parents.get(&current).copied() else {
-            return false;
-        };
-        if parent == ancestor {
-            return true;
+        let parent = parents.get(&current).copied()?;
+        if parent == app_pid || Some(parent) == daemon_pid {
+            return Some(parent);
         }
         current = parent;
     }
-    false
+    None
+}
+
+/// 读取 daemon 命名 Job 的成员 pid（含嵌套子 Job）；旧版 daemon 的匿名 Job、权限不足或非 Windows 时返回空集，
+/// 调用方此时只按父链归属。
+#[cfg(target_os = "windows")]
+pub(crate) fn daemon_job_members(daemon_pid: Option<u32>) -> HashSet<u32> {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::JobObjects::{
+        JobObjectBasicProcessIdList, OpenJobObjectW, QueryInformationJobObject,
+        JOBOBJECT_BASIC_PROCESS_ID_LIST,
+    };
+    // winnt.h 的 JOB_OBJECT_QUERY；windows-sys 把它放在未启用的 SystemServices 特性下。
+    const JOB_OBJECT_QUERY: u32 = 0x0004;
+
+    let Some(daemon_pid) = daemon_pid else {
+        return HashSet::new();
+    };
+    let name = crate::daemon::process_governance_job_name(daemon_pid)
+        .encode_utf16()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let header_words = std::mem::offset_of!(JOBOBJECT_BASIC_PROCESS_ID_LIST, ProcessIdList)
+        .div_ceil(std::mem::size_of::<usize>());
+    // SAFETY: name 以 NUL 结尾；缓冲区按 usize 对齐且长度覆盖头部与 capacity 个 pid，调用期间一直存活。
+    unsafe {
+        let job = OpenJobObjectW(JOB_OBJECT_QUERY, 0, name.as_ptr());
+        if job.is_null() {
+            return HashSet::new();
+        }
+        let mut capacity = 256usize;
+        let mut members = HashSet::new();
+        // 成员可能在两次查询之间增加；缓冲区不足时按返回的总数扩容重试，最多三次后取已拿到的部分。
+        for _ in 0..3 {
+            let mut buffer = vec![0usize; header_words + capacity];
+            // 失败时（含 ERROR_MORE_DATA）头部只可能带回总数，列表为空，循环据总数决定是否扩容。
+            QueryInformationJobObject(
+                job,
+                JobObjectBasicProcessIdList,
+                buffer.as_mut_ptr().cast(),
+                (buffer.len() * std::mem::size_of::<usize>()) as u32,
+                std::ptr::null_mut(),
+            );
+            let list = &*(buffer.as_ptr() as *const JOBOBJECT_BASIC_PROCESS_ID_LIST);
+            let assigned = list.NumberOfAssignedProcesses as usize;
+            let listed = (list.NumberOfProcessIdsInList as usize).min(capacity);
+            members = buffer[header_words..header_words + listed]
+                .iter()
+                .map(|pid| *pid as u32)
+                .collect();
+            if listed >= assigned {
+                break;
+            }
+            capacity = assigned + 64;
+        }
+        CloseHandle(job);
+        members
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn daemon_job_members(_daemon_pid: Option<u32>) -> HashSet<u32> {
+    HashSet::new()
 }
 
 // 用忽略 ASCII 大小写的名称子串启发式识别 WebView；调用方先限定进程所属应用树。
@@ -435,17 +507,59 @@ mod tests {
     // 验证 daemon 树即使嵌在应用树中仍优先分类，其他 WebView 子进程保持独立角色。
     fn daemon_tree_takes_priority_over_app_tree() {
         let parents = parent_map(&[(20, 10), (21, 20), (30, 10)]);
+        let members = HashSet::new();
         assert_eq!(
-            classify_process(20, "cli-manager-daemon.exe", 10, Some(20), &parents),
+            classify_process(
+                20,
+                "cli-manager-daemon.exe",
+                10,
+                Some(20),
+                &members,
+                &parents
+            ),
             Some(ManagedProcessRole::PtyDaemon)
         );
         assert_eq!(
-            classify_process(21, "codex.exe", 10, Some(20), &parents),
+            classify_process(21, "codex.exe", 10, Some(20), &members, &parents),
             Some(ManagedProcessRole::PtyChild)
         );
         assert_eq!(
-            classify_process(30, "msedgewebview2.exe", 10, Some(20), &parents),
+            classify_process(30, "msedgewebview2.exe", 10, Some(20), &members, &parents),
             Some(ManagedProcessRole::WebviewChild)
+        );
+    }
+
+    #[test]
+    // 验证由 daemon 经 Hook 拉起的应用及其 WebView 归应用，即使应用仍在 daemon Job 中。
+    fn app_launched_by_daemon_keeps_its_own_tree() {
+        let parents = parent_map(&[(10, 20), (30, 10), (21, 20)]);
+        let members = HashSet::from([10, 30, 21]);
+        assert_eq!(
+            classify_process(10, "cli-manager.exe", 10, Some(20), &members, &parents),
+            Some(ManagedProcessRole::AppMain)
+        );
+        assert_eq!(
+            classify_process(30, "msedgewebview2.exe", 10, Some(20), &members, &parents),
+            Some(ManagedProcessRole::WebviewChild)
+        );
+        assert_eq!(
+            classify_process(21, "pwsh.exe", 10, Some(20), &members, &parents),
+            Some(ManagedProcessRole::PtyChild)
+        );
+    }
+
+    #[test]
+    // 验证父链断开的进程只凭 daemon Job 成员身份归为 PTY 子进程。
+    fn job_members_with_broken_parent_chain_are_pty_children() {
+        let parents = parent_map(&[(40, 999), (50, 998)]);
+        let members = HashSet::from([40]);
+        assert_eq!(
+            classify_process(40, "node.exe", 10, Some(20), &members, &parents),
+            Some(ManagedProcessRole::PtyChild)
+        );
+        assert_eq!(
+            classify_process(50, "node.exe", 10, Some(20), &members, &parents),
+            None
         );
     }
 
@@ -453,14 +567,17 @@ mod tests {
     // 验证不属于应用树的进程不会出现在诊断分类中。
     fn process_outside_managed_trees_is_ignored() {
         let parents = parent_map(&[(11, 10), (50, 40)]);
-        assert_eq!(classify_process(50, "other.exe", 10, None, &parents), None);
+        assert_eq!(
+            classify_process(50, "other.exe", 10, None, &HashSet::new(), &parents),
+            None
+        );
     }
 
     #[test]
-    // 验证含环父映射在找不到祖先时结束并返回 false。
+    // 验证含环父映射在找不到祖先时结束并返回空。
     fn parent_cycles_do_not_loop_forever() {
         let parents = parent_map(&[(20, 21), (21, 20)]);
-        assert!(!is_descendant_of(20, 10, &parents));
+        assert_eq!(nearest_managed_ancestor(20, 10, None, &parents), None);
     }
 
     #[test]

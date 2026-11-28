@@ -35,6 +35,28 @@ struct ProcessMemory {
     working_set_bytes: u64,
 }
 
+/// 系统提交（commit）用量与上限（物理内存 + 页面文件），单位字节。
+/// 提交耗尽时新的内存分配直接失败，WebView2 等进程会因此崩溃，与物理内存占用率无关。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct SystemCommit {
+    pub committed_bytes: u64,
+    pub limit_bytes: u64,
+}
+
+impl SystemCommit {
+    pub fn available_bytes(&self) -> u64 {
+        self.limit_bytes.saturating_sub(self.committed_bytes)
+    }
+}
+
+// 只读一次系统性能计数器，不枚举进程；平台不支持或调用失败时返回 None。
+pub(crate) fn system_commit() -> Option<SystemCommit> {
+    platform_system_commit().map(|memory| SystemCommit {
+        committed_bytes: memory.committed_bytes,
+        limit_bytes: memory.limit_bytes,
+    })
+}
+
 // Sample numeric native counters only. No process enumeration, command lines or frontend dependency.
 pub(super) fn sample() -> NativeMemorySnapshot {
     let sampled_at_ms = SystemTime::now()
@@ -83,20 +105,13 @@ fn commit_from_pages(
 }
 
 #[cfg(target_os = "windows")]
-fn platform_sample() -> (Option<SystemCommitMemory>, Option<ProcessMemory>) {
+fn platform_system_commit() -> Option<SystemCommitMemory> {
     use std::mem::size_of;
-    use windows_sys::Win32::System::ProcessStatus::{
-        GetPerformanceInfo, GetProcessMemoryInfo, PERFORMANCE_INFORMATION, PROCESS_MEMORY_COUNTERS,
-        PROCESS_MEMORY_COUNTERS_EX,
-    };
-    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    use windows_sys::Win32::System::ProcessStatus::{GetPerformanceInfo, PERFORMANCE_INFORMATION};
     let mut performance = PERFORMANCE_INFORMATION::default();
-    let mut counters = PROCESS_MEMORY_COUNTERS_EX::default();
     performance.cb = size_of::<PERFORMANCE_INFORMATION>() as u32;
-    counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
-    // Both buffers are initialized repr(C) structs, live throughout each native call.
-    // EX begins with PROCESS_MEMORY_COUNTERS; cb requests the extended PrivateUsage field.
-    let system = unsafe { GetPerformanceInfo(&mut performance, performance.cb) != 0 }
+    // The buffer is an initialized repr(C) struct that lives throughout the native call.
+    unsafe { GetPerformanceInfo(&mut performance, performance.cb) != 0 }
         .then(|| {
             commit_from_pages(
                 performance.CommitTotal,
@@ -105,7 +120,26 @@ fn platform_sample() -> (Option<SystemCommitMemory>, Option<ProcessMemory>) {
                 performance.PageSize,
             )
         })
-        .flatten();
+        .flatten()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn platform_system_commit() -> Option<SystemCommitMemory> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn platform_sample() -> (Option<SystemCommitMemory>, Option<ProcessMemory>) {
+    use std::mem::size_of;
+    use windows_sys::Win32::System::ProcessStatus::{
+        GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+    let mut counters = PROCESS_MEMORY_COUNTERS_EX::default();
+    counters.cb = size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32;
+    // The buffer is an initialized repr(C) struct that lives throughout the native call.
+    // EX begins with PROCESS_MEMORY_COUNTERS; cb requests the extended PrivateUsage field.
+    let system = platform_system_commit();
     let process = unsafe {
         GetProcessMemoryInfo(
             GetCurrentProcess(),

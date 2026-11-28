@@ -16,6 +16,8 @@ use uuid::Uuid;
 #[path = "runtime_memory.rs"]
 mod runtime_memory;
 
+pub(crate) use runtime_memory::{system_commit, SystemCommit};
+
 const CRASH_LOG_FILE_NAME: &str = "crash.log";
 const MARKER_SCHEMA_VERSION: u32 = 1;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(15);
@@ -242,6 +244,22 @@ pub fn mark_graceful_exit() {
         return;
     };
     reporter.stop();
+}
+
+// 记录后端侦测到的运行时故障（如 WebView2 进程退出），附带事发时刻的原生内存读数；
+// 前端此时可能已不存在，因此不依赖 IPC。未初始化时静默跳过，写盘失败只写 stderr。
+pub fn report_native_event(kind: &str, details: Value) {
+    let Some(reporter) = REPORTER.get() else {
+        return;
+    };
+    let event = json!({
+        "event": reporter.base_event(kind, reporter.current_context()),
+        "details": limit_json_size(redact_json_value(details), MAX_CONTEXT_BYTES),
+        "nativeMemoryAtEvent": runtime_memory::sample(),
+    });
+    if let Err(err) = reporter.write_event(event) {
+        eprintln!("failed to write native crash event: {err}");
+    }
 }
 
 impl CrashReporter {

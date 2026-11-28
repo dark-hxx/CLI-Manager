@@ -276,17 +276,35 @@ function useAppMemoryItemModel({ usage, optimizing, lastOptimization, optimize }
     try {
       const result = await optimize();
       setNow(Date.now());
+      // 修剪只回收物理内存（工作集），不降低提交；两者分开报告，终端进程不在清理范围内也如实说明。
       const detailParts = [t("terminalStatusBar.appMemory.optimizedDetail", {
         before: formatStatusBarBytes(result.before.totalBytes),
         after: formatStatusBarBytes(result.after.totalBytes),
       })];
+      if (result.trimmedWorkingSetBytes >= MEGABYTE) {
+        detailParts.push(t("terminalStatusBar.appMemory.trimmedDetail", {
+          trimmed: formatStatusBarBytes(result.trimmedWorkingSetBytes),
+        }));
+      }
       if (result.orphanKilledCount > 0) {
         detailParts.push(t("terminalStatusBar.appMemory.orphanKilled", { count: result.orphanKilledCount }));
+      }
+      if (result.after.terminal.processCount > 0) {
+        detailParts.push(t("terminalStatusBar.appMemory.terminalUntouched", {
+          bytes: formatStatusBarBytes(result.after.terminal.bytes),
+        }));
       }
       const detail = detailParts.join(" · ");
       if (result.freedBytes >= MEGABYTE) {
         toast.success(
           t("terminalStatusBar.appMemory.optimized", { freed: formatStatusBarBytes(result.freedBytes) }),
+          { description: detail }
+        );
+      } else if (result.trimmedWorkingSetBytes >= MEGABYTE) {
+        toast.success(
+          t("terminalStatusBar.appMemory.trimmedOnly", {
+            trimmed: formatStatusBarBytes(result.trimmedWorkingSetBytes),
+          }),
           { description: detail }
         );
       } else {
@@ -315,8 +333,15 @@ function useAppMemoryItemModel({ usage, optimizing, lastOptimization, optimize }
     if (usage.daemon.processCount > 0) {
       rows.push({ label: t("terminalStatusBar.appMemory.daemon"), value: formatStatusBarBytes(usage.daemon.bytes) });
     }
+    rows.push({
+      label: t("terminalStatusBar.appMemory.workingSet"),
+      value: formatStatusBarBytes(usage.totalWorkingSetBytes),
+    });
     if (usage.terminal.processCount > 0) {
-      rows.push({ label: t("terminalStatusBar.appMemory.terminal"), value: formatStatusBarBytes(usage.terminal.bytes) });
+      rows.push({
+        label: t("terminalStatusBar.appMemory.terminal", { count: usage.terminal.processCount }),
+        value: formatStatusBarBytes(usage.terminal.bytes),
+      });
     }
     if (usage.orphan.processCount > 0) {
       rows.push({
@@ -332,6 +357,7 @@ function useAppMemoryItemModel({ usage, optimizing, lastOptimization, optimize }
         t("terminalStatusBar.appMemory.lastResult", {
           time: formatClockTime(lastOptimization.finishedAt),
           freed: formatStatusBarBytes(lastOptimization.freedBytes),
+          trimmed: formatStatusBarBytes(lastOptimization.trimmedWorkingSetBytes),
         }),
         ...(lastOptimization.orphanKilledCount > 0
           ? [t("terminalStatusBar.appMemory.orphanKilled", { count: lastOptimization.orphanKilledCount })]
@@ -353,7 +379,7 @@ function useAppMemoryItemModel({ usage, optimizing, lastOptimization, optimize }
   if (orphanCount > 0 && !optimizing) {
     hints.push(t("terminalStatusBar.appMemory.orphanHint", { count: orphanCount }));
   }
-  if (usage && !usage.privateWorkingSet) hints.push(t("terminalStatusBar.appMemory.workingSetFallback"));
+  hints.push(t("terminalStatusBar.appMemory.commitBasis"));
 
   let value: ReactNode = usage ? formatStatusBarBytes(usage.totalBytes) : PLACEHOLDER;
   if (optimizing) value = t("terminalStatusBar.appMemory.optimizing");
@@ -514,17 +540,34 @@ function TerminalStatusBarContent({ onActivateSession, menuStyle }: TerminalStat
       case "memory": {
         const memory = snapshot?.memory;
         const percent = memory && memory.totalBytes > 0 ? (memory.usedBytes / memory.totalBytes) * 100 : null;
+        // 提交耗尽会让程序直接分配失败崩溃，而物理内存占用率可能并不高；条目颜色取两者中更严重的一项。
+        const commit = memory && memory.commitBytes != null && memory.commitLimitBytes
+          ? {
+            used: memory.commitBytes,
+            limit: memory.commitLimitBytes,
+            percent: (memory.commitBytes / memory.commitLimitBytes) * 100,
+          }
+          : null;
+        const commitTone = usageTone(commit?.percent);
         return {
           value: percent == null ? PLACEHOLDER : formatStatusBarPercent(percent),
-          tone: usageTone(percent),
+          tone: usageTone(Math.max(percent ?? 0, commit?.percent ?? 0)),
           meter: percent,
           rows: memory
             ? [
               { label: t("terminalStatusBar.detail.used"), value: formatStatusBarBytes(memory.usedBytes), tone: usageTone(percent) },
               { label: t("terminalStatusBar.detail.available"), value: formatStatusBarBytes(memory.availableBytes) },
               { label: t("terminalStatusBar.detail.capacity"), value: formatStatusBarBytes(memory.totalBytes) },
+              ...(commit
+                ? [{
+                  label: t("terminalStatusBar.detail.commit"),
+                  value: `${formatStatusBarBytes(commit.used)} / ${formatStatusBarBytes(commit.limit)} · ${formatStatusBarPercent(commit.percent)}`,
+                  tone: commitTone,
+                }]
+                : []),
             ]
             : [],
+          hint: commitTone === "default" ? undefined : t("terminalStatusBar.memory.commitHigh"),
         };
       }
       case "appMemory":

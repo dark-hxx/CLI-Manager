@@ -432,6 +432,10 @@ pub fn run() {
             if let Err(err) = crash_reporter::start_runtime() {
                 log::warn!("failed to start CLI-Manager crash runtime marker: {err}");
             }
+            // 配置中的窗口已在 setup 前创建；尽早挂上监听，覆盖后续初始化期间的 WebView 崩溃。
+            app::webview_supervisor::install(app.handle());
+            // 提交压力预警与状态栏是否显示内存项无关，常驻监测。
+            app::commit_pressure::start(app.handle());
             let startup_args: Vec<String> = std::env::args().collect();
             if let Some(session_id) = background_session_arg(&startup_args) {
                 if let Ok(mut pending) = app.state::<PendingBackgroundSession>().0.lock() {
@@ -561,7 +565,10 @@ pub fn run() {
                         show_main_window(app);
                     }
                     "tray_quit" => {
-                        if let Some(window) = app.get_webview_window("main") {
+                        // 前端已崩溃时没有 JS 能响应退出事件，直接由 Rust 退出。
+                        if app::webview_supervisor::frontend_unavailable() {
+                            app::webview_supervisor::exit_without_frontend(app, "tray quit");
+                        } else if let Some(window) = app.get_webview_window("main") {
                             let _ = window.emit("tray-quit-requested", ());
                         } else {
                             app.exit(0);
@@ -583,6 +590,14 @@ pub fn run() {
                 .build(app)?;
 
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            // 前端注册了关闭监听时 Tauri 会先阻止关闭再交给 JS；JS 已随 WebView 崩溃时由 Rust 兜底退出。
+            if let tauri::WindowEvent::CloseRequested { .. } = event {
+                if window.label() == "main" && app::webview_supervisor::frontend_unavailable() {
+                    app::webview_supervisor::exit_without_frontend(window.app_handle(), "window close");
+                }
+            }
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -1048,6 +1063,7 @@ pub fn run() {
             statusline_profiles::statusline_profiles_commit_import,
             crash_reporter::crash_context_update,
             crash_reporter::frontend_crash_report,
+            app::webview_supervisor::app_take_recovery_notice,
             app_show_main_window,
             app_exit,
         ])

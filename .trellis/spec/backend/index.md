@@ -38,7 +38,7 @@
 | [App Data Persistence Contracts](./app-data-persistence-contracts.md) | Stable `.cli-manager` data paths, non-destructive legacy store migration, and safe legacy DB recovery | Active |
 | [CCS-Compatible Provider Domain Contracts](./ccs-provider-domain-contracts.md) | Planned full provider-domain ownership: CCS-compatible schema, configuration, manual multi-key, Home apply, scope resolver, and import boundaries | Planned |
 | [Statusline Contracts](./statusline-contracts.md) | 内置 Claude 状态栏子命令、配置存储、预览、旧配置导入与安装边界 | Active |
-| [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约 | Active |
+| [System Resource Contracts](./system-resource-contracts.md) | CPU 物理核心、逻辑线程与前端展示字段契约；应用内存按提交统计与系统提交压力预警 | Active |
 | [Local Path Opening Contracts](./local-path-opening-contracts.md) | WebView 本地路径打开、Rust command 参数与 opener scope 边界 | Active |
 | [Desktop Pet File Safety Contracts](./desktop-pet-file-safety-contracts.md) | 桌宠 ID、包清单与受管理目录文件操作的路径安全边界 | Active |
 | [SSH Remote Terminal Contracts](./ssh-remote-terminal-contracts.md) | SSH 主机、远程项目、OpenSSH Launch Plan、PTY/daemon、能力路由与同步安全边界 | Active |

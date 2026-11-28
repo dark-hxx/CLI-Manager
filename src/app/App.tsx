@@ -64,6 +64,7 @@ import { startRuntimeDiagnostics } from "../features/terminal/api/runtimeDiagnos
 import { getTerminalTheme, isLightTerminalTheme } from "../shared/lib/terminalThemes";
 import { resolveProjectForSession } from "../features/terminal/api/terminalProject";
 import { terminalProcessManager } from "../features/terminal/api/TerminalProcessManager";
+import { formatStatusBarBytes } from "../features/terminal/api/terminalStatusBarItems";
 import {
   resolveCliHookStatus,
   type CliHookStatusDecision,
@@ -154,6 +155,14 @@ interface SubagentTranscriptAppendPayload {
 
 interface SystemNotificationActionPayload {
   tabId: string;
+}
+
+/** Rust `commit_pressure` 发出的系统提交压力提醒。 */
+interface SystemCommitPressurePayload {
+  level: "high" | "critical";
+  committedBytes: number;
+  limitBytes: number;
+  percent: number;
 }
 
 type ClaudeHookToastVariant = "attention" | "approval" | "finished" | "failed";
@@ -559,6 +568,21 @@ function runDeferredStartupTasks(openSettings?: (tab?: SettingsTab) => void): vo
   window.setTimeout(() => {
     window.setTimeout(preloadSettingsModal, 250);
 
+    // 上一个进程因 WebView2 崩溃而自动重启时会留下一次性提示，说明原因与会话状态。
+    void (async () => {
+      const notice = await invoke<{ failureKind: string; lowCommit: boolean } | null>(
+        "app_take_recovery_notice"
+      ).catch((err) => {
+        logWarn("Failed to read webview recovery notice", err);
+        return null;
+      });
+      if (!notice) return;
+      const description = [
+        translateCurrent("notifications.app.webviewRecoveredDescription"),
+        ...(notice.lowCommit ? [translateCurrent("notifications.app.webviewRecoveredLowCommit")] : []),
+      ].join(" ");
+      toast.warning(translateCurrent("notifications.app.webviewRecovered"), { description, duration: 15000 });
+    })();
     void (async () => {
       await useProjectStore.getState().refreshProjectDiagnostics().catch((err) => {
         logWarn("Failed to refresh deferred project diagnostics", err);
@@ -997,6 +1021,33 @@ function App() {
       void unlisten.then((fn) => fn());
     };
   }, [t]);
+
+  // 系统提交越过 85%/95% 时由 Rust 侧各提醒一次（回落后重新武装）；与状态栏是否显示内存项无关。
+  useEffect(() => {
+    if (!IN_TAURI) return;
+    const unlisten = listen<SystemCommitPressurePayload>("system-commit-pressure", (event) => {
+      const { level, committedBytes, limitBytes, percent } = event.payload;
+      const critical = level === "critical";
+      const notify = critical ? toast.error : toast.warning;
+      notify(
+        translateCurrent(
+          critical ? "notifications.app.commitPressureCritical" : "notifications.app.commitPressureHigh"
+        ),
+        {
+          id: "system-commit-pressure",
+          description: translateCurrent("notifications.app.commitPressureDescription", {
+            used: formatStatusBarBytes(committedBytes),
+            limit: formatStatusBarBytes(limitBytes),
+            percent: Math.round(percent),
+          }),
+          duration: critical ? 30000 : 15000,
+        }
+      );
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
 
   useEffect(() => {
     if (!IN_TAURI) return;

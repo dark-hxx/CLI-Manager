@@ -77,6 +77,29 @@ sizes are bounded in both the frontend and backend.
 - A marker may lack a sample before its first heartbeat. This evidence is
   diagnostic, not an OOM/leak cure, and does not require frontend polling.
 
+## WebView process failure recovery
+
+- `app::webview_supervisor::install` subscribes every WebView window to
+  WebView2 `ProcessFailed` in Rust during `setup`. Recovery must not depend on
+  the frontend, because the frontend is what died.
+- Browser process exit restarts the whole app: daemon sessions survive and are
+  re-attached. Main-frame renderer exit reloads that window; more than 3 reloads
+  in 5 minutes escalates to an app restart. Other kinds (unresponsive renderer,
+  GPU/utility/frame exits) are only logged and recorded.
+- Each failure writes a `webview_process_failed` crash event with kind, reason,
+  exit code, process description and native memory at the event. Restarts
+  write `webview_recovery_restart`.
+- Only the first window report of one browser crash enters recovery. While the
+  frontend is unavailable, main-window close and tray quit exit from Rust
+  (`exit_without_frontend`) instead of waiting for JS.
+- Before restarting, wait up to 5 s for at least 1 GiB of available commit.
+  If it is still short, a native `MessageBoxW` offers Retry/Cancel. After 2
+  restarts within 10 minutes, ask Yes/No before restarting again. Missing
+  counters do not block a restart.
+- Restart history and a one-time notice live in `webview-recovery[-dev].json`
+  under the log directory. A corrupt file counts as empty. The new frontend
+  takes the notice once through `app_take_recovery_notice`.
+
 ## Scenario matrix
 
 The capture behavior is independent of window focus, current/deep split pane,

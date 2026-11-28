@@ -7,27 +7,33 @@ const APP_MEMORY_POLL_INTERVAL_MS = 5000;
 export const APP_MEMORY_OPTIMIZE_COOLDOWN_MS = 30_000;
 
 export interface AppMemoryGroup {
+  /** 提交（私有已提交内存）。 */
   bytes: number;
+  /** 工作集（当前占用的物理内存）。 */
+  workingSetBytes: number;
   processCount: number;
 }
 
 export interface AppMemoryUsage {
-  /** 主进程 + WebView2 + daemon 合计，不含终端子进程。 */
+  /** 主进程 + WebView2 + daemon 的提交合计，不含终端子进程。 */
   totalBytes: number;
+  totalWorkingSetBytes: number;
   main: AppMemoryGroup;
   webview: AppMemoryGroup;
   daemon: AppMemoryGroup;
   terminal: AppMemoryGroup;
   /** 可清理的孤儿进程（含后代），不计入合计，优化时一并结束。 */
   orphan: AppMemoryGroup;
-  privateWorkingSet: boolean;
   sampledAt: number;
 }
 
 export interface AppMemoryOptimizeResult {
   before: AppMemoryUsage;
   after: AppMemoryUsage;
+  /** 提交下降量（含已结束孤儿进程）。 */
   freedBytes: number;
+  /** 工作集下降量：归还给系统的物理内存，不代表提交下降。 */
+  trimmedWorkingSetBytes: number;
   webviewHintCount: number;
   trimmedProcessCount: number;
   orphanKilledCount: number;
@@ -36,6 +42,7 @@ export interface AppMemoryOptimizeResult {
 
 export interface AppMemoryLastOptimization {
   freedBytes: number;
+  trimmedWorkingSetBytes: number;
   beforeBytes: number;
   afterBytes: number;
   orphanKilledCount: number;
@@ -82,6 +89,7 @@ export function useAppMemory(enabled: boolean) {
       setUsage(result.after);
       setLastOptimization({
         freedBytes: result.freedBytes,
+        trimmedWorkingSetBytes: result.trimmedWorkingSetBytes,
         beforeBytes: result.before.totalBytes,
         afterBytes: result.after.totalBytes,
         orphanKilledCount: result.orphanKilledCount,

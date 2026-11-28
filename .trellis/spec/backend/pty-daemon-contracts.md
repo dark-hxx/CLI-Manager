@@ -246,6 +246,8 @@ if (cleanup.canExit) await exitApp();
 - **★进程治理（防孤儿/防性能劣化）**：
   - **Windows ConPTY Ctrl+C 契约**：daemon 自举禁止使用 `DETACHED_PROCESS` 或 `CREATE_NEW_PROCESS_GROUP`。ConPTY 收到 ETX (`0x03`) 后需要向兼容的控制台进程组投递 Ctrl+C；错误 flags 会造成普通输入正常、但运行中的 PowerShell/CMD/Claude/Codex 任务无法中断。GUI 主进程本身无控制台，Windows daemon 仅使用 `CREATE_NO_WINDOW` 隐藏窗口。
   - **Job Object 兜底**：Windows 上 daemon 启动即创建 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` 的 Job Object，所有 PTY 子进程挂入——daemon 无论正常退出还是被强杀，系统自动回收全部子进程树，物理上杜绝 PTY 孤儿（Unix 对应 `setsid` + 进程组 kill）。
+    - Job 命名为 `Local\CLI-Manager-PtyDaemon-{daemonPid}`，供应用侧只读查询成员做内存归属；同名已存在时退回匿名 Job，不得复用他人的 Job。
+    - Job 同时设置 `JOB_OBJECT_LIMIT_BREAKAWAY_OK`：daemon 因 hook 激活拉起 GUI 时必须带 `CREATE_BREAKAWAY_FROM_JOB`，否则 GUI 进入 kill-on-close Job，daemon 退出或被强制关闭时会连带杀死主窗口。breakaway 创建失败才退回仅 `CREATE_NO_WINDOW`。
   - **daemon 单实例**：启动时以独占创建方式写 daemon.json；发现已有存活实例（pid 活且端口可握手）→ 新 daemon 立即自退，禁止多 daemon 并存。
   - **孤儿 daemon 清扫**：app 每次启动扫描一次——daemon.json 存在但 pid 已死 → 删文件；反向情况（无文件但存在同名 `cli-manager-daemon` 进程且属当前用户、且非另一环境实例）→ 尝试连接握手，握手不上视为僵尸，优雅终止失败后 kill。
   - **自灭规则细化**：无客户端连接时，全部会话均已 exited（子进程死、仅剩 buffer）→ 宽限 5 分钟后视同"无会话"参与 10 分钟自灭计时；exited 会话的 ring buffer 在自灭前保留供 attach 回放。

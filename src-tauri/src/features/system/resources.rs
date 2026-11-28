@@ -143,6 +143,9 @@ pub struct MemorySnapshot {
     available_bytes: u64,
     cached_bytes: u64,
     free_bytes: u64,
+    /// 系统提交已用量与上限（物理内存 + 页面文件）；平台不支持或读取失败时为 null。
+    commit_bytes: Option<u64>,
+    commit_limit_bytes: Option<u64>,
 }
 
 #[derive(Serialize, Clone, Default)]
@@ -949,6 +952,8 @@ impl MemoryCollector {
             available_bytes: available,
             cached_bytes: cached,
             free_bytes: free,
+            commit_bytes: None,
+            commit_limit_bytes: None,
         }
     }
 }
@@ -963,11 +968,13 @@ impl MemoryCollector {
     }
 
     // 总量/已用/可用来自 sysinfo，缓存/空闲优先 PDH；PDH 失败时缓存为零、空闲回退 sysinfo。
+    // 提交读系统性能计数器，失败时两项均为空，不用物理内存冒充。
     fn sample(&mut self, system: &System) -> MemorySnapshot {
         let total = system.total_memory();
         let used = system.used_memory().min(total);
         let available = system.available_memory().min(total);
         let counters = self.inner.as_mut().and_then(MemoryPdhQuery::sample);
+        let commit = crate::crash_reporter::system_commit();
 
         MemorySnapshot {
             total_bytes: total,
@@ -980,6 +987,8 @@ impl MemoryCollector {
                 || system.free_memory().min(total),
                 |value| value.free_bytes.min(total),
             ),
+            commit_bytes: commit.map(|value| value.committed_bytes),
+            commit_limit_bytes: commit.map(|value| value.limit_bytes),
         }
     }
 }

@@ -1721,6 +1721,8 @@ fn read_line_bounded(reader: &mut BufReader<TcpStream>) -> Option<String> {
 }
 
 // 仅对需要用户响应的 Hook 尝试启动同目录应用，并传入后台会话恢复参数。
+// Windows 上界面需脱离 daemon 的 kill-on-close Job，否则 daemon 退出或被强制关闭时会连带结束界面；
+// 所在 Job 链不允许脱离（旧版 daemon 创建的 Job 或外层 Job）时退回普通启动。
 fn maybe_activate_app_for_hook(payload: &crate::claude_hook::ClaudeHookPayload) {
     if !payload.requires_user_response() {
         return;
@@ -1746,7 +1748,13 @@ fn maybe_activate_app_for_hook(payload: &crate::claude_hook::ClaudeHookPayload) 
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB);
+        if command.spawn().is_ok() {
+            return;
+        }
+        command.creation_flags(CREATE_NO_WINDOW);
     }
     if let Err(err) = command.spawn() {
         log::warn!("hook activation failed: {err}");

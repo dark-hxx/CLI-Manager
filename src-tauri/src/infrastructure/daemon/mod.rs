@@ -21,23 +21,36 @@ mod ssh_agent_bridge;
 /// 会话关闭由平台 PTY 控制器回收；daemon 自身 detach 由拉起方处理）。
 // Windows 创建 kill-on-close Job 并挂入当前进程；失败只告警返回，非 Windows 无操作。
 // 创建成功后的句柄留到进程退出回收，包括后续配置或挂入失败的路径，此处没有显式关闭。
+// Job 按 daemon pid 命名，供应用统计内存时按成员归属终端进程（父链断开的进程也能认出）；
+// 同名对象已存在时退回匿名 Job。允许显式 breakaway，仅供 daemon 拉起的应用界面脱离，PTY 子进程不受影响。
 pub fn setup_process_governance() {
     #[cfg(target_os = "windows")]
     unsafe {
+        use windows_sys::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS};
         use windows_sys::Win32::System::JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
             SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+            JOB_OBJECT_LIMIT_BREAKAWAY_OK, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         };
         use windows_sys::Win32::System::Threading::GetCurrentProcess;
 
-        let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        let name = process_governance_job_name(std::process::id())
+            .encode_utf16()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let mut job = CreateJobObjectW(std::ptr::null(), name.as_ptr());
+        if !job.is_null() && GetLastError() == ERROR_ALREADY_EXISTS {
+            // 打开的是别人留下的同名 Job，不能挂进去；改用匿名 Job，只是内存统计少了成员归属。
+            CloseHandle(job);
+            job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+        }
         if job.is_null() {
             log::warn!("daemon job object create failed, orphan protection disabled");
             return;
         }
         let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        limits.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
         let ok = SetInformationJobObject(
             job,
             JobObjectExtendedLimitInformation,
@@ -56,4 +69,9 @@ pub fn setup_process_governance() {
         // 进程终止时句柄关闭触发 KILL_ON_JOB_CLOSE 清理全部子进程。
         log::debug!("daemon job object active (kill-on-close)");
     }
+}
+
+/// daemon 进程治理 Job 的会话内名称；应用侧据此只读查询成员。
+pub fn process_governance_job_name(daemon_pid: u32) -> String {
+    format!("Local\\CLI-Manager-PtyDaemon-{daemon_pid}")
 }
