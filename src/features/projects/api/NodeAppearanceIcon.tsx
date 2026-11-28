@@ -1,5 +1,4 @@
-import { Folder as HomeFolder, Terminal as HomeTerminal } from "../../../shared/ui/homeIcons";
-import { Folder, Terminal } from "../../../shared/ui/icons";
+import { Folder, Terminal } from "../../../shared/ui/homeIcons";
 import { CliToolIcon, isCliToolIconKey } from "../../../shared/ui/CliToolIcon";
 import { resolveCliToolIconKey } from "../../../shared/lib/cliTools";
 import { isNodeBrandIconKey, nodeBrandIconSource } from "./nodeAppearance";
@@ -14,14 +13,13 @@ interface NodeAppearanceIconProps {
   /** 都没有时的兜底图标。 */
   fallback: "folder" | "terminal";
   size?: number;
-  /** 仅首页默认图形跟随精致图标偏好，自定义和品牌图标优先。 */
-  homeStyle?: boolean;
 }
 
 /**
  * 节点图标的唯一渲染入口：单字符标记 → 内置图标 key → CLI 工具图标 → 类型兜底图标。
  *
- * 侧边栏、History 项目树、Stats 项目树共用，避免三处各写一遍回退分支。
+ * 侧边栏、History / Stats 项目树、项目编辑弹窗的分组下拉共用，避免各处各写一遍回退分支。
+ * 兜底的文件夹/终端图形统一走 homeIcons，跟随「精致图标」偏好；自定义和品牌图标优先。
  * 颜色由外层的 `--node-accent` 决定，但只对单色图标生效 —— CLI 品牌图标与 emoji 自带颜色。
  */
 export function NodeAppearanceIcon({
@@ -30,7 +28,6 @@ export function NodeAppearanceIcon({
   cliTool,
   fallback,
   size = 16,
-  homeStyle = false,
 }: NodeAppearanceIconProps) {
   if (mark) {
     return (
@@ -56,11 +53,9 @@ export function NodeAppearanceIcon({
   const resolvedKey = isCliToolIconKey(iconKey) ? iconKey : resolveCliToolIconKey(cliTool);
   if (resolvedKey) return <CliToolIcon icon={resolvedKey} size={size} />;
 
-  const FolderIcon = homeStyle ? HomeFolder : Folder;
-  const TerminalIcon = homeStyle ? HomeTerminal : Terminal;
   return fallback === "folder" ? (
-    <FolderIcon size={size} strokeWidth={1.5} />
+    <Folder size={size} strokeWidth={1.5} />
   ) : (
-    <TerminalIcon size={size} strokeWidth={1.5} />
+    <Terminal size={size} strokeWidth={1.5} />
   );
 }

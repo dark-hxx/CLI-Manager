@@ -260,7 +260,7 @@ function TreeNodeItemImpl({
                   <Link2 size={11} strokeWidth={2} aria-hidden="true" />
                 </span>
               )}
-              <NodeAppearanceIcon homeStyle
+              <NodeAppearanceIcon
                 mark={appearance.emoji}
                 iconKey={appearance.iconKey}
                 cliTool={p.cli_tool}
@@ -338,7 +338,7 @@ function TreeNodeItemImpl({
                 <Link2 size={11} strokeWidth={2} aria-hidden="true" />
               </span>
             )}
-            <NodeAppearanceIcon homeStyle
+            <NodeAppearanceIcon
               mark={appearance.emoji}
               iconKey={appearance.iconKey}
               cliTool={p.cli_tool}
@@ -507,7 +507,7 @@ function TreeNodeItemImpl({
             <ChevronRight size={12} strokeWidth={2} style={{ transition: "transform 150ms", transform: isOpen ? "rotate(90deg)" : "rotate(0)" }} />
           </span>
           <span className="ui-tree-leading-icon">
-            <NodeAppearanceIcon homeStyle
+            <NodeAppearanceIcon
               mark={groupAppearance.emoji}
               iconKey={groupAppearance.iconKey}
               fallback="folder"

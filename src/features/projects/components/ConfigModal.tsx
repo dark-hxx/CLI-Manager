@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useId, useMemo, type Ref } from "react";
+import { useState, useRef, useEffect, useCallback, useId, useMemo, type CSSProperties, type Ref } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useProjectStore } from "../api/projectStore";
@@ -1548,7 +1548,11 @@ function GroupSelector({
                 data-selected={selected}
                 aria-pressed={selected}
               >
-                <span className="ui-tree-leading-icon relative" aria-hidden="true" style={{ color: appearance.colorVar || undefined }}>
+                <span
+                  className="ui-tree-leading-icon relative"
+                  aria-hidden="true"
+                  style={(appearance.hasColor ? { "--node-accent": appearance.colorVar } : {}) as CSSProperties}
+                >
                   {depth > 0 && (
                     <span className="absolute -left-3 -top-1 h-4 w-2.5 rounded-bl-sm border-b border-l border-text-muted/60" />
                   )}

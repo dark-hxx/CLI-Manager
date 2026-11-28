@@ -130,7 +130,7 @@ function PinnedProjectItem({ project, density }: { project: Project; density: "c
         onContextMenu={(event) => actions.onContextMenuProject(event, project, true)}
       >
         <span className="ui-tree-leading-icon">
-          <NodeAppearanceIcon homeStyle
+          <NodeAppearanceIcon
             mark={appearance.emoji}
             iconKey={appearance.iconKey}
             cliTool={project.cli_tool}

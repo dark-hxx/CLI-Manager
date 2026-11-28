@@ -53,7 +53,7 @@ export function NewGroupRow({ compact, paddingLeft, onCreate, onCancel }: NewGro
             // 阻止 mousedown 抢焦点：否则名称输入框会先 blur 并提前提交建组。
             onMouseDown={(event) => event.preventDefault()}
           >
-            <NodeAppearanceIcon homeStyle mark={appearance.emoji} iconKey={appearance.iconKey} fallback="folder" size={19} />
+            <NodeAppearanceIcon mark={appearance.emoji} iconKey={appearance.iconKey} fallback="folder" size={19} />
           </button>
         </PopoverTrigger>
         <PopoverContent

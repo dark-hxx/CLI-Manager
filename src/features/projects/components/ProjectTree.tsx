@@ -919,7 +919,7 @@ function CollapsedProjectButton({ node, sizeClass, pinned = false }: { node: TNo
       onContextMenu={(e) => actions.onContextMenuProject(e, p)}
     >
       <span className="ui-tree-collapsed-icon pointer-events-none" aria-hidden="true">
-        <NodeAppearanceIcon homeStyle
+        <NodeAppearanceIcon
           mark={appearance.emoji}
           iconKey={appearance.iconKey}
           cliTool={p.cli_tool}
@@ -993,7 +993,7 @@ function CollapsedGroupButton({
           onContextMenu={(e) => actions.onContextMenuGroup(e, g.id, g.name)}
         >
           <span className="ui-tree-collapsed-icon" aria-hidden="true">
-            <NodeAppearanceIcon homeStyle
+            <NodeAppearanceIcon
               mark={groupAppearance.emoji}
               iconKey={groupAppearance.iconKey}
               fallback="folder"
@@ -1131,7 +1131,6 @@ function DragGhost({ activeId, tree }: { activeId: string; tree: TNode[] }) {
     <WorktreeIcon className="h-3.5 w-3.5" />
   ) : (
     <NodeAppearanceIcon
-      homeStyle
       mark={appearance.emoji}
       iconKey={appearance.iconKey}
       cliTool={node.type === "project" ? node.project.cli_tool : undefined}
